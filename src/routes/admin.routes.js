@@ -31,13 +31,13 @@ export async function handleAdminRoutes(req, res, path, url) {
       const body = await parseBody(req)
       const { address } = JSON.parse(body || '{}')
 
-      if (!validateSwtcAddress(address, res)) return
+      if (!validateSwtcAddress(address, res)) return true
 
       const addrLower = normalizeAddress(address)
       if (!isAdmin(addrLower)) {
         res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify({ error: '不是管理员地址', code: 'FORBIDDEN' }))
-        return
+        return true
       }
 
       // 设置管理员会话 Cookie
@@ -50,7 +50,10 @@ export async function handleAdminRoutes(req, res, path, url) {
       // 记录日志
       dataService.logOperation('admin_login', { address: addrLower })
     } catch (err) {
-      handleError(err, res)
+      // 只有在 headers 还没发送时才处理错误
+      if (!res.headersSent) {
+        handleError(err, res)
+      }
     }
     return true
   }

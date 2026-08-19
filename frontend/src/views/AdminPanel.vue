@@ -249,7 +249,18 @@ const setupAccountChangeListener = () => {
             }
           }
         } catch (err) {
-          console.error('[AdminPanel] 验证新地址失败:', err)
+          if (err.response?.status === 403) {
+            // 新地址不是管理员，显示无权限页面
+            notAdmin.value = true
+            isAdmin.value = false
+            currentAdminAddress.value = null
+            if (dataRefreshInterval) {
+              clearInterval(dataRefreshInterval)
+              dataRefreshInterval = null
+            }
+          } else {
+            console.error('[AdminPanel] 验证新地址失败:', err)
+          }
         }
       }
     })
@@ -384,12 +395,22 @@ const tierBadge = (tier) => {
 }
 
 const statusBadge = (status) => {
-  const map = { running: 'badge-success', stopped: 'badge-warning', destroyed: 'badge-danger' }
+  const map = {
+    running: 'badge-success',
+    stopped: 'badge-warning',
+    destroyed: 'badge-danger',
+    unknown: 'badge-secondary',
+  }
   return map[status] || 'badge-info'
 }
 
 const statusText = (status) => {
-  const map = { running: '运行中', stopped: '已停止', destroyed: '已销毁' }
+  const map = {
+    running: '运行中',
+    stopped: '已停止',
+    destroyed: '已销毁',
+    unknown: '未知',
+  }
   return map[status] || status
 }
 
@@ -593,6 +614,11 @@ table {
 
 .btn-info:hover {
   background: #2563eb;
+}
+
+.badge-secondary {
+  background: #6b7280;
+  color: white;
 }
 
 .current-address {

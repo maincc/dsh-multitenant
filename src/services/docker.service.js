@@ -28,6 +28,18 @@ function sh(cmd, args, opts = {}) {
 
 export class DockerService {
   /**
+   * 检查 Docker 是否可用
+   */
+  async isDockerAvailable() {
+    try {
+      await sh('docker', ['version'])
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
    * 查询容器是否存在及其运行状态
    */
   async containerInfo(name) {
@@ -63,15 +75,26 @@ export class DockerService {
    */
   async createContainer(name, port, volume, patchFile, limits) {
     const args = [
-      'run', '-d', '--name', name,
-      '--restart', 'unless-stopped',
-      '--memory', limits.memory,
-      '--memory-swap', limits.memorySwap,
-      '--cpus', limits.cpus,
-      '--pids-limit', String(limits.pids),
-      '-p', `${port}:3080`,
-      '-v', `${volume}:/dsh-home`,
-      '-v', `${patchFile}:/patches/tenant.patch.yml:ro`,
+      'run',
+      '-d',
+      '--name',
+      name,
+      '--restart',
+      'unless-stopped',
+      '--memory',
+      limits.memory,
+      '--memory-swap',
+      limits.memorySwap,
+      '--cpus',
+      limits.cpus,
+      '--pids-limit',
+      String(limits.pids),
+      '-p',
+      `${port}:3080`,
+      '-v',
+      `${volume}:/dsh-home`,
+      '-v',
+      `${patchFile}:/patches/tenant.patch.yml:ro`,
       IMAGE,
     ]
     await sh('docker', args)
@@ -115,10 +138,14 @@ export class DockerService {
   async updateContainer(name, limits) {
     await sh('docker', [
       'update',
-      '--memory', limits.memory,
-      '--memory-swap', limits.memorySwap,
-      '--cpus', limits.cpus,
-      '--pids-limit', String(limits.pids),
+      '--memory',
+      limits.memory,
+      '--memory-swap',
+      limits.memorySwap,
+      '--cpus',
+      limits.cpus,
+      '--pids-limit',
+      String(limits.pids),
       name,
     ])
   }
@@ -129,7 +156,9 @@ export class DockerService {
   async getContainerStats(containerName) {
     try {
       const out = await sh('docker', [
-        'stats', '--no-stream', '--format',
+        'stats',
+        '--no-stream',
+        '--format',
         '{"cpu":"{{.CPUPerc}}","mem":"{{.MemUsage}}","memPercent":"{{.MemPerc}}","net":"{{.NetIO}}","block":"{{.BlockIO}}"}',
         containerName,
       ])
@@ -151,7 +180,7 @@ export class DockerService {
       } catch {
         // 还没起来，继续等
       }
-      await new Promise(r => setTimeout(r, 500))
+      await new Promise((r) => setTimeout(r, 500))
     }
     return false
   }
@@ -162,9 +191,12 @@ export class DockerService {
   async listSwtcContainers() {
     try {
       const out = await sh('docker', [
-        'ps', '-a',
-        '--filter', 'name=dsh-swtc-',
-        '--format', '{{.Names}}',
+        'ps',
+        '-a',
+        '--filter',
+        'name=dsh-swtc-',
+        '--format',
+        '{{.Names}}',
       ])
       return out.split('\n').filter(Boolean)
     } catch {

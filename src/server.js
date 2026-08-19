@@ -149,7 +149,9 @@ const server = createServer(async (req, res) => {
   }
 
   // SPA 路由 fallback
-  serveFrontend(res)
+  if (!res.headersSent) {
+    serveFrontend(res)
+  }
 })
 
 // 启动服务器
