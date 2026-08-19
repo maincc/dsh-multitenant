@@ -2,7 +2,7 @@
 
 基于 SWTC 地址的智能容器分配系统，为每个用户分配独立的 Docker 容器运行 DeepSeek Harness Web。
 
-##  项目结构
+## 项目结构
 
 ```
 dsh-multitenant/
@@ -125,14 +125,14 @@ npm run test:coverage
 
 ### 核心模块
 
-| 模块 | 职责 | 文件 |
-|------|------|------|
-| **ConfigService** | 配置管理、管理员验证 | `src/config/config.js` |
-| **DockerService** | Docker CLI 封装 | `src/services/docker.service.js` |
-| **UserService** | 用户生命周期管理 | `src/services/user.service.js` |
-| **DataService** | 原子写入数据存储 | `src/services/data.service.js` |
-| **AuthMiddleware** | 管理员权限守卫 | `src/middleware/auth.middleware.js` |
-| **ValidateMiddleware** | 输入验证 | `src/middleware/validate.middleware.js` |
+| 模块                   | 职责                 | 文件                                    |
+| ---------------------- | -------------------- | --------------------------------------- |
+| **ConfigService**      | 配置管理、管理员验证 | `src/config/config.js`                  |
+| **DockerService**      | Docker CLI 封装      | `src/services/docker.service.js`        |
+| **UserService**        | 用户生命周期管理     | `src/services/user.service.js`          |
+| **DataService**        | 原子写入数据存储     | `src/services/data.service.js`          |
+| **AuthMiddleware**     | 管理员权限守卫       | `src/middleware/auth.middleware.js`     |
+| **ValidateMiddleware** | 输入验证             | `src/middleware/validate.middleware.js` |
 
 ## 📝 配置说明
 
@@ -162,14 +162,14 @@ npm run test:coverage
 
 ### 环境变量
 
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `PORT` | 服务端口 | 8090 |
-| `PUBLIC_HOST` | 对外主机名 | 127.0.0.1 |
-| `DSH_TENANT_IMAGE` | 租户镜像 | dsh-multitenant:latest |
-| `BASE_PORT` | 起始端口 | 31000 |
-| `PUBLIC_TRUST` | 信任的浏览器 authority | - |
-| `INJECT_ENV` | 注入容器的环境变量 | - |
+| 变量               | 说明                   | 默认值                 |
+| ------------------ | ---------------------- | ---------------------- |
+| `PORT`             | 服务端口               | 8090                   |
+| `PUBLIC_HOST`      | 对外主机名             | 127.0.0.1              |
+| `DSH_TENANT_IMAGE` | 租户镜像               | dsh-multitenant:latest |
+| `BASE_PORT`        | 起始端口               | 31000                  |
+| `PUBLIC_TRUST`     | 信任的浏览器 authority | -                      |
+| `INJECT_ENV`       | 注入容器的环境变量     | -                      |
 
 ## 🔌 API 文档
 
@@ -289,10 +289,26 @@ Response: { "ok": true, "status": "destroyed" }
 2. 导出中间件函数
 3. 在路由中调用
 
-##  许可证
+### Git Hooks
+
+本项目配置了 `pre-commit` hook，在提交时自动：
+
+- 格式化暂存区的代码文件（Prettier）
+- 运行测试套件（Vitest）
+
+如果测试失败，提交将被阻止。
+
+手动安装/卸载 hooks：
+
+```bash
+npm run hooks:install    # 安装 hooks
+npm run hooks:uninstall  # 卸载 hooks
+```
+
+## 许可证
 
 MIT
 
-##  贡献
+## 贡献
 
 欢迎提交 Issue 和 Pull Request！

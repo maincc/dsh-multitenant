@@ -8,7 +8,7 @@
    - **Description**: `DSH 多租户管理系统 - 基于 SWTC 地址的智能容器分配`
    - **Visibility**: Public 或 Private（根据需要）
    - ❌ 不要勾选 "Add a README file"（我们已有）
-   -  不要勾选 "Add .gitignore"（我们已有）
+   - 不要勾选 "Add .gitignore"（我们已有）
    - ❌ 不要勾选 "Choose a license"（我们已有）
 3. 点击 "Create repository"
 
@@ -72,32 +72,32 @@ name: Tests
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    
+
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '22'
-    
-    - name: Install dependencies
-      run: |
-        npm install
-        cd frontend && npm install
-    
-    - name: Run tests
-      run: npm test
-    
-    - name: Build frontend
-      run: cd frontend && npm run build
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: |
+          npm install
+          cd frontend && npm install
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build frontend
+        run: cd frontend && npm run build
 ```
 
 ## 常用命令
@@ -170,15 +170,16 @@ git remote set-url origin https://<token>@github.com/<username>/dsh-multitenant.
 
 ```bash
 # 重新安装 hooks
-npm run prepare
+npm run hooks:install
 
 # 或手动设置
-chmod +x .git/hooks/pre-push
+chmod +x .git/hooks/pre-commit
 ```
 
 ## 完成！
 
 现在你的项目已经：
+
 - ✅ 本地 Git 仓库初始化
 - ✅ 代码格式化钩子配置
 - ✅ 测试自动化配置
