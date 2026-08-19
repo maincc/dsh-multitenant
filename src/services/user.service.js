@@ -6,18 +6,170 @@
 import { join, resolve } from 'node:path'
 import { writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { CONFIG, getTierLimits, isAdmin } from '../config/config.js'
 import { dockerService } from './docker.service.js'
 import { dataService } from './data.service.js'
 import { swtcContainerName, swtcVolumeName, normalizeAddress } from '../utils/address.js'
 import { NotFoundError, BadRequestError, ConflictError } from '../utils/errors.js'
 
+const execFileAsync = promisify(execFile)
 const ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)))
 const PATCHES_DIR = join(ROOT, 'patches')
 
 export class UserService {
   constructor() {
     this.state = dataService.loadState()
+    this.waitQueue = [] // 等待队列
+  }
+
+  /**
+   * 资源预检
+   * 检查是否有足够资源创建新容器
+   */
+  async preflightCheck() {
+    const checks = {
+      ports: false,
+      memory: false,
+      disk: false,
+      containers: false,
+    }
+
+    // 1. 检查端口
+    const availablePorts = this.state.availablePorts?.length ?? 0
+    const nextPort = this.state.nextPort ?? CONFIG.docker.basePort
+    checks.ports = availablePorts > 0 || nextPort < CONFIG.docker.maxPort
+
+    // 2. 检查主机内存（需要至少 512MB 可用）
+    try {
+      const { stdout } = await execFileAsync('sysctl', ['-n', 'hw.memsize'])
+      const totalMemory = parseInt(stdout.trim(), 10)
+      const { stdout: vmStats } = await execFileAsync('sysctl', ['-n', 'vm.vm_stats'])
+      // 简化检查：如果总内存 > 8GB，认为足够
+      checks.memory = totalMemory > 8 * 1024 * 1024 * 1024
+    } catch {
+      checks.memory = true // 无法检查时假设足够
+    }
+
+    // 3. 检查磁盘空间（需要至少 2GB 可用）
+    try {
+      const { stdout } = await execFileAsync('df', ['-k', '/'])
+      const lines = stdout.trim().split('\n')
+      if (lines.length >= 2) {
+        const parts = lines[1].split(/\s+/)
+        const availableKB = parseInt(parts[3], 10)
+        checks.disk = availableKB > 2 * 1024 * 1024 // 2GB
+      } else {
+        checks.disk = true
+      }
+    } catch {
+      checks.disk = true
+    }
+
+    // 4. 检查容器数量（最多 50 个）
+    try {
+      const containers = await dockerService.listSwtcContainers()
+      checks.containers = containers.length < 50
+    } catch {
+      checks.containers = true
+    }
+
+    const failed = Object.entries(checks)
+      .filter(([_, v]) => !v)
+      .map(([k]) => k)
+
+    return {
+      ok: failed.length === 0,
+      checks,
+      failed,
+    }
+  }
+
+  /**
+   * 添加到等待队列
+   */
+  addToWaitQueue(address, tier = 1) {
+    // 检查是否已在队列中
+    const existing = this.waitQueue.find((item) => item.address === address)
+    if (existing) {
+      return {
+        position: this.waitQueue.indexOf(existing) + 1,
+        alreadyInQueue: true,
+      }
+    }
+
+    const item = {
+      address,
+      tier,
+      timestamp: Date.now(),
+      status: 'waiting',
+    }
+    this.waitQueue.push(item)
+    return {
+      position: this.waitQueue.length,
+      alreadyInQueue: false,
+    }
+  }
+
+  /**
+   * 从等待队列移除
+   */
+  removeFromWaitQueue(address) {
+    const index = this.waitQueue.findIndex((item) => item.address === address)
+    if (index !== -1) {
+      this.waitQueue.splice(index, 1)
+      return true
+    }
+    return false
+  }
+
+  /**
+   * 获取队列中的位置
+   */
+  getQueuePosition(address) {
+    const index = this.waitQueue.findIndex((item) => item.address === address)
+    if (index === -1) return null
+    return {
+      position: index + 1,
+      total: this.waitQueue.length,
+      timestamp: this.waitQueue[index].timestamp,
+    }
+  }
+
+  /**
+   * 处理等待队列
+   * 尝试为队列中的用户创建容器
+   */
+  async processWaitQueue() {
+    if (this.waitQueue.length === 0) return []
+
+    const processed = []
+    const check = await this.preflightCheck()
+
+    if (!check.ok) {
+      console.log(`[queue] Resources still insufficient: ${check.failed.join(', ')}`)
+      return processed
+    }
+
+    // 处理队列中的第一个用户
+    const next = this.waitQueue.shift()
+    if (next) {
+      try {
+        console.log(`[queue] Processing ${next.address} (tier ${next.tier})`)
+        await this.ensureContainer(next.address)
+        next.status = 'completed'
+        processed.push(next)
+        console.log(`[queue] Successfully created container for ${next.address}`)
+      } catch (err) {
+        console.error(`[queue] Failed to create container for ${next.address}:`, err.message)
+        next.status = 'failed'
+        next.error = err.message
+        processed.push(next)
+      }
+    }
+
+    return processed
   }
 
   /**
@@ -104,8 +256,9 @@ export class UserService {
 
   /**
    * 确保用户容器存在并运行
+   * @param {boolean} skipQueueCheck - 跳过队列检查（队列处理时调用）
    */
-  async ensureContainer(address) {
+  async ensureContainer(address, skipQueueCheck = false) {
     address = normalizeAddress(address)
     const name = swtcContainerName(address)
     const volume = swtcVolumeName(address)
@@ -123,7 +276,22 @@ export class UserService {
       return await this.finalizeTenant(address, name, port)
     }
 
-    // 2) 容器不存在：创建新容器
+    // 2) 资源预检（队列处理时跳过）
+    if (!skipQueueCheck) {
+      const check = await this.preflightCheck()
+      if (!check.ok) {
+        // 资源不足，添加到等待队列
+        const tier = this.state.swtcUsers?.[address]?.tier ?? 1
+        const queueResult = this.addToWaitQueue(address, tier)
+        const error = new Error('资源不足，已进入等待队列')
+        error.code = 'RESOURCE_EXHAUSTED'
+        error.queuePosition = queueResult.position
+        error.failedResources = check.failed
+        throw error
+      }
+    }
+
+    // 3) 容器不存在：创建新容器
     // 优先使用回收的端口，其次使用 nextPort
     let port
     if (this.state.availablePorts && this.state.availablePorts.length > 0) {

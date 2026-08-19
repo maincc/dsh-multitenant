@@ -25,8 +25,22 @@ export async function handleTenantRoutes(req, res, path, url) {
       res.writeHead(302, { location: `http://${PUBLIC_HOST}:${port}/` })
       res.end()
     } catch (err) {
-      res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' })
-      res.end(`SWTC tenant provisioning failed: ${err.message}\n${err.stderr ?? ''}`)
+      // 资源不足，进入等待队列
+      if (err.code === 'RESOURCE_EXHAUSTED') {
+        res.writeHead(202, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(
+          JSON.stringify({
+            error: '资源不足，请等待',
+            code: 'RESOURCE_EXHAUSTED',
+            queuePosition: err.queuePosition,
+            failedResources: err.failedResources,
+            message: '系统资源不足，您已进入等待队列，资源释放后将自动为您创建容器',
+          }),
+        )
+      } else {
+        res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' })
+        res.end(`SWTC tenant provisioning failed: ${err.message}\n${err.stderr ?? ''}`)
+      }
     }
     return true
   }
@@ -37,6 +51,24 @@ export async function handleTenantRoutes(req, res, path, url) {
     if (!validateSwtcAddress(address, res)) return true
 
     address = normalizeAddress(address)
+
+    // 检查是否在等待队列中
+    const queueInfo = userService.getQueuePosition(address)
+    if (queueInfo) {
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(
+        JSON.stringify({
+          exists: false,
+          address,
+          status: 'waiting',
+          queuePosition: queueInfo.position,
+          queueTotal: queueInfo.total,
+          waitingSince: queueInfo.timestamp,
+          message: '资源不足，正在等待中',
+        }),
+      )
+      return true
+    }
 
     const user = userService.state.swtcUsers?.[address]
     if (!user) {

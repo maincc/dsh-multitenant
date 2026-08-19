@@ -110,6 +110,25 @@ function startResourceMonitor() {
   )
 }
 
+/**
+ * 启动等待队列处理定时器
+ * 每 30 秒检查一次队列，尝试为等待的用户创建容器
+ */
+function startQueueProcessor() {
+  const interval = 30000 // 30 秒
+  setInterval(async () => {
+    try {
+      const processed = await userService.processWaitQueue()
+      if (processed.length > 0) {
+        console.log(`[queue] processed ${processed.length} items`)
+      }
+    } catch (err) {
+      console.error('[queue] error processing queue:', err.message)
+    }
+  }, interval)
+  console.log(`[queue] processor started: check every ${(interval / 1000).toFixed(0)}s`)
+}
+
 // 创建 HTTP 服务器
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`)
@@ -170,6 +189,7 @@ server.listen(PORT, '0.0.0.0', async () => {
   await userService.restoreFromDocker()
   startCleanupTimer()
   startResourceMonitor()
+  startQueueProcessor()
   console.log(`[dsh-multitenant] entry server on http://127.0.0.1:${PORT}/`)
   console.log(
     `[dsh-multitenant] tenant image: ${CONFIG.docker.image}, host: ${CONFIG.server.publicHost}, ports from ${CONFIG.docker.basePort}`,

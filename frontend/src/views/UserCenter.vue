@@ -36,6 +36,36 @@
       </button>
     </div>
 
+    <!-- 等待队列页面 -->
+    <div v-else-if="waiting" class="card waiting-card">
+      <div class="waiting-icon">⏳</div>
+      <h2>资源不足，请等待</h2>
+      <p class="waiting-message">系统资源不足，您已进入等待队列</p>
+      <p class="waiting-message">资源释放后将自动为您创建容器</p>
+
+      <div class="queue-info">
+        <div class="queue-item">
+          <span class="queue-label">排队位置：</span>
+          <span class="queue-value">第 {{ queuePosition }} 位</span>
+        </div>
+        <div class="queue-item">
+          <span class="queue-label">队列总人数：</span>
+          <span class="queue-value">{{ queueTotal }} 人</span>
+        </div>
+        <div class="queue-item">
+          <span class="queue-label">等待时间：</span>
+          <span class="queue-value">{{ waitingTime }}</span>
+        </div>
+      </div>
+
+      <div class="waiting-progress">
+        <div class="spinner"></div>
+        <span>系统正在清理闲置资源，请稍候...</span>
+      </div>
+
+      <button class="btn btn-secondary" @click="cancelWaiting">取消等待</button>
+    </div>
+
     <!-- 用户信息页面 -->
     <div v-else class="user-dashboard">
       <div class="card">
@@ -108,19 +138,32 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import axios from 'axios'
 
 const connected = ref(false)
 const connecting = ref(false)
 const hasCCDAO = ref(false)
 const userInfo = ref({})
+const waiting = ref(false)
+const queuePosition = ref(0)
+const queueTotal = ref(0)
+const waitingSince = ref(0)
 
 // 加载状态
 const loading = ref(false)
 const loadingTitle = ref('')
 const loadingMessage = ref('')
 const loadingProgress = ref(0)
+
+// 等待时间计算
+const waitingTime = computed(() => {
+  if (!waitingSince.value) return '0 秒'
+  const ms = Date.now() - waitingSince.value
+  if (ms < 60000) return `${Math.floor(ms / 1000)} 秒`
+  if (ms < 3600000) return `${Math.floor(ms / 60000)} 分钟`
+  return `${(ms / 3600000).toFixed(1)} 小时`
+})
 
 const showLoading = (title, message, progress = 0) => {
   loading.value = true
@@ -225,6 +268,14 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
     // 关键：无论地址是否变化，都要确保容器存在并运行
     const containerStatus = await ensureContainer(newAddress)
 
+    // 如果在等待队列中，不继续加载用户信息
+    if (containerStatus === 'waiting') {
+      hideLoading()
+      // 保存地址
+      localStorage.setItem('swtc_address', newAddress)
+      return
+    }
+
     // 更新加载状态
     showLoading(
       '正在创建容器',
@@ -295,12 +346,35 @@ const ensureContainer = async (address) => {
   try {
     const statusRes = await axios.get(`/connect-status?address=${encodeURIComponent(address)}`)
 
+    // 如果在等待队列中
+    if (statusRes.data.status === 'waiting') {
+      waiting.value = true
+      queuePosition.value = statusRes.data.queuePosition
+      queueTotal.value = statusRes.data.queueTotal
+      waitingSince.value = statusRes.data.waitingSince
+      // 开始轮询队列状态
+      startQueuePolling(address)
+      return 'waiting'
+    }
+
     // 如果容器不存在或已销毁，创建新容器
     if (!statusRes.data.exists || statusRes.data.status === 'destroyed') {
       console.log('[UserCenter] 容器不存在，正在创建...')
-      await fetch(`/connect?address=${encodeURIComponent(address)}`, {
+      const connectRes = await fetch(`/connect?address=${encodeURIComponent(address)}`, {
         redirect: 'manual',
       })
+
+      // 检查是否返回 202（资源不足，进入队列）
+      if (connectRes.status === 202) {
+        const data = await connectRes.json()
+        waiting.value = true
+        queuePosition.value = data.queuePosition
+        queueTotal.value = 1 // 初始值，后续轮询会更新
+        waitingSince.value = Date.now()
+        startQueuePolling(address)
+        return 'waiting'
+      }
+
       // 等待容器就绪
       await new Promise((resolve) => setTimeout(resolve, 3000))
       return 'created'
@@ -322,12 +396,72 @@ const ensureContainer = async (address) => {
   } catch (err) {
     console.error('[UserCenter] 检查容器状态失败:', err)
     // 如果检查失败，尝试直接创建容器
-    await fetch(`/connect?address=${encodeURIComponent(address)}`, {
+    const connectRes = await fetch(`/connect?address=${encodeURIComponent(address)}`, {
       redirect: 'manual',
     })
+
+    // 检查是否返回 202（资源不足，进入队列）
+    if (connectRes.status === 202) {
+      const data = await connectRes.json()
+      waiting.value = true
+      queuePosition.value = data.queuePosition
+      queueTotal.value = 1
+      waitingSince.value = Date.now()
+      startQueuePolling(address)
+      return 'waiting'
+    }
+
     await new Promise((resolve) => setTimeout(resolve, 3000))
     return 'created'
   }
+}
+
+// 轮询队列状态
+let queuePollingTimer = null
+const startQueuePolling = (address) => {
+  // 清除之前的轮询
+  if (queuePollingTimer) {
+    clearInterval(queuePollingTimer)
+  }
+
+  // 每 5 秒检查一次队列状态
+  queuePollingTimer = setInterval(async () => {
+    try {
+      const statusRes = await axios.get(`/connect-status?address=${encodeURIComponent(address)}`)
+
+      // 如果容器已创建成功
+      if (statusRes.data.exists) {
+        waiting.value = false
+        if (queuePollingTimer) {
+          clearInterval(queuePollingTimer)
+          queuePollingTimer = null
+        }
+        // 重新加载用户信息
+        await fetchUserInfo(address)
+        connected.value = true
+        return
+      }
+
+      // 更新队列信息
+      if (statusRes.data.status === 'waiting') {
+        queuePosition.value = statusRes.data.queuePosition
+        queueTotal.value = statusRes.data.queueTotal
+      }
+    } catch (err) {
+      console.error('[UserCenter] 轮询队列状态失败:', err)
+    }
+  }, 5000)
+}
+
+// 取消等待
+const cancelWaiting = () => {
+  waiting.value = false
+  if (queuePollingTimer) {
+    clearInterval(queuePollingTimer)
+    queuePollingTimer = null
+  }
+  connected.value = false
+  userInfo.value = {}
 }
 
 const fetchUserInfo = async (address) => {
@@ -656,5 +790,107 @@ onMounted(async () => {
   padding: 0.25rem 0;
   font-size: 0.9rem;
   color: #6b7280;
+}
+
+/* 等待队列样式 */
+.waiting-card {
+  text-align: center;
+  padding: 3rem;
+  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+  border: 2px solid #f59e0b;
+}
+
+.waiting-icon {
+  font-size: 4rem;
+  margin-bottom: 1rem;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.1);
+  }
+}
+
+.waiting-card h2 {
+  font-size: 1.8rem;
+  margin-bottom: 1rem;
+  color: #92400e;
+}
+
+.waiting-message {
+  color: #78350f;
+  margin-bottom: 0.5rem;
+  font-size: 1rem;
+}
+
+.queue-info {
+  background: white;
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin: 2rem 0;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.queue-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.queue-item:last-child {
+  border-bottom: none;
+}
+
+.queue-label {
+  color: #6b7280;
+  font-size: 0.9rem;
+}
+
+.queue-value {
+  color: #1f2937;
+  font-weight: 600;
+  font-size: 1.1rem;
+}
+
+.waiting-progress {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  margin: 2rem 0;
+  color: #92400e;
+}
+
+.waiting-progress .spinner {
+  width: 30px;
+  height: 30px;
+  border: 4px solid #fde68a;
+  border-top: 4px solid #f59e0b;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.btn-secondary {
+  background: #6b7280;
+  color: white;
+  padding: 0.75rem 2rem;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: background 0.3s;
+}
+
+.btn-secondary:hover {
+  background: #4b5563;
 }
 </style>
