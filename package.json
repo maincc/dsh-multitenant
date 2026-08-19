@@ -1,0 +1,25 @@
+{
+  "name": "dsh-multitenant",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "DSH 多租户管理系统",
+  "scripts": {
+    "start": "node src/server.js",
+    "start:legacy": "node entry-server.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "build:frontend": "cd frontend && npm run build",
+    "lint": "eslint src/",
+    "format": "prettier --write \"src/**/*.js\" \"test/**/*.js\"",
+    "format:check": "prettier --check \"src/**/*.js\" \"test/**/*.js\"",
+    "clean": "rm -rf data/ patches/*.yml",
+    "prepare": "node scripts/setup-hooks.js"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "vitest": "^1.6.0",
+    "@vitest/coverage-v8": "^1.6.0",
+    "prettier": "^3.2.0"
+  }
+}

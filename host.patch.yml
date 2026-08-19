@@ -1,0 +1,26 @@
+# ============================================================================
+#  镜像内置默认 cordis patch（host.patch.yml）
+# ============================================================================
+#  作用：让容器内的 DSH webserver 监听 0.0.0.0:3080，使 Docker 的端口映射
+#  （-p <hostPort>:3080，本质是 NAT 到容器 IP）能够把流量送达 DSH。
+#
+#  为什么需要这个 patch？
+#    dsh 的 CLI 明确拒绝 `--host 0.0.0.0`（"would expose remote code
+#    execution to the network"）——这是对"DSH 直连公网"的安全防护。
+#    但在本系统中，每个容器就是租户的隔离边界，容器内监听 0.0.0.0 只对该
+#    容器开放的宿主端口可见，因此是合理且必要的。
+#
+#  为什么用 patch 而不是配置文件？
+#    DSH 基于 Cordis 插件框架，配置以"patch 分层覆盖"方式组合：
+#    bundle 层（web-app 内置）→ 用户层 → --patch 覆盖层。
+#    这里直接覆盖 web-app bundle 中 id 为 webserver 的整行 config。
+#    （cordis patch 语义：按 id 整行替换 config，不是合并。）
+#
+#  入口服务还会挂载一个内容更丰富的按租户 patch（/patches/tenant.patch.yml），
+#  其中包含相同的 webserver 行和 web-runtime 行（trustedHosts 按租户端口生成）。
+#  两个 patch 同时加载时，同 id 行"后应用者生效"（last write wins），
+#  因此实际生效的是按租户 patch。
+- id: webserver
+  config:
+    host: '0.0.0.0'
+    port: 3080

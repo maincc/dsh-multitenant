@@ -1,0 +1,54 @@
+{
+  "server": {
+    "port": 8090,
+    "publicHost": "127.0.0.1",
+    "comment": "服务端口和对外主机名（局域网请填 192.168.x.x）"
+  },
+  "admin": {
+    "addresses": [
+      "your-admin-address-here"
+    ],
+    "comment": "管理员地址列表（小写），只有这些地址可以访问管理页面"
+  },
+  "cleanup": {
+    "stopTimeoutMs": 900000,
+    "destroyTimeoutMs": 3600000,
+    "checkIntervalMs": 300000,
+    "comment": "stopTimeoutMs: 空闲多久后停止容器（毫秒），默认 15 分钟；destroyTimeoutMs: 停止多久后销毁容器（毫秒），默认 1 小时；checkIntervalMs: 检查间隔（毫秒），默认 5 分钟"
+  },
+  "resource": {
+    "monitorIntervalMs": 30000,
+    "autoUpgradeThreshold": 80,
+    "comment": "monitorIntervalMs: 资源监控间隔（毫秒），默认 30 秒；autoUpgradeThreshold: 内存使用率超过此值自动升级配额（百分比）"
+  },
+  "tiers": {
+    "1": {
+      "label": "基础",
+      "memory": "512m",
+      "memorySwap": "1g",
+      "cpus": "1.0",
+      "pids": 256
+    },
+    "2": {
+      "label": "增强",
+      "memory": "1g",
+      "memorySwap": "2g",
+      "cpus": "2.0",
+      "pids": 512
+    },
+    "3": {
+      "label": "高性能",
+      "memory": "2g",
+      "memorySwap": "4g",
+      "cpus": "4.0",
+      "pids": 1024
+    }
+  },
+  "docker": {
+    "image": "dsh-multitenant:latest",
+    "basePort": 31000,
+    "maxPort": 65535,
+    "startupTimeoutMs": 120000,
+    "comment": "image: Docker 镜像名称；basePort: 起始端口；maxPort: 最大端口；startupTimeoutMs: 容器启动超时（毫秒）"
+  }
+}
