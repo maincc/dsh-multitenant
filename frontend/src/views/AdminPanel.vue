@@ -12,15 +12,18 @@
     <div v-else-if="!isAdmin" class="card login-card">
       <h2>🔐 管理员登录</h2>
       <p>请使用管理员地址登录</p>
-      
+
       <div v-if="!hasCCDAO" class="error">
-         未检测到 CCDAO 插件
-        <br>
-        <a href="https://chromewebstore.google.com/detail/ccdao-connector/fpondiojcgaollhcmjgpjmldjjkealjb" target="_blank">
+        未检测到 CCDAO 插件
+        <br />
+        <a
+          href="https://chromewebstore.google.com/detail/ccdao-connector/fpondiojcgaollhcmjgpjmldjjkealjb"
+          target="_blank"
+        >
           点击安装 CCDAO Connector
         </a>
       </div>
-      
+
       <div v-else>
         <div v-if="currentAddress" class="current-address">
           <p>当前地址：</p>
@@ -29,7 +32,7 @@
         <button class="btn btn-primary btn-large" @click="adminLogin" :disabled="logging">
           {{ logging ? '登录中...' : '使用 CCDAO 登录' }}
         </button>
-        <div v-if="loginError" class="error" style="margin-top: 1rem;">{{ loginError }}</div>
+        <div v-if="loginError" class="error" style="margin-top: 1rem">{{ loginError }}</div>
       </div>
     </div>
 
@@ -114,13 +117,25 @@
                 <span v-else class="badge badge-info">普通用户</span>
               </td>
               <td>
-                <button class="btn btn-primary" @click="upgradeUser(user.address, user.tier + 1)" :disabled="user.tier >= 3">
+                <button
+                  class="btn btn-primary"
+                  @click="upgradeUser(user.address, user.tier + 1)"
+                  :disabled="user.tier >= 3"
+                >
                   升级
                 </button>
-                <button class="btn btn-success" @click="downgradeUser(user.address, user.tier - 1)" :disabled="user.tier <= 1">
+                <button
+                  class="btn btn-success"
+                  @click="downgradeUser(user.address, user.tier - 1)"
+                  :disabled="user.tier <= 1"
+                >
                   降级
                 </button>
-                <button v-if="!user.isAdmin" class="btn btn-warning" @click="promoteUser(user.address)">
+                <button
+                  v-if="!user.isAdmin"
+                  class="btn btn-warning"
+                  @click="promoteUser(user.address)"
+                >
                   提权
                 </button>
                 <a :href="`http://127.0.0.1:${user.port}/`" target="_blank" class="btn btn-info">
@@ -188,12 +203,12 @@ const checkCCDAO = () => {
 // 监听账户变化事件
 const setupAccountChangeListener = () => {
   if (!hasCCDAO.value) return
-  
+
   // CCDAO 插件使用 ethereum 对象监听事件
   if (window.ethereum && window.ethereum.on) {
     window.ethereum.on('swtcAccountsChanged', async (accounts) => {
       console.log('[AdminPanel] 检测到账户变化:', accounts)
-      
+
       if (!accounts || accounts.length === 0) {
         // 用户断开连接
         alert('钱包已断开连接，已退出管理面板')
@@ -207,13 +222,13 @@ const setupAccountChangeListener = () => {
         }
         return
       }
-      
+
       const newAddress = accounts[0].toLowerCase()
       currentAddress.value = newAddress
-      
+
       if (newAddress !== currentAdminAddress.value) {
         console.log(`[AdminPanel] 地址切换：${currentAdminAddress.value} -> ${newAddress}`)
-        
+
         // 检查新地址是否是管理员
         try {
           const res = await axios.post('/api/admin/login', { address: newAddress })
@@ -252,7 +267,7 @@ const checkAdmin = async () => {
 
 const adminLogin = async () => {
   if (!hasCCDAO.value) return
-  
+
   logging.value = true
   loginError.value = null
   try {
@@ -260,15 +275,15 @@ const adminLogin = async () => {
       method: 'swtc_requestAccounts',
       params: [],
     })
-    
+
     if (!accounts || accounts.length === 0) {
       throw new Error('未获取到账户')
     }
-    
+
     // 统一转小写
     const address = accounts[0].toLowerCase()
     currentAddress.value = address
-    
+
     // 直接调用登录 API，后端会检查是否是管理员
     const res = await axios.post('/api/admin/login', { address })
     if (res.data.ok) {
@@ -277,7 +292,7 @@ const adminLogin = async () => {
       notAdmin.value = false
       currentAdminAddress.value = address
       await fetchData()
-      
+
       // 启动数据刷新（每 10 秒刷新一次）
       if (dataRefreshInterval) {
         clearInterval(dataRefreshInterval)
@@ -402,19 +417,44 @@ const getCurrentAddress = async () => {
 
 onMounted(async () => {
   checkCCDAO()
-  
+
   // 获取当前地址
   if (hasCCDAO.value) {
     await getCurrentAddress()
     // 设置账户变化监听器
     setupAccountChangeListener()
-  }
-  
-  await checkAdmin()
-  if (isAdmin.value) {
-    await fetchData()
-    // 启动数据刷新（每 10 秒刷新一次）
-    dataRefreshInterval = setInterval(fetchData, 10000)
+
+    // 检查当前地址是否是管理员
+    if (currentAddress.value) {
+      try {
+        const res = await axios.get('/api/admin/check', {
+          params: { address: currentAddress.value },
+        })
+        if (res.data.isAdmin) {
+          // 当前地址是管理员，检查 cookie session
+          await checkAdmin()
+          if (isAdmin.value) {
+            await fetchData()
+            dataRefreshInterval = setInterval(fetchData, 10000)
+          } else {
+            // cookie 无效，需要重新登录
+            notAdmin.value = false
+            isAdmin.value = false
+          }
+        } else {
+          // 当前地址不是管理员，显示无权限页面
+          notAdmin.value = true
+          isAdmin.value = false
+        }
+      } catch (err) {
+        console.error('[AdminPanel] 检查管理员权限失败:', err)
+        notAdmin.value = true
+        isAdmin.value = false
+      }
+    }
+  } else {
+    // 没有 CCDAO 插件，显示登录页面
+    await checkAdmin()
   }
 })
 
@@ -432,8 +472,14 @@ onUnmounted(() => {
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .admin-info-card {

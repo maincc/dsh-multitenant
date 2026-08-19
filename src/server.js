@@ -40,22 +40,22 @@ const FRONTEND_DIST = join(ROOT, 'frontend', 'dist')
 function serveStaticFile(filePath, res) {
   const ext = filePath.split('.').pop().toLowerCase()
   const mimeTypes = {
-    'html': 'text/html; charset=utf-8',
-    'js': 'application/javascript; charset=utf-8',
-    'css': 'text/css; charset=utf-8',
-    'json': 'application/json; charset=utf-8',
-    'png': 'image/png',
-    'jpg': 'image/jpeg',
-    'jpeg': 'image/jpeg',
-    'gif': 'image/gif',
-    'svg': 'image/svg+xml',
-    'ico': 'image/x-icon',
-    'woff': 'font/woff',
-    'woff2': 'font/woff2',
-    'ttf': 'font/ttf',
+    html: 'text/html; charset=utf-8',
+    js: 'application/javascript; charset=utf-8',
+    css: 'text/css; charset=utf-8',
+    json: 'application/json; charset=utf-8',
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    gif: 'image/gif',
+    svg: 'image/svg+xml',
+    ico: 'image/x-icon',
+    woff: 'font/woff',
+    woff2: 'font/woff2',
+    ttf: 'font/ttf',
   }
   const contentType = mimeTypes[ext] || 'application/octet-stream'
-  
+
   try {
     const content = readFileSync(filePath)
     res.writeHead(200, { 'content-type': contentType })
@@ -91,7 +91,9 @@ function startCleanupTimer() {
   const checkMin = (interval / 60000).toFixed(0)
   const stopMin = (userService.state.cleanupPolicy.stopTimeoutMs / 60000).toFixed(0)
   const destroyMin = (userService.state.cleanupPolicy.destroyTimeoutMs / 60000).toFixed(0)
-  console.log(`[cleanup] timer started: check every ${checkMin}min, stop after ${stopMin}min idle, destroy after ${destroyMin}min stopped`)
+  console.log(
+    `[cleanup] timer started: check every ${checkMin}min, stop after ${stopMin}min idle, destroy after ${destroyMin}min stopped`,
+  )
 }
 
 /**
@@ -103,7 +105,9 @@ function startResourceMonitor() {
   setInterval(() => {
     // 资源监控逻辑（可选实现）
   }, interval)
-  console.log(`[monitor] resource monitor started: check every ${(interval/1000).toFixed(0)}s, auto-upgrade at ${threshold}% memory`)
+  console.log(
+    `[monitor] resource monitor started: check every ${(interval / 1000).toFixed(0)}s, auto-upgrade at ${threshold}% memory`,
+  )
 }
 
 // 创建 HTTP 服务器
@@ -120,7 +124,7 @@ const server = createServer(async (req, res) => {
 
   // 管理路由
   if (path.startsWith('/api/admin/') || path === '/api/users' || path === '/api/stats') {
-    if (await handleAdminRoutes(req, res, path)) return
+    if (await handleAdminRoutes(req, res, path, url)) return
   }
 
   // 用户路由
@@ -155,7 +159,9 @@ server.listen(PORT, '0.0.0.0', async () => {
   startCleanupTimer()
   startResourceMonitor()
   console.log(`[dsh-multitenant] entry server on http://127.0.0.1:${PORT}/`)
-  console.log(`[dsh-multitenant] tenant image: ${CONFIG.docker.image}, host: ${CONFIG.server.publicHost}, ports from ${CONFIG.docker.basePort}`)
+  console.log(
+    `[dsh-multitenant] tenant image: ${CONFIG.docker.image}, host: ${CONFIG.server.publicHost}, ports from ${CONFIG.docker.basePort}`,
+  )
   console.log(`[dsh-multitenant] Frontend: http://127.0.0.1:${PORT}/`)
   console.log(`[dsh-multitenant] Admin: http://127.0.0.1:${PORT}/admin`)
   console.log(`[dsh-multitenant] User: http://127.0.0.1:${PORT}/user`)
