@@ -5,6 +5,7 @@
 import { CONFIG, isAdmin } from '../config/config.js'
 import { userService } from '../services/user.service.js'
 import { dataService } from '../services/data.service.js'
+import { dockerService } from '../services/docker.service.js'
 import { requireAdmin, getAdminSession } from '../middleware/auth.middleware.js'
 import { validateSwtcAddress } from '../middleware/validate.middleware.js'
 import { normalizeAddress } from '../utils/address.js'
@@ -76,6 +77,19 @@ export async function handleAdminRoutes(req, res, path, url) {
     const isAdm = session && isAdmin(session)
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
     res.end(JSON.stringify({ isAdmin: isAdm, address: session || null }))
+    return true
+  }
+
+  // GET /api/docker/status - 检查 Docker 状态
+  if (path === '/api/docker/status') {
+    try {
+      const available = await dockerService.isDockerAvailable()
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ available, timestamp: Date.now() }))
+    } catch (err) {
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ available: false, error: err.message, timestamp: Date.now() }))
+    }
     return true
   }
 

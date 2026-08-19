@@ -123,7 +123,12 @@ const server = createServer(async (req, res) => {
   }
 
   // 管理路由
-  if (path.startsWith('/api/admin/') || path === '/api/users' || path === '/api/stats') {
+  if (
+    path.startsWith('/api/admin/') ||
+    path === '/api/users' ||
+    path === '/api/stats' ||
+    path === '/api/docker/status'
+  ) {
     if (await handleAdminRoutes(req, res, path, url)) return
   }
 

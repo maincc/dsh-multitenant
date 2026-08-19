@@ -47,8 +47,22 @@
         </div>
       </div>
 
+      <!-- Docker 状态指示器 -->
+      <div class="card docker-status-card" :class="dockerAvailable ? 'docker-ok' : 'docker-error'">
+        <div class="docker-status">
+          <div class="status-icon">{{ dockerAvailable ? '🟢' : '' }}</div>
+          <div class="status-info">
+            <div class="status-label">Docker 状态：</div>
+            <div class="status-text">{{ dockerAvailable ? '运行中' : '未启动' }}</div>
+          </div>
+          <div v-if="!dockerAvailable" class="status-hint">
+            请启动 Docker Desktop 以使用容器管理功能
+          </div>
+        </div>
+      </div>
+
       <div class="card">
-        <h2>📊 系统概览</h2>
+        <h2>系统概览</h2>
         <div class="stats-grid">
           <div class="stat-card">
             <h3>总用户数</h3>
@@ -194,6 +208,7 @@ const loginError = ref(null)
 const hasCCDAO = ref(false)
 const currentAdminAddress = ref(null)
 const currentAddress = ref(null)
+const dockerAvailable = ref(false)
 let dataRefreshInterval = null
 
 const checkCCDAO = () => {
@@ -264,6 +279,15 @@ const setupAccountChangeListener = () => {
         }
       }
     })
+  }
+}
+
+const checkDockerStatus = async () => {
+  try {
+    const res = await axios.get('/api/docker/status')
+    dockerAvailable.value = res.data.available
+  } catch (err) {
+    dockerAvailable.value = false
   }
 }
 
@@ -439,6 +463,9 @@ const getCurrentAddress = async () => {
 onMounted(async () => {
   checkCCDAO()
 
+  // 检查 Docker 状态
+  await checkDockerStatus()
+
   // 获取当前地址
   if (hasCCDAO.value) {
     await getCurrentAddress()
@@ -534,6 +561,52 @@ onUnmounted(() => {
 
 .btn-danger:hover {
   background: #b91c1c;
+}
+
+.docker-status-card {
+  padding: 1rem 1.5rem;
+  transition: all 0.3s;
+}
+
+.docker-status-card.docker-ok {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: white;
+}
+
+.docker-status-card.docker-error {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  color: white;
+}
+
+.docker-status {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.status-icon {
+  font-size: 1.5rem;
+}
+
+.status-info {
+  flex: 1;
+}
+
+.status-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+  opacity: 0.9;
+}
+
+.status-text {
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.status-hint {
+  font-size: 0.85rem;
+  opacity: 0.9;
+  margin-top: 0.25rem;
 }
 
 .login-card {
