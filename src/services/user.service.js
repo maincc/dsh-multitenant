@@ -124,8 +124,14 @@ export class UserService {
     }
 
     // 2) 容器不存在：创建新容器
-    let port =
-      this.state.swtcUsers?.[address]?.port ?? this.state.nextPort ?? CONFIG.docker.basePort
+    // 优先使用回收的端口，其次使用 nextPort
+    let port
+    if (this.state.availablePorts && this.state.availablePorts.length > 0) {
+      port = this.state.availablePorts.shift() // 取出最小的可用端口
+      console.log(`[port] using recycled port ${port} for ${address}`)
+    } else {
+      port = this.state.swtcUsers?.[address]?.port ?? this.state.nextPort ?? CONFIG.docker.basePort
+    }
     const tier = this.state.swtcUsers?.[address]?.tier ?? 1
     const limits = getTierLimits(tier)
 
@@ -227,8 +233,9 @@ export class UserService {
 
   /**
    * 停止并销毁容器（保留数据卷）
+   * @param {boolean} removeRecord - 是否彻底删除用户记录并释放端口
    */
-  async destroyContainer(address) {
+  async destroyContainer(address, removeRecord = false) {
     const user = this.state.swtcUsers?.[address]
     if (!user) throw new NotFoundError('User not found')
 
@@ -243,9 +250,28 @@ export class UserService {
     } catch {
       // ignore
     }
-    user.containerStatus = 'destroyed'
-    dataService.saveState(this.state)
-    return { ok: true, address, status: 'destroyed', volume: swtcVolumeName(address) }
+
+    if (removeRecord) {
+      // 彻底删除：移除记录，释放端口
+      const port = user.port
+      delete this.state.swtcUsers[address]
+
+      // 将端口回收到可用端口池
+      if (!this.state.availablePorts) this.state.availablePorts = []
+      if (!this.state.availablePorts.includes(port)) {
+        this.state.availablePorts.push(port)
+        this.state.availablePorts.sort((a, b) => a - b)
+      }
+
+      dataService.saveState(this.state)
+      console.log(`[destroy] ${address} completely removed, port ${port} recycled`)
+      return { ok: true, address, status: 'removed', portRecycled: port }
+    } else {
+      // 仅销毁容器，保留记录
+      user.containerStatus = 'destroyed'
+      dataService.saveState(this.state)
+      return { ok: true, address, status: 'destroyed', volume: swtcVolumeName(address) }
+    }
   }
 
   /**

@@ -138,7 +138,12 @@ const server = createServer(async (req, res) => {
   }
 
   // 租户路由
-  if (path === '/connect' || path === '/connect-status' || path.startsWith('/leave/')) {
+  if (
+    path === '/connect' ||
+    path === '/connect-status' ||
+    path.startsWith('/leave/') ||
+    (path.startsWith('/api/user/') && path.endsWith('/remove'))
+  ) {
     if (await handleTenantRoutes(req, res, path, url)) return
   }
 

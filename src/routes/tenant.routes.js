@@ -16,9 +16,9 @@ export async function handleTenantRoutes(req, res, path, url) {
   if (path === '/connect') {
     let address = url.searchParams.get('address')
     if (!validateSwtcAddress(address, res)) return true
-    
+
     address = normalizeAddress(address)
-    
+
     try {
       const port = await userService.ensureContainer(address)
       const PUBLIC_HOST = process.env.PUBLIC_HOST || CONFIG.server.publicHost
@@ -35,26 +35,33 @@ export async function handleTenantRoutes(req, res, path, url) {
   if (path === '/connect-status') {
     let address = url.searchParams.get('address')
     if (!validateSwtcAddress(address, res)) return true
-    
+
     address = normalizeAddress(address)
-    
+
     const user = userService.state.swtcUsers?.[address]
     if (!user) {
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify({ exists: false, address }))
       return true
     }
-    
+
     const idle = Date.now() - user.lastSeenAt
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-    res.end(JSON.stringify({
-      exists: true,
-      address,
-      port: user.port,
-      status: user.containerStatus ?? 'running',
-      idleMs: idle,
-      idleHuman: idle < 60000 ? `${Math.floor(idle/1000)}s` : idle < 3600000 ? `${Math.floor(idle/60000)}min` : `${(idle/3600000).toFixed(1)}h`,
-    }))
+    res.end(
+      JSON.stringify({
+        exists: true,
+        address,
+        port: user.port,
+        status: user.containerStatus ?? 'running',
+        idleMs: idle,
+        idleHuman:
+          idle < 60000
+            ? `${Math.floor(idle / 1000)}s`
+            : idle < 3600000
+              ? `${Math.floor(idle / 60000)}min`
+              : `${(idle / 3600000).toFixed(1)}h`,
+      }),
+    )
     return true
   }
 
@@ -62,9 +69,9 @@ export async function handleTenantRoutes(req, res, path, url) {
   if (path.startsWith('/leave/')) {
     let address = decodeURIComponent(path.slice('/leave/'.length))
     if (!validateSwtcAddress(address, res)) return true
-    
+
     address = normalizeAddress(address)
-    
+
     try {
       const result = await userService.destroyContainer(address)
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
@@ -76,6 +83,43 @@ export async function handleTenantRoutes(req, res, path, url) {
       } else {
         res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' })
         res.end(`failed to destroy container: ${err.message}`)
+      }
+    }
+    return true
+  }
+
+  // POST /api/user/:address/remove - 彻底删除用户记录并释放端口（需要管理员权限）
+  if (path.startsWith('/api/user/') && path.endsWith('/remove') && req.method === 'POST') {
+    const { requireAdmin } = await import('../middleware/auth.middleware.js')
+    if (!requireAdmin(req, res)) return true
+
+    // 提取地址：/api/user/<address>/remove
+    const match = path.match(/^\/api\/user\/(.+)\/remove$/)
+    if (!match) {
+      res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: 'Invalid path', code: 'BAD_REQUEST' }))
+      return true
+    }
+
+    let address = match[1]
+    if (!validateSwtcAddress(address, res)) return true
+    address = normalizeAddress(address)
+
+    try {
+      const result = await userService.destroyContainer(address, true)
+      if (!res.headersSent) {
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify(result))
+      }
+    } catch (err) {
+      if (!res.headersSent) {
+        if (err.code === 'NOT_FOUND') {
+          res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' })
+          res.end(JSON.stringify({ error: err.message, code: 'NOT_FOUND' }))
+        } else {
+          res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
+          res.end(JSON.stringify({ error: err.message, code: 'INTERNAL_ERROR' }))
+        }
       }
     }
     return true

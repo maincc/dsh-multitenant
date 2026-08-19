@@ -134,14 +134,18 @@
                 <button
                   class="btn btn-primary"
                   @click="upgradeUser(user.address, user.tier + 1)"
-                  :disabled="user.tier >= 3"
+                  :disabled="
+                    user.tier >= 3 || user.status === 'destroyed' || user.status === 'unknown'
+                  "
                 >
                   升级
                 </button>
                 <button
                   class="btn btn-success"
                   @click="downgradeUser(user.address, user.tier - 1)"
-                  :disabled="user.tier <= 1"
+                  :disabled="
+                    user.tier <= 1 || user.status === 'destroyed' || user.status === 'unknown'
+                  "
                 >
                   降级
                 </button>
@@ -149,12 +153,26 @@
                   v-if="!user.isAdmin"
                   class="btn btn-warning"
                   @click="promoteUser(user.address)"
+                  :disabled="user.status === 'destroyed' || user.status === 'unknown'"
                 >
                   提权
                 </button>
-                <a :href="`http://127.0.0.1:${user.port}/`" target="_blank" class="btn btn-info">
+                <a
+                  v-if="user.status === 'running'"
+                  :href="`http://127.0.0.1:${user.port}/`"
+                  target="_blank"
+                  class="btn btn-info"
+                >
                   访问
                 </a>
+                <button
+                  v-if="user.status === 'destroyed' || user.status === 'unknown'"
+                  class="btn btn-danger"
+                  @click="removeUser(user.address)"
+                  title="彻底删除记录并释放端口"
+                >
+                  删除
+                </button>
               </td>
             </tr>
           </tbody>
@@ -399,6 +417,23 @@ const downgradeUser = async (address, tier) => {
     alert('降级成功！')
   } catch (err) {
     alert('降级失败: ' + (err.response?.data?.error || err.message))
+  }
+}
+
+const removeUser = async (address) => {
+  if (
+    !confirm(
+      `确定要彻底删除用户 ${address.slice(0, 10)}... 吗？\n此操作将：\n1. 删除用户记录\n2. 释放端口 ${users.value.find((u) => u.address === address)?.port}\n3. 不可恢复`,
+    )
+  )
+    return
+
+  try {
+    await axios.post(`/api/user/${address}/remove`)
+    await fetchData()
+    alert('删除成功！记录已清除，端口已释放。')
+  } catch (err) {
+    alert('删除失败: ' + (err.response?.data?.error || err.message))
   }
 }
 
@@ -687,6 +722,15 @@ table {
 
 .btn-info:hover {
   background: #2563eb;
+}
+
+.btn-danger {
+  background: #dc2626;
+  color: white;
+}
+
+.btn-danger:hover {
+  background: #b91c1c;
 }
 
 .badge-secondary {
