@@ -50,7 +50,7 @@
       <!-- Docker 状态指示器 -->
       <div class="card docker-status-card" :class="dockerAvailable ? 'docker-ok' : 'docker-error'">
         <div class="docker-status">
-          <div class="status-icon">{{ dockerAvailable ? '🟢' : '' }}</div>
+          <div class="status-icon">{{ dockerAvailable ? '' : '' }}</div>
           <div class="status-info">
             <div class="status-label">Docker 状态：</div>
             <div class="status-text">{{ dockerAvailable ? '运行中' : '未启动' }}</div>
@@ -58,6 +58,18 @@
           <div v-if="!dockerAvailable" class="status-hint">
             请启动 Docker Desktop 以使用容器管理功能
           </div>
+        </div>
+      </div>
+
+      <!-- 合并重复地址按钮 -->
+      <div class="card merge-card">
+        <div class="merge-info">
+          <div class="merge-icon">🔧</div>
+          <div class="merge-text">
+            <div class="merge-label">地址合并工具</div>
+            <div class="merge-hint">检测并合并前缀相同的重复地址记录</div>
+          </div>
+          <button class="btn btn-warning" @click="mergeDuplicates">合并重复地址</button>
         </div>
       </div>
 

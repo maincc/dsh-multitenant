@@ -93,6 +93,23 @@ export async function handleAdminRoutes(req, res, path, url) {
     return true
   }
 
+  // POST /api/admin/merge-duplicates - 合并重复地址
+  if (path === '/api/admin/merge-duplicates' && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return true
+
+    try {
+      const merged = await userService.mergeDuplicateAddresses()
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ ok: true, merged, count: merged.length }))
+    } catch (err) {
+      if (!res.headersSent) {
+        res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: err.message, code: 'INTERNAL_ERROR' }))
+      }
+    }
+    return true
+  }
+
   // POST /api/admin/promote/:address - 提权用户为管理员
   if (path.startsWith('/api/admin/promote/') && req.method === 'POST') {
     if (!requireAdmin(req, res)) return

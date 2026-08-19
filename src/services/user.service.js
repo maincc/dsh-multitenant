@@ -232,6 +232,64 @@ export class UserService {
   }
 
   /**
+   * 合并重复地址（基于前缀匹配）
+   * 保留运行中的记录，删除其他重复记录
+   */
+  async mergeDuplicateAddresses() {
+    const users = this.state.swtcUsers || {}
+    const addresses = Object.keys(users)
+    const merged = []
+
+    // 按前 10 个字符分组
+    const groups = {}
+    for (const addr of addresses) {
+      const prefix = addr.slice(0, 10)
+      if (!groups[prefix]) groups[prefix] = []
+      groups[prefix].push(addr)
+    }
+
+    // 合并每组中的重复地址
+    for (const [prefix, addrs] of Object.entries(groups)) {
+      if (addrs.length <= 1) continue
+
+      console.log(`[merge] Found ${addrs.length} addresses with prefix ${prefix}:`, addrs)
+
+      // 找到运行中的记录（优先保留）
+      let keepAddr = addrs.find((a) => users[a].containerStatus === 'running')
+      if (!keepAddr) {
+        // 如果没有运行中的，保留最后看到的
+        keepAddr = addrs.reduce((a, b) =>
+          (users[a].lastSeenAt || 0) > (users[b].lastSeenAt || 0) ? a : b,
+        )
+      }
+
+      // 删除其他记录，回收端口
+      for (const addr of addrs) {
+        if (addr !== keepAddr) {
+          const port = users[addr].port
+          if (port) {
+            if (!this.state.availablePorts) this.state.availablePorts = []
+            if (!this.state.availablePorts.includes(port)) {
+              this.state.availablePorts.push(port)
+              this.state.availablePorts.sort((a, b) => a - b)
+            }
+          }
+          delete users[addr]
+          merged.push({ removed: addr, kept: keepAddr, portRecycled: port })
+          console.log(`[merge] Removed ${addr}, kept ${keepAddr}, recycled port ${port}`)
+        }
+      }
+    }
+
+    if (merged.length > 0) {
+      this.state.swtcUsers = users
+      dataService.saveState(this.state)
+    }
+
+    return merged
+  }
+
+  /**
    * 停止并销毁容器（保留数据卷）
    * @param {boolean} removeRecord - 是否彻底删除用户记录并释放端口
    */
