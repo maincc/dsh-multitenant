@@ -154,5 +154,53 @@ export async function handleAdminRoutes(req, res, path, url) {
     return true
   }
 
+  // POST /api/admin/force-stop/:address - 强制下线容器
+  if (path.startsWith('/api/admin/force-stop/') && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return
+
+    let address = path.slice('/api/admin/force-stop/'.length)
+    if (!validateSwtcAddress(address, res)) return
+
+    address = normalizeAddress(address)
+
+    try {
+      const result = await userService.forceStopContainer(address)
+      if (!res.headersSent) {
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify(result))
+      }
+    } catch (err) {
+      if (!res.headersSent) {
+        res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: err.message, code: 'INTERNAL_ERROR' }))
+      }
+    }
+    return true
+  }
+
+  // POST /api/admin/delete-volume/:address - 删除数据卷
+  if (path.startsWith('/api/admin/delete-volume/') && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return
+
+    let address = path.slice('/api/admin/delete-volume/'.length)
+    if (!validateSwtcAddress(address, res)) return
+
+    address = normalizeAddress(address)
+
+    try {
+      const result = await userService.deleteUserVolume(address)
+      if (!res.headersSent) {
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify(result))
+      }
+    } catch (err) {
+      if (!res.headersSent) {
+        res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: err.message, code: 'INTERNAL_ERROR' }))
+      }
+    }
+    return true
+  }
+
   return false
 }

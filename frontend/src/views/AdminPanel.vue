@@ -178,6 +178,22 @@
                   访问
                 </a>
                 <button
+                  v-if="user.status === 'running'"
+                  class="btn btn-warning"
+                  @click="forceStopUser(user.address)"
+                  title="强制停止容器"
+                >
+                  强制下线
+                </button>
+                <button
+                  v-if="user.status === 'stopped' || user.status === 'destroyed'"
+                  class="btn btn-danger"
+                  @click="deleteVolume(user.address)"
+                  title="删除数据卷"
+                >
+                  删除数据
+                </button>
+                <button
                   v-if="user.status === 'destroyed' || user.status === 'unknown'"
                   class="btn btn-danger"
                   @click="removeUser(user.address)"
@@ -444,6 +460,38 @@ const removeUser = async (address) => {
     await axios.post(`/api/user/${address}/remove`)
     await fetchData()
     alert('删除成功！记录已清除，端口已释放。')
+  } catch (err) {
+    alert('删除失败: ' + (err.response?.data?.error || err.message))
+  }
+}
+
+const forceStopUser = async (address) => {
+  if (!confirm(`确定要强制下线用户 ${address.slice(0, 10)}... 吗？\n容器将被停止，但数据卷保留。`))
+    return
+
+  try {
+    await axios.post(`/api/admin/force-stop/${address}`)
+    await fetchData()
+    alert('强制下线成功！容器已停止。')
+  } catch (err) {
+    alert('强制下线失败: ' + (err.response?.data?.error || err.message))
+  }
+}
+
+const deleteVolume = async (address) => {
+  if (
+    !confirm(
+      `确定要删除用户 ${address.slice(0, 10)}... 的数据卷吗？\n\n⚠️ 警告：此操作将删除所有数据！\n- DSH 配置\n- 插件\n- 会话数据\n- 此操作不可恢复！`,
+    )
+  )
+    return
+
+  if (!confirm('再次确认：确定要删除该用户的所有数据吗？')) return
+
+  try {
+    await axios.post(`/api/admin/delete-volume/${address}`)
+    await fetchData()
+    alert('数据卷删除成功！用户数据已清除。')
   } catch (err) {
     alert('删除失败: ' + (err.response?.data?.error || err.message))
   }

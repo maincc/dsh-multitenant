@@ -269,6 +269,83 @@ export class UserService {
   }
 
   /**
+   * 强制下线容器（停止容器，保留数据卷）
+   */
+  async forceStopContainer(address) {
+    address = normalizeAddress(address)
+    const name = swtcContainerName(address)
+    const info = await dockerService.containerInfo(name)
+
+    if (!info.exists) {
+      throw new NotFoundError(`Container ${name} not found`)
+    }
+
+    if (info.status === 'stopped' || info.status === 'exited') {
+      // 已经停止了，直接更新状态
+      if (this.state.swtcUsers?.[address]) {
+        this.state.swtcUsers[address].containerStatus = 'stopped'
+        dataService.saveState(this.state)
+      }
+      return { ok: true, address, status: 'already_stopped' }
+    }
+
+    // 停止容器
+    await dockerService.stopContainer(name)
+
+    // 更新状态
+    if (this.state.swtcUsers?.[address]) {
+      this.state.swtcUsers[address].containerStatus = 'stopped'
+      this.state.swtcUsers[address].stoppedAt = Date.now()
+      dataService.saveState(this.state)
+    }
+
+    console.log(`[force-stop] ${address} container stopped by admin`)
+    return { ok: true, address, status: 'stopped' }
+  }
+
+  /**
+   * 删除用户数据卷（容器必须已停止并删除）
+   */
+  async deleteUserVolume(address) {
+    address = normalizeAddress(address)
+    const name = swtcContainerName(address)
+    const volume = swtcVolumeName(address)
+    const info = await dockerService.containerInfo(name)
+
+    // 如果容器还在运行，先停止
+    if (info.exists && info.status === 'running') {
+      await dockerService.stopContainer(name)
+      console.log(`[delete-volume] ${address} container stopped before volume deletion`)
+    }
+
+    // 删除容器（如果存在）
+    if (info.exists) {
+      try {
+        await dockerService.removeContainer(name)
+        console.log(`[delete-volume] Container ${name} removed`)
+      } catch (err) {
+        throw new Error(`Failed to remove container: ${err.message}`)
+      }
+    }
+
+    // 删除数据卷
+    try {
+      await dockerService.removeVolume(volume)
+      console.log(`[delete-volume] Volume ${volume} deleted for ${address}`)
+    } catch (err) {
+      throw new Error(`Failed to delete volume: ${err.message}`)
+    }
+
+    // 更新状态
+    if (this.state.swtcUsers?.[address]) {
+      this.state.swtcUsers[address].containerStatus = 'destroyed'
+      dataService.saveState(this.state)
+    }
+
+    return { ok: true, address, volumeDeleted: volume }
+  }
+
+  /**
    * 获取用户信息
    */
   async getUserInfo(address) {
