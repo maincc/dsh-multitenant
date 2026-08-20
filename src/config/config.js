@@ -9,13 +9,14 @@ import { fileURLToPath } from 'node:url'
 
 const ROOT = join(fileURLToPath(new URL('../..', import.meta.url)))
 const CONFIG_FILE = join(ROOT, 'config.json')
+const ADMIN_FILE = join(ROOT, 'data', 'config', 'admin.json')
 
 const DEFAULTS = {
   server: { port: 8090, publicHost: '127.0.0.1' },
   cleanup: {
-    stopTimeoutMs: 900000,      // 15 分钟
-    destroyTimeoutMs: 3600000,  // 1 小时
-    checkIntervalMs: 300000,    // 5 分钟
+    stopTimeoutMs: 900000, // 15 分钟
+    destroyTimeoutMs: 3600000, // 1 小时
+    checkIntervalMs: 300000, // 5 分钟
   },
   resource: {
     monitorIntervalMs: 30000,
@@ -53,7 +54,21 @@ export function getConfig() {
 
 export function getAdminAddresses() {
   const config = loadConfig()
-  return new Set((config.admin?.addresses || []).map(addr => addr.toLowerCase()))
+  const addresses = new Set((config.admin?.addresses || []).map((addr) => addr.toLowerCase()))
+
+  // 同时从 data/config/admin.json 读取（提权操作写入的位置）
+  try {
+    if (existsSync(ADMIN_FILE)) {
+      const adminConfig = JSON.parse(readFileSync(ADMIN_FILE, 'utf8'))
+      if (adminConfig.addresses) {
+        adminConfig.addresses.forEach((addr) => addresses.add(addr.toLowerCase()))
+      }
+    }
+  } catch {
+    // 忽略读取错误
+  }
+
+  return addresses
 }
 
 export function isAdmin(address) {
