@@ -268,8 +268,21 @@ export class UserService {
     if (info.exists) {
       if (info.status !== 'running') {
         await dockerService.startContainer(name)
+        // 等待容器完全启动
+        await new Promise((r) => setTimeout(r, 3000))
       }
-      const port = await dockerService.publishedPort(name)
+
+      // 获取端口映射（可能需要重试）
+      let port = await dockerService.publishedPort(name)
+
+      // 如果端口映射丢失，尝试重启容器
+      if (port === null) {
+        console.warn(`[user] Container ${name} has no port mapping, restarting...`)
+        await dockerService.restartContainer(name)
+        await new Promise((r) => setTimeout(r, 5000))
+        port = await dockerService.publishedPort(name)
+      }
+
       if (port === null) {
         throw new Error(`SWTC container ${name} has no readable port mapping`)
       }

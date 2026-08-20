@@ -523,12 +523,20 @@ const switchAddress = async () => {
 const restartContainer = async () => {
   try {
     const address = userInfo.value.address
+    showLoading('正在启动容器', '请稍候...', 50)
+
     await fetch(`/connect?address=${encodeURIComponent(address)}`, {
       redirect: 'manual',
     })
+
+    // 等待容器完全就绪
+    await new Promise((resolve) => setTimeout(resolve, 5000))
+
     await fetchUserInfo(address)
+    hideLoading()
     alert('容器已启动')
   } catch (err) {
+    hideLoading()
     alert('启动失败：' + err.message)
   }
 }

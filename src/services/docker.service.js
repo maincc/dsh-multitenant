@@ -56,6 +56,7 @@ export class DockerService {
    */
   async publishedPort(container) {
     try {
+      // 先尝试从 NetworkSettings.Ports 获取（容器运行时的实际映射）
       const out = await sh('docker', [
         'inspect',
         '--format',
@@ -64,6 +65,16 @@ export class DockerService {
       ])
       const m = out.match(/3080\/tcp=\[?\{?0\.0\.0\.0 (\d+)|3080\/tcp=(\d+)/)
       if (m) return Number(m[1] || m[2])
+
+      // 如果 NetworkSettings.Ports 为空，尝试从 HostConfig.PortBindings 获取（配置的目标端口）
+      const configOut = await sh('docker', [
+        'inspect',
+        '--format',
+        '{{json .HostConfig.PortBindings}}',
+        container,
+      ])
+      const configMatch = configOut.match(/"3080\/tcp":\[.*?"HostPort":"(\d+)"/)
+      if (configMatch) return Number(configMatch[1])
     } catch {
       // container gone
     }
@@ -101,10 +112,18 @@ export class DockerService {
   }
 
   /**
-   * 启动容器
+   * 启动容器（使用 restart 以确保端口映射恢复）
    */
   async startContainer(name) {
-    await sh('docker', ['start', name])
+    // 使用 restart 而不是 start，因为 start 可能不会恢复端口映射
+    await sh('docker', ['restart', name])
+  }
+
+  /**
+   * 重启容器
+   */
+  async restartContainer(name) {
+    await sh('docker', ['restart', name])
   }
 
   /**
