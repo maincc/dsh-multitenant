@@ -133,6 +133,23 @@
           打开 DSH Web UI
         </a>
       </div>
+
+      <div class="card">
+        <h2>⚙️ 容器管理</h2>
+        <p>管理您的 DSH 容器</p>
+        <div class="action-buttons">
+          <button class="btn btn-primary" @click="restartDSH">🔄 重启 DSH 服务</button>
+          <button class="btn btn-danger" @click="resetContainer">🗑️ 重置容器（删除数据）</button>
+        </div>
+        <div class="action-hints">
+          <div class="hint">
+            <strong>重启 DSH 服务：</strong>安装插件后需要重启 DSH 服务才能生效
+          </div>
+          <div class="hint">
+            <strong>重置容器：</strong>删除所有数据和配置，重新开始（不可恢复）
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -541,6 +558,58 @@ const restartContainer = async () => {
   }
 }
 
+const restartDSH = async () => {
+  if (!confirm('确定要重启 DSH 服务吗？\n\n安装插件后需要重启才能生效。\n重启期间服务暂时不可用。'))
+    return
+
+  try {
+    const address = userInfo.value.address
+    showLoading('正在重启 DSH 服务', '请稍候...', 50)
+
+    const res = await axios.post(`/api/user/${address}/restart`)
+
+    // 等待容器完全就绪
+    await new Promise((resolve) => setTimeout(resolve, 5000))
+
+    await fetchUserInfo(address)
+    hideLoading()
+    alert('DSH 服务已重启')
+  } catch (err) {
+    hideLoading()
+    alert('重启失败：' + (err.response?.data?.error || err.message))
+  }
+}
+
+const resetContainer = async () => {
+  if (
+    !confirm(
+      '️ 警告：此操作将删除所有数据！\n\n确定要重置容器吗？\n- 删除所有 DSH 配置\n- 删除所有插件\n- 删除所有会话数据\n- 此操作不可恢复！',
+    )
+  )
+    return
+
+  if (!confirm('再次确认：您确定要放弃所有数据重新开始吗？')) return
+
+  try {
+    const address = userInfo.value.address
+    showLoading('正在重置容器', '删除数据和重建容器...', 50)
+
+    const res = await axios.post(`/api/user/${address}/reset`)
+
+    // 重置后需要重新创建容器
+    await new Promise((resolve) => setTimeout(resolve, 2000))
+
+    // 重新连接
+    await handleAddressChange(address)
+
+    hideLoading()
+    alert('容器已重置，正在重新创建...')
+  } catch (err) {
+    hideLoading()
+    alert('重置失败：' + (err.response?.data?.error || err.message))
+  }
+}
+
 const tierBadge = (tier) => {
   const map = { 1: 'badge-info', 2: 'badge-warning', 3: 'badge-success' }
   return map[tier] || 'badge-info'
@@ -900,5 +969,41 @@ onMounted(async () => {
 
 .btn-secondary:hover {
   background: #4b5563;
+}
+
+/* 容器管理卡片样式 */
+.action-buttons {
+  display: flex;
+  gap: 1rem;
+  margin: 1.5rem 0;
+  flex-wrap: wrap;
+}
+
+.action-buttons .btn {
+  flex: 1;
+  min-width: 150px;
+  padding: 0.75rem 1.5rem;
+  font-size: 1rem;
+}
+
+.action-hints {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #e5e7eb;
+}
+
+.hint {
+  margin-bottom: 0.75rem;
+  font-size: 0.9rem;
+  color: #6b7280;
+  line-height: 1.5;
+}
+
+.hint strong {
+  color: #374151;
+}
+
+.hint:last-child {
+  margin-bottom: 0;
 }
 </style>

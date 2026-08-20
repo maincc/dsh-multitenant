@@ -141,6 +141,13 @@ export class DockerService {
   }
 
   /**
+   * 删除数据卷
+   */
+  async removeVolume(name) {
+    await sh('docker', ['volume', 'rm', name])
+  }
+
+  /**
    * 强制删除容器
    */
   async forceRemoveContainer(name) {

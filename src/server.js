@@ -161,7 +161,8 @@ const server = createServer(async (req, res) => {
     path === '/connect' ||
     path === '/connect-status' ||
     path.startsWith('/leave/') ||
-    (path.startsWith('/api/user/') && path.endsWith('/remove'))
+    (path.startsWith('/api/user/') &&
+      (path.endsWith('/remove') || path.endsWith('/restart') || path.endsWith('/reset')))
   ) {
     if (await handleTenantRoutes(req, res, path, url)) return
   }

@@ -173,6 +173,102 @@ export class UserService {
   }
 
   /**
+   * 重启容器（用于安装插件后重启 DSH 服务）
+   */
+  async restartContainer(address) {
+    address = normalizeAddress(address)
+    const name = swtcContainerName(address)
+    const info = await dockerService.containerInfo(name)
+
+    if (!info.exists) {
+      throw new NotFoundError(`Container ${name} not found`)
+    }
+
+    // 重启容器
+    await dockerService.restartContainer(name)
+
+    // 等待容器就绪
+    const port = await dockerService.publishedPort(name)
+    if (port === null) {
+      throw new Error(`Container ${name} has no port mapping after restart`)
+    }
+
+    // 更新状态
+    if (!this.state.swtcUsers) this.state.swtcUsers = {}
+    this.state.swtcUsers[address] = {
+      ...(this.state.swtcUsers[address] ?? {}),
+      port,
+      lastSeenAt: Date.now(),
+      containerStatus: 'running',
+    }
+    dataService.saveState(this.state)
+
+    // 等待容器完全就绪
+    const ready = await dockerService.waitReady(port)
+    if (!ready) {
+      throw new Error(`Container ${name} did not become ready after restart`)
+    }
+
+    console.log(`[restart] ${address} container restarted successfully`)
+    return { ok: true, address, port, status: 'restarted' }
+  }
+
+  /**
+   * 重置容器（删除数据卷并重建，放弃当前配置重新开始）
+   */
+  async resetContainer(address) {
+    address = normalizeAddress(address)
+    const name = swtcContainerName(address)
+    const volume = swtcVolumeName(address)
+    const info = await dockerService.containerInfo(name)
+
+    // 1. 停止并删除容器
+    if (info.exists) {
+      try {
+        await dockerService.stopContainer(name)
+      } catch {
+        // ignore
+      }
+      try {
+        await dockerService.removeContainer(name)
+      } catch {
+        // ignore
+      }
+    }
+
+    // 2. 删除数据卷
+    try {
+      await dockerService.removeVolume(volume)
+      console.log(`[reset] Volume ${volume} deleted`)
+    } catch {
+      // 卷可能不存在，忽略
+    }
+
+    // 3. 删除用户记录（保留端口分配）
+    const user = this.state.swtcUsers?.[address]
+    const port = user?.port
+    const tier = user?.tier ?? 1
+
+    if (this.state.swtcUsers?.[address]) {
+      delete this.state.swtcUsers[address]
+    }
+
+    // 4. 回收端口
+    if (port) {
+      if (!this.state.availablePorts) this.state.availablePorts = []
+      if (!this.state.availablePorts.includes(port)) {
+        this.state.availablePorts.push(port)
+        this.state.availablePorts.sort((a, b) => a - b)
+      }
+    }
+
+    dataService.saveState(this.state)
+
+    console.log(`[reset] ${address} container and volume deleted, port ${port} recycled`)
+    return { ok: true, address, portRecycled: port, volumeDeleted: volume }
+  }
+
+  /**
    * 获取用户信息
    */
   async getUserInfo(address) {

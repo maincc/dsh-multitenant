@@ -2,7 +2,7 @@
  * 租户路由模块
  */
 
-import { CONFIG } from '../config/config.js'
+import { CONFIG, isAdmin } from '../config/config.js'
 import { userService } from '../services/user.service.js'
 import { validateSwtcAddress } from '../middleware/validate.middleware.js'
 import { normalizeAddress, swtcVolumeName } from '../utils/address.js'
@@ -115,6 +115,90 @@ export async function handleTenantRoutes(req, res, path, url) {
       } else {
         res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' })
         res.end(`failed to destroy container: ${err.message}`)
+      }
+    }
+    return true
+  }
+
+  // POST /api/user/:address/restart - 重启容器（用于安装插件后重启 DSH 服务）
+  if (path.startsWith('/api/user/') && path.endsWith('/restart') && req.method === 'POST') {
+    const { getSessionAddress, requireAdmin } = await import('../middleware/auth.middleware.js')
+    const session = getSessionAddress(req)
+    const isAdminUser = session && isAdmin(session)
+
+    // 提取地址：/api/user/<address>/restart
+    const match = path.match(/^\/api\/user\/(.+)\/restart$/)
+    if (!match) {
+      res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: 'Invalid path', code: 'BAD_REQUEST' }))
+      return true
+    }
+
+    let address = match[1]
+    if (!validateSwtcAddress(address, res)) return true
+    address = normalizeAddress(address)
+
+    // 权限检查：只能重启自己的容器，或者是管理员
+    if (session !== address && !isAdminUser) {
+      if (!res.headersSent) {
+        res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: '没有权限重启此容器', code: 'FORBIDDEN' }))
+      }
+      return true
+    }
+
+    try {
+      const result = await userService.restartContainer(address)
+      if (!res.headersSent) {
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify(result))
+      }
+    } catch (err) {
+      if (!res.headersSent) {
+        res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: err.message, code: 'INTERNAL_ERROR' }))
+      }
+    }
+    return true
+  }
+
+  // POST /api/user/:address/reset - 删除数据卷并重建容器（放弃当前配置重新开始）
+  if (path.startsWith('/api/user/') && path.endsWith('/reset') && req.method === 'POST') {
+    const { getSessionAddress, requireAdmin } = await import('../middleware/auth.middleware.js')
+    const session = getSessionAddress(req)
+    const isAdminUser = session && isAdmin(session)
+
+    // 提取地址：/api/user/<address>/reset
+    const match = path.match(/^\/api\/user\/(.+)\/reset$/)
+    if (!match) {
+      res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: 'Invalid path', code: 'BAD_REQUEST' }))
+      return true
+    }
+
+    let address = match[1]
+    if (!validateSwtcAddress(address, res)) return true
+    address = normalizeAddress(address)
+
+    // 权限检查：只能重置自己的容器，或者是管理员
+    if (session !== address && !isAdminUser) {
+      if (!res.headersSent) {
+        res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: '没有权限重置此容器', code: 'FORBIDDEN' }))
+      }
+      return true
+    }
+
+    try {
+      const result = await userService.resetContainer(address)
+      if (!res.headersSent) {
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify(result))
+      }
+    } catch (err) {
+      if (!res.headersSent) {
+        res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: err.message, code: 'INTERNAL_ERROR' }))
       }
     }
     return true
