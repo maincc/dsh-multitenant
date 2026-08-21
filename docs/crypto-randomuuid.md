@@ -120,3 +120,32 @@ typeof crypto.randomUUID // 安全上下文为 "function"，否则 polyfill 注�
    安全上下文 → 确认后者
 4. 讨论替换方案（A 镜像注入 / B nginx 注入 / C 不替换）→ 确认方案 A
 5. 实现 `deploy/randomuuid-shim.js` + Dockerfile 注入 → 本地构建验证 → 推送
+6. 局域网直连发现"模型/设置页"打不开 → 定位为配置平面 loopback-only 设计限制
+   （见第九节，DSH 产品侧限制，非本项目可修）
+
+## 九、后续发现：配置平面（模型/API Key 设置页）loopback-only 限制
+
+**现象**：局域网直连 `http://192.168.66.58:<port>/` 后，打开"模型"设置页报
+`Loading the provider directory failed: settings are unavailable in this browser`。
+
+**根因**（DSH 设计性限制，非 bug）：
+
+- DSH 把 `settings.*` / `credentials.*` / `llm.discoverModels` 等**配置平面方法**
+  钉死在 loopback（`packages/client/connection/src/index.ts` 的 `PRIVILEGED_METHODS`，
+  服务端按请求 Host 是否回环强制拒绝）
+- 官方注释原文：_"trustedHosts is a DNS-rebinding fence, explicitly not
+  authentication, so the whole configuration plane stays loopback-same-origin
+  until a real authentication layer exists."_
+- 因此 **`PUBLIC_TRUST` 和 HTTPS 都无法解除该限制**（看的是 Host，不是加密）
+- 模型目录 `llm.providers` / `llm.models` 故意不钉死 → **局域网聊天正常**，
+  只有设置/密钥页需要 loopback
+
+**影响与对策**：
+
+- 聊天：局域网直连可用（配合本文件 shim 修复 randomUUID）
+- 配置模型/API Key：只能 loopback 访问——服务器本机 `http://127.0.0.1:<port>/`，
+  或远程 SSH 隧道 `ssh -L <port>:127.0.0.1:<port> user@server` 后浏览器开 127.0.0.1
+  （隧道访问同时满足 loopback + 安全上下文，randomUUID 也无问题）
+- 多租户产品约束：每个租户的模型配置由租户经 loopback 自行完成，或运维以
+  环境变量注入（读 README 的 `INJECT_ENV`；注意模块化版 `src/` 当前未实现该变量，
+  需要时需补回）
