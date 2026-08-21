@@ -25,4 +25,5 @@ fi
 
 echo ">> starting entry server on http://127.0.0.1:${PORT:-8090}/"
 # exec 让 node 进程取代本 shell，信号（Ctrl+C/SIGTERM）直接送达入口服务
-exec node entry-server.mjs
+# 注意：必须用模块化入口 src/server.js（旧 entry-server.mjs 已废弃，仅为重定向层）
+exec node src/server.js

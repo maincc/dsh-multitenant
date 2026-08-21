@@ -4,7 +4,7 @@
  */
 
 import { join, resolve } from 'node:path'
-import { writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -17,6 +17,8 @@ import { NotFoundError, BadRequestError, ConflictError } from '../utils/errors.j
 const execFileAsync = promisify(execFile)
 const ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)))
 const PATCHES_DIR = join(ROOT, 'patches')
+// 确保 patches 目录存在（旧版入口在启动时创建，模块化版需自行保证）
+mkdirSync(PATCHES_DIR, { recursive: true })
 
 export class UserService {
   constructor() {

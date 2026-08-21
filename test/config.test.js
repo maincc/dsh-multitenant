@@ -25,7 +25,9 @@ describe('配置模块', () => {
     })
 
     it('应该识别非管理员地址', () => {
-      expect(isAdmin('jhfamgqipxtakkdnamduoppim4shcdztea')).toBe(false)
+      // 使用合成地址（格式合法但不会被提权），避免依赖本地运行时数据
+      // data/config/admin.json（该文件里的地址会被 isAdmin 合并判定）
+      expect(isAdmin('j1111111111111111111111111111111111')).toBe(false)
     })
 
     it('应该大小写不敏感', () => {

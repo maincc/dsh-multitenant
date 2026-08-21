@@ -1,0 +1,27 @@
+# ============================================================================
+#  dsh-multitenant 入口服务 systemd 单元（模板）
+#  由 deploy/install.sh 用 sed 替换 __PLACEHOLDER__ 后写入 /etc/systemd/system/
+# ============================================================================
+[Unit]
+Description=DSH Multitenant Entry Server
+Documentation=file://__REMOTE_DIR__/README.md
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=__RUN_USER__
+WorkingDirectory=__REMOTE_DIR__
+Environment=PORT=__PORT__
+Environment=PUBLIC_HOST=__PUBLIC_HOST__
+Environment=PUBLIC_TRUST=__PUBLIC_TRUST__
+# 可选：把宿主机同名环境变量注入每个租户容器（逗号分隔，如 DEEPSEEK_API_KEY）
+#Environment=INJECT_ENV=
+ExecStart=__NODE_BIN__ __REMOTE_DIR__/src/server.js
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
