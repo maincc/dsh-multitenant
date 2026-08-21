@@ -28,8 +28,11 @@ set -e
 
 echo "🎨 Running code format check..."
 
-# 运行 prettier 格式化暂存区的文件
-npx prettier --write $(git diff --cached --name-only --diff-filter=ACM | grep -E '\\.(js|vue|json|md|css)$' || true)
+# 运行 prettier 格式化暂存区的文件（无匹配文件时跳过，避免 prettier 无参报错）
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\\.(js|vue|json|md|css)$' || true)
+if [ -n "$STAGED_FILES" ]; then
+  npx prettier --write $STAGED_FILES
+fi
 
 # 如果有文件被格式化，重新添加到暂存区
 if ! git diff --cached --quiet; then

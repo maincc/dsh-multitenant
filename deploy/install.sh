@@ -116,6 +116,10 @@ if [ "${SKIP_IMAGE:-0}" != "1" ]; then
   fi
 fi
 
+# ---- 安装入口服务依赖（生产依赖，含 @swtc/keypairs）----
+echo ">> 安装入口服务依赖 ..."
+npm ci --omit=dev
+
 # ---- 构建前端 ----
 if [ "${SKIP_FRONTEND:-0}" != "1" ]; then
   echo ">> 构建前端 ..."
