@@ -237,36 +237,40 @@ const signChallenge = async () => {
   if (!window.ccdao || !window.ccdao.request) {
     throw new Error('未检测到 CCDAO 插件，请先安装并连接钱包')
   }
-  // 1. 插件当前账户（保证在已授权账户列表内）
+  // 1. 插件当前账户【保留原始大小写】！
+  //    插件的 accounts.includes() 是大小写敏感严格匹配：把 jNDwRet... 转成
+  //    jndwret... 再传回去会被判"未授权"(4100)。只有 requestAccounts 原样
+  //    返回的字符串才能通过。后端 normalizeAddress 会自己转小写，无需担心。
   const accounts = await window.ccdao.request({
     method: 'swtc_requestAccounts',
     params: [],
   })
-  const address = accounts?.[0]?.toLowerCase()
-  if (!address) {
+  const pluginAddress = accounts?.[0]
+  if (!pluginAddress) {
     throw new Error('未获取到钱包账户，请确认 CCDAO 插件已解锁并授权本网站')
   }
   // 2. 领一次性挑战
-  const challengeRes = await axios.post('/api/user/config-challenge', { address })
+  const challengeRes = await axios.post('/api/user/config-challenge', { address: pluginAddress })
   const nonce = challengeRes.data.nonce
-  // 3. 插件对 nonce 签名 + 取公钥（弹签名确认框）
+  // 3. 插件对 nonce 签名 + 取公钥（都用原始大小写地址）
   const signature = await window.ccdao.request({
     method: 'swtc_signMessage',
-    params: [address, nonce],
+    params: [pluginAddress, nonce],
   })
   const publicKey = await window.ccdao.request({
     method: 'swtc_getPublicKey',
-    params: [address],
+    params: [pluginAddress],
   })
-  return { address, nonce, signature, publicKey }
+  return { address: pluginAddress, nonce, signature, publicKey }
 }
 
 /** 保存/清除成功后，把插件当前账户同步到页面与 localStorage */
 const syncWalletAccount = async (address) => {
-  localStorage.setItem('swtc_address', address)
-  if (userInfo.value.address !== address) {
-    userInfo.value = { ...userInfo.value, address }
-    await fetchUserInfo(address)
+  const normalized = String(address).toLowerCase()
+  localStorage.setItem('swtc_address', normalized)
+  if (userInfo.value.address !== normalized) {
+    userInfo.value = { ...userInfo.value, address: normalized }
+    await fetchUserInfo(normalized)
   }
   fetchKeyStatus()
 }
