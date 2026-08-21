@@ -226,15 +226,30 @@ const fetchKeyStatus = async () => {
 }
 
 /**
- * 钱包签名挑战-响应：领 nonce → 插件签名 + 取公钥。
- * 若地址不属于当前钱包，插件会拒绝（unauthorized）。
+ * 钱包签名挑战-响应：先取插件当前账户 → 领 nonce → 插件签名 + 取公钥。
+ *
+ * 关键：签名对象必须用插件【当前选中的账户】，否则插件会以
+ * "The requested account and/or method has not been authorized" 拒绝
+ * （源码：swtc_signMessage 检查 accounts.includes(from)）。
+ * 返回的 address 即插件当前账户，后续提交/清除都用它（写的是该账户自己的卷）。
  */
-const signChallenge = async (address) => {
+const signChallenge = async () => {
   if (!window.ccdao || !window.ccdao.request) {
     throw new Error('未检测到 CCDAO 插件，请先安装并连接钱包')
   }
+  // 1. 插件当前账户（保证在已授权账户列表内）
+  const accounts = await window.ccdao.request({
+    method: 'swtc_requestAccounts',
+    params: [],
+  })
+  const address = accounts?.[0]?.toLowerCase()
+  if (!address) {
+    throw new Error('未获取到钱包账户，请确认 CCDAO 插件已解锁并授权本网站')
+  }
+  // 2. 领一次性挑战
   const challengeRes = await axios.post('/api/user/config-challenge', { address })
   const nonce = challengeRes.data.nonce
+  // 3. 插件对 nonce 签名 + 取公钥（弹签名确认框）
   const signature = await window.ccdao.request({
     method: 'swtc_signMessage',
     params: [address, nonce],
@@ -243,15 +258,24 @@ const signChallenge = async (address) => {
     method: 'swtc_getPublicKey',
     params: [address],
   })
-  return { nonce, signature, publicKey }
+  return { address, nonce, signature, publicKey }
+}
+
+/** 保存/清除成功后，把插件当前账户同步到页面与 localStorage */
+const syncWalletAccount = async (address) => {
+  localStorage.setItem('swtc_address', address)
+  if (userInfo.value.address !== address) {
+    userInfo.value = { ...userInfo.value, address }
+    await fetchUserInfo(address)
+  }
+  fetchKeyStatus()
 }
 
 const saveApiKey = async () => {
-  const address = currentAddress()
-  if (!address) return alert('请先连接钱包')
+  if (!currentAddress()) return alert('请先连接钱包')
   keySaving.value = true
   try {
-    const { nonce, signature, publicKey } = await signChallenge(address)
+    const { address, nonce, signature, publicKey } = await signChallenge()
     await axios.post('/api/user/tenant-config', {
       address,
       nonce,
@@ -261,6 +285,7 @@ const saveApiKey = async () => {
     })
     apiKeyInput.value = ''
     keyConfigured.value = true
+    await syncWalletAccount(address)
     alert('✅ API Key 已保存并热加载，可以直接开始聊天了')
   } catch (err) {
     alert('保存失败：' + (err.response?.data?.error || err.message))
@@ -270,16 +295,16 @@ const saveApiKey = async () => {
 }
 
 const clearApiKey = async () => {
-  const address = currentAddress()
-  if (!address) return alert('请先连接钱包')
+  if (!currentAddress()) return alert('请先连接钱包')
   if (!confirm('确认清除您的 API Key？')) return
   keySaving.value = true
   try {
-    const { nonce, signature, publicKey } = await signChallenge(address)
+    const { address, nonce, signature, publicKey } = await signChallenge()
     await axios.delete('/api/user/tenant-config', {
       data: { address, nonce, signature, publicKey },
     })
     keyConfigured.value = false
+    await syncWalletAccount(address)
     alert('✅ API Key 已清除')
   } catch (err) {
     alert('清除失败：' + (err.response?.data?.error || err.message))
