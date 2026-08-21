@@ -261,6 +261,7 @@ Response: { "ok": true, "status": "destroyed" }
 2. **Cookie 安全配置** - 添加 SameSite=strict 标志
 3. **管理员提权持久化** - 写入 data/config/admin.json
 4. **全局错误处理** - 添加 unhandledRejection 和 uncaughtException 处理
+5. **局域网 HTTP 访问 DSH Web UI** - 前端"进入 DSH"链接硬编码 127.0.0.1 已改为动态 host；`crypto.randomUUID is not a function` 已通过镜像内 polyfill 注入解决（详见 [docs/crypto-randomuuid.md](docs/crypto-randomuuid.md)）
 
 ## 📈 性能优化
 

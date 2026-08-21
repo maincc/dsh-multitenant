@@ -40,6 +40,24 @@ ENV NODE_ENV=production
 RUN npm install -g @deepseek-ai/dsh@latest \
   && npm cache clean --force
 
+# ---------------------------------------------------------------------------
+# 注入 crypto.randomUUID polyfill（非安全上下文兼容）
+# ---------------------------------------------------------------------------
+# DSH 前端在浏览器非安全上下文（局域网 IP + 明文 HTTP）下拿不到
+# crypto.randomUUID（W3C Secure Contexts 限制），发消息报
+# "crypto.randomUUID is not a function"。这里把 polyfill 注入到 web 前端
+# 的 index.html（</head> 前，先于所有 module script 执行）。
+# 与 DSH 官方 random-uuid.ts（crypto.getRandomValues 实现）一致；在安全
+# 上下文（HTTPS/localhost）下 guard 不成立自动跳过，零副作用。
+# 详见 docs/crypto-randomuuid.md
+COPY deploy/randomuuid-shim.js /patches/shims/randomuuid-shim.js
+COPY deploy/inject-shim.mjs /tmp/inject-shim.mjs
+RUN WEB_HTML="$(find "$(npm root -g)" -path '*/dsh-web-frontend/dist/index.html' | head -1)" \
+  && test -n "$WEB_HTML" \
+  && test -f "$WEB_HTML" \
+  && node /tmp/inject-shim.mjs "$WEB_HTML" \
+  && rm /tmp/inject-shim.mjs
+
 WORKDIR /srv
 
 # ---------------------------------------------------------------------------
