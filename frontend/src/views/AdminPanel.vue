@@ -171,7 +171,7 @@
                 </button>
                 <a
                   v-if="user.status === 'running'"
-                  :href="`http://127.0.0.1:${user.port}/`"
+                  :href="webUrl(user.port)"
                   target="_blank"
                   class="btn btn-info"
                 >
@@ -256,6 +256,9 @@ const currentAdminAddress = ref(null)
 const currentAddress = ref(null)
 const dockerAvailable = ref(false)
 let dataRefreshInterval = null
+
+// 租户 DSH 实例地址：用当前访问入口页的 host 拼端口（不再硬编码 127.0.0.1）
+const webUrl = (port) => `http://${window.location.hostname}:${port}/`
 
 const checkCCDAO = () => {
   hasCCDAO.value = typeof window.ccdao !== 'undefined'

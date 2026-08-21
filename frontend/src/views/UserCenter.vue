@@ -125,13 +125,7 @@
       <div class="card">
         <h2>🚀 进入 DSH</h2>
         <p>点击下方按钮进入您的专属 DSH 实例</p>
-        <a
-          :href="`http://127.0.0.1:${userInfo.port}/`"
-          target="_blank"
-          class="btn btn-success btn-large"
-        >
-          打开 DSH Web UI
-        </a>
+        <a :href="dshWebUrl" target="_blank" class="btn btn-success btn-large"> 打开 DSH Web UI </a>
       </div>
 
       <div class="card">
@@ -166,6 +160,13 @@ const waiting = ref(false)
 const queuePosition = ref(0)
 const queueTotal = ref(0)
 const waitingSince = ref(0)
+
+// 专属 DSH 实例地址：用用户当前访问入口页的 host 拼端口，
+// 保证内网/公网/域名部署下跳转目标正确（不再硬编码 127.0.0.1）
+const dshWebUrl = computed(() => {
+  if (!userInfo.value.port) return ''
+  return `http://${window.location.hostname}:${userInfo.value.port}/`
+})
 
 // 加载状态
 const loading = ref(false)
