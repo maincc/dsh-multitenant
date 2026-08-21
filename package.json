@@ -18,10 +18,12 @@
     "hooks:install": "node scripts/setup-hooks.js",
     "hooks:uninstall": "rm -f .git/hooks/pre-commit .git/hooks/pre-push"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@swtc/keypairs": "^1.2.0"
+  },
   "devDependencies": {
-    "vitest": "^1.6.0",
     "@vitest/coverage-v8": "^1.6.0",
-    "prettier": "^3.2.0"
+    "prettier": "^3.2.0",
+    "vitest": "^1.6.0"
   }
 }

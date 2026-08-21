@@ -245,6 +245,36 @@ GET /leave/:address
 Response: { "ok": true, "status": "destroyed" }
 ```
 
+### 配置租户模型密钥（钱包签名验证身份）
+
+解决 DSH 配置平面 loopback-only 限制：用户可在前端自助配置自己容器的 API Key，
+身份由 CCDAO 插件钱包签名验证（详见 [docs/crypto-randomuuid.md](docs/crypto-randomuuid.md)）。
+
+```
+# 1. 领取一次性签名挑战（5 分钟有效）
+POST /api/user/config-challenge
+Body: { "address": "j..." }
+Response: { "ok": true, "nonce": "<hex>" }
+
+# 2. 前端让 CCDAO 插件对 nonce 签名 + 取公钥（插件弹签名确认）
+window.ccdao.request({ method: 'swtc_signMessage',  params: [address, nonce] })
+window.ccdao.request({ method: 'swtc_getPublicKey', params: [address] })
+
+# 3. 提交（服务端验签 + 公钥推导地址比对后写入该租户卷 .credentials.yaml）
+POST /api/user/tenant-config
+Body: { "address": "j...", "nonce": "...", "signature": "...", "publicKey": "...", "apiKey": "sk-xxx" }
+Response: { "ok": true, "configured": true }
+
+# 4. 查询配置状态（永不回显 key）
+GET /api/user/tenant-config?address=j...
+Response: { "ok": true, "address": "j...", "configured": true }
+
+# 5. 清除（同样需要签名）
+DELETE /api/user/tenant-config
+Body: { "address": "j...", "nonce": "...", "signature": "...", "publicKey": "..." }
+Response: { "ok": true, "configured": false }
+```
+
 ## 🔒 安全特性
 
 1. **地址验证**：所有 API 端点验证 SWTC 地址格式

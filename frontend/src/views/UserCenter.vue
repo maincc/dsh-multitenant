@@ -129,6 +129,45 @@
       </div>
 
       <div class="card">
+        <h2>🔑 我的模型密钥</h2>
+        <p>配置您的 API Key（需 CCDAO 插件签名验证身份），之后局域网直连即可使用</p>
+        <div class="key-config">
+          <div class="key-status" :class="{ ok: keyConfigured }">
+            状态：{{ keyConfigured ? '✅ 已配置' : '未配置' }}
+          </div>
+          <input
+            v-model="apiKeyInput"
+            type="password"
+            placeholder="输入您的 API Key（如 DeepSeek sk-xxx）"
+            :disabled="!connected || keySaving"
+          />
+          <div class="action-buttons">
+            <button
+              class="btn btn-primary"
+              :disabled="!connected || keySaving || !apiKeyInput"
+              @click="saveApiKey"
+            >
+              {{ keySaving ? '保存中…' : '💾 保存密钥' }}
+            </button>
+            <button
+              class="btn btn-danger"
+              :disabled="!connected || keySaving || !keyConfigured"
+              @click="clearApiKey"
+            >
+              清除密钥
+            </button>
+          </div>
+          <div class="action-hints">
+            <div class="hint">
+              <strong>保存：</strong>CCDAO
+              插件会弹出签名确认，证明该地址归您所有，密钥只写入您自己的容器
+            </div>
+            <div class="hint"><strong>清除：</strong>同样需要钱包签名确认</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
         <h2>⚙️ 容器管理</h2>
         <p>管理您的 DSH 容器</p>
         <div class="action-buttons">
@@ -167,6 +206,87 @@ const dshWebUrl = computed(() => {
   if (!userInfo.value.port) return ''
   return `http://${window.location.hostname}:${userInfo.value.port}/`
 })
+
+// ---- 我的模型密钥（钱包签名验证身份后写入自己的租户卷）----
+const keyConfigured = ref(false)
+const apiKeyInput = ref('')
+const keySaving = ref(false)
+
+const currentAddress = () => userInfo.value.address || localStorage.getItem('swtc_address')
+
+const fetchKeyStatus = async () => {
+  const address = currentAddress()
+  if (!address) return
+  try {
+    const res = await axios.get(`/api/user/tenant-config?address=${encodeURIComponent(address)}`)
+    keyConfigured.value = !!res.data.configured
+  } catch {
+    keyConfigured.value = false
+  }
+}
+
+/**
+ * 钱包签名挑战-响应：领 nonce → 插件签名 + 取公钥。
+ * 若地址不属于当前钱包，插件会拒绝（unauthorized）。
+ */
+const signChallenge = async (address) => {
+  if (!window.ccdao || !window.ccdao.request) {
+    throw new Error('未检测到 CCDAO 插件，请先安装并连接钱包')
+  }
+  const challengeRes = await axios.post('/api/user/config-challenge', { address })
+  const nonce = challengeRes.data.nonce
+  const signature = await window.ccdao.request({
+    method: 'swtc_signMessage',
+    params: [address, nonce],
+  })
+  const publicKey = await window.ccdao.request({
+    method: 'swtc_getPublicKey',
+    params: [address],
+  })
+  return { nonce, signature, publicKey }
+}
+
+const saveApiKey = async () => {
+  const address = currentAddress()
+  if (!address) return alert('请先连接钱包')
+  keySaving.value = true
+  try {
+    const { nonce, signature, publicKey } = await signChallenge(address)
+    await axios.post('/api/user/tenant-config', {
+      address,
+      nonce,
+      signature,
+      publicKey,
+      apiKey: apiKeyInput.value.trim(),
+    })
+    apiKeyInput.value = ''
+    keyConfigured.value = true
+    alert('✅ API Key 已保存并热加载，可以直接开始聊天了')
+  } catch (err) {
+    alert('保存失败：' + (err.response?.data?.error || err.message))
+  } finally {
+    keySaving.value = false
+  }
+}
+
+const clearApiKey = async () => {
+  const address = currentAddress()
+  if (!address) return alert('请先连接钱包')
+  if (!confirm('确认清除您的 API Key？')) return
+  keySaving.value = true
+  try {
+    const { nonce, signature, publicKey } = await signChallenge(address)
+    await axios.delete('/api/user/tenant-config', {
+      data: { address, nonce, signature, publicKey },
+    })
+    keyConfigured.value = false
+    alert('✅ API Key 已清除')
+  } catch (err) {
+    alert('清除失败：' + (err.response?.data?.error || err.message))
+  } finally {
+    keySaving.value = false
+  }
+}
 
 // 加载状态
 const loading = ref(false)
@@ -486,6 +606,7 @@ const fetchUserInfo = async (address) => {
   try {
     const res = await axios.get(`/api/user/${address}`)
     userInfo.value = res.data
+    fetchKeyStatus()
   } catch (err) {
     console.error('获取用户信息失败:', err)
 
@@ -1006,5 +1127,38 @@ onMounted(async () => {
 
 .hint:last-child {
   margin-bottom: 0;
+}
+
+/* 我的模型密钥卡片 */
+.key-config input {
+  width: 100%;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  margin-bottom: 0.75rem;
+  box-sizing: border-box;
+}
+
+.key-config input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+.key-status {
+  display: inline-block;
+  padding: 0.3rem 0.8rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  background: #f3f4f6;
+  color: #6b7280;
+  margin-bottom: 0.75rem;
+}
+
+.key-status.ok {
+  background: #d1fae5;
+  color: #065f46;
 }
 </style>

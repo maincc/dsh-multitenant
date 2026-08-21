@@ -149,3 +149,55 @@ typeof crypto.randomUUID // 安全上下文为 "function"，否则 polyfill 注�
 - 多租户产品约束：每个租户的模型配置由租户经 loopback 自行完成，或运维以
   环境变量注入（读 README 的 `INJECT_ENV`；注意模块化版 `src/` 当前未实现该变量，
   需要时需补回）
+
+## 十、解决方案：用户自助配置（钱包签名验证身份）
+
+在 loopback 限制下，让**每个用户在自己的前端**配置自己的租户密钥，同时保留
+真实认证（而不是放开 loopback 变成"网段信任"）：
+
+```
+用户浏览器（UserCenter.vue）
+  ① POST /api/user/config-challenge { address }        → 领取一次性 nonce（5 分钟）
+  ② window.ccdao.request({ method: 'swtc_signMessage',
+                           params: [address, nonce] })  → 插件弹签名确认，返回 signature
+     window.ccdao.request({ method: 'swtc_getPublicKey',
+                           params: [address] })         → 返回 publicKey
+  ③ POST /api/user/tenant-config { address, nonce, signature, publicKey, apiKey }
+  服务端：nonce 一次性校验 + @swtc/keypairs 验签 + 公钥推导地址 === 声称地址
+          → 写入该租户卷 $DSH_HOME/.credentials.yaml（DEEPSEEK_API_KEY）
+  → DSH credentials-local 热加载（chokidar，约 100ms），无需重启容器
+```
+
+**为什么安全**：
+
+- 身份 = **钱包签名**（能签出该地址的有效签名 = 持有该地址私钥），不是"网段信任"
+- 插件侧双保险：`swtc_signMessage` 会拒绝不属于当前钱包的地址（unauthorized）
+- key 只写入租户卷（容器内 0600），服务端/日志绝不落盘或回显；
+  GET 状态只回 configured/absent
+- 与 CCDAO 插件同库同流程（插件内部就是 `Keypairs.sign(messageHex, privateKey)`，
+  服务端 `Keypairs.verify` 对称验证），ed25519 / secp256k1 都支持
+
+**涉及文件**：
+
+- `src/services/tenant-config.service.js` —— 挑战存储/验签/写卷
+- `src/services/merge-credentials.mjs` —— 卷内 `.credentials.yaml` 原子合并
+  （在租户镜像的辅助容器内运行，借助数据卷挂载）
+- `src/routes/user.routes.js` —— 4 个端点（challenge / POST / GET / DELETE）
+- `frontend/src/views/UserCenter.vue` —— "🔑 我的模型密钥"卡片
+- `package.json` —— 新增运行时依赖 `@swtc/keypairs`
+
+**部署注意**：入口服务新增了运行时依赖，服务器上需先 `npm install` 再重启：
+
+```bash
+cd ~/dsh-multitenant
+git pull
+npm install                # 安装 @swtc/keypairs（新增）
+cd frontend && npm run build && cd ..
+systemctl restart dsh-multitenant
+```
+
+## 十一、时间线（补充）
+
+7. 定位 CCDAO 插件签名 API（`swtc_signMessage` / `swtc_getPublicKey`，源码确认
+   JCCDex/CCDAOConnector）
+8. 实现用户自助配置 + 钱包签名验证 → 单元测试（33 通过）+ 端到端冒烟验证通过
