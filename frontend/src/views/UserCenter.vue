@@ -271,6 +271,22 @@ const syncWalletAccount = async (address) => {
   fetchKeyStatus()
 }
 
+/**
+ * 把 CCDAO 插件的未授权错误转成可操作的提示。
+ * 插件对每个网站（origin）单独授权，且 swtc_signMessage 不会自动触发授权
+ * （源码确认：signMessage 直接验签，无授权/解锁流程）。
+ */
+const friendlyPluginError = (err) => {
+  const msg = err.response?.data?.error || err.message || '未知错误'
+  if (/not been authorized|unauthorized/i.test(String(msg))) {
+    return (
+      'CCDAO 插件尚未授权本网站：请先点击浏览器上的 CCDAO 插件图标解锁钱包，' +
+      '再点击本页"连接钱包"完成授权（会弹出授权确认框），然后重试'
+    )
+  }
+  return msg
+}
+
 const saveApiKey = async () => {
   if (!currentAddress()) return alert('请先连接钱包')
   keySaving.value = true
@@ -288,7 +304,7 @@ const saveApiKey = async () => {
     await syncWalletAccount(address)
     alert('✅ API Key 已保存并热加载，可以直接开始聊天了')
   } catch (err) {
-    alert('保存失败：' + (err.response?.data?.error || err.message))
+    alert('保存失败：' + friendlyPluginError(err))
   } finally {
     keySaving.value = false
   }
@@ -307,7 +323,7 @@ const clearApiKey = async () => {
     await syncWalletAccount(address)
     alert('✅ API Key 已清除')
   } catch (err) {
-    alert('清除失败：' + (err.response?.data?.error || err.message))
+    alert('清除失败：' + friendlyPluginError(err))
   } finally {
     keySaving.value = false
   }
