@@ -112,7 +112,7 @@ export async function handleAdminRoutes(req, res, path, url) {
 
   // POST /api/admin/promote/:address - 提权用户为管理员
   if (path.startsWith('/api/admin/promote/') && req.method === 'POST') {
-    if (!requireAdmin(req, res)) return
+    if (!requireAdmin(req, res)) return true
 
     let address = path.slice('/api/admin/promote/'.length)
     if (!validateSwtcAddress(address, res)) return
@@ -171,8 +171,9 @@ export async function handleAdminRoutes(req, res, path, url) {
       }
     } catch (err) {
       if (!res.headersSent) {
-        res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ error: err.message, code: 'INTERNAL_ERROR' }))
+        const status = err.statusCode || 500
+        res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: err.message, code: err.code || 'INTERNAL_ERROR' }))
       }
     }
     return true
@@ -195,8 +196,9 @@ export async function handleAdminRoutes(req, res, path, url) {
       }
     } catch (err) {
       if (!res.headersSent) {
-        res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ error: err.message, code: 'INTERNAL_ERROR' }))
+        const status = err.statusCode || 500
+        res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: err.message, code: err.code || 'INTERNAL_ERROR' }))
       }
     }
     return true

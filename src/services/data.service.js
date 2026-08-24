@@ -3,7 +3,16 @@
  * 支持原子写入的 JSON 数据读写
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  renameSync,
+  unlinkSync,
+  readdirSync,
+  appendFileSync,
+} from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -105,7 +114,6 @@ export class DataService {
   deleteUserFile(address) {
     const filePath = join(this.dataDir, 'users', `${address}.json`)
     if (existsSync(filePath)) {
-      const { unlinkSync } = require('node:fs')
       unlinkSync(filePath)
     }
   }
@@ -116,8 +124,7 @@ export class DataService {
   getAllUsers() {
     const usersDir = join(this.dataDir, 'users')
     if (!existsSync(usersDir)) return []
-    
-    const { readdirSync } = require('node:fs')
+
     const files = readdirSync(usersDir)
     const users = []
     for (const file of files) {
@@ -173,14 +180,13 @@ export class DataService {
     const logDir = join(this.dataDir, 'logs')
     mkdirSync(logDir, { recursive: true })
     const logFile = join(logDir, 'operations.log')
-    
+
     const logEntry = {
       timestamp: Date.now(),
       operation,
       details,
     }
-    
-    const { appendFileSync } = require('node:fs')
+
     appendFileSync(logFile, JSON.stringify(logEntry) + '\n')
   }
 }

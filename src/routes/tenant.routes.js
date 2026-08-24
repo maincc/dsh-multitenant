@@ -155,8 +155,9 @@ export async function handleTenantRoutes(req, res, path, url) {
       }
     } catch (err) {
       if (!res.headersSent) {
-        res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ error: err.message, code: 'INTERNAL_ERROR' }))
+        const status = err.statusCode || 500
+        res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: err.message, code: err.code || 'INTERNAL_ERROR' }))
       }
     }
     return true
@@ -197,8 +198,9 @@ export async function handleTenantRoutes(req, res, path, url) {
       }
     } catch (err) {
       if (!res.headersSent) {
-        res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ error: err.message, code: 'INTERNAL_ERROR' }))
+        const status = err.statusCode || 500
+        res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: err.message, code: err.code || 'INTERNAL_ERROR' }))
       }
     }
     return true
