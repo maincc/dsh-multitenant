@@ -129,40 +129,209 @@
       </div>
 
       <div class="card">
-        <h2>🔑 我的模型密钥</h2>
-        <p>配置您的 API Key（需 CCDAO 插件签名验证身份），之后局域网直连即可使用</p>
+        <h2>🔑 模型配置</h2>
+        <p>
+          每个提供方独立配置，保存后进入 DSH 可在模型选择器中切换使用 （需 CCDAO 插件签名验证身份）
+        </p>
         <div class="key-config">
-          <div class="key-status" :class="{ ok: keyConfigured }">
-            状态：{{ keyConfigured ? '✅ 已配置' : '未配置' }}
+          <!-- 获取提供方配置的 loading -->
+          <div v-if="configLoading" class="config-loading">
+            <div class="mini-spinner"></div>
+            <span>正在获取提供方配置…</span>
           </div>
-          <input
-            v-model="apiKeyInput"
-            type="password"
-            placeholder="输入您的 API Key（如 DeepSeek sk-xxx）"
-            :disabled="!connected || keySaving"
-          />
-          <div class="action-buttons">
-            <button
-              class="btn btn-primary"
-              :disabled="!connected || keySaving || !apiKeyInput"
-              @click="saveApiKey"
+
+          <!-- 提供方列表：DeepSeek 官方也是其中一个 item -->
+          <template v-else>
+            <div
+              v-for="(item, idx) in items"
+              :key="item.route || `new-${idx}`"
+              class="provider-row"
             >
-              {{ keySaving ? '保存中…' : '💾 保存密钥' }}
+              <div class="row-head">
+                <span class="row-identity">
+                  <span class="row-name" :class="{ 'row-name-missing': !item.keyConfigured }">
+                    {{ item.displayName }}
+                  </span>
+                  <span v-if="item.kind === 'custom'" class="row-tag">自定义</span>
+                  <span
+                    class="cred-dot"
+                    :class="item.keyConfigured ? 'ok' : 'missing'"
+                    :title="item.keyConfigured ? 'API Key 已配置' : 'API Key 未配置'"
+                  ></span>
+                  <span
+                    v-if="item.kind === 'official'"
+                    class="key-state"
+                    :class="item.keyConfigured ? 'ok' : 'missing'"
+                  >
+                    {{ item.keyConfigured ? '已配置' : '未配置' }}
+                  </span>
+                </span>
+                <span class="row-actions">
+                  <button class="btn btn-small" @click="toggleExpand(idx)">
+                    {{ item.expanded ? '收起' : '编辑' }}
+                  </button>
+                  <button
+                    v-if="item.removable"
+                    class="btn btn-small btn-danger"
+                    :disabled="!connected || keySaving"
+                    @click="removeItem(idx)"
+                  >
+                    删除
+                  </button>
+                </span>
+              </div>
+
+              <div v-if="item.expanded" class="row-body">
+                <input
+                  v-if="item.kind === 'custom'"
+                  v-model="item.displayName"
+                  placeholder="显示名称（显示在模型选择器中）"
+                  :disabled="!connected || keySaving"
+                />
+                <input
+                  v-if="item.kind === 'custom'"
+                  v-model="item.baseURL"
+                  type="text"
+                  placeholder="baseURL（OpenAI 兼容，如 https://gw.example.com/v1）"
+                  :disabled="!connected || keySaving"
+                />
+                <input
+                  v-model="item.apiKey"
+                  type="password"
+                  :placeholder="item.keyConfigured ? 'API Key（已配置，留空保留）' : 'API Key'"
+                  :disabled="!connected || keySaving"
+                />
+                <!-- 官方：可单独删除 key（不影响自定义端点） -->
+                <div
+                  v-if="item.kind === 'official' && item.keyConfigured"
+                  class="official-key-actions"
+                >
+                  <button
+                    class="btn btn-small btn-danger"
+                    :disabled="!connected || keySaving"
+                    @click="clearOfficialKey"
+                  >
+                    删除官方 key
+                  </button>
+                  <span class="hint">只删除官方 DeepSeek API Key，不影响自定义端点</span>
+                </div>
+                <!-- 官方：固定端点 + 默认模型；检测到旧覆盖残留时警告并在保存时清除 -->
+                <div
+                  v-if="item.kind === 'official'"
+                  class="override-warning"
+                  v-show="item.officialOverride"
+                >
+                  ⚠️ 检测到旧的官方端点覆盖
+                  <span v-if="item.officialBaseURL" class="override-url">{{
+                    item.officialBaseURL
+                  }}</span>
+                  ，保存配置将自动清除，官方恢复
+                  <code>https://api.deepseek.com</code>
+                </div>
+                <div v-if="item.kind === 'official'" class="hint">
+                  官方端点固定为 https://api.deepseek.com，使用默认模型 （deepseek-v4-flash /
+                  deepseek-v4-pro）。自定义端点请用下方「添加端点」。
+                </div>
+                <div v-if="item.kind === 'custom'" class="models-editor">
+                  <div class="models-header">
+                    <span>模型列表</span>
+                    <button
+                      class="btn btn-small"
+                      :disabled="!connected || keySaving || discovering === idx || !item.baseURL"
+                      @click="discoverItem(idx)"
+                    >
+                      {{ discovering === idx ? '探测中…' : '🔍 探测模型' }}
+                    </button>
+                  </div>
+                  <div v-if="!item.baseURL" class="hint">
+                    填写 baseURL 后可一键探测该端点提供的模型
+                  </div>
+                  <table v-if="item.baseURL" class="models-table">
+                    <thead>
+                      <tr>
+                        <th>模型 ID</th>
+                        <th>名称</th>
+                        <th>contextWindow</th>
+                        <th>maxTokens</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="(m, mi) in item.models" :key="mi">
+                        <td><input v-model="m.id" placeholder="model-id" /></td>
+                        <td><input v-model="m.name" placeholder="显示名称" /></td>
+                        <td>
+                          <input
+                            v-model.number="m.contextWindow"
+                            type="number"
+                            min="1"
+                            placeholder="128000"
+                          />
+                        </td>
+                        <td>
+                          <input
+                            v-model.number="m.maxTokens"
+                            type="number"
+                            min="1"
+                            placeholder="8192"
+                          />
+                        </td>
+                        <td>
+                          <button class="btn btn-small btn-danger" @click="removeModel(idx, mi)">
+                            ✕
+                          </button>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <button
+                    class="btn btn-small"
+                    :disabled="!connected || keySaving"
+                    @click="addModel(idx)"
+                  >
+                    ＋ 添加模型
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 添加提供方 -->
+            <div class="add-actions">
+              <button
+                class="btn btn-small"
+                :disabled="!connected || keySaving || customCount >= 20"
+                @click="addItem"
+              >
+                ＋ 添加端点
+              </button>
+            </div>
+          </template>
+
+          <div class="action-buttons">
+            <button class="btn btn-primary" :disabled="!connected || keySaving" @click="saveConfig">
+              {{ keySaving ? '保存中…' : '💾 保存配置' }}
             </button>
             <button
               class="btn btn-danger"
-              :disabled="!connected || keySaving || !keyConfigured"
-              @click="clearApiKey"
+              :disabled="!connected || keySaving || !hasAnyConfig"
+              @click="resetConfig"
             >
-              清除密钥
+              恢复默认
             </button>
           </div>
           <div class="action-hints">
             <div class="hint">
-              <strong>保存：</strong>CCDAO
-              插件会弹出签名确认，证明该地址归您所有，密钥只写入您自己的容器
+              <strong>保存：</strong>CCDAO 插件会弹出签名确认；各提供方的 API Key 写入
+              您自己的容器，端点与模型写入 settings.yaml，约 100ms 热生效，无需重启
             </div>
-            <div class="hint"><strong>清除：</strong>同样需要钱包签名确认</div>
+            <div class="hint">
+              <strong>探测：</strong>请求端点 /models 接口并自动填入模型列表
+              （使用容器内已保存的该端点 API Key 鉴权，密钥不离开您的容器）
+            </div>
+            <div class="hint">
+              <strong>恢复默认：</strong>清除官方 API Key 与所有自定义端点，回到 DeepSeek
+              官方配置（同样需要签名确认）
+            </div>
           </div>
         </div>
       </div>
@@ -207,22 +376,113 @@ const dshWebUrl = computed(() => {
   return `http://${window.location.hostname}:${userInfo.value.port}/`
 })
 
-// ---- 我的模型密钥（钱包签名验证身份后写入自己的租户卷）----
-const keyConfigured = ref(false)
-const apiKeyInput = ref('')
+// ---- 模型配置（钱包签名验证身份后写入自己的租户卷）----
+// items：每个提供方一个 item；DeepSeek 官方也是其中一个（不可删除）
+// { kind: 'official'|'custom', route?, displayName, baseURL, models, apiKey, keyConfigured, removable, expanded }
+const items = ref([])
 const keySaving = ref(false)
+const discovering = ref(null) // 正在探测的 item 下标
+const configLoading = ref(false) // 获取提供方配置的 loading
 
 const currentAddress = () => userInfo.value.address || localStorage.getItem('swtc_address')
 
-const fetchKeyStatus = async () => {
+const customCount = computed(() => items.value.filter((i) => i.kind === 'custom').length)
+const hasAnyConfig = computed(
+  () => items.value.some((i) => i.keyConfigured) || items.value.some((i) => i.kind === 'custom'),
+)
+
+/** 自定义 provider route -> 凭据引用名（与服务端一致） */
+const credentialRefFor = (route) =>
+  `${String(route)
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '_')}_API_KEY`
+
+const fetchConfigStatus = async () => {
   const address = currentAddress()
   if (!address) return
+  configLoading.value = true
   try {
     const res = await axios.get(`/api/user/tenant-config?address=${encodeURIComponent(address)}`)
-    keyConfigured.value = !!res.data.configured
+    // 官方 item：不再编辑 baseURL/models；检测旧覆盖残留（保存时自动清除）
+    const officialOverride = !!(res.data.baseURL || (res.data.models && res.data.models.length > 0))
+    items.value = [
+      {
+        kind: 'official',
+        route: 'deepseek-official',
+        displayName: 'DeepSeek 官方',
+        baseURL: '',
+        models: [],
+        apiKey: '',
+        keyConfigured: !!res.data.apiKeyConfigured,
+        removable: false,
+        expanded: true,
+        officialOverride,
+        officialBaseURL: res.data.baseURL || '',
+      },
+      ...(Array.isArray(res.data.providers)
+        ? res.data.providers.map((p) => ({
+            kind: 'custom',
+            route: p.route,
+            displayName: p.displayName || '',
+            baseURL: p.baseURL || '',
+            models: Array.isArray(p.models)
+              ? p.models.map((m) => ({
+                  id: m.id || '',
+                  name: m.name || '',
+                  contextWindow: m.contextWindow,
+                  maxTokens: m.maxTokens,
+                }))
+              : [],
+            apiKey: '',
+            keyConfigured: !!p.keyConfigured,
+            removable: true,
+            expanded: false,
+          }))
+        : []),
+    ]
   } catch {
-    keyConfigured.value = false
+    items.value = []
+  } finally {
+    configLoading.value = false
   }
+}
+
+const toggleExpand = (idx) => {
+  items.value[idx].expanded = !items.value[idx].expanded
+}
+
+const addItem = () => {
+  if (customCount.value >= 20) return alert('自定义端点最多 20 个')
+  items.value.push({
+    kind: 'custom',
+    route: undefined,
+    displayName: '',
+    baseURL: '',
+    models: [],
+    apiKey: '',
+    keyConfigured: false,
+    removable: true,
+    expanded: true,
+  })
+}
+
+const removeItem = (idx) => {
+  const item = items.value[idx]
+  if (
+    !confirm(
+      `确定删除端点「${item.displayName || '未命名'}」吗？\n将同时清除该端点的 API Key 与模型配置。`,
+    )
+  )
+    return
+  items.value.splice(idx, 1)
+}
+
+const addModel = (idx) => {
+  items.value[idx].models.push({ id: '', name: '', contextWindow: undefined, maxTokens: undefined })
+}
+
+const removeModel = (idx, mi) => {
+  items.value[idx].models.splice(mi, 1)
 }
 
 /**
@@ -272,7 +532,7 @@ const syncWalletAccount = async (address) => {
     userInfo.value = { ...userInfo.value, address: normalized }
     await fetchUserInfo(normalized)
   }
-  fetchKeyStatus()
+  fetchConfigStatus()
 }
 
 /**
@@ -291,22 +551,89 @@ const friendlyPluginError = (err) => {
   return msg
 }
 
-const saveApiKey = async () => {
+/** 模型行校验：id 非空且唯一 */
+const validateModelRows = (models) => {
+  const rows = (models || []).filter((m) => m.id && String(m.id).trim())
+  const ids = new Set(rows.map((m) => String(m.id).trim()))
+  if (ids.size !== rows.length) return { ok: false, msg: '模型 ID 不能重复' }
+  for (const m of rows) {
+    if (m.contextWindow && (typeof m.contextWindow !== 'number' || m.contextWindow < 1)) {
+      return { ok: false, msg: `模型 ${m.id} 的 contextWindow 非法` }
+    }
+    if (m.maxTokens && (typeof m.maxTokens !== 'number' || m.maxTokens < 1)) {
+      return { ok: false, msg: `模型 ${m.id} 的 maxTokens 非法` }
+    }
+  }
+  return { ok: true }
+}
+
+/** 整体校验：每个 item（官方 key 长度、自定义显示名/baseURL/模型） */
+const validateAll = () => {
+  const seenNames = new Set()
+  for (const item of items.value) {
+    if (item.apiKey && item.apiKey.length > 4096) {
+      return { ok: false, msg: 'API Key 长度超出限制' }
+    }
+    if (item.kind === 'custom') {
+      const name = (item.displayName || '').trim()
+      if (!name) return { ok: false, msg: '自定义端点需要填写显示名称' }
+      if (name.length > 64) return { ok: false, msg: '显示名称不能超过 64 字符' }
+      if (seenNames.has(name)) return { ok: false, msg: `显示名称重复：${name}` }
+      seenNames.add(name)
+      if (!/^https?:\/\//.test(item.baseURL || '')) {
+        return { ok: false, msg: `端点 ${name} 的 baseURL 必须是 http(s) 地址` }
+      }
+    } else if (item.baseURL && !/^https?:\/\//.test(item.baseURL)) {
+      return { ok: false, msg: '官方端点 baseURL 必须是 http(s) 地址' }
+    }
+    const check = validateModelRows(item.models)
+    if (!check.ok) return { ok: false, msg: `${item.displayName}：${check.msg}` }
+  }
+  return { ok: true }
+}
+
+const saveConfig = async () => {
   if (!currentAddress()) return alert('请先连接钱包')
+  const check = validateAll()
+  if (!check.ok) return alert(check.msg)
+
   keySaving.value = true
   try {
     const { address, nonce, signature, publicKey } = await signChallenge()
-    await axios.post('/api/user/tenant-config', {
+    const official = items.value.find((i) => i.kind === 'official')
+    const payload = {
       address,
       nonce,
       signature,
       publicKey,
-      apiKey: apiKeyInput.value.trim(),
-    })
-    apiKeyInput.value = ''
-    keyConfigured.value = true
+      providers: items.value
+        .filter((i) => i.kind === 'custom')
+        .map((p) => ({
+          // 已有 route 回传（更新）；新建的由服务端分配
+          ...(p.route ? { route: p.route } : {}),
+          displayName: p.displayName.trim(),
+          baseURL: p.baseURL.trim(),
+          models: (p.models || [])
+            .filter((m) => m.id && String(m.id).trim())
+            .map((m) => ({
+              id: String(m.id).trim(),
+              name: (m.name || '').trim() || undefined,
+              contextWindow: m.contextWindow || undefined,
+              maxTokens: m.maxTokens || undefined,
+            })),
+          ...(p.apiKey && p.apiKey.trim() ? { apiKey: p.apiKey.trim() } : {}),
+        })),
+    }
+    if (official?.apiKey?.trim()) payload.apiKey = official.apiKey.trim()
+    // 官方 item 不再编辑端点/模型；但若检测到旧覆盖残留，保存时显式清除（回官方）
+    if (official?.officialOverride) {
+      payload.baseURL = ''
+      payload.models = []
+    }
+
+    await axios.post('/api/user/tenant-config', payload)
     await syncWalletAccount(address)
-    alert('✅ API Key 已保存并热加载，可以直接开始聊天了')
+    alert('✅ 配置已保存并热加载：进入 DSH 后可在模型选择器中切换各提供方')
   } catch (err) {
     alert('保存失败：' + friendlyPluginError(err))
   } finally {
@@ -314,20 +641,86 @@ const saveApiKey = async () => {
   }
 }
 
-const clearApiKey = async () => {
+/** 探测某个自定义端点的模型列表（优先用输入框 key，否则用该端点已存 key） */
+const discoverItem = async (idx) => {
   if (!currentAddress()) return alert('请先连接钱包')
-  if (!confirm('确认清除您的 API Key？')) return
+  const item = items.value[idx]
+  if (!item?.baseURL?.trim()) return alert('请先填写该端点的 baseURL')
+  discovering.value = idx
+  try {
+    const { address, nonce, signature, publicKey } = await signChallenge()
+    const payload = {
+      address,
+      nonce,
+      signature,
+      publicKey,
+      baseURL: item.baseURL.trim(),
+    }
+    if (item.apiKey && item.apiKey.trim()) payload.apiKey = item.apiKey.trim()
+    if (item.route) payload.credentialRef = credentialRefFor(item.route)
+
+    const res = await axios.post('/api/user/tenant-config/discover', payload)
+    const models = Array.isArray(res.data.models) ? res.data.models : []
+    item.models = models.map((m) => ({
+      id: m.id || '',
+      name: m.name || '',
+      contextWindow: undefined,
+      maxTokens: undefined,
+    }))
+    if (models.length === 0) {
+      alert('该端点未返回任何模型（可能需要鉴权：先填写 API Key 并保存后再试）')
+    } else {
+      alert(
+        `✅ 探测到 ${models.length} 个模型，已填入「${item.displayName || '该端点'}」，可编辑后保存`,
+      )
+    }
+  } catch (err) {
+    alert('探测失败：' + friendlyPluginError(err))
+  } finally {
+    discovering.value = null
+  }
+}
+
+/** 只删除官方 DeepSeek API Key（不影响端点覆盖与自定义端点，需签名） */
+const clearOfficialKey = async () => {
+  if (!currentAddress()) return alert('请先连接钱包')
+  if (!confirm('确认删除官方 DeepSeek API Key 吗？\n只删除官方 key，不影响自定义端点。')) return
+  keySaving.value = true
+  try {
+    const { address, nonce, signature, publicKey } = await signChallenge()
+    await axios.delete('/api/user/tenant-config', {
+      data: { address, nonce, signature, publicKey, scope: 'official-key' },
+    })
+    await syncWalletAccount(address)
+    alert('✅ 官方 DeepSeek API Key 已删除')
+  } catch (err) {
+    alert('删除失败：' + friendlyPluginError(err))
+  } finally {
+    keySaving.value = false
+  }
+}
+
+/** 恢复默认：清除官方 key + 官方端点覆盖 + 所有自定义端点（需签名） */
+const resetConfig = async () => {
+  if (!currentAddress()) return alert('请先连接钱包')
+  if (
+    !confirm(
+      '确认恢复默认配置吗？\n\n将清除：\n1. 官方 DeepSeek API Key\n2. ' +
+        (customCount.value > 0 ? `全部 ${customCount.value} 个自定义端点及其 API Key\n3. ` : '') +
+        '官方端点覆盖配置\n\n回到 DeepSeek 官方 API + 默认模型。此操作需要钱包签名确认，不可恢复。',
+    )
+  )
+    return
   keySaving.value = true
   try {
     const { address, nonce, signature, publicKey } = await signChallenge()
     await axios.delete('/api/user/tenant-config', {
       data: { address, nonce, signature, publicKey },
     })
-    keyConfigured.value = false
     await syncWalletAccount(address)
-    alert('✅ API Key 已清除')
+    alert('✅ 已恢复默认配置（官方 API + 默认模型）')
   } catch (err) {
-    alert('清除失败：' + friendlyPluginError(err))
+    alert('恢复失败：' + friendlyPluginError(err))
   } finally {
     keySaving.value = false
   }
@@ -651,7 +1044,7 @@ const fetchUserInfo = async (address) => {
   try {
     const res = await axios.get(`/api/user/${address}`)
     userInfo.value = res.data
-    fetchKeyStatus()
+    fetchConfigStatus()
   } catch (err) {
     console.error('获取用户信息失败:', err)
 
@@ -1205,5 +1598,199 @@ onMounted(async () => {
 .key-status.ok {
   background: #d1fae5;
   color: #065f46;
+}
+
+/* 模型配置卡片：提供方行卡片（参考 DSH 模型设置页设计语言） */
+.config-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 2.5rem 0;
+  color: #6b7280;
+  font-size: 0.9rem;
+}
+
+.mini-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid #e5e7eb;
+  border-top: 2px solid #667eea;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 0;
+}
+
+.provider-row {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 8px;
+  background: #fff;
+}
+
+.row-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.row-identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.row-name {
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: #1f2937;
+}
+
+.row-tag {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 16px;
+  color: #6b7280;
+}
+
+.cred-dot {
+  box-sizing: border-box;
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.cred-dot.ok {
+  background: #10b981;
+}
+
+.cred-dot.missing {
+  background: #ef4444;
+}
+
+.key-state {
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 500;
+}
+
+.key-state.ok {
+  color: #10b981;
+}
+
+.key-state.missing {
+  color: #ef4444;
+}
+
+.row-name-missing {
+  color: #dc2626;
+}
+
+.official-key-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 0.75rem;
+}
+
+.official-key-actions .hint {
+  margin: 0;
+}
+
+.row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.override-warning {
+  margin-bottom: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #f59e0b;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.override-url {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-all;
+}
+
+.add-actions {
+  display: flex;
+  gap: 8px;
+  margin: 4px 0 12px;
+}
+
+.models-editor {
+  margin: 0.25rem 0 0.75rem;
+  padding: 0.75rem;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  background: #fafbfc;
+}
+
+.models-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+  color: #374151;
+  font-size: 0.9rem;
+}
+
+.models-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 0.5rem;
+}
+
+.models-table th {
+  text-align: left;
+  font-size: 0.75rem;
+  color: #6b7280;
+  font-weight: 600;
+  padding: 0.3rem 0.4rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.models-table td {
+  padding: 0.25rem 0.4rem;
+}
+
+.models-table input {
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  box-sizing: border-box;
+}
+
+.models-table input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+.models-table td:last-child {
+  width: 2.5rem;
+  text-align: center;
 }
 </style>

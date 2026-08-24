@@ -245,10 +245,25 @@ GET /leave/:address
 Response: { "ok": true, "status": "destroyed" }
 ```
 
-### 配置租户模型密钥（钱包签名验证身份）
+### 配置租户模型密钥与自定义模型（钱包签名验证身份）
 
-解决 DSH 配置平面 loopback-only 限制：用户可在前端自助配置自己容器的 API Key，
-身份由 CCDAO 插件钱包签名验证（详见 [docs/crypto-randomuuid.md](docs/crypto-randomuuid.md)）。
+解决 DSH 配置平面 loopback-only 限制：用户可在前端自助配置自己容器的 API Key、
+自定义模型端点（baseURL）与模型列表，身份由 CCDAO 插件钱包签名验证
+（详见 [docs/crypto-randomuuid.md](docs/crypto-randomuuid.md)）。
+
+**官方 DeepSeek 与自定义端点并存**：自定义端点通过 DSH 的 `llm-pi-ai` 多 provider
+适配器注册（官方设计：settings 段非空时路由实时注册、清空即消失），保存后进入
+DSH 的模型选择器，**官方 DeepSeek 与自定义端点并列可选**，可随时切换。
+
+**工作原理**：
+
+- API Key 写入租户卷 `$DSH_HOME/.credentials.yaml`（官方 `DEEPSEEK_API_KEY`；
+  每个自定义端点各自的 `<ROUTE>_API_KEY`）
+- 官方端点覆盖（可选）写入 `settings.yaml` 的 `llm-deepseek` 段
+- 自定义端点写入 `settings.yaml` 的 `llm-pi-ai.providers.<route>` 段
+  （`api: openai-completions` + displayName + baseURL + models + apiKeyEnv）
+- 两个文件都被 DSH 用 chokidar 热监听（约 100ms），provider 配置为请求级
+  动态解析（官方 dynamic-config 测试验证：改配置后下一请求即生效，无需重启）
 
 ```
 # 1. 领取一次性签名挑战（5 分钟有效）
@@ -260,20 +275,44 @@ Response: { "ok": true, "nonce": "<hex>" }
 window.ccdao.request({ method: 'swtc_signMessage',  params: [address, nonce] })
 window.ccdao.request({ method: 'swtc_getPublicKey', params: [address] })
 
-# 3. 提交（服务端验签 + 公钥推导地址比对后写入该租户卷 .credentials.yaml）
+# 3. 提交（服务端验签 + 公钥推导地址比对后写入该租户卷）
+#    apiKey 非空才更新；providers 为全量列表（被移除的端点自动删除并清 key）
 POST /api/user/tenant-config
-Body: { "address": "j...", "nonce": "...", "signature": "...", "publicKey": "...", "apiKey": "sk-xxx" }
+Body: { "address": "j...", "nonce": "...", "signature": "...", "publicKey": "...",
+        "apiKey": "sk-xxx",                       # 可选：官方 DeepSeek key
+        "providers": [                            # 可选：自定义端点（全量）
+          { "route": "custom-123...",             # 更新现有时回传；新建省略
+            "displayName": "我的中转站",
+            "baseURL": "https://gw.example.com/v1",
+            "apiKey": "sk-gw",                    # 可选，留空保留已存
+            "models": [ { "id": "m1", "name": "M1", "contextWindow": 128000, "maxTokens": 8192 } ] }
+        ] }
 Response: { "ok": true, "configured": true }
 
 # 4. 查询配置状态（永不回显 key）
 GET /api/user/tenant-config?address=j...
-Response: { "ok": true, "address": "j...", "configured": true }
+Response: { "ok": true, "configured": true, "apiKeyConfigured": true,
+            "baseURL": ..., "models": ...,
+            "providers": [ { "route": "custom-...", "displayName": "我的中转站",
+                             "baseURL": "https://...", "models": [...], "apiKeyEnv": "..." } ] }
 
-# 5. 清除（同样需要签名）
+# 5. 探测端点的模型列表（自动用该端点已存 key 鉴权，key 不离开容器）
+POST /api/user/tenant-config/discover
+Body: { "address": "j...", "nonce": "...", "signature": "...", "publicKey": "...",
+        "baseURL": "https://gw.example.com/v1", "credentialRef": "CUSTOM_..._API_KEY" }
+Response: { "ok": true, "models": [ { "id": "model-a", "name": "Model A" } ] }
+
+# 6. 恢复默认（清除官方 key + 端点覆盖 + 所有自定义端点，同样需要签名）
 DELETE /api/user/tenant-config
 Body: { "address": "j...", "nonce": "...", "signature": "...", "publicKey": "..." }
 Response: { "ok": true, "configured": false }
 ```
+
+> 安全边界：探测请求在租户镜像的辅助容器内执行（SSRF 面与租户容器一致），
+> 只接受 http/https 地址；baseURL 支持任意 OpenAI 兼容服务（中转站/自建网关）。
+> 验证工具：`docker run --rm -v <租户卷>:/dsh-home \
+  -v "$PWD/deploy/verify-llm-providers.mjs:/verify.mjs:ro" \
+  dsh-multitenant:latest node /verify.mjs` 可列出容器内实际注册的 provider。
 
 ## 🔒 安全特性
 

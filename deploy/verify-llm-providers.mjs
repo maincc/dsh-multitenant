@@ -1,0 +1,22 @@
+import { createRequire } from 'node:module'
+const req = createRequire('/usr/local/lib/node_modules/@deepseek-ai/dsh/package.json')
+const { Context } = req('@deepseek-ai/cordis')
+const LlmRuntime = req('@deepseek-ai/dsh-llm').default ?? req('@deepseek-ai/dsh-llm')
+const { FileSettingsProvider } = req('@deepseek-ai/dsh-settings-file')
+const { LocalCredentialProvider } = req('@deepseek-ai/dsh-credentials-local')
+const LlmPiAi = req('@deepseek-ai/dsh-llm-pi-ai')
+const LlmDeepSeek = req('@deepseek-ai/dsh-llm-deepseek')
+
+process.env.DSH_HOME = '/dsh-home'
+const ctx = new Context()
+await ctx.plugin(LlmRuntime)
+await ctx.plugin(FileSettingsProvider, { path: '/dsh-home/settings.yaml', watch: false })
+await ctx.plugin(LocalCredentialProvider, { path: '/dsh-home/.credentials.yaml', watch: false })
+await ctx.plugin(LlmPiAi)
+await ctx.plugin(LlmDeepSeek)
+const providers = ctx.llm.listProviders().map((p) => p.id)
+console.log('REGISTERED PROVIDERS:', JSON.stringify(providers))
+const cfg = ctx.llm.listConfigurableProviders().map((p) => `${p.provider}(${p.displayName})`).sort()
+console.log('CONFIGURABLE:', JSON.stringify(cfg))
+await ctx.fiber.dispose()
+console.log('BOOT_OK')

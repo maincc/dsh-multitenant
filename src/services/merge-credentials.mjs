@@ -8,22 +8,24 @@
  *   - set：替换已有同键条目，没有则追加（原子写：临时文件 + rename）
  *   - del：删除同键条目
  *   - get：只输出 configured / absent（绝不输出值）
+ *   - list：只输出所有已配置的引用名（JSON 数组，绝不输出值）
  *
  * 用法：
  *   node merge-credentials.mjs get <file> <key>            # configured | absent
  *   node merge-credentials.mjs set <file> <key> <value>    # 合并写入
  *   node merge-credentials.mjs del <file> <key>            # 删除条目
+ *   node merge-credentials.mjs list <file>                 # ["KEY1","KEY2",...]
  */
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 const [action, file, key, value] = process.argv.slice(2)
 
-if (!['get', 'set', 'del'].includes(action) || !file || !key) {
-  console.error('usage: node merge-credentials.mjs <get|set|del> <file> <key> [value]')
+if (!['get', 'set', 'del', 'list'].includes(action) || !file) {
+  console.error('usage: node merge-credentials.mjs <get|set|del|list> <file> <key> [value]')
   process.exit(2)
 }
-if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+if (action !== 'list' && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
   console.error('invalid credential key: ' + key)
   process.exit(2)
 }
@@ -45,6 +47,19 @@ function writeLines(lines) {
 if (action === 'get') {
   const hit = readLines().some((l) => l.trim().startsWith(`${key}:`))
   console.log(hit ? 'configured' : 'absent')
+  process.exit(0)
+}
+
+if (action === 'list') {
+  // 输出所有非空引用名（绝不输出值）
+  const refs = []
+  for (const line of readLines()) {
+    const m = line.match(/^([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$/)
+    if (!m) continue
+    const v = m[2].trim()
+    if (v !== '' && v.toLowerCase() !== 'null') refs.push(m[1])
+  }
+  console.log(JSON.stringify(refs))
   process.exit(0)
 }
 

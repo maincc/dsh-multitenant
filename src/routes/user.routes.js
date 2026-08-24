@@ -51,7 +51,7 @@ export async function handleUserRoutes(req, res, path) {
     return true
   }
 
-  // POST /api/user/tenant-config - 签名验证后写入/覆盖 API Key
+  // POST /api/user/tenant-config - 签名验证后写入/覆盖 API Key、模型配置与自定义 Provider
   if (path === '/api/user/tenant-config' && req.method === 'POST') {
     const body = await parseJsonBody(req, res)
     if (!body) return true
@@ -62,6 +62,9 @@ export async function handleUserRoutes(req, res, path) {
         signature: body.signature,
         publicKey: body.publicKey,
         apiKey: body.apiKey,
+        baseURL: body.baseURL,
+        models: body.models,
+        providers: body.providers,
       })
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify({ ok: true, configured: true }))
@@ -71,7 +74,30 @@ export async function handleUserRoutes(req, res, path) {
     return true
   }
 
-  // DELETE /api/user/tenant-config - 签名验证后清除 API Key
+  // POST /api/user/tenant-config/discover - 签名验证后探测 baseURL 的模型列表
+  if (path === '/api/user/tenant-config/discover' && req.method === 'POST') {
+    const body = await parseJsonBody(req, res)
+    if (!body) return true
+    if (!validateSwtcAddress(body.address, res)) return true
+    try {
+      const models = await tenantConfigService.discoverWithAuth(body.address, {
+        nonce: body.nonce,
+        signature: body.signature,
+        publicKey: body.publicKey,
+        baseURL: body.baseURL,
+        apiKey: body.apiKey,
+        credentialRef: body.credentialRef,
+      })
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ ok: true, models }))
+    } catch (err) {
+      handleError(err, res)
+    }
+    return true
+  }
+
+  // DELETE /api/user/tenant-config - 签名验证后清除配置
+  //   scope='official-key'：只删官方 key；默认（不传）：清全部（恢复默认）
   if (path === '/api/user/tenant-config' && req.method === 'DELETE') {
     const body = await parseJsonBody(req, res)
     if (!body) return true
@@ -81,6 +107,7 @@ export async function handleUserRoutes(req, res, path) {
         nonce: body.nonce,
         signature: body.signature,
         publicKey: body.publicKey,
+        scope: body.scope,
       })
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify({ ok: true, configured: false }))
@@ -96,9 +123,19 @@ export async function handleUserRoutes(req, res, path) {
     const address = url.searchParams.get('address')
     if (!validateSwtcAddress(address, res)) return true
     try {
-      const configured = await tenantConfigService.getStatus(address)
+      const status = await tenantConfigService.getStatus(address)
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ ok: true, address: normalizeAddress(address), configured }))
+      res.end(
+        JSON.stringify({
+          ok: true,
+          address: normalizeAddress(address),
+          configured: status.apiKeyConfigured,
+          apiKeyConfigured: status.apiKeyConfigured,
+          baseURL: status.baseURL,
+          models: status.models,
+          providers: status.providers ?? [],
+        }),
+      )
     } catch (err) {
       handleError(err, res)
     }
@@ -106,8 +143,13 @@ export async function handleUserRoutes(req, res, path) {
   }
 
   // GET /api/user/:address - 获取单个用户详情
-  // 排除 /restart 和 /reset 路径（由 tenant.routes 处理）
-  if (path.startsWith('/api/user/') && !path.endsWith('/restart') && !path.endsWith('/reset')) {
+  // 排除 /restart /reset /remove 路径（由 tenant.routes 处理）
+  if (
+    path.startsWith('/api/user/') &&
+    !path.endsWith('/restart') &&
+    !path.endsWith('/reset') &&
+    !path.endsWith('/remove')
+  ) {
     let address = path.slice('/api/user/'.length)
     if (!validateSwtcAddress(address, res)) return
 
