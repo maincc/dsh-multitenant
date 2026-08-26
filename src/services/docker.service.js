@@ -92,6 +92,16 @@ export class DockerService {
       name,
       '--restart',
       'unless-stopped',
+      // DSH 的 bash 沙箱（bwrap）需要在这两个条件下才能工作：
+      //   - --cap-add SYS_ADMIN：允许创建 mount/用户命名空间、pivot_root
+      //   - --security-opt seccomp=unconfined：Docker 默认 seccomp profile
+      //     会拦截 bwrap 的 namespace 创建与 pivot_root 系统调用
+      //     （bwrap: Creating new namespace failed / pivot_root failed）
+      //  仅对租户容器内部生效（容器本身就是租户隔离边界），不暴露给宿主。
+      '--cap-add',
+      'SYS_ADMIN',
+      '--security-opt',
+      'seccomp=unconfined',
       '--memory',
       limits.memory,
       '--memory-swap',
