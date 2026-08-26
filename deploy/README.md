@@ -40,7 +40,7 @@ curl -s "http://127.0.0.1:8090/connect-status?address=<你的地址>"
 | `rsync-upload.sh`         | 本地 Mac | rsync 上传代码（排除 node_modules / data / patches / config.json 等）         |
 | `install.sh`              | 服务器   | 首次安装：建目录 → 生成 config.json → 构建镜像 → 构建前端 → 安装 systemd 服务 |
 | `dsh-multitenant.service` | 模板     | systemd 单元，install.sh 填充占位符后写入 `/etc/systemd/system/`              |
-| `update.sh`               | 服务器   | `git pull` + 按需重建前端/镜像 + 重启                                         |
+| `update.sh`               | 服务器   | `git pull`（远端不可达自动跳过）+ 按需重建前端/镜像 + 重启                    |
 | `backup.sh`               | 服务器   | 备份入口状态（+ 可选租户数据卷）                                              |
 
 ## 常用运维
@@ -55,6 +55,31 @@ sudo VOLUME_BACKUP=1 ./deploy/backup.sh   # 连同所有租户数据卷一起备
 # 定时备份（cron）：
 # 0 3 * * * /srv/dsh-multitenant/deploy/backup.sh
 ```
+
+## 更新（服务器无法访问 GitHub 时）
+
+`update.sh` 默认尝试 `git pull --ff-only`；服务器**无法访问 GitHub** 时改用
+**rsync 上传 + 离线更新**（不会失败，会自动跳过 pull 并全量重建）：
+
+```bash
+# 1. 本地 Mac：把整个工作树（含未提交改动）推到服务器
+SERVER_HOST=<服务器IP> ./deploy/rsync-upload.sh
+
+# 2. 服务器：离线模式更新（自动跳过 git pull，全量重建前端+镜像）
+ssh root@<服务器IP>
+cd /srv/dsh-multitenant
+sudo ./deploy/update.sh
+```
+
+说明：
+
+- `update.sh` 检测到 git 远端不可达（非 git 目录 / `git ls-remote` 超时）时会自动
+  跳过 pull，并因缺少 git 版本基线而**默认全量重建**前端与镜像——最安全，不依赖
+  GitHub。也可显式 `SKIP_GIT_PULL=1 sudo ./deploy/update.sh`。
+- 只要本地改了 `Dockerfile`，租户镜像就会重建（全量模式下必然重建），租户
+  **数据卷不受影响**（聊天记录/会话/文件都保留）。
+- rsync 上传**前**建议先备份（见下节）；上传会同步删除服务器上多余文件，但
+  `data/ patches/ config.json state.json` 等已排除，不会丢。
 
 ## 恢复
 

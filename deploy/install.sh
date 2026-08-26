@@ -82,7 +82,10 @@ else
     "stopTimeoutMs": 900000,
     "destroyTimeoutMs": 3600000,
     "checkIntervalMs": 300000,
-    "comment": "stopTimeoutMs: 空闲多久后停止容器（毫秒），默认 15 分钟；destroyTimeoutMs: 停止多久后销毁容器（毫秒），默认 1 小时；checkIntervalMs: 检查间隔（毫秒），默认 5 分钟"
+    "activityWindowMs": 180000,
+    "processBaseline": 2,
+    "stopGraceSeconds": 60,
+    "comment": "stopTimeoutMs: 空闲多久后停止容器（毫秒），默认 15 分钟；destroyTimeoutMs: 停止多久后销毁容器（毫秒），默认 1 小时；checkIntervalMs: 检查间隔（毫秒），默认 5 分钟；activityWindowMs: 会话文件多久没写入视为内部空闲（毫秒），默认 3 分钟，有写入说明容器内 DSH 仍在干活不会停；processBaseline: docker top 进程数超过此值视为有外部程序在跑，默认 2；stopGraceSeconds: 停止前的 SIGTERM 宽限（秒），默认 60"
   },
   "resource": {
     "monitorIntervalMs": 30000,
