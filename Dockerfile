@@ -19,7 +19,7 @@ FROM node:22-slim
 # （实测：清华 403、官方超时、阿里云 200）。
 RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
   && apt-get update \
-  && apt-get install -y --no-install-recommends python3 make g++ git ca-certificates \
+  && apt-get install -y --no-install-recommends python3 make g++ git ca-certificates bash bubblewrap \
   && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
@@ -32,6 +32,8 @@ ENV DSH_HOME=/dsh-home
 # 关闭遥测上报；生产模式。
 ENV DSH_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
+# 沙箱模式：如果 bubblewrap 不可用，可改为 danger-full-access（降低安全性）
+# ENV DSH_SANDBOX_MODE=danger-full-access
 
 # ---------------------------------------------------------------------------
 # 安装 DeepSeek Harness

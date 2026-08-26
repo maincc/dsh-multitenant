@@ -17,6 +17,7 @@ import { NotFoundError, BadRequestError, ConflictError } from '../utils/errors.j
 const execFileAsync = promisify(execFile)
 const ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)))
 const PATCHES_DIR = join(ROOT, 'patches')
+const SCRIPTS_DIR = join(ROOT, 'src', 'services')
 // 确保 patches 目录存在（旧版入口在启动时创建，模块化版需自行保证）
 mkdirSync(PATCHES_DIR, { recursive: true })
 
@@ -772,9 +773,115 @@ export class UserService {
   }
 
   /**
+   * 判断租户容器是否真的在活动（三层检测，全部从宿主侧完成）：
+   *   1) DSH 内部活动：卷内 sessions/ 会话文件最近有写入
+   *      （对话流/工具调用/agent 任务都会 append 事件，文件在动 = 在干活）
+   *   2) 外部程序：docker top 进程数超过基线
+   *      （shell 命令、代码执行等 fork 出的额外进程）
+   *   3) 活跃连接：容器内非回环 ESTABLISHED 连接 > 0
+   *      （浏览器开着 DSH 页面 = WebSocket 长连；LLM 出站请求）
+   * 全部安静才算空闲。
+   * @param {string} address SWTC 地址
+   * @param {string} name 容器名
+   */
+  async isContainerActive(address, name) {
+    const policy = this.state.cleanupPolicy || {}
+    const windowMs = policy.activityWindowMs ?? CONFIG.cleanup.activityWindowMs ?? 180000
+    const baseline = policy.processBaseline ?? CONFIG.cleanup.processBaseline ?? 2
+    const diag = {}
+
+    // 1) 会话文件活动
+    try {
+      const out = await dockerService.runVolumeScript(
+        swtcVolumeName(address),
+        join(SCRIPTS_DIR, 'check-activity.mjs'),
+        'check-activity.mjs',
+        ['/dsh-home/sessions'],
+      )
+      const parsed = JSON.parse(out)
+      const ageMs = parsed?.latestSessionMtime ? Date.now() - parsed.latestSessionMtime : null
+      diag.session = {
+        mtime: parsed?.latestSessionMtime ?? 0,
+        ageMs,
+        windowMs,
+        active: ageMs !== null && ageMs < windowMs,
+      }
+      if (diag.session.active) return true
+    } catch (err) {
+      diag.session = { error: err.message }
+    }
+
+    // 2) 外部进程
+    try {
+      const count = await dockerService.topProcessCount(name)
+      diag.process = { count, baseline, active: count > baseline }
+      if (diag.process.active) return true
+    } catch (err) {
+      diag.process = { error: err.message }
+    }
+
+    // 3) 活跃连接（共享租户容器网络命名空间看连接表）
+    try {
+      const out = await dockerService.runVolumeScript(
+        swtcVolumeName(address),
+        join(SCRIPTS_DIR, 'check-connections.mjs'),
+        'check-connections.mjs',
+        [],
+        { networkContainer: name },
+      )
+      const parsed = JSON.parse(out)
+      diag.connection = {
+        established: parsed?.established ?? 0,
+        active: (parsed?.established ?? 0) > 0,
+      }
+      if (diag.connection.active) return true
+    } catch (err) {
+      diag.connection = { error: err.message }
+    }
+
+    // 4) DSH 任务状态：session.list 存在 running 会话
+    try {
+      const out = await dockerService.runVolumeScript(
+        swtcVolumeName(address),
+        join(SCRIPTS_DIR, 'check-rpc.mjs'),
+        'check-rpc.mjs',
+        [],
+        { networkContainer: name },
+      )
+      const parsed = JSON.parse(out)
+      diag.rpc = {
+        ok: parsed?.ok === true,
+        runningSessions: parsed?.runningSessions ?? 0,
+        active: parsed?.ok === true && parsed.runningSessions > 0,
+      }
+      if (diag.rpc.active) return true
+    } catch (err) {
+      diag.rpc = { error: err.message }
+    }
+
+    // 全部安静：记录诊断，便于排查"为何判空闲"
+    console.log(`[cleanup] ${address} judged idle: ${JSON.stringify(diag)}`)
+    return false
+  }
+
+  /**
    * 清理空闲容器
+   * 运行中的容器空闲超时 → 先做活动检测（会话文件 + 进程数），
+   * 确认空闲才优雅停止（SIGTERM 宽限）；停止超时 → 销毁（数据卷保留）。
+   * 防重入：docker stop -t 的宽限等待可能超过检查间隔，重复触发会对同一
+   * 容器并发 stop，因此正在执行的本轮直接跳过（不做任何事）。
    */
   async cleanupIdleContainers() {
+    if (this._cleanupRunning) return
+    this._cleanupRunning = true
+    try {
+      await this._cleanupIdleContainersInner()
+    } finally {
+      this._cleanupRunning = false
+    }
+  }
+
+  async _cleanupIdleContainersInner() {
     const now = Date.now()
     let changed = false
 
@@ -783,16 +890,35 @@ export class UserService {
       const name = swtcContainerName(address)
       const status = user.containerStatus ?? 'running'
 
-      // 阶段 1：运行中的容器空闲超过阈值 → 停止
+      // 阶段 1：运行中的容器空闲超过阈值 → 先检测真实活动，确认空闲再停止
       if (status === 'running' && idle > this.state.cleanupPolicy.stopTimeoutMs) {
+        // 容器内还有真实活动（会话在写 / 有额外进程）→ 刷新 lastSeenAt，跳过本次清理
+        let active = false
         try {
-          await dockerService.stopContainer(name)
+          active = await this.isContainerActive(address, name)
+        } catch (err) {
+          console.error(`[cleanup] activity check failed for ${address}:`, err.message)
+        }
+        if (active) {
+          user.lastSeenAt = now
+          changed = true
+          console.log(
+            `[cleanup] ${address} is still active, skipping (idle ${(idle / 60000).toFixed(0)}min)`,
+          )
+          continue
+        }
+        try {
+          const grace =
+            this.state.cleanupPolicy.stopGraceSeconds ?? CONFIG.cleanup.stopGraceSeconds ?? 60
+          await dockerService.stopContainer(name, grace)
           user.containerStatus = 'stopped'
           user.stoppedAt = now
           // 清理不相关字段
           delete user.lastUpgradeAt
           const idleMin = (idle / 60000).toFixed(0)
-          console.log(`[cleanup] stopped idle container: ${address} (idle ${idleMin}min)`)
+          console.log(
+            `[cleanup] stopped idle container: ${address} (idle ${idleMin}min, grace ${grace}s)`,
+          )
           changed = true
         } catch (err) {
           if (String(err.stderr).includes('No such container')) {

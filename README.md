@@ -150,7 +150,10 @@ npm run test:coverage
   "cleanup": {
     "stopTimeoutMs": 900000,
     "destroyTimeoutMs": 3600000,
-    "checkIntervalMs": 300000
+    "checkIntervalMs": 300000,
+    "activityWindowMs": 180000,
+    "processBaseline": 2,
+    "stopGraceSeconds": 60
   },
   "tiers": {
     "1": { "label": "基础", "memory": "512m", "cpus": "1.0" },
@@ -331,6 +334,32 @@ Response: { "ok": true, "configured": false }
 3. **管理员提权持久化** - 写入 data/config/admin.json
 4. **全局错误处理** - 添加 unhandledRejection 和 uncaughtException 处理
 5. **局域网 HTTP 访问 DSH Web UI** - 前端"进入 DSH"链接硬编码 127.0.0.1 已改为动态 host；`crypto.randomUUID is not a function` 已通过镜像内 polyfill 注入解决（详见 [docs/crypto-randomuuid.md](docs/crypto-randomuuid.md)）
+
+## 🧹 空闲清理机制（不会误停正在干活的容器）
+
+清理定时器每 `checkIntervalMs`（5 分钟）检查一次运行中的容器。空闲超时
+（`stopTimeoutMs`，15 分钟）后**不会直接停止**，而是先做四层活动检测
+（全部从宿主侧完成，无需进容器，**任一命中即视为活跃**）：
+
+1. **DSH 内部活动**：卷内 `sessions/` 会话文件最近 `activityWindowMs`（3 分钟）
+   内有写入 → 对话流/工具调用/agent 任务正在发生 → 视为活跃，刷新 lastSeenAt，
+   跳过清理。原理：DSH 把每个会话的事件流 append 到卷里 `sessions/` 的
+   jsonl 文件，文件在动 = 在干活。
+2. **外部程序**：`docker top` 进程数超过 `processBaseline`（2）→ 有 shell 命令、
+   代码执行等额外进程在跑 → 视为活跃，跳过清理。
+3. **活跃连接**：共享租户容器的网络命名空间统计非回环 ESTABLISHED 连接 > 0 →
+   浏览器开着 DSH 页面（WebSocket 长连接）或 LLM 出站请求进行中 → 视为活跃。
+4. **DSH 运行中任务**：容器内 RPC `session.list` 存在 running 会话 → agent 正在
+   处理（含静默等待 LLM/外部 API 响应的场景，此时会话文件可能暂无写入）→
+   视为活跃。
+
+四层全部安静且空闲超时才停止容器，且停止使用 `stopGraceSeconds`（60 秒）的
+SIGTERM 宽限，让 DSH 有机会保存状态。停止后再闲置 `destroyTimeoutMs`
+（1 小时）才销毁容器（**数据卷始终保留**：聊天记录、会话历史、文件全在，
+重连即恢复）。
+
+> 注意：`cleanupPolicy` 实际读自 `state.json`（兼容旧格式）；`config.json`
+> 的值仅在 state.json 缺省字段时作为兜底。
 
 ## 📈 性能优化
 

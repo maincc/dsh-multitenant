@@ -17,6 +17,9 @@ const DEFAULTS = {
     stopTimeoutMs: 900000, // 15 分钟
     destroyTimeoutMs: 3600000, // 1 小时
     checkIntervalMs: 300000, // 5 分钟
+    activityWindowMs: 180000, // 会话文件多久没写入视为内部空闲（3 分钟）
+    processBaseline: 2, // docker top 进程数超过此值视为有外部程序在跑（基础进程数 1 + 1）
+    stopGraceSeconds: 60, // 停止容器前的 SIGTERM 宽限秒数
   },
   resource: {
     monitorIntervalMs: 30000,

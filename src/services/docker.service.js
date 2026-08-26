@@ -127,10 +127,12 @@ export class DockerService {
   }
 
   /**
-   * 停止容器
+   * 停止容器（支持优雅宽限：先 SIGTERM，宽限超时后 SIGKILL）
+   * @param {string} name 容器名
+   * @param {number} [graceSeconds] SIGTERM 后等待秒数，默认 10
    */
-  async stopContainer(name) {
-    await sh('docker', ['stop', name])
+  async stopContainer(name, graceSeconds = 10) {
+    await sh('docker', ['stop', '-t', String(graceSeconds), name])
   }
 
   /**
@@ -228,6 +230,49 @@ export class DockerService {
     } catch {
       return []
     }
+  }
+
+  /**
+   * 列出容器内运行的进程数（宿主侧 docker top，无需进容器）
+   * @param {string} name 容器名
+   * @returns {Promise<number>} 进程数；容器不存在/停止返回 0
+   */
+  async topProcessCount(name) {
+    try {
+      const out = await sh('docker', ['top', name])
+      const lines = out.split('\n').filter(Boolean)
+      return Math.max(0, lines.length - 1) // 去掉表头
+    } catch {
+      return 0
+    }
+  }
+
+  /**
+   * 在租户镜像的辅助容器内执行一个卷脚本（挂载租户卷 + 宿主脚本）
+   * @param {string} volume 租户数据卷名
+   * @param {string} scriptHostPath 宿主脚本绝对路径
+   * @param {string} scriptName 容器内脚本文件名
+   * @param {string[]} [scriptArgs] 传给脚本的参数
+   * @param {object} [opts] 选项：{ networkContainer: 共享该容器的网络命名空间 }
+   * @returns {Promise<string>} 脚本 stdout
+   */
+  async runVolumeScript(volume, scriptHostPath, scriptName, scriptArgs = [], opts = {}) {
+    const args = ['run', '--rm']
+    if (opts.networkContainer) {
+      args.push('--network', `container:${opts.networkContainer}`)
+    }
+    args.push(
+      '-v',
+      `${volume}:/dsh-home`,
+      '-v',
+      `${scriptHostPath}:/${scriptName}:ro`,
+      IMAGE,
+      'node',
+      `/${scriptName}`,
+      ...scriptArgs,
+    )
+    const out = await sh('docker', args)
+    return out
   }
 
   /**
