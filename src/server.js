@@ -29,6 +29,7 @@ import { userService } from './services/user.service.js'
 import { handleAdminRoutes } from './routes/admin.routes.js'
 import { handleUserRoutes } from './routes/user.routes.js'
 import { handleTenantRoutes } from './routes/tenant.routes.js'
+import { handleSkillRoutes } from './routes/skill.routes.js'
 import { handleError } from './utils/errors.js'
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
@@ -149,6 +150,11 @@ const server = createServer(async (req, res) => {
     path === '/api/docker/status'
   ) {
     if (await handleAdminRoutes(req, res, path, url)) return
+  }
+
+  // 技能市场路由
+  if (path.startsWith('/api/skills')) {
+    if (await handleSkillRoutes(req, res, path)) return
   }
 
   // 用户路由

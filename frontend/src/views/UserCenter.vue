@@ -352,13 +352,148 @@
           </div>
         </div>
       </div>
+
+      <div class="card">
+        <h2>🧩 我的技能</h2>
+        <p>将本地 DSH 的技能导入容器，或在技能市场安装他人共享的技能</p>
+        <div class="action-buttons">
+          <button class="btn btn-primary" @click="openImportDialog">📥 导入技能</button>
+          <button class="btn btn-primary" @click="openShareDialog">📤 共享技能</button>
+          <router-link to="/skills" class="btn btn-secondary">🏪 技能市场</router-link>
+        </div>
+
+        <div v-if="mySkillsLoading" class="config-loading">
+          <div class="mini-spinner"></div>
+          <span>正在获取我的技能…</span>
+        </div>
+        <template v-else>
+          <div v-if="mineData.published.length > 0" class="skill-subsection">
+            <h3>我的共享</h3>
+            <div v-for="s in mineData.published" :key="'p-' + s.name" class="skill-row">
+              <div class="skill-row-main">
+                <strong>{{ s.name }}</strong>
+                <span class="skill-desc">{{ s.description }}</span>
+              </div>
+              <button class="btn btn-small btn-danger" @click="unpublishSkill(s.name)">
+                取消共享
+              </button>
+            </div>
+          </div>
+          <div v-if="mineData.installed.length > 0" class="skill-subsection">
+            <h3>已安装</h3>
+            <div v-for="s in mineData.installed" :key="'i-' + s.name" class="skill-row">
+              <div class="skill-row-main">
+                <strong>{{ s.name }}</strong>
+                <span class="skill-desc">
+                  {{
+                    s.description ||
+                    `来源：${s.source} · ${new Date(s.installedAt).toLocaleString()}`
+                  }}
+                </span>
+                <span v-if="s.hasUpdate" class="badge badge-warning">有更新</span>
+              </div>
+              <button class="btn btn-small btn-danger" @click="uninstallSkill(s.name)">卸载</button>
+            </div>
+          </div>
+          <p v-if="mineData.published.length === 0 && mineData.installed.length === 0" class="hint">
+            还没有技能。可以把本地 DSH 写好的技能导入进来，或去技能市场逛逛。
+          </p>
+        </template>
+      </div>
+
+      <!-- 导入技能对话框 -->
+      <div v-if="importDialogOpen" class="import-mask" @click.self="closeImportDialog">
+        <div class="import-panel">
+          <h3>📥 导入技能</h3>
+          <p class="hint">
+            选择本地 DSH 导出的技能文件（SKILL.md），或直接粘贴正文。导入会写入您自己的容器
+            （需钱包签名确认）。
+          </p>
+          <div class="import-field">
+            <label>技能文件</label>
+            <input type="file" accept=".md,.txt,text/markdown" @change="onImportFile" />
+          </div>
+          <div class="import-field">
+            <label>技能名（kebab-case，需与 frontmatter 的 name 一致）</label>
+            <input v-model="importName" placeholder="my-skill" />
+          </div>
+          <div class="import-field">
+            <label>SKILL.md 内容（或粘贴）</label>
+            <textarea
+              v-model="importText"
+              rows="8"
+              placeholder="---&#10;name: my-skill&#10;description: 一句话说明&#10;---&#10;正文…"
+            ></textarea>
+          </div>
+          <div v-if="importBusy" class="loading">提交中…</div>
+          <div class="action-buttons">
+            <button class="btn btn-primary" :disabled="importBusy" @click="doImport">
+              ✓ 签名并导入
+            </button>
+            <button class="btn btn-secondary" :disabled="importBusy" @click="closeImportDialog">
+              取消
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 共享容器内技能对话框 -->
+      <div v-if="shareDialogOpen" class="import-mask" @click.self="closeShareDialog">
+        <div class="import-panel">
+          <h3>📤 共享容器内的技能</h3>
+          <p class="hint">
+            从您容器里已有的技能中选择一个（自写或导入的都可以），共享后出现在技能市场，需钱包签名确认。
+            <br />
+            共享名要求<strong>唯一</strong>：若名称已被其他人共享，请改名后发布。
+          </p>
+          <div class="import-field">
+            <label>选择容器内的技能</label>
+            <select
+              v-model="shareSourceName"
+              :disabled="shareLoading || shareConflict || shareBusy"
+            >
+              <option value="" disabled>
+                {{ shareLoading ? '正在获取列表…' : '— 请选择 —' }}
+              </option>
+              <option v-for="n in mineData.inContainer" :key="n" :value="n">{{ n }}</option>
+            </select>
+          </div>
+          <div v-if="shareLoading" class="config-loading">
+            <div class="mini-spinner"></div>
+            <span>正在获取容器内技能…</span>
+          </div>
+          <div v-else-if="mineData.inContainer.length === 0" class="hint share-empty-hint">
+            容器里还没有可共享的技能：先在 DSH 里写好一个（
+            <code>/dsh-home/skills/</code>），或用上方「📥 导入技能」导入后再来共享
+          </div>
+          <div v-if="shareConflict" class="import-field share-conflict">
+            <label>⚠️ 该名称已被占用，请填写新的共享名（frontmatter 的 name 会自动同步改写）</label>
+            <input v-model="shareRenameTo" placeholder="my-skill-v2" />
+            <span class="hint">源名保留在您的容器不变；发布到市场的名称需唯一</span>
+          </div>
+          <div v-if="shareBusy" class="loading">提交中…</div>
+          <div class="action-buttons">
+            <button
+              class="btn btn-primary"
+              :disabled="shareBusy || !shareSourceName"
+              @click="doShare"
+            >
+              {{ shareConflict ? '✓ 用新名称共享' : '✓ 签名并共享' }}
+            </button>
+            <button class="btn btn-secondary" :disabled="shareBusy" @click="closeShareDialog">
+              取消
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import axios from 'axios'
+import { skillsApi } from '../api/skills.js'
 
 const connected = ref(false)
 const connecting = ref(false)
@@ -837,6 +972,13 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
     console.log('[UserCenter] 地址相同，但仍需检查容器状态')
   }
 
+  // 地址真正变化时：立即清空"我的技能"并进入 loading，
+  // 避免切换后短暂闪现上一个用户的共享/安装列表
+  if (!isInitialLoad && newAddress !== oldAddress) {
+    mineData.value = { published: [], installed: [], inContainer: [] }
+    mySkillsLoading.value = true
+  }
+
   try {
     // 显示加载页面
     showLoading('正在连接钱包', '验证地址...', 10)
@@ -880,6 +1022,9 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
     if (!isInitialLoad && newAddress !== oldAddress) {
       alert(`已切换到新地址：${newAddress.slice(0, 10)}...`)
     }
+
+    // 切换/连接后刷新"我的技能"为当前地址的个人视图
+    await loadMine()
   } catch (err) {
     console.error('[UserCenter] 处理地址失败:', err)
     hideLoading()
@@ -1240,7 +1385,217 @@ onMounted(async () => {
       await handleAddressChange(savedAddress, true)
     }
   }
+  await loadMine()
 })
+
+// ===================== 🧩 我的技能（技能市场集成） =====================
+const mineData = ref({ published: [], installed: [], inContainer: [] })
+const mySkillsLoading = ref(true) // 初始即 loading：面板首帧显示 spinner，避免空态闪现后突然出数据
+const importDialogOpen = ref(false)
+const importName = ref('')
+const importText = ref('')
+const importBusy = ref(false)
+
+/** 拉取 mine 数据（含签名） */
+const fetchMine = async () => {
+  const sig = await signChallenge()
+  const res = await skillsApi.mine(sig)
+  return {
+    published: res.published || [],
+    installed: res.installed || [],
+    inContainer: res.inContainer || [],
+  }
+}
+
+let mineInFlight = null
+
+/** 我的技能列表整体刷新（控制下方列表区的 loading） */
+const loadMine = async () => {
+  if (mineInFlight) return mineInFlight // 并发去重：watch 与切换流程可能重叠触发
+  if (!connected.value) return
+  mySkillsLoading.value = true
+  const startedAt = Date.now()
+  mineInFlight = (async () => {
+    try {
+      // 个人视图接口：无需钱包签名，任何环境都能加载出"我的共享/已安装"
+      // （inContainer 由共享弹窗单独用签名接口刷新，这里保留原有值）
+      const res = await skillsApi.mineView(currentAddress())
+      mineData.value = {
+        ...mineData.value,
+        published: res.published || [],
+        installed: res.installed || [],
+      }
+    } catch (err) {
+      // 我的技能加载失败不阻塞其他功能
+      console.warn('[skills] 加载我的技能失败（忽略）:', err)
+    } finally {
+      // 保证 loading 至少可见一小段时间：请求太快时若立即关闭，
+      // spinner 来不及渲染一帧就被替换，用户会以为"没有 loading"
+      const MIN_LOADING_MS = 400
+      const elapsed = Date.now() - startedAt
+      if (elapsed < MIN_LOADING_MS) {
+        await new Promise((r) => setTimeout(r, MIN_LOADING_MS - elapsed))
+      }
+      mySkillsLoading.value = false
+    }
+  })()
+  try {
+    return await mineInFlight
+  } finally {
+    mineInFlight = null
+  }
+}
+
+/**
+ * 共享对话框专用：只刷新 inContainer，不触发下方列表区的 loading。
+ * 弹窗与外层"我的共享/已安装"列表的加载态互相独立。
+ */
+const loadContainerSkills = async () => {
+  if (!connected.value) return
+  try {
+    const data = await fetchMine()
+    mineData.value = { ...mineData.value, inContainer: data.inContainer }
+  } catch (err) {
+    mineData.value = { ...mineData.value, inContainer: [] }
+    console.warn('[skills] 获取容器内技能失败（忽略）:', err)
+  }
+}
+
+watch(connected, (v) => {
+  if (v) loadMine()
+})
+
+const openImportDialog = () => {
+  importDialogOpen.value = true
+  importName.value = ''
+  importText.value = ''
+}
+
+const closeImportDialog = () => {
+  importDialogOpen.value = false
+}
+
+const onImportFile = (e) => {
+  const file = e.target.files?.[0]
+  if (!file) return
+  const reader = new FileReader()
+  reader.onload = () => {
+    importText.value = String(reader.result || '')
+    // 从文件名推断技能名（去 .md 后缀、转小写）
+    const base = String(file.name).replace(/\.md$/i, '').trim().toLowerCase()
+    if (/^[a-z0-9]+(-[a-z0-9]+)*$/.test(base)) importName.value = base
+  }
+  reader.readAsText(file)
+}
+
+const doImport = async () => {
+  const name = importName.value.trim()
+  if (!name) {
+    alert('请填写技能名（kebab-case）')
+    return
+  }
+  if (!importText.value.trim()) {
+    alert('请选择技能文件或粘贴 SKILL.md 内容')
+    return
+  }
+  importBusy.value = true
+  try {
+    const sig = await signChallenge()
+    await skillsApi.importSkill(sig, name, importText.value)
+    alert(`技能 ${name} 导入成功，已写入您的容器，DSH 会话中可直接使用`)
+    closeImportDialog()
+    await loadMine()
+  } catch (err) {
+    alert('导入失败：' + friendlyPluginError(err))
+  } finally {
+    importBusy.value = false
+  }
+}
+
+const unpublishSkill = async (name) => {
+  if (!confirm(`确定取消共享技能 ${name} 吗？（已安装用户不受影响）`)) return
+  try {
+    const sig = await signChallenge()
+    await skillsApi.unpublish(sig, name)
+    await loadMine()
+  } catch (err) {
+    alert('操作失败：' + friendlyPluginError(err))
+  }
+}
+
+const uninstallSkill = async (name) => {
+  if (!confirm(`确定从您的容器卸载技能 ${name} 吗？`)) return
+  try {
+    const sig = await signChallenge()
+    await skillsApi.uninstall(sig, name)
+    await loadMine()
+  } catch (err) {
+    alert('卸载失败：' + friendlyPluginError(err))
+  }
+}
+
+// ===================== 📤 共享容器内的技能（含撞名重命名） =====================
+const shareDialogOpen = ref(false)
+const shareSourceName = ref('')
+const shareRenameTo = ref('')
+const shareBusy = ref(false)
+const shareConflict = ref(false)
+const shareLoading = ref(false) // 获取容器内技能列表的 loading
+
+const openShareDialog = async () => {
+  shareDialogOpen.value = true
+  shareSourceName.value = ''
+  shareRenameTo.value = ''
+  shareConflict.value = false
+  // 打开时只刷新弹窗用的容器内技能列表（不触碰下方列表区的 loading）
+  if (connected.value) {
+    shareLoading.value = true
+    try {
+      await loadContainerSkills()
+    } finally {
+      shareLoading.value = false
+    }
+  }
+}
+
+const closeShareDialog = () => {
+  shareDialogOpen.value = false
+}
+
+const doShare = async () => {
+  const source = shareSourceName.value
+  if (!source) {
+    alert('请从列表中选择要共享的技能')
+    return
+  }
+  const renameTo = shareConflict.value ? shareRenameTo.value.trim() : ''
+  if (shareConflict.value && !renameTo) {
+    alert('该名称已被占用，请填写一个新的共享名（kebab-case）')
+    return
+  }
+  shareBusy.value = true
+  try {
+    const sig = await signChallenge()
+    await skillsApi.publish(sig, source, renameTo || undefined)
+    alert(
+      renameTo
+        ? `技能已以新名称「${renameTo}」发布到技能市场`
+        : `技能「${source}」已发布到技能市场`,
+    )
+    closeShareDialog()
+    await loadMine()
+  } catch (err) {
+    if (err.response?.status === 409) {
+      // 共享名已被占用：进入重命名模式，源名保持不变
+      shareConflict.value = true
+      shareRenameTo.value = ''
+      return
+    }
+    alert('共享失败：' + friendlyPluginError(err))
+  } finally {
+    shareBusy.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -1601,25 +1956,6 @@ onMounted(async () => {
 }
 
 /* 模型配置卡片：提供方行卡片（参考 DSH 模型设置页设计语言） */
-.config-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  padding: 2.5rem 0;
-  color: #6b7280;
-  font-size: 0.9rem;
-}
-
-.mini-spinner {
-  width: 18px;
-  height: 18px;
-  border: 2px solid #e5e7eb;
-  border-top: 2px solid #667eea;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-  margin: 0;
-}
 
 .provider-row {
   border: 1px solid #e5e7eb;
@@ -1792,5 +2128,115 @@ onMounted(async () => {
 .models-table td:last-child {
   width: 2.5rem;
   text-align: center;
+}
+
+/* ===================== 我的技能 ===================== */
+.skill-subsection {
+  margin-top: 1rem;
+}
+
+.skill-subsection h3 {
+  font-size: 0.95rem;
+  color: #374151;
+  margin: 0 0 0.5rem;
+}
+
+.skill-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  margin-bottom: 0.5rem;
+  background: #fafbfc;
+}
+
+.skill-row-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.skill-row-main strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9rem;
+}
+
+.skill-desc {
+  font-size: 0.8rem;
+  color: #6b7280;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.import-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.import-panel {
+  background: #fff;
+  border-radius: 14px;
+  padding: 1.5rem;
+  max-width: 560px;
+  width: calc(100% - 2rem);
+  max-height: 86vh;
+  overflow: auto;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+}
+
+.import-panel h3 {
+  margin: 0 0 0.5rem;
+}
+
+.import-field {
+  margin: 0.75rem 0;
+}
+
+.import-field label {
+  display: block;
+  font-size: 0.8rem;
+  color: #6b7280;
+  margin-bottom: 0.25rem;
+  font-weight: 600;
+}
+
+.import-field input[type='text'],
+.import-field select,
+.import-field textarea {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: #fff;
+}
+
+.share-empty-hint {
+  padding: 0.5rem 0.6rem;
+  border: 1px dashed #d1d5db;
+  border-radius: 6px;
+}
+
+.import-field textarea {
+  resize: vertical;
+}
+
+.share-conflict {
+  padding: 0.65rem 0.75rem;
+  border: 1px solid #f59e0b;
+  border-radius: 8px;
+  background: #fffbeb;
 }
 </style>

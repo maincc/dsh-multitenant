@@ -5,6 +5,7 @@
         <h1>🔗 DSH 多租户管理</h1>
       </div>
       <div class="nav-links">
+        <router-link to="/skills">技能市场</router-link>
         <router-link to="/admin">管理面板</router-link>
         <router-link to="/user">用户中心</router-link>
       </div>
@@ -15,8 +16,7 @@
   </div>
 </template>
 
-<script setup>
-</script>
+<script setup></script>
 
 <style scoped>
 .navbar {
@@ -26,7 +26,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
 }
 
 .nav-brand h1 {
@@ -49,7 +49,7 @@
 
 .nav-links a:hover,
 .nav-links a.router-link-active {
-  background: rgba(255,255,255,0.2);
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .container {
