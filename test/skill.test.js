@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -389,6 +389,27 @@ describe('SkillService', () => {
     await svc.publish(author, 'admin-skill')
     await svc.unpublish(other, 'admin-skill', { admin: true })
     await expect(svc.list()).resolves.toEqual([])
+  })
+
+  it('取消共享后个人视图即消失；再发布同名可恢复（回归：mineView 不再返回已下架）', async () => {
+    const { dir, svc } = makeService()
+    const author = 'jabcdef1234567890abcdef1234567890444'
+    mockExtract(svc, skillText('re-share'))
+    await svc.publish(author, 're-share')
+    await svc.unpublish(author, 're-share')
+    // 市场与"我的共享"都不再出现该技能；共享仓数据被彻底删除
+    await expect(svc.list()).resolves.toEqual([])
+    const view = await svc.mineView(author)
+    expect(view.published).toEqual([])
+    expect(existsSync(join(dir, 'store', 're-share'))).toBe(false)
+    // 二次取消 → 条目已不存在
+    await expect(svc.unpublish(author, 're-share')).rejects.toThrow(NotFoundError)
+    // 同名再发布 → 全新条目，恢复 active
+    mockExtract(svc, skillText('re-share'))
+    await svc.publish(author, 're-share')
+    const view2 = await svc.mineView(author)
+    expect(view2.published.map((s) => s.name)).toEqual(['re-share'])
+    await expect(svc.list()).resolves.toHaveLength(1)
   })
 
   it('mine：发布者视角与安装更新提示', async () => {

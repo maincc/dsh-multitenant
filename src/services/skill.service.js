@@ -14,7 +14,7 @@
  *   - 入仓前 frontmatter 全量校验（validateSkill），非法内容拒绝进入市场
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -169,7 +169,9 @@ export class SkillService {
   async mineView(address) {
     address = normalizeAddress(address)
     const entries = this.readIndex()
-    const published = entries.filter((e) => e.sharer === address).map((e) => this.toPublic(e))
+    const published = entries
+      .filter((e) => e.sharer === address && e.status === 'active')
+      .map((e) => this.toPublic(e))
     const installs = this.readInstalls()[address] || []
     const installed = installs.map((rec) => {
       const entry = entries.find((e) => e.name === rec.name)
@@ -310,20 +312,23 @@ export class SkillService {
     return this.toPublic(entry)
   }
 
-  /** 取消共享（作者本人）或下架（admin） */
+  /** 取消共享（作者本人）或下架（admin）：彻底删除市场数据 */
   async unpublish(operator, skillName, { admin = false } = {}) {
     const name = assertSkillName(skillName)
     const entries = this.readIndex()
-    const entry = entries.find((e) => e.name === name)
-    if (!entry) throw new NotFoundError(`技能 ${name} 不存在`)
+    const idx = entries.findIndex((e) => e.name === name)
+    if (idx === -1) throw new NotFoundError(`技能 ${name} 不存在`)
+    const entry = entries[idx]
     if (!admin && entry.sharer !== normalizeAddress(operator)) {
       throw new ForbiddenError('只能取消自己共享的技能（管理员可下架任意技能）')
     }
-    if (entry.status !== 'removed') {
-      entry.status = 'removed'
-      this.writeIndex(entries)
-    }
-    return this.toPublic(entry)
+    // 取消共享 = 删除共享仓正文文件 + 移除索引条目。
+    // 已安装用户持有的副本在自己卷里，不受影响；同名可重新发布（全新条目）。
+    const removed = this.toPublic(entry)
+    entries.splice(idx, 1)
+    this.writeIndex(entries)
+    rmSync(join(this.storeDir, name), { recursive: true, force: true })
+    return removed
   }
 
   // ---------------------------------------------------------------------------
