@@ -528,6 +528,17 @@ export class UserService {
   /**
    * 获取用户信息
    */
+  /**
+   * 判断该地址的容器是否已存在（/connect 所有权口径 B 用：
+   * 已存在免签名直连，需要创建时才要求钱包签名）
+   * @param {string} address
+   * @returns {Promise<boolean>}
+   */
+  async containerExists(address) {
+    const info = await dockerService.containerInfo(swtcContainerName(normalizeAddress(address)))
+    return info.exists
+  }
+
   async getUserInfo(address) {
     const user = this.state.swtcUsers?.[address]
     if (!user) throw new NotFoundError('User not found')

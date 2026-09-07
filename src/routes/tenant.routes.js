@@ -4,6 +4,7 @@
 
 import { CONFIG, isAdmin } from '../config/config.js'
 import { userService } from '../services/user.service.js'
+import { tenantConfigService } from '../services/tenant-config.service.js'
 import { validateSwtcAddress } from '../middleware/validate.middleware.js'
 import { rateLimit } from '../middleware/rate-limit.middleware.js'
 import { normalizeAddress, swtcVolumeName } from '../utils/address.js'
@@ -22,6 +23,7 @@ export async function handleTenantRoutes(req, res, path, url) {
   }
 
   // GET /connect：CCDAO 插件连接端点
+  // （P0-2 所有权口径 B：容器已存在→免签名直连；需要创建→钱包签名证明地址归属）
   if (path === '/connect') {
     let address = url.searchParams.get('address')
     if (!validateSwtcAddress(address, res)) return true
@@ -29,6 +31,46 @@ export async function handleTenantRoutes(req, res, path, url) {
     address = normalizeAddress(address)
 
     try {
+      // 只有"需要创建"才要求签名；已存在的容器直接连接
+      const exists = await userService.containerExists(address)
+      if (!exists) {
+        const nonce = url.searchParams.get('nonce')
+        const signature = url.searchParams.get('signature')
+        const publicKey = url.searchParams.get('publicKey')
+        if (!nonce || !signature || !publicKey) {
+          // 未携带签名材料 → 401 + 下发一次性挑战（签名后带参重试）
+          const challenge = tenantConfigService.issueChallenge(address)
+          if (!challenge) {
+            res.writeHead(503, { 'content-type': 'application/json; charset=utf-8' })
+            res.end(JSON.stringify({ error: '挑战发放过载，请稍后重试', code: 'OVERLOAD' }))
+            return true
+          }
+          res.writeHead(401, { 'content-type': 'application/json; charset=utf-8' })
+          res.end(
+            JSON.stringify({
+              error: '需要签名验证容器所有权',
+              code: 'SIGNATURE_REQUIRED',
+              nonce: challenge,
+              address,
+            }),
+          )
+          return true
+        }
+        // 验签（公钥推导地址 === 声称地址）
+        if (!tenantConfigService.verifySignature(address, nonce, signature, publicKey)) {
+          res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
+          res.end(JSON.stringify({ error: '签名验证失败', code: 'FORBIDDEN' }))
+          return true
+        }
+        // 挑战一次性（防重放）
+        if (!tenantConfigService.consumeChallenge(address, nonce)) {
+          res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
+          res.end(JSON.stringify({ error: '挑战已失效，请重新获取', code: 'FORBIDDEN' }))
+          return true
+        }
+      }
+
+      // 连接/创建容器
       const port = await userService.ensureContainer(address)
       const PUBLIC_HOST = process.env.PUBLIC_HOST || CONFIG.server.publicHost
       res.writeHead(302, { location: `http://${PUBLIC_HOST}:${port}/` })

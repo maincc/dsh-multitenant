@@ -1221,6 +1221,42 @@ const connectWallet = async () => {
   }
 }
 
+/**
+ * 容器连接/创建（P0-2 决策 B：所有权签名）
+ * - 容器已存在 → 免签名直连（302）
+ * - 需要创建 → 后端 401 下发一次性挑战 → 插件签名（当前选中账户，原始大小写）→
+ *   带 nonce/signature/publicKey 重试
+ * 签名账户必须与目标地址一致，否则后端验签会 403。
+ */
+const connectWithOwnership = async (address) => {
+  let res = await fetch(`/connect?address=${encodeURIComponent(address)}`, {
+    redirect: 'manual',
+  })
+  if (res.status === 401) {
+    const { nonce } = await res.json()
+    // 复用 signChallenge 的取账户逻辑：插件当前选中账户（保留原始大小写）
+    const accounts = await window.ccdao.request({
+      method: 'swtc_requestAccounts',
+      params: [],
+    })
+    const pluginAddress = accounts?.[0]
+    if (!pluginAddress) {
+      throw new Error('未获取到钱包账户，请确认 CCDAO 插件已解锁并授权本网站')
+    }
+    const signature = await window.ccdao.request({
+      method: 'swtc_signMessage',
+      params: [pluginAddress, nonce],
+    })
+    const publicKey = await window.ccdao.request({
+      method: 'swtc_getPublicKey',
+      params: [pluginAddress],
+    })
+    const params = new URLSearchParams({ address, nonce, signature, publicKey })
+    res = await fetch(`/connect?${params}`, { redirect: 'manual' })
+  }
+  return res
+}
+
 const ensureContainer = async (address) => {
   // 先检查容器状态
   try {
@@ -1240,9 +1276,7 @@ const ensureContainer = async (address) => {
     // 如果容器不存在或已销毁，创建新容器
     if (!statusRes.data.exists || statusRes.data.status === 'destroyed') {
       console.log('[UserCenter] 容器不存在，正在创建...')
-      const connectRes = await fetch(`/connect?address=${encodeURIComponent(address)}`, {
-        redirect: 'manual',
-      })
+      const connectRes = await connectWithOwnership(address)
 
       // 检查是否返回 202（资源不足，进入队列）
       if (connectRes.status === 202) {
@@ -1262,9 +1296,7 @@ const ensureContainer = async (address) => {
     // 如果容器已停止，启动它
     else if (statusRes.data.status === 'stopped') {
       console.log('[UserCenter] 容器已停止，正在启动...')
-      await fetch(`/connect?address=${encodeURIComponent(address)}`, {
-        redirect: 'manual',
-      })
+      await connectWithOwnership(address)
       await new Promise((resolve) => setTimeout(resolve, 2000))
       return 'started'
     }
@@ -1276,9 +1308,7 @@ const ensureContainer = async (address) => {
   } catch (err) {
     console.error('[UserCenter] 检查容器状态失败:', err)
     // 如果检查失败，尝试直接创建容器
-    const connectRes = await fetch(`/connect?address=${encodeURIComponent(address)}`, {
-      redirect: 'manual',
-    })
+    const connectRes = await connectWithOwnership(address)
 
     // 检查是否返回 202（资源不足，进入队列）
     if (connectRes.status === 202) {
@@ -1408,9 +1438,7 @@ const restartContainer = async () => {
     const address = userInfo.value.address
     showLoading('正在启动容器', '请稍候...', 50)
 
-    await fetch(`/connect?address=${encodeURIComponent(address)}`, {
-      redirect: 'manual',
-    })
+    await connectWithOwnership(address)
 
     // 等待容器完全就绪
     await new Promise((resolve) => setTimeout(resolve, 5000))
