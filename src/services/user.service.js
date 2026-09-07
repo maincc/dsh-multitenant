@@ -11,6 +11,7 @@ import { promisify } from 'node:util'
 import { CONFIG, getTierLimits, isAdmin } from '../config/config.js'
 import { dockerService } from './docker.service.js'
 import { dataService } from './data.service.js'
+import { cwtStore } from './cwt.store.js'
 import { swtcContainerName, swtcVolumeName, normalizeAddress } from '../utils/address.js'
 import { NotFoundError, BadRequestError, ConflictError } from '../utils/errors.js'
 
@@ -18,12 +19,26 @@ const execFileAsync = promisify(execFile)
 const ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)))
 const PATCHES_DIR = join(ROOT, 'patches')
 const SCRIPTS_DIR = join(ROOT, 'src', 'services')
+/** 等待队列上限与过期时间（security-hardening-plan P0-3） */
+const WAIT_QUEUE_MAX = 500
+const WAIT_QUEUE_STALE_MS = 60 * 60 * 1000
 // 确保 patches 目录存在（旧版入口在启动时创建，模块化版需自行保证）
 mkdirSync(PATCHES_DIR, { recursive: true })
+
+/** 本地日期 YYYY-MM-DD（每日限时按此重置） */
+function todayStr() {
+  const d = new Date()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${d.getFullYear()}-${m}-${day}`
+}
 
 export class UserService {
   constructor() {
     this.state = dataService.loadState()
+    this.state.usages = this.state.usages || {} // 每日使用时长记录 { address: { date, minutes } }
+    // 注：CWT 数据（cwtRegistry / cwtApplications / cwtRecords）已迁移到 data/cwt/，
+    // 由 cwtStore 管理，不再写入 state.json
     this.waitQueue = [] // 等待队列
   }
 
@@ -90,9 +105,10 @@ export class UserService {
   }
 
   /**
-   * 添加到等待队列
+   * 添加到等待队列（security-hardening-plan P0-3：上限 + 过期淘汰，防无界内存增长）
    */
   addToWaitQueue(address, tier = 1) {
+    this.pruneWaitQueue()
     // 检查是否已在队列中
     const existing = this.waitQueue.find((item) => item.address === address)
     if (existing) {
@@ -100,6 +116,10 @@ export class UserService {
         position: this.waitQueue.indexOf(existing) + 1,
         alreadyInQueue: true,
       }
+    }
+
+    if (this.waitQueue.length >= WAIT_QUEUE_MAX) {
+      return { position: -1, full: true, alreadyInQueue: false }
     }
 
     const item = {
@@ -113,6 +133,14 @@ export class UserService {
       position: this.waitQueue.length,
       alreadyInQueue: false,
     }
+  }
+
+  /**
+   * 淘汰过期等待项（超过 1 小时仍未创建则移出队列）
+   */
+  pruneWaitQueue() {
+    const now = Date.now()
+    this.waitQueue = this.waitQueue.filter((item) => now - item.timestamp < WAIT_QUEUE_STALE_MS)
   }
 
   /**
@@ -252,6 +280,10 @@ export class UserService {
     const port = user?.port
     const tier = user?.tier ?? 1
 
+    // 重置 = 全新开始：结算并清除当日时长记录
+    this.settleUsage(address)
+    delete this.state.usages[address]
+
     if (this.state.swtcUsers?.[address]) {
       delete this.state.swtcUsers[address]
     }
@@ -269,6 +301,148 @@ export class UserService {
 
     console.log(`[reset] ${address} container and volume deleted, port ${port} recycled`)
     return { ok: true, address, portRecycled: port, volumeDeleted: volume }
+  }
+
+  /**
+   * 每日使用时限配置（优先 state，回退 config.json）
+   */
+  usageLimitConfig() {
+    return this.state?.usageLimit ?? CONFIG.usageLimit ?? {}
+  }
+
+  /**
+   * CWT 授权用户豁免每日限时。
+   * 判定：审批注册表（cwtStore，data/cwt/registry.json）status=approved 优先（权威）；
+   * 其次兼容 swtcUsers 上的授权/验证时间戳字段。撤销（revoked）后不再豁免，冗余字段同步清除。
+   */
+  isUsageExempt(address) {
+    const registry = cwtStore.getRegistry()[address]
+    if (registry?.status === 'approved') return true
+    const user = this.state.swtcUsers?.[address]
+    return Boolean(user && (user.cwtAuthorizedAt || user.cwtVerifiedAt))
+  }
+
+  /**
+   * 结算一段运行时长：把 usageStartedAt 累计进当日 usages，然后清零起点。
+   * 所有"容器停止"路径都要调用，保证挂机时间也被准确结算。
+   * @returns {number} 本次结算的分钟数
+   */
+  settleUsage(address) {
+    const user = this.state.swtcUsers?.[address]
+    const startedAt = user?.usageStartedAt
+    if (!startedAt) return 0
+    const today = todayStr()
+    const rec = this.state.usages[address] || {}
+    const prev = rec.date === today ? rec.minutes || 0 : 0
+    const minutes = Math.floor((Date.now() - startedAt) / 60000)
+    this.state.usages[address] = { date: today, minutes: prev + minutes }
+    delete user.usageStartedAt
+    return minutes
+  }
+
+  /**
+   * 当日已用分钟（含当前运行段），跨日自动归零
+   */
+  getUsedMinutes(address) {
+    const today = todayStr()
+    const rec = this.state.usages[address]
+    let minutes = rec && rec.date === today ? rec.minutes || 0 : 0
+    const user = this.state.swtcUsers?.[address]
+    if (user?.usageStartedAt) {
+      minutes += Math.floor((Date.now() - user.usageStartedAt) / 60000)
+    }
+    return minutes
+  }
+
+  /**
+   * 启动容器前的每日额度检查；超限抛 USAGE_LIMIT_REACHED（CWT 授权豁免、开关关闭则放行）
+   */
+  ensureUsageAllowed(address) {
+    const cfg = this.usageLimitConfig()
+    if (!cfg.enabled) return
+    if (this.isUsageExempt(address)) return
+    const limit = cfg.dailyMinutes
+    if (!Number.isFinite(limit) || limit <= 0) return
+    const used = this.getUsedMinutes(address)
+    if (used >= limit) {
+      const err = new Error(
+        `今日使用时长已达上限（${limit} 分钟），请明日再试，或完成 CWT 验证解锁`,
+      )
+      err.code = 'USAGE_LIMIT_REACHED'
+      err.usedMinutes = used
+      err.dailyLimit = limit
+      throw err
+    }
+  }
+
+  /**
+   * 定时检查：运行中的非豁免容器超限 → 优雅停止（结算后停）
+   */
+  async checkUsageLimitAndStop() {
+    if (this._usageCheckRunning) return
+    this._usageCheckRunning = true
+    try {
+      const cfg = this.usageLimitConfig()
+      if (!cfg.enabled) return
+      const limit = cfg.dailyMinutes
+      if (!Number.isFinite(limit) || limit <= 0) return
+      const grace =
+        this.state.cleanupPolicy?.stopGraceSeconds ?? CONFIG.cleanup.stopGraceSeconds ?? 60
+      let changed = false
+      for (const [address, user] of Object.entries(this.state.swtcUsers || {})) {
+        if (user.containerStatus !== 'running') continue
+        if (this.isUsageExempt(address)) continue
+        if (this.getUsedMinutes(address) < limit) continue
+        // 超限：先结算本次运行段，再优雅停止
+        this.settleUsage(address)
+        const name = swtcContainerName(address)
+        try {
+          await dockerService.stopContainer(name, grace)
+        } catch (err) {
+          console.error(`[usage-limit] failed to stop ${name}:`, err.message)
+          continue
+        }
+        user.containerStatus = 'stopped'
+        user.stoppedAt = Date.now()
+        changed = true
+        console.log(
+          `[usage-limit] ${address} reached ${limit}min daily limit, container stopped (grace ${grace}s)`,
+        )
+      }
+      if (changed) dataService.saveState(this.state)
+    } finally {
+      this._usageCheckRunning = false
+    }
+  }
+
+  /**
+   * 用户主动停止自己的容器：结算当前运行段（保全每日额度），优雅停止
+   */
+  async stopContainerForUser(address) {
+    address = normalizeAddress(address)
+    const name = swtcContainerName(address)
+    const info = await dockerService.containerInfo(name)
+    if (!info.exists) {
+      throw new NotFoundError(`Container ${name} not found`)
+    }
+
+    // 结算当前运行段：时间停在停止时刻，剩余额度保全
+    this.settleUsage(address)
+
+    if (info.status === 'running') {
+      const grace =
+        this.state.cleanupPolicy?.stopGraceSeconds ?? CONFIG.cleanup.stopGraceSeconds ?? 60
+      await dockerService.stopContainer(name, grace)
+    }
+
+    const user = this.state.swtcUsers?.[address]
+    if (user) {
+      user.containerStatus = 'stopped'
+      user.stoppedAt = Date.now()
+      dataService.saveState(this.state)
+    }
+    console.log(`[user-stop] ${address} container stopped by user (data preserved)`)
+    return { ok: true, address, status: 'stopped' }
   }
 
   /**
@@ -294,6 +468,9 @@ export class UserService {
 
     // 停止容器
     await dockerService.stopContainer(name)
+
+    // 结算本次运行段（管理端强停也计入当日时长）
+    this.settleUsage(address)
 
     // 更新状态
     if (this.state.swtcUsers?.[address]) {
@@ -436,6 +613,10 @@ export class UserService {
    */
   async ensureContainer(address, skipQueueCheck = false) {
     address = normalizeAddress(address)
+
+    // 每日使用时限额度检查（CWT 授权用户豁免；超限抛 USAGE_LIMIT_REACHED）
+    this.ensureUsageAllowed(address)
+
     const name = swtcContainerName(address)
     const volume = swtcVolumeName(address)
 
@@ -472,6 +653,11 @@ export class UserService {
         // 资源不足，添加到等待队列
         const tier = this.state.swtcUsers?.[address]?.tier ?? 1
         const queueResult = this.addToWaitQueue(address, tier)
+        if (queueResult.full) {
+          const error = new Error('等待队列已满，请稍后再试')
+          error.code = 'QUEUE_FULL'
+          throw error
+        }
         const error = new Error('资源不足，已进入等待队列')
         error.code = 'RESOURCE_EXHAUSTED'
         error.queuePosition = queueResult.position
@@ -531,6 +717,7 @@ export class UserService {
   async finalizeTenant(address, name, port) {
     if (!this.state.swtcUsers) this.state.swtcUsers = {}
     const tier = this.state.swtcUsers[address]?.tier ?? 1
+    const startedAt = this.state.swtcUsers[address]?.usageStartedAt ?? Date.now()
     this.state.swtcUsers[address] = {
       ...(this.state.swtcUsers[address] ?? {}),
       port,
@@ -538,6 +725,7 @@ export class UserService {
       createdAt: this.state.swtcUsers[address]?.createdAt ?? Date.now(),
       lastSeenAt: Date.now(),
       containerStatus: 'running',
+      usageStartedAt: startedAt,
     }
     dataService.saveState(this.state)
     const ready = await dockerService.waitReady(port)
@@ -560,8 +748,9 @@ export class UserService {
     const info = await dockerService.containerInfo(name)
     if (!info.exists) throw new NotFoundError(`Container ${name} not found`)
 
-    // 先停止容器
+    // 先结算当前运行段，再停止容器
     if (info.status === 'running') {
+      this.settleUsage(address)
       await dockerService.stopContainer(name)
     }
 
@@ -579,6 +768,7 @@ export class UserService {
       lastUpgradeAt: Date.now(),
       containerStatus: 'running',
       lastSeenAt: Date.now(),
+      usageStartedAt: Date.now(), // 升级重启 = 新的运行段
     }
     dataService.saveState(this.state)
 
@@ -656,6 +846,8 @@ export class UserService {
 
     const name = swtcContainerName(address)
     try {
+      // 容器可能还在运行：先结算本次运行段（销毁也计入当日时长）
+      this.settleUsage(address)
       await dockerService.stopContainer(name)
     } catch {
       // ignore
@@ -717,6 +909,7 @@ export class UserService {
    */
   async restoreFromDocker() {
     const names = await dockerService.listSwtcContainers()
+    const running = new Set(names)
     for (const name of names) {
       const address = name.replace(/^dsh-swtc-/, '').toLowerCase()
       const port = await dockerService.publishedPort(name)
@@ -752,6 +945,8 @@ export class UserService {
         createdAt: this.state.swtcUsers[address]?.createdAt ?? Date.now(),
         lastSeenAt: this.state.swtcUsers[address]?.lastSeenAt ?? Date.now(),
         containerStatus: 'running',
+        // 恢复运行中的容器：保留原运行段起点；缺失（新记录）则从恢复时刻开始计时
+        usageStartedAt: this.state.swtcUsers[address]?.usageStartedAt ?? Date.now(),
       }
 
       // 如果 tier 不匹配，更新 Docker 容器
@@ -768,6 +963,17 @@ export class UserService {
       }
 
       this.state.nextPort = Math.max(this.state.nextPort ?? CONFIG.docker.basePort, port + 1)
+    }
+
+    // 对齐每日时长：Docker 中已不在运行的记录，结算残留运行段并校正状态
+    // （进程重启前崩溃 / 容器被外部停止时，usageStartedAt 可能残留）
+    for (const [address, user] of Object.entries(this.state.swtcUsers || {})) {
+      if (running.has(swtcContainerName(address))) continue
+      this.settleUsage(address)
+      if (user.containerStatus === 'running') {
+        user.containerStatus = 'stopped'
+        user.stoppedAt = user.stoppedAt ?? Date.now()
+      }
     }
     dataService.saveState(this.state)
   }
@@ -910,6 +1116,7 @@ export class UserService {
         try {
           const grace =
             this.state.cleanupPolicy.stopGraceSeconds ?? CONFIG.cleanup.stopGraceSeconds ?? 60
+          this.settleUsage(address) // 结算本次运行段（空闲停止同样累计当日时长）
           await dockerService.stopContainer(name, grace)
           user.containerStatus = 'stopped'
           user.stoppedAt = now

@@ -5,34 +5,12 @@
 import { CONFIG, isAdmin } from '../config/config.js'
 import { userService } from '../services/user.service.js'
 import { tenantConfigService } from '../services/tenant-config.service.js'
+import { cwtAdminService } from '../services/cwt-admin.service.js'
 import { getAdminSession } from '../middleware/auth.middleware.js'
 import { validateSwtcAddress } from '../middleware/validate.middleware.js'
 import { normalizeAddress } from '../utils/address.js'
 import { NotFoundError, ForbiddenError, handleError } from '../utils/errors.js'
-
-/**
- * 解析请求体
- */
-function parseBody(req) {
-  return new Promise((resolve) => {
-    let data = ''
-    req.on('data', (chunk) => (data += chunk))
-    req.on('end', () => resolve(data))
-  })
-}
-
-/**
- * 安全解析 JSON 请求体（非法 JSON 返回 400）
- */
-async function parseJsonBody(req, res) {
-  try {
-    return JSON.parse((await parseBody(req)) || '{}')
-  } catch {
-    res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
-    res.end(JSON.stringify({ error: 'Invalid JSON body', code: 'BAD_REQUEST' }))
-    return null
-  }
-}
+import { parseBody, parseJsonBody } from '../utils/parse-body.js'
 
 /**
  * 处理用户路由
@@ -40,12 +18,50 @@ async function parseJsonBody(req, res) {
 export async function handleUserRoutes(req, res, path) {
   // ---- 租户密钥配置（钱包签名验证身份）----
 
+  // POST /api/user/cwt/apply - 提交 CWT 授权申请（token 即凭证，服务端解析+预验签）
+  if (path === '/api/user/cwt/apply' && req.method === 'POST') {
+    const body = await parseJsonBody(req, res)
+    if (!body) return true
+    try {
+      const result = await cwtAdminService.submitApplication(body.token)
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify(result))
+    } catch (err) {
+      const status = err.statusCode || (err.code ? 400 : 500)
+      if (!res.headersSent) {
+        res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: err.message, code: err.code || 'INTERNAL_ERROR' }))
+      }
+    }
+    return true
+  }
+
+  // GET /api/user/cwt/status - 我的注册状态 / 申请进度（地址公开可查，无敏感信息）
+  if (path === '/api/user/cwt/status' && req.method === 'GET') {
+    const url = new URL(req.url, `http://${req.headers.host}`)
+    const address = url.searchParams.get('address')
+    if (!validateSwtcAddress(address, res)) return true
+    try {
+      const status = cwtAdminService.getStatus(address)
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ ok: true, ...status }))
+    } catch (err) {
+      handleError(err, res)
+    }
+    return true
+  }
+
   // POST /api/user/config-challenge - 获取一次性签名挑战
   if (path === '/api/user/config-challenge' && req.method === 'POST') {
     const body = await parseJsonBody(req, res)
     if (!body) return true
     if (!validateSwtcAddress(body.address, res)) return true
     const nonce = tenantConfigService.issueChallenge(body.address)
+    if (!nonce) {
+      res.writeHead(503, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '挑战发放过载，请稍后重试', code: 'OVERLOAD' }))
+      return true
+    }
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
     res.end(JSON.stringify({ ok: true, nonce }))
     return true
@@ -148,7 +164,8 @@ export async function handleUserRoutes(req, res, path) {
     path.startsWith('/api/user/') &&
     !path.endsWith('/restart') &&
     !path.endsWith('/reset') &&
-    !path.endsWith('/remove')
+    !path.endsWith('/remove') &&
+    !path.endsWith('/stop')
   ) {
     let address = path.slice('/api/user/'.length)
     if (!validateSwtcAddress(address, res)) return

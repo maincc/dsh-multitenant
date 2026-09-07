@@ -14,31 +14,13 @@ import { requireAdmin, getAdminSession } from '../middleware/auth.middleware.js'
 import { validateSwtcAddress } from '../middleware/validate.middleware.js'
 import { isAdmin } from '../config/config.js'
 import { handleError } from '../utils/errors.js'
+import { parseBody, parseJsonBody } from '../utils/parse-body.js'
 
 const PREFIX = '/api/skills'
 
 /**
- * 解析请求体
+ * 处理技能路由
  */
-function parseBody(req) {
-  return new Promise((resolve) => {
-    let data = ''
-    req.on('data', (chunk) => (data += chunk))
-    req.on('end', () => resolve(data))
-  })
-}
-
-/**
- * 安全解析 JSON 请求体（非法 JSON 返回 400）
- */
-async function parseJsonBody(req, res) {
-  try {
-    return JSON.parse((await parseBody(req)) || '{}')
-  } catch {
-    send(res, 400, { error: 'Invalid JSON body', code: 'BAD_REQUEST' })
-    return null
-  }
-}
 
 function send(res, status, obj) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })

@@ -26,6 +26,7 @@
         <a
           href="https://chromewebstore.google.com/detail/ccdao-connector/fpondiojcgaollhcmjgpjmldjjkealjb"
           target="_blank"
+          rel="noopener noreferrer"
         >
           点击安装 CCDAO Connector
         </a>
@@ -101,6 +102,55 @@
       </div>
 
       <div class="card">
+        <h2>🛡️ CWT 验证</h2>
+        <p>通过 CWT 验证后豁免每日使用时限（不再受分钟数限制）</p>
+
+        <div v-if="cwtLoading" class="config-loading">
+          <div class="mini-spinner"></div>
+          <span>正在加载验证状态…</span>
+        </div>
+
+        <template v-else-if="cwtStatus">
+          <!-- 已授权 -->
+          <div v-if="cwtStatus.authorized" class="info-row">
+            <span class="badge badge-success">✅ 已通过验证 · 不限时</span>
+            <span class="cwt-meta">usr: {{ cwtStatus.registry?.usr }}</span>
+          </div>
+
+          <!-- 待审批 -->
+          <div v-else-if="hasPendingApplication" class="info-row">
+            <span class="badge badge-warning">⏳ 待管理员审批</span>
+            <span class="cwt-meta">
+              申请已提交（{{ pendingAppText }}），审批通过后自动豁免限时
+            </span>
+          </div>
+
+          <!-- 未申请 / 被拒 / 已撤销 -->
+          <div v-else>
+            <p class="cwt-meta">
+              你尚未通过 CWT 验证，当前受每日 {{ dailyLimitText }} 分钟使用时限
+              {{
+                cwtStatus.applications?.[0]?.status === 'rejected'
+                  ? '（上次申请被拒绝，可重新申请）'
+                  : ''
+              }}
+            </p>
+            <div class="cwt-apply-form">
+              <button class="btn btn-primary" :disabled="cwtSubmitting" @click="applyCwt">
+                {{ cwtSubmitting ? '签名中…' : '🔐 申请验证（插件签名）' }}
+              </button>
+              <div class="action-hints">
+                <div class="hint">
+                  <strong>申请流程：</strong>点击按钮 → CCDAO 插件弹出 cwt_sign 签名确认 →
+                  自动提交到平台，等待管理员审批；审批通过后自动豁免每日限时
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <div class="card">
         <h2>📊 资源使用</h2>
         <div v-if="userInfo.stats" class="resource-usage">
           <div class="resource-item">
@@ -125,7 +175,14 @@
       <div class="card">
         <h2>🚀 进入 DSH</h2>
         <p>点击下方按钮进入您的专属 DSH 实例</p>
-        <a :href="dshWebUrl" target="_blank" class="btn btn-success btn-large"> 打开 DSH Web UI </a>
+        <a
+          :href="dshWebUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="btn btn-success btn-large"
+        >
+          打开 DSH Web UI
+        </a>
       </div>
 
       <div class="card">
@@ -341,11 +398,24 @@
         <p>管理您的 DSH 容器</p>
         <div class="action-buttons">
           <button class="btn btn-primary" @click="restartDSH">🔄 重启 DSH 服务</button>
+          <button
+            class="btn btn-secondary"
+            :disabled="!connected || userInfo.status !== 'running'"
+            @click="stopContainer"
+          >
+            ⏹ 停止容器（保全时长）
+          </button>
           <button class="btn btn-danger" @click="resetContainer">🗑️ 重置容器（删除数据）</button>
         </div>
         <div class="action-hints">
           <div class="hint">
             <strong>重启 DSH 服务：</strong>安装插件后需要重启 DSH 服务才能生效
+          </div>
+          <div class="hint">
+            <strong>停止容器：</strong>立即结算今日使用时长并保全剩余额度
+            （挂机不再耗时长），数据保留，随时可重新启动{{
+              usageInfoLabel ? '。今日用量：' + usageInfoLabel : ''
+            }}
           </div>
           <div class="hint">
             <strong>重置容器：</strong>删除所有数据和配置，重新开始（不可恢复）
@@ -499,6 +569,7 @@ const connected = ref(false)
 const connecting = ref(false)
 const hasCCDAO = ref(false)
 const userInfo = ref({})
+const usageInfo = ref(null)
 const waiting = ref(false)
 const queuePosition = ref(0)
 const queueTotal = ref(0)
@@ -510,6 +581,94 @@ const dshWebUrl = computed(() => {
   if (!userInfo.value.port) return ''
   return `http://${window.location.hostname}:${userInfo.value.port}/`
 })
+
+// ---- 每日使用时限展示（非 CWT 授权用户受每日分钟数限制）----
+const usageInfoLabel = computed(() => {
+  const u = usageInfo.value
+  if (!u) return ''
+  if (!u.enabled) return '不限量'
+  if (u.exempt) return '已通过 CWT 验证 · 不限时'
+  return `今日已用 ${u.usedMinutes} / ${u.dailyMinutes} 分钟`
+})
+
+const fetchUsage = async (address) => {
+  try {
+    const res = await axios.get(`/connect-status?address=${encodeURIComponent(address)}`)
+    usageInfo.value = res.data.usage || null
+  } catch {
+    usageInfo.value = null
+  }
+}
+
+// ---- CWT 验证状态（M1：展示 + 插件签名申请）----
+const cwtStatus = ref(null)
+const cwtLoading = ref(false)
+const cwtSubmitting = ref(false)
+
+const hasPendingApplication = computed(() =>
+  (cwtStatus.value?.applications || []).some((a) => a.status === 'pending'),
+)
+
+const pendingAppText = computed(() => {
+  const app = (cwtStatus.value?.applications || []).find((a) => a.status === 'pending')
+  return app ? `编号 ${app.id}，提交于 ${new Date(app.submittedAt).toLocaleString()}` : ''
+})
+
+const dailyLimitText = computed(() => usageInfo.value?.dailyMinutes ?? '120')
+
+const fetchCwtStatus = async (address) => {
+  if (!address) return
+  try {
+    cwtLoading.value = true
+    const res = await axios.get(`/api/user/cwt/status?address=${encodeURIComponent(address)}`)
+    cwtStatus.value = res.data || null
+  } catch {
+    cwtStatus.value = null
+  } finally {
+    cwtLoading.value = false
+  }
+}
+
+/**
+ * 申请 CWT 验证：点击 → 插件 cwt_sign 签名（usr 统一为 dsh-usr）→ 自动提交后端。
+ * 插件弹窗确认后返回 token（header.payload.Signature），无需用户手动粘贴。
+ * cwt_sign 参数：对象 { address: 插件当前账户(原始大小写), usr: 'dsh-usr' }。
+ */
+const applyCwt = async () => {
+  if (!window.ccdao || !window.ccdao.request) {
+    alert('未检测到 CCDAO 插件，请先安装并连接钱包')
+    return
+  }
+  cwtSubmitting.value = true
+  try {
+    // 插件当前账户（保留原始大小写！插件 accounts.includes 是大小写敏感严格匹配，
+    // 只有 requestAccounts 原样返回的字符串才能通过，后端会自行 normalize）
+    const accounts = await window.ccdao.request({
+      method: 'swtc_requestAccounts',
+      params: [],
+    })
+    const pluginAddress = accounts?.[0]
+    if (!pluginAddress) {
+      throw new Error('未获取到钱包账户，请确认 CCDAO 插件已解锁并授权本网站')
+    }
+    // 插件 cwt_sign：usr 统一使用平台标识 dsh-usr（用户无需输入）
+    const result = await window.ccdao.request({
+      method: 'cwt_sign',
+      params: [{ address: pluginAddress, usr: 'dsh-usr' }],
+    })
+    const token = typeof result === 'string' ? result : (result?.token ?? result?.signature)
+    if (!token) {
+      throw new Error('插件未返回 token，请确认 cwt_sign 签名成功')
+    }
+    await axios.post('/api/user/cwt/apply', { token })
+    alert('申请已提交，等待管理员审批。审批通过后将自动豁免每日限时。')
+    await fetchCwtStatus(userInfo.value.address)
+  } catch (err) {
+    alert('申请提交失败：' + (err.response?.data?.error || err.message))
+  } finally {
+    cwtSubmitting.value = false
+  }
+}
 
 // ---- 模型配置（钱包签名验证身份后写入自己的租户卷）----
 // items：每个提供方一个 item；DeepSeek 官方也是其中一个（不可删除）
@@ -1189,6 +1348,8 @@ const fetchUserInfo = async (address) => {
   try {
     const res = await axios.get(`/api/user/${address}`)
     userInfo.value = res.data
+    fetchUsage(address)
+    fetchCwtStatus(address)
     fetchConfigStatus()
   } catch (err) {
     console.error('获取用户信息失败:', err)
@@ -1312,6 +1473,33 @@ const resetContainer = async () => {
   } catch (err) {
     hideLoading()
     alert('重置失败：' + (err.response?.data?.error || err.message))
+  }
+}
+
+/**
+ * 主动停止自己的容器：立即结算今日使用时长并保全剩余额度
+ * （停止期间不计时，挂机不再消耗每日限额；数据保留，随时可重新启动）
+ */
+const stopContainer = async () => {
+  if (
+    !confirm(
+      '确定要停止容器吗？\n\n- 停止后今日使用时长立即结算并保全，不再继续消耗\n- 所有数据保留（会话、配置、文件）\n- 随时可以重新启动继续使用',
+    )
+  )
+    return
+
+  try {
+    const address = userInfo.value.address
+    showLoading('正在停止容器', '结算今日时长并停止...', 50)
+
+    await axios.post(`/api/user/${address}/stop`)
+
+    await fetchUserInfo(address)
+    hideLoading()
+    alert('容器已停止，今日剩余时长已保全。随时可重新启动。')
+  } catch (err) {
+    hideLoading()
+    alert('停止失败：' + (err.response?.data?.error || err.message))
   }
 }
 
@@ -2238,5 +2426,28 @@ const doShare = async () => {
   border: 1px solid #f59e0b;
   border-radius: 8px;
   background: #fffbeb;
+}
+
+/* ---- CWT 验证卡片（M1） ---- */
+.cwt-meta {
+  color: #666;
+  font-size: 0.9rem;
+  margin: 0.35rem 0;
+}
+
+.cwt-apply-form textarea {
+  width: 100%;
+  max-width: 560px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 0.6rem;
+  font-family: monospace;
+  font-size: 0.82rem;
+  resize: vertical;
+  margin: 0.5rem 0;
+}
+
+.cwt-apply-form .btn {
+  margin-top: 0.2rem;
 }
 </style>

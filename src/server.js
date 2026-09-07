@@ -98,6 +98,18 @@ function startCleanupTimer() {
 }
 
 /**
+ * 启动每日使用时限检查定时器
+ */
+function startUsageLimitTimer() {
+  const interval = CONFIG.usageLimit?.checkIntervalMs ?? 60000
+  setInterval(() => userService.checkUsageLimitAndStop(), interval)
+  const minutes = CONFIG.usageLimit?.dailyMinutes ?? 120
+  console.log(
+    `[usage-limit] timer started: check every ${(interval / 1000).toFixed(0)}s, daily limit ${minutes}min, CWT authorized users exempt`,
+  )
+}
+
+/**
  * 启动资源监控定时器
  */
 function startResourceMonitor() {
@@ -168,7 +180,10 @@ const server = createServer(async (req, res) => {
     path === '/connect-status' ||
     path.startsWith('/leave/') ||
     (path.startsWith('/api/user/') &&
-      (path.endsWith('/remove') || path.endsWith('/restart') || path.endsWith('/reset')))
+      (path.endsWith('/remove') ||
+        path.endsWith('/restart') ||
+        path.endsWith('/reset') ||
+        path.endsWith('/stop')))
   ) {
     if (await handleTenantRoutes(req, res, path, url)) return
   }
@@ -184,8 +199,13 @@ const server = createServer(async (req, res) => {
     return
   }
 
-  // SPA 路由 fallback
+  // SPA 路由 fallback；未注册的 /api/* 一律返回 404 JSON，绝不能吞成前端 HTML
   if (!res.headersSent) {
+    if (path.startsWith('/api/')) {
+      res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: 'Not found', code: 'NOT_FOUND' }))
+      return
+    }
     serveFrontend(res)
   }
 })
@@ -195,6 +215,7 @@ const PORT = Number(process.env.PORT || CONFIG.server.port)
 server.listen(PORT, '0.0.0.0', async () => {
   await userService.restoreFromDocker()
   startCleanupTimer()
+  startUsageLimitTimer()
   startResourceMonitor()
   startQueueProcessor()
   console.log(`[dsh-multitenant] entry server on http://127.0.0.1:${PORT}/`)

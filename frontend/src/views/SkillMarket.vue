@@ -14,6 +14,7 @@
         <a
           href="https://chromewebstore.google.com/detail/ccdao-connector/fpondiojcgaollhcmjgpjmldjjkealjb"
           target="_blank"
+          rel="noopener noreferrer"
           >CCDAO Connector</a
         >。
       </div>

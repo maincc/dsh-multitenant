@@ -21,6 +21,16 @@ const DEFAULTS = {
     processBaseline: 2, // docker top 进程数超过此值视为有外部程序在跑（基础进程数 1 + 1）
     stopGraceSeconds: 60, // 停止容器前的 SIGTERM 宽限秒数
   },
+  usageLimit: {
+    enabled: true, // 每日使用时限开关
+    dailyMinutes: 120, // 每个地址每天累计使用上限（分钟），CWT 授权用户豁免
+    checkIntervalMs: 60000, // 超时检查间隔（毫秒）
+  },
+  cwt: {
+    enabled: true, // CWT 申请-审批-出示体系开关
+    ttlMs: 300000, // 出示 token 全局时效（±5 分钟，双向）
+    allowCwtEnt: false, // CWT_ENT 组形态预留，本期关闭
+  },
   resource: {
     monitorIntervalMs: 30000,
     autoUpgradeThreshold: 80,

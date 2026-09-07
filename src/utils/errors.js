@@ -39,6 +39,13 @@ export class ConflictError extends AppError {
   }
 }
 
+export class PayloadTooLargeError extends AppError {
+  constructor(message = 'Request body too large') {
+    super('PAYLOAD_TOO_LARGE', message, 413)
+    this.name = 'PayloadTooLargeError'
+  }
+}
+
 export class InternalError extends AppError {
   constructor(message = 'Internal server error') {
     super('INTERNAL_ERROR', message, 500)
@@ -52,10 +59,10 @@ export class InternalError extends AppError {
 export function handleError(err, res) {
   const statusCode = err.statusCode || 500
   const message = err.message || 'Internal server error'
-  
+
   res.writeHead(statusCode, { 'content-type': 'application/json; charset=utf-8' })
   res.end(JSON.stringify({ error: message, code: err.code || 'UNKNOWN' }))
-  
+
   // 记录错误日志
   if (statusCode >= 500) {
     console.error(`[error] ${statusCode} ${message}`, err.stack || '')

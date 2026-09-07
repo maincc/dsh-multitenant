@@ -19,6 +19,7 @@
         <a
           href="https://chromewebstore.google.com/detail/ccdao-connector/fpondiojcgaollhcmjgpjmldjjkealjb"
           target="_blank"
+          rel="noopener noreferrer"
         >
           点击安装 CCDAO Connector
         </a>
@@ -173,6 +174,7 @@
                   v-if="user.status === 'running'"
                   :href="webUrl(user.port)"
                   target="_blank"
+                  rel="noopener noreferrer"
                   class="btn btn-info"
                 >
                   访问
@@ -234,6 +236,141 @@
           </tbody>
         </table>
       </div>
+
+      <div class="card">
+        <h2>🔐 CWT 授权管理</h2>
+        <p>用户提交 CWT 申请后在此审批；批准后该地址豁免每日使用时限</p>
+
+        <h3>待审批申请</h3>
+        <div v-if="cwtLoading" class="config-loading">
+          <span>正在加载…</span>
+        </div>
+        <table v-else-if="cwtApplications.length">
+          <thead>
+            <tr>
+              <th>usr</th>
+              <th>SWTC 地址</th>
+              <th>算法</th>
+              <th>提交时间</th>
+              <th>验签</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="app in cwtApplications" :key="app.id">
+              <td>{{ app.parsed?.usr || '-' }}</td>
+              <td class="cwt-mono">{{ shortAddr(app.parsed?.address) }}</td>
+              <td>{{ app.parsed?.alg || '-' }}</td>
+              <td>{{ fmtTime(app.submittedAt) }}</td>
+              <td>
+                <span class="badge" :class="app.sigOk ? 'badge-success' : 'badge-danger'">
+                  {{ app.sigOk ? '通过' : '失败' }}
+                </span>
+              </td>
+              <td>
+                <template v-if="app.status === 'pending'">
+                  <button
+                    class="btn btn-small btn-success"
+                    :disabled="cwtBusy"
+                    @click="approveCwt(app.id)"
+                  >
+                    批准
+                  </button>
+                  <button
+                    class="btn btn-small btn-danger"
+                    :disabled="cwtBusy"
+                    @click="rejectCwt(app.id)"
+                  >
+                    拒绝
+                  </button>
+                </template>
+                <span
+                  v-else
+                  class="badge"
+                  :class="app.status === 'approved' ? 'badge-success' : 'badge-info'"
+                >
+                  {{ app.status }}
+                </span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div v-else class="cwt-empty">暂无待审批申请</div>
+
+        <h3>授权注册表</h3>
+        <table v-if="cwtRegistry.length">
+          <thead>
+            <tr>
+              <th>usr</th>
+              <th>SWTC 地址</th>
+              <th>状态</th>
+              <th>批准时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="entry in cwtRegistry" :key="entry.address">
+              <td>{{ entry.usr }}</td>
+              <td class="cwt-mono">{{ shortAddr(entry.address) }}</td>
+              <td>
+                <span
+                  class="badge"
+                  :class="entry.status === 'approved' ? 'badge-success' : 'badge-danger'"
+                >
+                  {{ entry.status }}
+                </span>
+              </td>
+              <td>{{ fmtTime(entry.approvedAt) }}</td>
+              <td>
+                <button
+                  v-if="entry.status === 'approved'"
+                  class="btn btn-small btn-danger"
+                  :disabled="cwtBusy"
+                  @click="revokeCwt(entry.address)"
+                >
+                  撤销
+                </button>
+                <span v-else-if="entry.revokedAt">{{ fmtTime(entry.revokedAt) }} 撤销</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div v-else class="cwt-empty">暂无已授权地址</div>
+
+        <h3>审计记录</h3>
+        <table v-if="cwtRecords.length">
+          <thead>
+            <tr>
+              <th>动作</th>
+              <th>usr</th>
+              <th>地址</th>
+              <th>时间</th>
+              <th>操作人</th>
+              <th>token</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(rec, i) in cwtRecords" :key="i">
+              <td>
+                <span class="badge" :class="actionBadge(rec.action)">{{ rec.action }}</span>
+              </td>
+              <td>{{ rec.usr || '-' }}</td>
+              <td class="cwt-mono">{{ shortAddr(rec.address) }}</td>
+              <td>{{ fmtTime(rec.at) }}</td>
+              <td class="cwt-mono">{{ shortAddr(rec.by) }}</td>
+              <td>
+                <button v-if="rec.token" class="btn btn-small" @click="toggleToken(i)">
+                  {{ expandedToken === i ? '收起' : '查看' }}
+                </button>
+                <div v-if="expandedToken === i" class="cwt-token-preview">
+                  {{ rec.token }}
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div v-else class="cwt-empty">暂无审计记录</div>
+      </div>
     </div>
   </div>
 </template>
@@ -255,6 +392,13 @@ const hasCCDAO = ref(false)
 const currentAdminAddress = ref(null)
 const currentAddress = ref(null)
 const dockerAvailable = ref(false)
+// CWT 授权管理（M1）
+const cwtApplications = ref([])
+const cwtRegistry = ref([])
+const cwtRecords = ref([])
+const cwtLoading = ref(false)
+const cwtBusy = ref(false)
+const expandedToken = ref(null)
 let dataRefreshInterval = null
 
 // 租户 DSH 实例地址：用当前访问入口页的 host 拼端口（不再硬编码 127.0.0.1）
@@ -426,6 +570,79 @@ const fetchData = async () => {
     error.value = '加载数据失败: ' + err.message
   } finally {
     loading.value = false
+  }
+  // CWT 数据跟随主刷新（登录成功、定时刷新、操作后刷新均自动带上）
+  fetchCwtData()
+}
+
+// ---------- CWT 授权管理（M1） ----------
+
+const shortAddr = (a) => (a ? `${a.slice(0, 8)}…${a.slice(-4)}` : '-')
+const fmtTime = (t) => (t ? new Date(t).toLocaleString() : '-')
+const actionBadge = (action) =>
+  ({ approve: 'badge-success', reject: 'badge-warning', revoke: 'badge-danger' })[action] ||
+  'badge-info'
+const toggleToken = (i) => {
+  expandedToken.value = expandedToken.value === i ? null : i
+}
+
+const fetchCwtData = async () => {
+  try {
+    cwtLoading.value = true
+    const [apps, reg, recs] = await Promise.all([
+      axios.get('/api/admin/cwt/applications'),
+      axios.get('/api/admin/cwt/registry'),
+      axios.get('/api/admin/cwt/records'),
+    ])
+    cwtApplications.value = apps.data.applications || []
+    cwtRegistry.value = reg.data.registry || []
+    cwtRecords.value = recs.data.records || []
+  } catch (err) {
+    console.error('加载 CWT 数据失败:', err)
+  } finally {
+    cwtLoading.value = false
+  }
+}
+
+const approveCwt = async (id) => {
+  if (!confirm('确认批准该 CWT 申请？\n批准后此地址将豁免每日使用时限。')) return
+  cwtBusy.value = true
+  try {
+    await axios.post(`/api/admin/cwt/applications/${id}/approve`)
+    alert('已批准，该地址现已豁免每日限时')
+    await fetchData()
+  } catch (err) {
+    alert('批准失败: ' + (err.response?.data?.error || err.message))
+  } finally {
+    cwtBusy.value = false
+  }
+}
+
+const rejectCwt = async (id) => {
+  if (!confirm('确认拒绝该 CWT 申请？')) return
+  cwtBusy.value = true
+  try {
+    await axios.post(`/api/admin/cwt/applications/${id}/reject`)
+    alert('已拒绝')
+    await fetchData()
+  } catch (err) {
+    alert('拒绝失败: ' + (err.response?.data?.error || err.message))
+  } finally {
+    cwtBusy.value = false
+  }
+}
+
+const revokeCwt = async (address) => {
+  if (!confirm(`确认撤销 ${address.slice(0, 8)}… 的 CWT 授权？\n撤销后该地址恢复每日限时。`)) return
+  cwtBusy.value = true
+  try {
+    await axios.post(`/api/admin/cwt/registry/${address}/revoke`)
+    alert('已撤销，该地址恢复每日限时')
+    await fetchData()
+  } catch (err) {
+    alert('撤销失败: ' + (err.response?.data?.error || err.message))
+  } finally {
+    cwtBusy.value = false
   }
 }
 
@@ -819,5 +1036,35 @@ table {
   word-break: break-all;
   display: block;
   font-size: 0.85rem;
+}
+
+/* ---- CWT 授权管理（M1） ---- */
+.cwt-mono {
+  font-family: monospace;
+  font-size: 0.82rem;
+}
+
+.cwt-empty {
+  color: #888;
+  padding: 0.6rem 0;
+  font-size: 0.9rem;
+}
+
+.cwt-token-preview {
+  margin-top: 0.4rem;
+  font-family: monospace;
+  font-size: 0.72rem;
+  background: #f3f4f6;
+  border-radius: 4px;
+  padding: 0.4rem;
+  word-break: break-all;
+  max-width: 420px;
+}
+
+.card h3 {
+  margin-top: 1.2rem;
+  margin-bottom: 0.4rem;
+  font-size: 0.95rem;
+  color: #444;
 }
 </style>

@@ -48,6 +48,8 @@ const CREDENTIAL_KEY = 'DEEPSEEK_API_KEY'
 const PI_AI_SECTION = 'llm-pi-ai'
 /** 挑战有效期：5 分钟 */
 const CHALLENGE_TTL_MS = 5 * 60 * 1000
+/** 一次性挑战 Map 上限（防未认证洪泛导致内存耗尽，security-hardening-plan P0-3） */
+const MAX_CHALLENGES = 10000
 /** API Key 长度上限（防止超大 payload） */
 const MAX_KEY_LENGTH = 4096
 /** baseURL 长度上限 */
@@ -80,11 +82,23 @@ function sh(cmd, args) {
 
 export class TenantConfigService {
   /**
+   * 清理过期挑战（每次发放时顺带执行，防 Map 无限增长）
+   */
+  pruneChallenges() {
+    const now = Date.now()
+    for (const [addr, rec] of challenges) {
+      if (rec.expiresAt < now) challenges.delete(addr)
+    }
+  }
+
+  /**
    * 发放一次性挑战
    * @param {string} address SWTC 地址
-   * @returns {string} nonce（hex）
+   * @returns {string|null} nonce（hex）；挑战池已满时返回 null
    */
   issueChallenge(address) {
+    this.pruneChallenges()
+    if (challenges.size >= MAX_CHALLENGES) return null
     const nonce = randomBytes(32).toString('hex')
     challenges.set(normalizeAddress(address), {
       nonce,

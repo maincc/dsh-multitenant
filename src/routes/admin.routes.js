@@ -6,21 +6,12 @@ import { CONFIG, isAdmin } from '../config/config.js'
 import { userService } from '../services/user.service.js'
 import { dataService } from '../services/data.service.js'
 import { dockerService } from '../services/docker.service.js'
+import { cwtAdminService } from '../services/cwt-admin.service.js'
 import { requireAdmin, getAdminSession } from '../middleware/auth.middleware.js'
 import { validateSwtcAddress } from '../middleware/validate.middleware.js'
 import { normalizeAddress } from '../utils/address.js'
 import { BadRequestError, NotFoundError, handleError } from '../utils/errors.js'
-
-/**
- * 解析请求体
- */
-function parseBody(req) {
-  return new Promise((resolve) => {
-    let data = ''
-    req.on('data', (chunk) => (data += chunk))
-    req.on('end', () => resolve(data))
-  })
-}
+import { parseBody } from '../utils/parse-body.js'
 
 /**
  * 处理管理路由
@@ -175,6 +166,128 @@ export async function handleAdminRoutes(req, res, path, url) {
         res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify({ error: err.message, code: err.code || 'INTERNAL_ERROR' }))
       }
+    }
+    return true
+  }
+
+  // GET /api/admin/cwt/applications - CWT 待审批列表
+  if (path === '/api/admin/cwt/applications' && req.method === 'GET') {
+    if (!requireAdmin(req, res)) return
+    try {
+      const list = cwtAdminService.listApplications()
+      if (!res.headersSent) {
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ ok: true, applications: list }))
+      }
+    } catch (err) {
+      if (!res.headersSent) handleError(err, res)
+    }
+    return true
+  }
+
+  // POST /api/admin/cwt/applications/:id/approve - 批准（复核验签后入库）
+  if (
+    path.startsWith('/api/admin/cwt/applications/') &&
+    path.endsWith('/approve') &&
+    req.method === 'POST'
+  ) {
+    if (!requireAdmin(req, res)) return
+    const id = path.slice('/api/admin/cwt/applications/'.length, -'/approve'.length)
+    try {
+      const adminAddr = getAdminSession(req)
+      const result = await cwtAdminService.approveApplication(id, adminAddr)
+      if (!res.headersSent) {
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify(result))
+      }
+    } catch (err) {
+      if (!res.headersSent) {
+        const status = err.statusCode || (err.code ? 400 : 500)
+        res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: err.message, code: err.code || 'INTERNAL_ERROR' }))
+      }
+    }
+    return true
+  }
+
+  // POST /api/admin/cwt/applications/:id/reject - 拒绝
+  if (
+    path.startsWith('/api/admin/cwt/applications/') &&
+    path.endsWith('/reject') &&
+    req.method === 'POST'
+  ) {
+    if (!requireAdmin(req, res)) return
+    const id = path.slice('/api/admin/cwt/applications/'.length, -'/reject'.length)
+    try {
+      const adminAddr = getAdminSession(req)
+      const result = await cwtAdminService.rejectApplication(id, adminAddr)
+      if (!res.headersSent) {
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify(result))
+      }
+    } catch (err) {
+      if (!res.headersSent) {
+        const status = err.statusCode || (err.code ? 400 : 500)
+        res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: err.message, code: err.code || 'INTERNAL_ERROR' }))
+      }
+    }
+    return true
+  }
+
+  // GET /api/admin/cwt/registry - 已批准注册表
+  if (path === '/api/admin/cwt/registry' && req.method === 'GET') {
+    if (!requireAdmin(req, res)) return
+    try {
+      const registry = cwtAdminService.listRegistry()
+      if (!res.headersSent) {
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ ok: true, registry }))
+      }
+    } catch (err) {
+      if (!res.headersSent) handleError(err, res)
+    }
+    return true
+  }
+
+  // POST /api/admin/cwt/registry/:address/revoke - 撤销授权
+  if (
+    path.startsWith('/api/admin/cwt/registry/') &&
+    path.endsWith('/revoke') &&
+    req.method === 'POST'
+  ) {
+    if (!requireAdmin(req, res)) return
+    let address = path.slice('/api/admin/cwt/registry/'.length, -'/revoke'.length)
+    if (!validateSwtcAddress(address, res)) return
+    address = normalizeAddress(address)
+    try {
+      const adminAddr = getAdminSession(req)
+      const result = await cwtAdminService.revokeRegistry(address, adminAddr)
+      if (!res.headersSent) {
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify(result))
+      }
+    } catch (err) {
+      if (!res.headersSent) {
+        const status = err.statusCode || (err.code ? 400 : 500)
+        res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: err.message, code: err.code || 'INTERNAL_ERROR' }))
+      }
+    }
+    return true
+  }
+
+  // GET /api/admin/cwt/records - 审计记录（token 原文可查可重验）
+  if (path === '/api/admin/cwt/records' && req.method === 'GET') {
+    if (!requireAdmin(req, res)) return
+    try {
+      const records = cwtAdminService.listRecords()
+      if (!res.headersSent) {
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ ok: true, records }))
+      }
+    } catch (err) {
+      if (!res.headersSent) handleError(err, res)
     }
     return true
   }
