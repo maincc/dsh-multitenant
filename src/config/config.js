@@ -31,6 +31,10 @@ const DEFAULTS = {
     ttlMs: 300000, // 出示 token 全局时效（±5 分钟，双向）
     allowCwtEnt: false, // CWT_ENT 组形态预留，本期关闭
   },
+  skills: {
+    autoInvoke: false, // 市场技能默认禁止模型自动调用（P0-4：安装到用户卷时强制
+    // disable-model-invocation: true，除非本配置开启）
+  },
   resource: {
     monitorIntervalMs: 30000,
     autoUpgradeThreshold: 80,

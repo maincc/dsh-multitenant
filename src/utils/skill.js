@@ -236,3 +236,34 @@ export function rewriteSkillName(text, newName) {
 export function parseSkillBoolean(key, raw) {
   return parseBooleanValue(key, raw)
 }
+
+/**
+ * 强制把 frontmatter 的 disable-model-invocation 置为 true（security-hardening-plan P0-4）。
+ *
+ * 平台默认关闭市场技能被模型自动调用：安装到用户卷的副本强制该标记，
+ * 共享仓正文保持作者原样（不污染市场展示）。已有 true / 已有 false 的
+ * 行统一替换为 true；没有该行则在闭合 --- 前插入。正文不动。
+ *
+ * @param {string} text 技能文件完整内容（已通过 validateSkill）
+ * @returns {string} 改写后的内容
+ * @throws TypeError frontmatter 缺失
+ */
+export function forceDisableModelInvocation(text) {
+  const { frontmatter } = parseFrontmatter(text)
+  if (frontmatter['disable-model-invocation'] === true) return text // 已是仅用户侧，无需改写
+  const lines = text.split(/\r?\n/)
+  let closeIdx = -1
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i].trim() === '---') {
+      closeIdx = i
+      break
+    }
+    if (/^\s*disable-model-invocation\s*:/.test(lines[i])) {
+      lines[i] = `disable-model-invocation: true`
+      return lines.join('\n')
+    }
+  }
+  if (closeIdx === -1) throw new TypeError('frontmatter 缺少闭合的 --- 行')
+  lines.splice(closeIdx, 0, 'disable-model-invocation: true')
+  return lines.join('\n')
+}

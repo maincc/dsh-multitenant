@@ -17,10 +17,17 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createHash } from 'node:crypto'
 
 import { tenantConfigService } from './tenant-config.service.js'
 import { dataService } from './data.service.js'
-import { assertSkillName, rewriteSkillName, validateSkill } from '../utils/skill.js'
+import { CONFIG } from '../config/config.js'
+import {
+  assertSkillName,
+  rewriteSkillName,
+  validateSkill,
+  forceDisableModelInvocation,
+} from '../utils/skill.js'
 import { normalizeAddress } from '../utils/address.js'
 import {
   BadRequestError,
@@ -182,6 +189,7 @@ export class SkillService {
         source: rec.source,
         installedAt: rec.installedAt,
         contentHash: rec.contentHash,
+        installedHash: rec.installedHash ?? null,
         size: rec.size,
         hasUpdate,
         status: entry?.status ?? 'removed',
@@ -342,9 +350,21 @@ export class SkillService {
     this.checkInstallRate(address)
     const entry = this.getActiveEntry(name)
     const text = this.readEntryBody(name)
-    const b64 = Buffer.from(text, 'utf8').toString('base64')
+
+    // P0-4 供应链边界：平台默认（skills.autoInvoke=false）市场技能
+    // 安装到用户卷时强制 disable-model-invocation: true —— 模型不可自动调用
+    // 未显式装受信技能。共享仓正文保持作者原样，只改写写入卷的副本。
+    let installText = text
+    if (!CONFIG.skills?.autoInvoke) {
+      installText = forceDisableModelInvocation(text)
+    }
+    const b64 = Buffer.from(installText, 'utf8').toString('base64')
     await tenantConfigService.runScript(address, 'install-skill.mjs', [name, b64])
-    this.recordInstall(address, name, entry.contentHash, entry.bodyBytes, 'market')
+    // 安装记录保留共享仓原 contentHash（hasUpdate 对比用），
+    // 另存 installedHash（改写后落盘内容的哈希，供展示/核对）
+    const recordBytes = Buffer.byteLength(installText, 'utf8')
+    const extra = installText === text ? {} : { installedHash: createHashForText(installText) }
+    this.recordInstall(address, name, entry.contentHash, recordBytes, 'market', extra)
     return this.toPublic(entry, true)
   }
 
@@ -394,6 +414,8 @@ export class SkillService {
       whenToUse: entry.whenToUse ?? '',
       hasResources: Boolean(entry.hasResources),
       disableModelInvocation: Boolean(entry.disableModelInvocation),
+      // P0-4：该技能在平台上是否可被模型自动调用（前端风险提示用）
+      modelAutoInvoke: !entry.disableModelInvocation && Boolean(CONFIG.skills?.autoInvoke),
       sharer: entry.sharer,
       sharedAt: entry.sharedAt,
       contentHash: entry.contentHash,
@@ -410,10 +432,17 @@ export class SkillService {
     return entry
   }
 
-  recordInstall(address, name, contentHash, size, source) {
+  recordInstall(address, name, contentHash, size, source, extra = {}) {
     const all = this.readInstalls()
     const list = all[address] || (all[address] = [])
-    const rec = { name, source, installedAt: new Date().toISOString(), contentHash, size }
+    const rec = {
+      name,
+      source,
+      installedAt: new Date().toISOString(),
+      contentHash,
+      size,
+    }
+    if (extra.installedHash) rec.installedHash = extra.installedHash
     const idx = list.findIndex((r) => r.name === name)
     if (idx === -1) list.push(rec)
     else list[idx] = rec
@@ -451,6 +480,10 @@ export class SkillService {
 
 function isValidAddressLike(addr) {
   return typeof addr === 'string' && /^j[1-9A-HJ-NP-Za-km-zl]{29,34}$/i.test(addr)
+}
+
+function createHashForText(text) {
+  return createHash('sha256').update(text, 'utf8').digest('hex')
 }
 
 export const skillService = new SkillService()

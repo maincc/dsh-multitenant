@@ -3,6 +3,13 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+// 本文件是安装/发布/状态流程回归护栏：关闭市场改写策略，保住"原样写入"断言
+//（P0-4 强制 disable-model-invocation 的行为由 skill-service.test.js 专门覆盖）
+vi.mock('../src/config/config.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  return { ...actual, CONFIG: { ...actual.CONFIG, skills: { autoInvoke: true } } }
+})
+
 import {
   assertSkillName,
   nameCandidateFromFilename,

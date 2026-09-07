@@ -173,6 +173,23 @@ const install = async (name) => {
     alert('请先在用户中心连接钱包后再安装')
     return
   }
+
+  // P0-4 供应链边界：安装前确认 + 风险提示
+  const isDetail = detail.value?.name === name
+  const target = (isDetail ? detail.value : skills.value.find((s) => s.name === name)) || {}
+  const autoLine = target.modelAutoInvoke
+    ? '⚠️ 该技能可被模型自动调用，请确认你信任其发布者与内容。'
+    : '（平台默认：市场技能不会被模型自动调用，仅供你手动使用）'
+  const confirmed = confirm(
+    `即将安装共享技能「${name}」\n\n` +
+      '⚠️ 技能内容来自社区市场，可能包含脚本、命令或外部请求，' +
+      '安装后会写入你的容器并可被执行。\n' +
+      `发布者：${target.sharer ? shortAddress(target.sharer) : '未知'}\n\n` +
+      autoLine +
+      '\n\n确定安装吗？',
+  )
+  if (!confirmed) return
+
   installing.value = true
   try {
     const auth = await signChallenge()
