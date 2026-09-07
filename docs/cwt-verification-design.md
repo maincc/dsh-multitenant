@@ -1,6 +1,9 @@
 # dsh-multitenant CWT 验证设计（申请-批准-出示）
 
-> 状态：设计评审稿（未动业务代码）
+> **状态：✅ 已实施（M0 后端 + M1 前端，2026-09）**——接口/前端/豁免联动均已落地
+> **实施后修订**：①注册表/申请/审计存储从 `state.json` 迁至 `data/cwt/`
+> （registry.json / applications.json / records.log，启动自动迁移）；②出示 token
+> 时效由双向 `±ttl` 改**单向**（`0 ≤ now−issued*1000 ≤ ttl`，拒绝未来签发，P2-6）。
 > 依据：cwt-lib 网关认证模式（`plugin/cwt.lua` 的 APISIX consumer 注册表 + 出示验签）与
 > cwt-lib JS 验签口径（signingInput=raw_h.raw_p、secp256k1=sha256+DER、ed25519=原始字节、jingtum=base58 派生）
 > 复用：`src/services/cwt.service.js`（验签+策略+地址推导，已就绪）
@@ -38,7 +41,7 @@ JS 端教训：JS `verify()` 只验签、**无注册表/时效/地址归属层**
 > 语义与 APISIX consumer 完全同构：**注册表存"身份规则"，出示 token 只是证明"当前持钥且未过期"**。
 > 因此：①每次出示的都是**新签** token（time 防重放）；②批准状态在注册表以地址为键，不是把某个特定 token 当通行证。
 
-## 3. 数据模型（state.json）
+## 3. 数据模型（data/cwt/，由 state.json 迁移而来）
 
 ```jsonc
 {
@@ -125,7 +128,7 @@ verifyCwtForAccess(address, token):
 {
   "cwt": {
     "enabled": true,
-    "ttlMs": 300000, // 出示 token 全局时效（沿用现有，±5min 防重放）
+    "ttlMs": 300000, // 出示 token 全局时效（已改单向：0 ≤ now−issued*1000 ≤ ttl，拒绝未来签发）
     "allowCwtEnt": false, // CWT_ENT 组形态预留，本期关闭
   },
 }
@@ -136,7 +139,7 @@ verifyCwtForAccess(address, token):
 1. **出示性质**：出示 token 证明"当前持钥"，注册表决定"身份是否授权"。**授权状态与限时豁免绑定**，但机密性等同 APISIX consumer 设计。
 2. **不防对抗**：用户在容器内有 shell，限时/授权不影响其自行使用；CWT 授权是平台侧凭证体系，不是沙箱加固。
 3. **token 原文存审计**：`cwtRecords` 存明文字符串（可随时重验），管理员可见；如需脱敏可改进（本期明文，文档注明）。
-4. **单实例**：注册表在 state.json，单实例生效；多实例需共享存储（与现状一致）。
+4. **单实例**：注册表在 `data/cwt/registry.json`，单实例生效；多实例需共享存储（与现状一致）。
 5. **CWT 是"签名证明"而非实名**：任何持该地址私钥者都能完成出示；实名/审核由"管理员批准"这道人工关承担（注册表可随时撤销）。
 
 ## 8. 落地阶段

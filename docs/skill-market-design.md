@@ -1,7 +1,7 @@
 # 技能市场（Skill Marketplace）设计与任务拆分
 
+> **状态：✅ 已实施（2026-09）**；末尾 §10 为 P0-4 供应链边界增补。
 > 目标读者：dsh-multitenant 维护者
-> 状态：设计评审稿（未动代码）
 > 适用范围：本仓库（multitenant 入口服务 + 租户容器），**不改 DSH 本体**
 
 ---
@@ -392,3 +392,27 @@ docker run --rm \
 
 - zip（含 resources）导入/导出打包；download 的已装用户签名下载细分。
 - admin 技能管理页 UI（后端 `GET /api/skills/admin` 与 `POST .../hide` 已就绪，AdminPanel 未接入）。
+
+---
+
+## 14. 供应链边界增补（P0-4，2026-09 已实施）
+
+审计 S4：市场正文零审查 → 恶意技能可被模型"自动调用"执行恶意指令/外发密钥。
+
+**落地方案（默认安全）**：
+
+1. `config.json` / config 默认 `skills.autoInvoke: false`（`src/config/config.js` DEFAULTS）。
+2. 市场安装（`SkillService.install`）在写入用户卷时强制改写副本 frontmatter：
+   `disable-model-invocation: true`（`src/utils/skill.js` 的 `forceDisableModelInvocation`，
+   行级替换/插入，正文不动，已有 true 幂等）。共享仓正文保持作者原样。
+   → 模型不可自动调用未装受信技能；仅用户显式使用。
+3. 安装记录保留共享仓原 `contentHash`（`hasUpdate` 对比用），另存 `installedHash`
+   （改写后落盘内容哈希）——避免"有更新"误报。
+4. 列表/详情返回 `modelAutoInvoke`（= !disableModelInvocation && autoInvoke）；
+   前端安装前 confirm 弹窗：风险提示 + 发布者 + 是否可被模型自动调用。
+5. `importSkill`（本地导入）不受市场策略影响（用户自写技能，须签名且 frontmatter 校验）。
+
+**验证**：`test/skill-service.test.js`（8 例：纯函数 4 + 策略 4）；
+默认配置下恶意技能无自动执行路径（验收达成）。
+
+**待办（P1-10）**：发布正文静态扫描（命令调用/URL 外发/凭据读写模式 → 标"未审核"）、举报/拉黑。
