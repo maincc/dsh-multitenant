@@ -437,15 +437,16 @@ const setupAccountChangeListener = () => {
       if (newAddress !== currentAdminAddress.value) {
         console.log(`[AdminPanel] 地址切换：${currentAdminAddress.value} -> ${newAddress}`)
 
-        // 检查新地址是否是管理员
+        // 新地址需要重新钱包签名登录（会话与地址绑定，P0-1）
         try {
-          const res = await axios.post('/api/admin/login', { address: newAddress })
+          const res = await signLogin(newAddress)
           if (res.data.ok) {
-            currentAdminAddress.value = newAddress
+            const address = res.data.address
+            currentAdminAddress.value = address
             isAdmin.value = true
             notAdmin.value = false
             await fetchData()
-            alert(`已切换到管理员：${newAddress.slice(0, 10)}...`)
+            alert(`已切换到管理员：${address.slice(0, 10)}...`)
           } else {
             // 新地址不是管理员，显示无权限
             notAdmin.value = true
@@ -493,6 +494,37 @@ const checkAdmin = async () => {
   }
 }
 
+/**
+ * 钱包签名登录（security-hardening-plan P0-1）：
+ * 领取一次性挑战 → 插件 signMessage 签名 → 提交验签换随机会话。
+ * @param {string} pluginAddress 插件当前账户【保留原始大小写】！
+ *   （插件 swtc_signMessage 的 accounts.includes 是大小写敏感严格匹配，
+ *    只有 requestAccounts 原样返回的字符串才能通过；后端自行 normalize）
+ */
+const signLogin = async (pluginAddress) => {
+  // 1. 领取挑战（地址传小写，后端 normalize 后校验管理员名单）
+  const chalRes = await axios.post('/api/admin/challenge', {
+    address: pluginAddress.toLowerCase(),
+  })
+  const nonce = chalRes.data.nonce
+  // 2. 插件对 nonce 签名 + 取公钥（都用原始大小写地址）
+  const signature = await window.ccdao.request({
+    method: 'swtc_signMessage',
+    params: [pluginAddress, nonce],
+  })
+  const publicKey = await window.ccdao.request({
+    method: 'swtc_getPublicKey',
+    params: [pluginAddress],
+  })
+  // 3. 提交登录（签名验明身份 + 地址归属 → 签发服务端会话）
+  return axios.post('/api/admin/login', {
+    address: pluginAddress,
+    nonce,
+    signature,
+    publicKey,
+  })
+}
+
 const adminLogin = async () => {
   if (!hasCCDAO.value) return
 
@@ -508,14 +540,15 @@ const adminLogin = async () => {
       throw new Error('未获取到账户')
     }
 
-    // 统一转小写
-    const address = accounts[0].toLowerCase()
-    currentAddress.value = address
+    // 插件原始大小写地址（用于签名）；展示用小写
+    const pluginAddress = accounts[0]
+    currentAddress.value = pluginAddress.toLowerCase()
 
-    // 直接调用登录 API，后端会检查是否是管理员
-    const res = await axios.post('/api/admin/login', { address })
+    // 钱包签名登录（challenge → signMessage → 会话）
+    const res = await signLogin(pluginAddress)
     if (res.data.ok) {
       // 是管理员，登录成功
+      const address = res.data.address // 后端 normalize 后的小写地址
       isAdmin.value = true
       notAdmin.value = false
       currentAdminAddress.value = address
@@ -546,7 +579,13 @@ const switchWallet = () => {
   alert('请在 CCDAO 插件中切换到管理员地址')
 }
 
-const logout = () => {
+const logout = async () => {
+  // 后端吊销会话（P0-1）
+  try {
+    await axios.post('/api/admin/logout')
+  } catch {
+    // 忽略吊销失败（本地强制登出）
+  }
   isAdmin.value = false
   currentAdminAddress.value = null
   if (dataRefreshInterval) {

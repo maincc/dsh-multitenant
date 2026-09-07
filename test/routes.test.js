@@ -13,6 +13,20 @@
  */
 
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { createHash } from 'node:crypto'
+import { adminSessionStore } from '../src/middleware/auth.middleware.js'
+
+// 有效管理员会话（P0-1：会话 = 服务端随机 token，Cookie 值不再是地址）
+const ADMIN_TOKEN = '11'.repeat(32) // 64 位 hex
+const sha256 = (v) => createHash('sha256').update(v).digest('hex')
+
+// 全局注入有效会话（内存），所有依赖 admin_session 的用例默认可用
+beforeEach(() => {
+  adminSessionStore.sessions[sha256(ADMIN_TOKEN)] = {
+    address: 'jndwretndumoqbt2uauclmfmx7xbqjykva',
+    expiresAt: Date.now() + 3600e3,
+  }
+})
 
 vi.mock('../src/services/user.service.js', () => ({
   userService: {
@@ -89,7 +103,7 @@ describe('user.routes.js 详情分支', () => {
     const req = makeReq({
       method: 'POST',
       url: `/api/user/${TARGET_ADDR}/remove`,
-      cookie: `admin_session=${ADMIN_ADDR}`,
+      cookie: `admin_session=${ADMIN_TOKEN}`,
     })
     const res = makeRes()
 
@@ -120,7 +134,7 @@ describe('tenant.routes.js remove / restart 错误码', () => {
     const req = makeReq({
       method: 'POST',
       url: `/api/user/${TARGET_ADDR}/remove`,
-      cookie: `admin_session=${ADMIN_ADDR}`,
+      cookie: `admin_session=${ADMIN_TOKEN}`,
     })
     const res = makeRes()
 
@@ -141,7 +155,7 @@ describe('tenant.routes.js remove / restart 错误码', () => {
     const req = makeReq({
       method: 'POST',
       url: `/api/user/${TARGET_ADDR}/remove`,
-      cookie: `admin_session=${ADMIN_ADDR}`,
+      cookie: `admin_session=${ADMIN_TOKEN}`,
     })
     const res = makeRes()
 
@@ -163,7 +177,7 @@ describe('tenant.routes.js remove / restart 错误码', () => {
     const req = makeReq({
       method: 'POST',
       url: `/api/user/${TARGET_ADDR}/restart`,
-      cookie: `admin_session=${ADMIN_ADDR}`,
+      cookie: `admin_session=${ADMIN_TOKEN}`,
     })
     const res = makeRes()
 
@@ -183,7 +197,7 @@ describe('tenant.routes.js remove / restart 错误码', () => {
     const req = makeReq({
       method: 'POST',
       url: `/api/user/${TARGET_ADDR}/restart`,
-      cookie: `admin_session=${ADMIN_ADDR}`,
+      cookie: `admin_session=${ADMIN_TOKEN}`,
     })
     const res = makeRes()
 

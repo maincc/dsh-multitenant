@@ -7,7 +7,8 @@ import { userService } from '../services/user.service.js'
 import { dataService } from '../services/data.service.js'
 import { dockerService } from '../services/docker.service.js'
 import { cwtAdminService } from '../services/cwt-admin.service.js'
-import { requireAdmin, getAdminSession } from '../middleware/auth.middleware.js'
+import { tenantConfigService } from '../services/tenant-config.service.js'
+import { requireAdmin, getAdminSession, adminSessionStore } from '../middleware/auth.middleware.js'
 import { validateSwtcAddress } from '../middleware/validate.middleware.js'
 import { normalizeAddress } from '../utils/address.js'
 import { BadRequestError, NotFoundError, handleError } from '../utils/errors.js'
@@ -17,25 +18,60 @@ import { parseBody } from '../utils/parse-body.js'
  * 处理管理路由
  */
 export async function handleAdminRoutes(req, res, path, url) {
-  // POST /api/admin/login - 管理员登录
-  if (path === '/api/admin/login' && req.method === 'POST') {
+  // POST /api/admin/challenge - 领取一次性签名挑战（security-hardening-plan P0-1）
+  if (path === '/api/admin/challenge' && req.method === 'POST') {
     try {
       const body = await parseBody(req)
       const { address } = JSON.parse(body || '{}')
+      if (!validateSwtcAddress(address, res)) return true
+      const nonce = tenantConfigService.issueChallenge(normalizeAddress(address))
+      if (!nonce) {
+        res.writeHead(503, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: '挑战发放过载，请稍后重试', code: 'OVERLOAD' }))
+        return true
+      }
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ ok: true, nonce }))
+    } catch (err) {
+      if (!res.headersSent) handleError(err, res)
+    }
+    return true
+  }
+
+  // POST /api/admin/login - 管理员钱包签名登录（P0-1：nonce 挑战 + 验签 + 地址归属）
+  if (path === '/api/admin/login' && req.method === 'POST') {
+    try {
+      const body = await parseBody(req)
+      const { address, nonce, signature, publicKey } = JSON.parse(body || '{}')
 
       if (!validateSwtcAddress(address, res)) return true
 
       const addrLower = normalizeAddress(address)
+
+      // ① 验签：nonce 签名有效且公钥推导地址 === 声称地址
+      if (!tenantConfigService.verifySignature(addrLower, nonce, signature, publicKey)) {
+        res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: '签名验证失败', code: 'FORBIDDEN' }))
+        return true
+      }
+      // ② 挑战一次性（不可重放）
+      if (!tenantConfigService.consumeChallenge(addrLower, nonce)) {
+        res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: '挑战已失效，请重新获取', code: 'FORBIDDEN' }))
+        return true
+      }
+      // ③ 必须是管理员地址
       if (!isAdmin(addrLower)) {
         res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify({ error: '不是管理员地址', code: 'FORBIDDEN' }))
         return true
       }
 
-      // 设置管理员会话 Cookie
+      // ④ 签发服务端随机会话（Cookie 值 = token，非地址）
+      const token = adminSessionStore.create(addrLower)
       res.writeHead(200, {
         'content-type': 'application/json; charset=utf-8',
-        'set-cookie': `admin_session=${addrLower}; path=/; max-age=86400; httponly; samesite=strict`,
+        'set-cookie': `admin_session=${token}; path=/; max-age=43200; httponly; samesite=strict`,
       })
       res.end(JSON.stringify({ ok: true, address: addrLower, isAdmin: true }))
 
@@ -47,6 +83,22 @@ export async function handleAdminRoutes(req, res, path, url) {
         handleError(err, res)
       }
     }
+    return true
+  }
+
+  // POST /api/admin/logout - 吊销当前会话（P0-1）
+  if (path === '/api/admin/logout' && req.method === 'POST') {
+    const cookie = req.headers.cookie || ''
+    const match = cookie.match(/admin_session=([^;]+)/)
+    if (match) {
+      try {
+        adminSessionStore.revoke(decodeURIComponent(match[1]))
+      } catch {
+        // 忽略损坏的 token
+      }
+    }
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+    res.end(JSON.stringify({ ok: true }))
     return true
   }
 

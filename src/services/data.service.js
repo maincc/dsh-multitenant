@@ -40,6 +40,7 @@ export class DataService {
       this.cwtFilePath('applications.json'),
       this.cwtFilePath('records.log'),
       join(this.dataDir, 'logs', 'operations.log'),
+      join(this.dataDir, 'config', 'sessions.json'),
     ]
     for (const filePath of targets) {
       try {
@@ -48,6 +49,22 @@ export class DataService {
         // 文件尚不存在则跳过
       }
     }
+  }
+
+  // ---------- 管理员会话（data/config/sessions.json，P0-1） ----------
+
+  /**
+   * 加载管理员会话表（sha256(token) -> { address, expiresAt }）
+   */
+  loadSessions() {
+    return this.readJson(join(this.dataDir, 'config', 'sessions.json'))
+  }
+
+  /**
+   * 保存管理员会话表（原子写 + 0600）
+   */
+  saveSessions(sessions) {
+    this.writeWithLock(join(this.dataDir, 'config', 'sessions.json'), sessions)
   }
 
   /**
