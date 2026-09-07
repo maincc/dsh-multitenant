@@ -1,71 +1,161 @@
 <template>
   <div class="home">
     <div class="hero">
-      <h1>🚀 DSH 多租户平台</h1>
-      <p class="subtitle">基于 SWTC 地址的智能容器分配系统</p>
-      
+      <h1>{{ $t('home.heroTitle') }}</h1>
+      <p class="subtitle">{{ $t('home.subtitle') }}</p>
+
       <div class="features">
         <div class="feature-card">
           <div class="icon">🔐</div>
-          <h3>钱包认证</h3>
-          <p>通过 CCDAO 插件获取 SWTC 地址，无需注册</p>
+          <h3>{{ $t('home.features.wallet.title') }}</h3>
+          <p>{{ $t('home.features.wallet.desc') }}</p>
         </div>
         <div class="feature-card">
           <div class="icon">📦</div>
-          <h3>独立容器</h3>
-          <p>每个用户独享 Docker 容器，数据完全隔离</p>
+          <h3>{{ $t('home.features.container.title') }}</h3>
+          <p>{{ $t('home.features.container.desc') }}</p>
         </div>
         <div class="feature-card">
           <div class="icon">⚡</div>
-          <h3>智能扩容</h3>
-          <p>自动监控资源使用，按需动态调整配额</p>
+          <h3>{{ $t('home.features.scale.title') }}</h3>
+          <p>{{ $t('home.features.scale.desc') }}</p>
         </div>
         <div class="feature-card">
           <div class="icon">💾</div>
-          <h3>数据持久化</h3>
-          <p>容器销毁后数据保留，重新连接自动恢复</p>
+          <h3>{{ $t('home.features.persist.title') }}</h3>
+          <p>{{ $t('home.features.persist.desc') }}</p>
         </div>
       </div>
 
       <div class="actions">
         <router-link to="/user" class="btn btn-primary btn-large">
-          🔌 连接钱包开始使用
+          {{ $t('home.actions.start') }}
         </router-link>
         <router-link to="/admin" class="btn btn-success btn-large">
-          📊 管理面板
+          {{ $t('home.actions.admin') }}
         </router-link>
       </div>
     </div>
 
+    <div class="guide">
+      <h2>{{ $t('home.guide.title') }}</h2>
+
+      <div class="guide-steps">
+        <div class="guide-step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <h3>{{ $t('home.guide.step1.title') }}</h3>
+            <p>
+              {{ $t('home.guide.step1.body') }}
+              <a
+                href="https://chromewebstore.google.com/detail/ccdao-connector/fpondiojcgaollhcmjgpjmldjjkealjb"
+                target="_blank"
+                rel="noopener noreferrer"
+                >{{ $t('home.guide.step1.linkLabel') }}</a
+              >{{ $t('home.guide.step1.tail') }}
+            </p>
+          </div>
+        </div>
+        <div class="guide-step">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <h3>{{ $t('home.guide.step2.title') }}</h3>
+            <p>
+              {{ $t('home.guide.step2.body') }}
+              {{ $t('home.guide.step2.sig', { sign: $t('home.guide.step2.signLabel') }) }}
+            </p>
+          </div>
+        </div>
+        <div class="guide-step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <h3>{{ $t('home.guide.step3.title') }}</h3>
+            <p>
+              {{
+                $t('home.guide.step3.body', {
+                  min: $t('home.guide.step3.minLabel'),
+                  cwt: $t('home.guide.step3.cwtLabel'),
+                  exempt: $t('home.guide.step3.exemptLabel'),
+                })
+              }}
+            </p>
+          </div>
+        </div>
+        <div class="guide-step">
+          <div class="step-num">4</div>
+          <div class="step-body">
+            <h3>{{ $t('home.guide.step4.title') }}</h3>
+            <p>
+              {{ $t('home.guide.step4.body', { admin: $t('home.guide.step4.adminLabel') }) }}
+            </p>
+          </div>
+        </div>
+        <div class="guide-step">
+          <div class="step-num">5</div>
+          <div class="step-body">
+            <h3>{{ $t('home.guide.step5.title') }}</h3>
+            <p>
+              {{
+                $t('home.guide.step5.body', {
+                  install: $t('home.guide.step5.installLabel'),
+                  noAuto: $t('home.guide.step5.noAutoLabel'),
+                })
+              }}
+            </p>
+          </div>
+        </div>
+        <div class="guide-step">
+          <div class="step-num">6</div>
+          <div class="step-body">
+            <h3>{{ $t('home.guide.step6.title') }}</h3>
+            <p>
+              {{ $t('home.guide.step6.body', { sign: $t('home.guide.step6.signLabel') }) }}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div class="guide-notes">
+        <h3>{{ $t('home.guide.notes.title') }}</h3>
+        <ul>
+          <li>{{ $t('home.guide.notes.item1', { data: $t('home.guide.notes.dataLabel') }) }}</li>
+          <li>
+            {{ $t('home.guide.notes.item2', { before: $t('home.guide.notes.beforeLabel') }) }}
+          </li>
+          <li>{{ $t('home.guide.notes.item3') }}</li>
+        </ul>
+      </div>
+    </div>
+
     <div class="tiers">
-      <h2>资源配额层级</h2>
+      <h2>{{ $t('home.tiers.title') }}</h2>
       <div class="tier-grid">
         <div class="tier-card">
-          <h3>🥉 基础配额</h3>
+          <h3>{{ $t('home.tiers.t1.name') }}</h3>
           <ul>
-            <li>内存：512 MB</li>
-            <li>CPU：1 核</li>
-            <li>进程：256 个</li>
-            <li>适用：普通对话</li>
+            <li>{{ $t('home.tiers.t1.memory') }}</li>
+            <li>{{ $t('home.tiers.t1.cpu') }}</li>
+            <li>{{ $t('home.tiers.t1.pids') }}</li>
+            <li>{{ $t('home.tiers.t1.use') }}</li>
           </ul>
         </div>
         <div class="tier-card featured">
-          <h3>🥈 增强配额</h3>
+          <h3>{{ $t('home.tiers.t2.name') }}</h3>
           <ul>
-            <li>内存：1 GB</li>
-            <li>CPU：2 核</li>
-            <li>进程：512 个</li>
-            <li>适用：复杂任务</li>
+            <li>{{ $t('home.tiers.t2.memory') }}</li>
+            <li>{{ $t('home.tiers.t2.cpu') }}</li>
+            <li>{{ $t('home.tiers.t2.pids') }}</li>
+            <li>{{ $t('home.tiers.t2.use') }}</li>
           </ul>
-          <span class="badge badge-info">自动扩容</span>
+          <span class="badge badge-info">{{ $t('home.tiers.t2.badge') }}</span>
         </div>
         <div class="tier-card">
-          <h3>🥇 高性能配额</h3>
+          <h3>{{ $t('home.tiers.t3.name') }}</h3>
           <ul>
-            <li>内存：2 GB</li>
-            <li>CPU：4 核</li>
-            <li>进程：1024 个</li>
-            <li>适用：大文件处理</li>
+            <li>{{ $t('home.tiers.t3.memory') }}</li>
+            <li>{{ $t('home.tiers.t3.cpu') }}</li>
+            <li>{{ $t('home.tiers.t3.pids') }}</li>
+            <li>{{ $t('home.tiers.t3.use') }}</li>
           </ul>
         </div>
       </div>
@@ -73,8 +163,7 @@
   </div>
 </template>
 
-<script setup>
-</script>
+<script setup></script>
 
 <style scoped>
 .hero {
@@ -83,7 +172,7 @@
   background: white;
   border-radius: 16px;
   margin-bottom: 2rem;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
 }
 
 .hero h1 {
@@ -147,11 +236,95 @@
   font-size: 1rem;
 }
 
+.guide {
+  background: white;
+  padding: 2rem;
+  border-radius: 16px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+  margin-bottom: 2rem;
+}
+
+.guide h2 {
+  text-align: center;
+  margin-bottom: 2rem;
+  color: #667eea;
+}
+
+.guide-steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.25rem;
+  margin-bottom: 2rem;
+}
+
+.guide-step {
+  display: flex;
+  gap: 1rem;
+  padding: 1.25rem;
+  background: #f9fafb;
+  border-radius: 12px;
+  border: 1px solid #eef0f3;
+}
+
+.step-num {
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.step-body h3 {
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+  color: #374151;
+}
+
+.step-body p {
+  margin: 0;
+  font-size: 0.88rem;
+  color: #6b7280;
+  line-height: 1.55;
+}
+
+.step-body a {
+  color: #667eea;
+}
+
+.guide-notes {
+  padding: 1.25rem 1.5rem;
+  background: #fff8e6;
+  border-radius: 12px;
+  border: 1px solid #f5e3b3;
+}
+
+.guide-notes h3 {
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+  color: #8a6d1a;
+}
+
+.guide-notes ul {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.guide-notes li {
+  font-size: 0.88rem;
+  color: #6b5b1e;
+  line-height: 1.8;
+}
+
 .tiers {
   background: white;
   padding: 2rem;
   border-radius: 16px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
 }
 
 .tiers h2 {

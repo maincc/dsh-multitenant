@@ -2,12 +2,14 @@
   <div id="app">
     <nav class="navbar">
       <div class="nav-brand">
-        <h1>🔗 DSH 多租户管理</h1>
+        <router-link to="/" class="brand-link" :title="$t('common.brand')">
+          <h1>{{ $t('common.brand') }}</h1>
+        </router-link>
       </div>
       <div class="nav-links">
-        <router-link to="/skills">技能市场</router-link>
-        <router-link to="/admin">管理面板</router-link>
-        <router-link to="/user">用户中心</router-link>
+        <router-link to="/skills">{{ $t('common.nav.skills') }}</router-link>
+        <router-link to="/admin">{{ $t('common.nav.admin') }}</router-link>
+        <router-link to="/user">{{ $t('common.nav.user') }}</router-link>
       </div>
     </nav>
     <main class="container">
@@ -32,6 +34,16 @@
 .nav-brand h1 {
   margin: 0;
   font-size: 1.5rem;
+}
+
+.nav-brand .brand-link {
+  color: white;
+  text-decoration: none;
+  display: inline-block;
+}
+
+.nav-brand .brand-link:hover {
+  opacity: 0.85;
 }
 
 .nav-links {

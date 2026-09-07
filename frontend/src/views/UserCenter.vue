@@ -17,76 +17,78 @@
 
     <!-- 连接钱包页面 -->
     <div v-else-if="!connected" class="card connect-card">
-      <h2>🔌 连接钱包</h2>
-      <p>通过 CCDAO 插件连接您的 SWTC 钱包，自动分配专属 DSH 容器</p>
+      <h2>{{ $t('user.connectTitle') }}</h2>
+      <p>{{ $t('user.connectHint') }}</p>
 
       <div v-if="!hasCCDAO" class="error">
-        ❌ 未检测到 CCDAO 插件
+        {{ $t('user.noCcdao') }}
         <br />
         <a
           href="https://chromewebstore.google.com/detail/ccdao-connector/fpondiojcgaollhcmjgpjmldjjkealjb"
           target="_blank"
           rel="noopener noreferrer"
         >
-          点击安装 CCDAO Connector
+          {{ $t('user.installCcdao') }}
         </a>
       </div>
 
       <button v-else class="btn btn-primary btn-large" @click="connectWallet">
-        连接 CCDAO 钱包
+        {{ $t('user.connectBtn') }}
       </button>
     </div>
 
     <!-- 等待队列页面 -->
     <div v-else-if="waiting" class="card waiting-card">
       <div class="waiting-icon">⏳</div>
-      <h2>资源不足，请等待</h2>
-      <p class="waiting-message">系统资源不足，您已进入等待队列</p>
-      <p class="waiting-message">资源释放后将自动为您创建容器</p>
+      <h2>{{ $t('user.waitingTitle') }}</h2>
+      <p class="waiting-message">{{ $t('user.waitingMsg1') }}</p>
+      <p class="waiting-message">{{ $t('user.waitingMsg2') }}</p>
 
       <div class="queue-info">
         <div class="queue-item">
-          <span class="queue-label">排队位置：</span>
-          <span class="queue-value">第 {{ queuePosition }} 位</span>
+          <span class="queue-label">{{ $t('user.queuePos') }}</span>
+          <span class="queue-value">{{ $t('user.queuePosValue', { n: queuePosition }) }}</span>
         </div>
         <div class="queue-item">
-          <span class="queue-label">队列总人数：</span>
-          <span class="queue-value">{{ queueTotal }} 人</span>
+          <span class="queue-label">{{ $t('user.queueTotal') }}</span>
+          <span class="queue-value">{{ $t('user.queueTotalValue', { n: queueTotal }) }}</span>
         </div>
         <div class="queue-item">
-          <span class="queue-label">等待时间：</span>
+          <span class="queue-label">{{ $t('user.waitTime') }}</span>
           <span class="queue-value">{{ waitingTime }}</span>
         </div>
       </div>
 
       <div class="waiting-progress">
         <div class="spinner"></div>
-        <span>系统正在清理闲置资源，请稍候...</span>
+        <span>{{ $t('user.waitCleanup') }}</span>
       </div>
 
-      <button class="btn btn-secondary" @click="cancelWaiting">取消等待</button>
+      <button class="btn btn-secondary" @click="cancelWaiting">{{ $t('user.cancelWait') }}</button>
     </div>
 
     <!-- 用户信息页面 -->
     <div v-else class="user-dashboard">
       <div class="card">
-        <h2>👤 我的账户</h2>
+        <h2>{{ $t('user.myAccount') }}</h2>
         <div class="user-info">
           <div class="info-row">
-            <span class="label">SWTC 地址：</span>
+            <span class="label">{{ $t('user.swtcAddress') }}</span>
             <span class="address">{{ userInfo.address }}</span>
-            <button class="btn btn-small" @click="switchAddress">切换地址</button>
+            <button class="btn btn-small" @click="switchAddress">
+              {{ $t('user.switchAddress') }}
+            </button>
           </div>
           <div class="info-row">
-            <span class="label">专属端口：</span>
+            <span class="label">{{ $t('user.port') }}</span>
             <span>{{ userInfo.port }}</span>
           </div>
           <div class="info-row">
-            <span class="label">当前配额：</span>
+            <span class="label">{{ $t('user.tier') }}</span>
             <span class="badge" :class="tierBadge(userInfo.tier)">{{ userInfo.tierLabel }}</span>
           </div>
           <div class="info-row">
-            <span class="label">容器状态：</span>
+            <span class="label">{{ $t('user.containerStatus') }}</span>
             <span class="badge" :class="statusBadge(userInfo.status)">{{
               statusText(userInfo.status)
             }}</span>
@@ -95,54 +97,52 @@
               class="btn btn-small btn-success"
               @click="restartContainer"
             >
-              启动容器
+              {{ $t('user.startContainer') }}
             </button>
           </div>
         </div>
       </div>
 
       <div class="card">
-        <h2>🛡️ CWT 验证</h2>
-        <p>通过 CWT 验证后豁免每日使用时限（不再受分钟数限制）</p>
+        <h2>{{ $t('user.cwtVerify') }}</h2>
+        <p>{{ $t('user.cwtVerifyHint') }}</p>
 
         <div v-if="cwtLoading" class="config-loading">
           <div class="mini-spinner"></div>
-          <span>正在加载验证状态…</span>
+          <span>{{ $t('user.cwtLoading') }}</span>
         </div>
 
         <template v-else-if="cwtStatus">
           <!-- 已授权 -->
           <div v-if="cwtStatus.authorized" class="info-row">
-            <span class="badge badge-success">✅ 已通过验证 · 不限时</span>
+            <span class="badge badge-success">{{ $t('user.cwtAuthorized') }}</span>
             <span class="cwt-meta">usr: {{ cwtStatus.registry?.usr }}</span>
           </div>
 
           <!-- 待审批 -->
           <div v-else-if="hasPendingApplication" class="info-row">
-            <span class="badge badge-warning">⏳ 待管理员审批</span>
+            <span class="badge badge-warning">{{ $t('user.cwtPending') }}</span>
             <span class="cwt-meta">
-              申请已提交（{{ pendingAppText }}），审批通过后自动豁免限时
+              {{ $t('user.cwtPendingHint', { text: pendingAppText }) }}
             </span>
           </div>
 
           <!-- 未申请 / 被拒 / 已撤销 -->
           <div v-else>
             <p class="cwt-meta">
-              你尚未通过 CWT 验证，当前受每日 {{ dailyLimitText }} 分钟使用时限
+              {{ $t('user.cwtNotVerified', { min: dailyLimitText }) }}
               {{
-                cwtStatus.applications?.[0]?.status === 'rejected'
-                  ? '（上次申请被拒绝，可重新申请）'
-                  : ''
+                cwtStatus.applications?.[0]?.status === 'rejected' ? $t('user.cwtRejectedHint') : ''
               }}
             </p>
             <div class="cwt-apply-form">
               <button class="btn btn-primary" :disabled="cwtSubmitting" @click="applyCwt">
-                {{ cwtSubmitting ? '签名中…' : '🔐 申请验证（插件签名）' }}
+                {{ cwtSubmitting ? $t('user.cwtSigning') : $t('user.cwtApplyBtn') }}
               </button>
               <div class="action-hints">
                 <div class="hint">
-                  <strong>申请流程：</strong>点击按钮 → CCDAO 插件弹出 cwt_sign 签名确认 →
-                  自动提交到平台，等待管理员审批；审批通过后自动豁免每日限时
+                  <strong>{{ $t('user.cwtFlowTitle') }}</strong>
+                  {{ $t('user.cwtFlow') }}
                 </div>
               </div>
             </div>
@@ -151,17 +151,17 @@
       </div>
 
       <div class="card">
-        <h2>📊 资源使用</h2>
+        <h2>{{ $t('user.resourceUsage') }}</h2>
         <div v-if="userInfo.stats" class="resource-usage">
           <div class="resource-item">
             <div class="resource-header">
-              <span>CPU 使用率</span>
+              <span>{{ $t('user.cpuUsage') }}</span>
               <span>{{ userInfo.stats.cpu }}</span>
             </div>
           </div>
           <div class="resource-item">
             <div class="resource-header">
-              <span>内存使用</span>
+              <span>{{ $t('user.memUsage') }}</span>
               <span>{{ userInfo.stats.memory }} ({{ userInfo.stats.memoryPercent }})</span>
             </div>
             <div class="progress-bar">
@@ -169,32 +169,32 @@
             </div>
           </div>
         </div>
-        <div v-else class="loading">暂无数据</div>
+        <div v-else class="loading">{{ $t('user.noData') }}</div>
       </div>
 
       <div class="card">
-        <h2>🚀 进入 DSH</h2>
-        <p>点击下方按钮进入您的专属 DSH 实例</p>
+        <h2>{{ $t('user.enterDsh') }}</h2>
+        <p>{{ $t('user.enterDshHint') }}</p>
         <a
           :href="dshWebUrl"
           target="_blank"
           rel="noopener noreferrer"
           class="btn btn-success btn-large"
         >
-          打开 DSH Web UI
+          {{ $t('user.openDsh') }}
         </a>
       </div>
 
       <div class="card">
-        <h2>🔑 模型配置</h2>
+        <h2>{{ $t('user.modelConfig') }}</h2>
         <p>
-          每个提供方独立配置，保存后进入 DSH 可在模型选择器中切换使用 （需 CCDAO 插件签名验证身份）
+          {{ $t('user.modelConfigHint') }}
         </p>
         <div class="key-config">
           <!-- 获取提供方配置的 loading -->
           <div v-if="configLoading" class="config-loading">
             <div class="mini-spinner"></div>
-            <span>正在获取提供方配置…</span>
+            <span>{{ $t('user.configLoading') }}</span>
           </div>
 
           <!-- 提供方列表：DeepSeek 官方也是其中一个 item -->
@@ -209,23 +209,27 @@
                   <span class="row-name" :class="{ 'row-name-missing': !item.keyConfigured }">
                     {{ item.displayName }}
                   </span>
-                  <span v-if="item.kind === 'custom'" class="row-tag">自定义</span>
+                  <span v-if="item.kind === 'custom'" class="row-tag">{{
+                    $t('user.customTag')
+                  }}</span>
                   <span
                     class="cred-dot"
                     :class="item.keyConfigured ? 'ok' : 'missing'"
-                    :title="item.keyConfigured ? 'API Key 已配置' : 'API Key 未配置'"
+                    :title="
+                      item.keyConfigured ? $t('user.keyConfigured') : $t('user.keyNotConfigured')
+                    "
                   ></span>
                   <span
                     v-if="item.kind === 'official'"
                     class="key-state"
                     :class="item.keyConfigured ? 'ok' : 'missing'"
                   >
-                    {{ item.keyConfigured ? '已配置' : '未配置' }}
+                    {{ item.keyConfigured ? $t('user.configured') : $t('user.notConfigured') }}
                   </span>
                 </span>
                 <span class="row-actions">
                   <button class="btn btn-small" @click="toggleExpand(idx)">
-                    {{ item.expanded ? '收起' : '编辑' }}
+                    {{ item.expanded ? $t('user.collapse') : $t('user.edit') }}
                   </button>
                   <button
                     v-if="item.removable"
@@ -233,7 +237,7 @@
                     :disabled="!connected || keySaving"
                     @click="removeItem(idx)"
                   >
-                    删除
+                    {{ $t('user.delete') }}
                   </button>
                 </span>
               </div>
@@ -242,20 +246,22 @@
                 <input
                   v-if="item.kind === 'custom'"
                   v-model="item.displayName"
-                  placeholder="显示名称（显示在模型选择器中）"
+                  :placeholder="$t('user.placeholderDisplayName')"
                   :disabled="!connected || keySaving"
                 />
                 <input
                   v-if="item.kind === 'custom'"
                   v-model="item.baseURL"
                   type="text"
-                  placeholder="baseURL（OpenAI 兼容，如 https://gw.example.com/v1）"
+                  :placeholder="$t('user.placeholderBaseUrl')"
                   :disabled="!connected || keySaving"
                 />
                 <input
                   v-model="item.apiKey"
                   type="password"
-                  :placeholder="item.keyConfigured ? 'API Key（已配置，留空保留）' : 'API Key'"
+                  :placeholder="
+                    item.keyConfigured ? $t('user.placeholderKeyKeep') : $t('user.placeholderKey')
+                  "
                   :disabled="!connected || keySaving"
                 />
                 <!-- 官方：可单独删除 key（不影响自定义端点） -->
@@ -268,9 +274,9 @@
                     :disabled="!connected || keySaving"
                     @click="clearOfficialKey"
                   >
-                    删除官方 key
+                    {{ $t('user.deleteOfficialKey') }}
                   </button>
-                  <span class="hint">只删除官方 DeepSeek API Key，不影响自定义端点</span>
+                  <span class="hint">{{ $t('user.deleteOfficialKeyHint') }}</span>
                 </div>
                 <!-- 官方：固定端点 + 默认模型；检测到旧覆盖残留时警告并在保存时清除 -->
                 <div
@@ -278,45 +284,46 @@
                   class="override-warning"
                   v-show="item.officialOverride"
                 >
-                  ⚠️ 检测到旧的官方端点覆盖
+                  {{ $t('user.officialOverrideWarn') }}
                   <span v-if="item.officialBaseURL" class="override-url">{{
                     item.officialBaseURL
                   }}</span>
-                  ，保存配置将自动清除，官方恢复
+                  {{ $t('user.officialOverrideTail') }}
                   <code>https://api.deepseek.com</code>
                 </div>
                 <div v-if="item.kind === 'official'" class="hint">
-                  官方端点固定为 https://api.deepseek.com，使用默认模型 （deepseek-v4-flash /
-                  deepseek-v4-pro）。自定义端点请用下方「添加端点」。
+                  {{ $t('user.officialEndpointHint') }}
                 </div>
                 <div v-if="item.kind === 'custom'" class="models-editor">
                   <div class="models-header">
-                    <span>模型列表</span>
+                    <span>{{ $t('user.modelsTitle') }}</span>
                     <button
                       class="btn btn-small"
                       :disabled="!connected || keySaving || discovering === idx || !item.baseURL"
                       @click="discoverItem(idx)"
                     >
-                      {{ discovering === idx ? '探测中…' : '🔍 探测模型' }}
+                      {{ discovering === idx ? $t('user.discovering') : $t('user.discoverBtn') }}
                     </button>
                   </div>
                   <div v-if="!item.baseURL" class="hint">
-                    填写 baseURL 后可一键探测该端点提供的模型
+                    {{ $t('user.discoverHint') }}
                   </div>
                   <table v-if="item.baseURL" class="models-table">
                     <thead>
                       <tr>
-                        <th>模型 ID</th>
-                        <th>名称</th>
-                        <th>contextWindow</th>
-                        <th>maxTokens</th>
+                        <th>{{ $t('user.colModelId') }}</th>
+                        <th>{{ $t('user.colName') }}</th>
+                        <th>{{ $t('user.colContext') }}</th>
+                        <th>{{ $t('user.colMaxTokens') }}</th>
                         <th></th>
                       </tr>
                     </thead>
                     <tbody>
                       <tr v-for="(m, mi) in item.models" :key="mi">
                         <td><input v-model="m.id" placeholder="model-id" /></td>
-                        <td><input v-model="m.name" placeholder="显示名称" /></td>
+                        <td>
+                          <input v-model="m.name" :placeholder="$t('user.placeholderModelName')" />
+                        </td>
                         <td>
                           <input
                             v-model.number="m.contextWindow"
@@ -346,7 +353,7 @@
                     :disabled="!connected || keySaving"
                     @click="addModel(idx)"
                   >
-                    ＋ 添加模型
+                    {{ $t('user.addModel') }}
                   </button>
                 </div>
               </div>
@@ -359,114 +366,130 @@
                 :disabled="!connected || keySaving || customCount >= 20"
                 @click="addItem"
               >
-                ＋ 添加端点
+                {{ $t('user.addEndpoint') }}
               </button>
             </div>
           </template>
 
           <div class="action-buttons">
             <button class="btn btn-primary" :disabled="!connected || keySaving" @click="saveConfig">
-              {{ keySaving ? '保存中…' : '💾 保存配置' }}
+              {{ keySaving ? $t('user.saving') : $t('user.saveConfig') }}
             </button>
             <button
               class="btn btn-danger"
               :disabled="!connected || keySaving || !hasAnyConfig"
               @click="resetConfig"
             >
-              恢复默认
+              {{ $t('user.resetConfig') }}
             </button>
           </div>
           <div class="action-hints">
             <div class="hint">
-              <strong>保存：</strong>CCDAO 插件会弹出签名确认；各提供方的 API Key 写入
-              您自己的容器，端点与模型写入 settings.yaml，约 100ms 热生效，无需重启
+              <strong>{{ $t('user.saveFlowTitle') }}</strong>
+              {{ $t('user.saveFlow') }}
             </div>
             <div class="hint">
-              <strong>探测：</strong>请求端点 /models 接口并自动填入模型列表
-              （使用容器内已保存的该端点 API Key 鉴权，密钥不离开您的容器）
+              <strong>{{ $t('user.discoverFlowTitle') }}</strong>
+              {{ $t('user.discoverFlow') }}
             </div>
             <div class="hint">
-              <strong>恢复默认：</strong>清除官方 API Key 与所有自定义端点，回到 DeepSeek
-              官方配置（同样需要签名确认）
+              <strong>{{ $t('user.resetFlowTitle') }}</strong>
+              {{ $t('user.resetFlow') }}
             </div>
           </div>
         </div>
       </div>
 
       <div class="card">
-        <h2>⚙️ 容器管理</h2>
-        <p>管理您的 DSH 容器</p>
+        <h2>{{ $t('user.containerManage') }}</h2>
+        <p>{{ $t('user.containerManageHint') }}</p>
         <div class="action-buttons">
-          <button class="btn btn-primary" @click="restartDSH">🔄 重启 DSH 服务</button>
+          <button class="btn btn-primary" @click="restartDSH">{{ $t('user.restartDsh') }}</button>
           <button
             class="btn btn-secondary"
             :disabled="!connected || userInfo.status !== 'running'"
             @click="stopContainer"
           >
-            ⏹ 停止容器（保全时长）
+            {{ $t('user.stopContainer') }}
           </button>
-          <button class="btn btn-danger" @click="resetContainer">🗑️ 重置容器（删除数据）</button>
+          <button class="btn btn-danger" @click="resetContainer">
+            {{ $t('user.resetContainer') }}
+          </button>
         </div>
         <div class="action-hints">
           <div class="hint">
-            <strong>重启 DSH 服务：</strong>安装插件后需要重启 DSH 服务才能生效
+            <strong>{{ $t('user.restartDshFlowTitle') }}</strong>
+            {{ $t('user.restartDshFlow') }}
           </div>
           <div class="hint">
-            <strong>停止容器：</strong>立即结算今日使用时长并保全剩余额度
-            （挂机不再耗时长），数据保留，随时可重新启动{{
-              usageInfoLabel ? '。今日用量：' + usageInfoLabel : ''
-            }}
+            <strong>{{ $t('user.stopFlowTitle') }}</strong>
+            {{ $t('user.stopFlow') }}
+            {{ usageInfoLabel ? $t('user.todayUsagePrefix') + usageInfoLabel : '' }}
           </div>
           <div class="hint">
-            <strong>重置容器：</strong>删除所有数据和配置，重新开始（不可恢复）
+            <strong>{{ $t('user.resetFlowTitle') }}</strong>
+            {{ $t('user.resetContainerFlow') }}
           </div>
         </div>
       </div>
 
       <div class="card">
-        <h2>🧩 我的技能</h2>
-        <p>将本地 DSH 的技能导入容器，或在技能市场安装他人共享的技能</p>
+        <h2>{{ $t('user.mySkills') }}</h2>
+        <p>{{ $t('user.mySkillsHint') }}</p>
         <div class="action-buttons">
-          <button class="btn btn-primary" @click="openImportDialog">📥 导入技能</button>
-          <button class="btn btn-primary" @click="openShareDialog">📤 共享技能</button>
-          <router-link to="/skills" class="btn btn-secondary">🏪 技能市场</router-link>
+          <button class="btn btn-primary" @click="openImportDialog">
+            {{ $t('user.importSkill') }}
+          </button>
+          <button class="btn btn-primary" @click="openShareDialog">
+            {{ $t('user.shareSkill') }}
+          </button>
+          <router-link to="/skills" class="btn btn-secondary">{{
+            $t('user.skillMarketLink')
+          }}</router-link>
         </div>
 
         <div v-if="mySkillsLoading" class="config-loading">
           <div class="mini-spinner"></div>
-          <span>正在获取我的技能…</span>
+          <span>{{ $t('user.mySkillsLoading') }}</span>
         </div>
         <template v-else>
           <div v-if="mineData.published.length > 0" class="skill-subsection">
-            <h3>我的共享</h3>
+            <h3>{{ $t('user.myPublished') }}</h3>
             <div v-for="s in mineData.published" :key="'p-' + s.name" class="skill-row">
               <div class="skill-row-main">
                 <strong>{{ s.name }}</strong>
                 <span class="skill-desc">{{ s.description }}</span>
               </div>
               <button class="btn btn-small btn-danger" @click="unpublishSkill(s.name)">
-                取消共享
+                {{ $t('user.unpublish') }}
               </button>
             </div>
           </div>
           <div v-if="mineData.installed.length > 0" class="skill-subsection">
-            <h3>已安装</h3>
+            <h3>{{ $t('user.myInstalled') }}</h3>
             <div v-for="s in mineData.installed" :key="'i-' + s.name" class="skill-row">
               <div class="skill-row-main">
                 <strong>{{ s.name }}</strong>
                 <span class="skill-desc">
                   {{
                     s.description ||
-                    `来源：${s.source} · ${new Date(s.installedAt).toLocaleString()}`
+                    $t('user.installedSource', {
+                      source: s.source,
+                      date: new Date(s.installedAt).toLocaleString(),
+                    })
                   }}
                 </span>
-                <span v-if="s.hasUpdate" class="badge badge-warning">有更新</span>
+                <span v-if="s.hasUpdate" class="badge badge-warning">{{
+                  $t('user.hasUpdate')
+                }}</span>
               </div>
-              <button class="btn btn-small btn-danger" @click="uninstallSkill(s.name)">卸载</button>
+              <button class="btn btn-small btn-danger" @click="uninstallSkill(s.name)">
+                {{ $t('user.uninstall') }}
+              </button>
             </div>
           </div>
           <p v-if="mineData.published.length === 0 && mineData.installed.length === 0" class="hint">
-            还没有技能。可以把本地 DSH 写好的技能导入进来，或去技能市场逛逛。
+            {{ $t('user.noSkillsHint') }}
           </p>
         </template>
       </div>
@@ -474,34 +497,33 @@
       <!-- 导入技能对话框 -->
       <div v-if="importDialogOpen" class="import-mask" @click.self="closeImportDialog">
         <div class="import-panel">
-          <h3>📥 导入技能</h3>
+          <h3>{{ $t('user.importDialogTitle') }}</h3>
           <p class="hint">
-            选择本地 DSH 导出的技能文件（SKILL.md），或直接粘贴正文。导入会写入您自己的容器
-            （需钱包签名确认）。
+            {{ $t('user.importDialogHint') }}
           </p>
           <div class="import-field">
-            <label>技能文件</label>
+            <label>{{ $t('user.importFileLabel') }}</label>
             <input type="file" accept=".md,.txt,text/markdown" @change="onImportFile" />
           </div>
           <div class="import-field">
-            <label>技能名（kebab-case，需与 frontmatter 的 name 一致）</label>
+            <label>{{ $t('user.importNameLabel') }}</label>
             <input v-model="importName" placeholder="my-skill" />
           </div>
           <div class="import-field">
-            <label>SKILL.md 内容（或粘贴）</label>
+            <label>{{ $t('user.importTextLabel') }}</label>
             <textarea
               v-model="importText"
               rows="8"
               placeholder="---&#10;name: my-skill&#10;description: 一句话说明&#10;---&#10;正文…"
             ></textarea>
           </div>
-          <div v-if="importBusy" class="loading">提交中…</div>
+          <div v-if="importBusy" class="loading">{{ $t('user.submitting') }}</div>
           <div class="action-buttons">
             <button class="btn btn-primary" :disabled="importBusy" @click="doImport">
-              ✓ 签名并导入
+              {{ $t('user.importSubmit') }}
             </button>
             <button class="btn btn-secondary" :disabled="importBusy" @click="closeImportDialog">
-              取消
+              {{ $t('user.cancel') }}
             </button>
           </div>
         </div>
@@ -510,48 +532,48 @@
       <!-- 共享容器内技能对话框 -->
       <div v-if="shareDialogOpen" class="import-mask" @click.self="closeShareDialog">
         <div class="import-panel">
-          <h3>📤 共享容器内的技能</h3>
+          <h3>{{ $t('user.shareDialogTitle') }}</h3>
           <p class="hint">
-            从您容器里已有的技能中选择一个（自写或导入的都可以），共享后出现在技能市场，需钱包签名确认。
+            {{ $t('user.shareDialogHint1') }}
             <br />
-            共享名要求<strong>唯一</strong>：若名称已被其他人共享，请改名后发布。
+            {{ $t('user.shareDialogHint2') }}
           </p>
           <div class="import-field">
-            <label>选择容器内的技能</label>
+            <label>{{ $t('user.shareSelectLabel') }}</label>
             <select
               v-model="shareSourceName"
               :disabled="shareLoading || shareConflict || shareBusy"
             >
               <option value="" disabled>
-                {{ shareLoading ? '正在获取列表…' : '— 请选择 —' }}
+                {{ shareLoading ? $t('user.shareLoadingList') : $t('user.shareSelectPlaceholder') }}
               </option>
               <option v-for="n in mineData.inContainer" :key="n" :value="n">{{ n }}</option>
             </select>
           </div>
           <div v-if="shareLoading" class="config-loading">
             <div class="mini-spinner"></div>
-            <span>正在获取容器内技能…</span>
+            <span>{{ $t('user.shareLoading') }}</span>
           </div>
           <div v-else-if="mineData.inContainer.length === 0" class="hint share-empty-hint">
-            容器里还没有可共享的技能：先在 DSH 里写好一个（
-            <code>/dsh-home/skills/</code>），或用上方「📥 导入技能」导入后再来共享
+            {{ $t('user.shareEmptyHintA') }}
+            <code>/dsh-home/skills/</code>{{ $t('user.shareEmptyHintB') }}
           </div>
           <div v-if="shareConflict" class="import-field share-conflict">
-            <label>⚠️ 该名称已被占用，请填写新的共享名（frontmatter 的 name 会自动同步改写）</label>
+            <label>{{ $t('user.shareConflictLabel') }}</label>
             <input v-model="shareRenameTo" placeholder="my-skill-v2" />
-            <span class="hint">源名保留在您的容器不变；发布到市场的名称需唯一</span>
+            <span class="hint">{{ $t('user.shareConflictHint') }}</span>
           </div>
-          <div v-if="shareBusy" class="loading">提交中…</div>
+          <div v-if="shareBusy" class="loading">{{ $t('user.submitting') }}</div>
           <div class="action-buttons">
             <button
               class="btn btn-primary"
               :disabled="shareBusy || !shareSourceName"
               @click="doShare"
             >
-              {{ shareConflict ? '✓ 用新名称共享' : '✓ 签名并共享' }}
+              {{ shareConflict ? $t('user.shareWithRename') : $t('user.shareSubmit') }}
             </button>
             <button class="btn btn-secondary" :disabled="shareBusy" @click="closeShareDialog">
-              取消
+              {{ $t('user.cancel') }}
             </button>
           </div>
         </div>
@@ -563,7 +585,10 @@
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue'
 import axios from 'axios'
+import { useI18n } from 'vue-i18n'
 import { skillsApi } from '../api/skills.js'
+
+const { t } = useI18n()
 
 const connected = ref(false)
 const connecting = ref(false)
@@ -586,9 +611,9 @@ const dshWebUrl = computed(() => {
 const usageInfoLabel = computed(() => {
   const u = usageInfo.value
   if (!u) return ''
-  if (!u.enabled) return '不限量'
-  if (u.exempt) return '已通过 CWT 验证 · 不限时'
-  return `今日已用 ${u.usedMinutes} / ${u.dailyMinutes} 分钟`
+  if (!u.enabled) return t('user.usageUnlimited')
+  if (u.exempt) return t('user.usageExempt')
+  return t('user.usageToday', { used: u.usedMinutes, total: u.dailyMinutes })
 })
 
 const fetchUsage = async (address) => {
@@ -611,7 +636,9 @@ const hasPendingApplication = computed(() =>
 
 const pendingAppText = computed(() => {
   const app = (cwtStatus.value?.applications || []).find((a) => a.status === 'pending')
-  return app ? `编号 ${app.id}，提交于 ${new Date(app.submittedAt).toLocaleString()}` : ''
+  return app
+    ? t('user.pendingAppText', { id: app.id, date: new Date(app.submittedAt).toLocaleString() })
+    : ''
 })
 
 const dailyLimitText = computed(() => usageInfo.value?.dailyMinutes ?? '120')
@@ -636,7 +663,7 @@ const fetchCwtStatus = async (address) => {
  */
 const applyCwt = async () => {
   if (!window.ccdao || !window.ccdao.request) {
-    alert('未检测到 CCDAO 插件，请先安装并连接钱包')
+    alert(t('user.errNoCcdao'))
     return
   }
   cwtSubmitting.value = true
@@ -649,7 +676,7 @@ const applyCwt = async () => {
     })
     const pluginAddress = accounts?.[0]
     if (!pluginAddress) {
-      throw new Error('未获取到钱包账户，请确认 CCDAO 插件已解锁并授权本网站')
+      throw new Error(t('user.errNoAccount'))
     }
     // 插件 cwt_sign：usr 统一使用平台标识 dsh-usr（用户无需输入）
     const result = await window.ccdao.request({
@@ -658,13 +685,13 @@ const applyCwt = async () => {
     })
     const token = typeof result === 'string' ? result : (result?.token ?? result?.signature)
     if (!token) {
-      throw new Error('插件未返回 token，请确认 cwt_sign 签名成功')
+      throw new Error(t('user.errNoToken'))
     }
     await axios.post('/api/user/cwt/apply', { token })
-    alert('申请已提交，等待管理员审批。审批通过后将自动豁免每日限时。')
+    alert(t('user.cwtAppliedOk'))
     await fetchCwtStatus(userInfo.value.address)
   } catch (err) {
-    alert('申请提交失败：' + (err.response?.data?.error || err.message))
+    alert(t('user.cwtApplyFail', { err: err.response?.data?.error || err.message }))
   } finally {
     cwtSubmitting.value = false
   }
@@ -746,7 +773,7 @@ const toggleExpand = (idx) => {
 }
 
 const addItem = () => {
-  if (customCount.value >= 20) return alert('自定义端点最多 20 个')
+  if (customCount.value >= 20) return alert(t('user.limitEndpoints'))
   items.value.push({
     kind: 'custom',
     route: undefined,
@@ -762,11 +789,7 @@ const addItem = () => {
 
 const removeItem = (idx) => {
   const item = items.value[idx]
-  if (
-    !confirm(
-      `确定删除端点「${item.displayName || '未命名'}」吗？\n将同时清除该端点的 API Key 与模型配置。`,
-    )
-  )
+  if (!confirm(t('user.confirmRemoveEndpoint', { name: item.displayName || t('user.unnamed') })))
     return
   items.value.splice(idx, 1)
 }
@@ -789,7 +812,7 @@ const removeModel = (idx, mi) => {
  */
 const signChallenge = async () => {
   if (!window.ccdao || !window.ccdao.request) {
-    throw new Error('未检测到 CCDAO 插件，请先安装并连接钱包')
+    throw new Error(t('user.errNoCcdao'))
   }
   // 1. 插件当前账户【保留原始大小写】！
   //    插件的 accounts.includes() 是大小写敏感严格匹配：把 jNDwRet... 转成
@@ -801,7 +824,7 @@ const signChallenge = async () => {
   })
   const pluginAddress = accounts?.[0]
   if (!pluginAddress) {
-    throw new Error('未获取到钱包账户，请确认 CCDAO 插件已解锁并授权本网站')
+    throw new Error(t('user.errNoAccount'))
   }
   // 2. 领一次性挑战
   const challengeRes = await axios.post('/api/user/config-challenge', { address: pluginAddress })
@@ -835,12 +858,9 @@ const syncWalletAccount = async (address) => {
  * （源码确认：signMessage 直接验签，无授权/解锁流程）。
  */
 const friendlyPluginError = (err) => {
-  const msg = err.response?.data?.error || err.message || '未知错误'
+  const msg = err.response?.data?.error || err.message || t('user.unknownError')
   if (/not been authorized|unauthorized/i.test(String(msg))) {
-    return (
-      'CCDAO 插件尚未授权本网站：请先点击浏览器上的 CCDAO 插件图标解锁钱包，' +
-      '再点击本页"连接钱包"完成授权（会弹出授权确认框），然后重试'
-    )
+    return t('user.pluginNotAuthorized')
   }
   return msg
 }
@@ -849,13 +869,13 @@ const friendlyPluginError = (err) => {
 const validateModelRows = (models) => {
   const rows = (models || []).filter((m) => m.id && String(m.id).trim())
   const ids = new Set(rows.map((m) => String(m.id).trim()))
-  if (ids.size !== rows.length) return { ok: false, msg: '模型 ID 不能重复' }
+  if (ids.size !== rows.length) return { ok: false, msg: t('user.errModelIdDup') }
   for (const m of rows) {
     if (m.contextWindow && (typeof m.contextWindow !== 'number' || m.contextWindow < 1)) {
-      return { ok: false, msg: `模型 ${m.id} 的 contextWindow 非法` }
+      return { ok: false, msg: t('user.errCwInvalid', { id: m.id }) }
     }
     if (m.maxTokens && (typeof m.maxTokens !== 'number' || m.maxTokens < 1)) {
-      return { ok: false, msg: `模型 ${m.id} 的 maxTokens 非法` }
+      return { ok: false, msg: t('user.errMtInvalid', { id: m.id }) }
     }
   }
   return { ok: true }
@@ -866,19 +886,19 @@ const validateAll = () => {
   const seenNames = new Set()
   for (const item of items.value) {
     if (item.apiKey && item.apiKey.length > 4096) {
-      return { ok: false, msg: 'API Key 长度超出限制' }
+      return { ok: false, msg: t('user.errKeyTooLong') }
     }
     if (item.kind === 'custom') {
       const name = (item.displayName || '').trim()
-      if (!name) return { ok: false, msg: '自定义端点需要填写显示名称' }
-      if (name.length > 64) return { ok: false, msg: '显示名称不能超过 64 字符' }
-      if (seenNames.has(name)) return { ok: false, msg: `显示名称重复：${name}` }
+      if (!name) return { ok: false, msg: t('user.errNeedName') }
+      if (name.length > 64) return { ok: false, msg: t('user.errNameTooLong') }
+      if (seenNames.has(name)) return { ok: false, msg: t('user.errNameDup', { name }) }
       seenNames.add(name)
       if (!/^https?:\/\//.test(item.baseURL || '')) {
-        return { ok: false, msg: `端点 ${name} 的 baseURL 必须是 http(s) 地址` }
+        return { ok: false, msg: t('user.errBadBaseUrl', { name }) }
       }
     } else if (item.baseURL && !/^https?:\/\//.test(item.baseURL)) {
-      return { ok: false, msg: '官方端点 baseURL 必须是 http(s) 地址' }
+      return { ok: false, msg: t('user.errOfficialBaseUrl') }
     }
     const check = validateModelRows(item.models)
     if (!check.ok) return { ok: false, msg: `${item.displayName}：${check.msg}` }
@@ -887,7 +907,7 @@ const validateAll = () => {
 }
 
 const saveConfig = async () => {
-  if (!currentAddress()) return alert('请先连接钱包')
+  if (!currentAddress()) return alert(t('user.errConnectFirst'))
   const check = validateAll()
   if (!check.ok) return alert(check.msg)
 
@@ -927,9 +947,9 @@ const saveConfig = async () => {
 
     await axios.post('/api/user/tenant-config', payload)
     await syncWalletAccount(address)
-    alert('✅ 配置已保存并热加载：进入 DSH 后可在模型选择器中切换各提供方')
+    alert(t('user.savedOk'))
   } catch (err) {
-    alert('保存失败：' + friendlyPluginError(err))
+    alert(t('user.saveFail', { err: friendlyPluginError(err) }))
   } finally {
     keySaving.value = false
   }
@@ -937,9 +957,9 @@ const saveConfig = async () => {
 
 /** 探测某个自定义端点的模型列表（优先用输入框 key，否则用该端点已存 key） */
 const discoverItem = async (idx) => {
-  if (!currentAddress()) return alert('请先连接钱包')
+  if (!currentAddress()) return alert(t('user.errConnectFirst'))
   const item = items.value[idx]
-  if (!item?.baseURL?.trim()) return alert('请先填写该端点的 baseURL')
+  if (!item?.baseURL?.trim()) return alert(t('user.errNeedBaseUrl'))
   discovering.value = idx
   try {
     const { address, nonce, signature, publicKey } = await signChallenge()
@@ -962,14 +982,17 @@ const discoverItem = async (idx) => {
       maxTokens: undefined,
     }))
     if (models.length === 0) {
-      alert('该端点未返回任何模型（可能需要鉴权：先填写 API Key 并保存后再试）')
+      alert(t('user.discoverEmpty'))
     } else {
       alert(
-        `✅ 探测到 ${models.length} 个模型，已填入「${item.displayName || '该端点'}」，可编辑后保存`,
+        t('user.discoveredOk', {
+          count: models.length,
+          name: item.displayName || t('user.unnamed'),
+        }),
       )
     }
   } catch (err) {
-    alert('探测失败：' + friendlyPluginError(err))
+    alert(t('user.discoverFail', { err: friendlyPluginError(err) }))
   } finally {
     discovering.value = null
   }
@@ -977,8 +1000,8 @@ const discoverItem = async (idx) => {
 
 /** 只删除官方 DeepSeek API Key（不影响端点覆盖与自定义端点，需签名） */
 const clearOfficialKey = async () => {
-  if (!currentAddress()) return alert('请先连接钱包')
-  if (!confirm('确认删除官方 DeepSeek API Key 吗？\n只删除官方 key，不影响自定义端点。')) return
+  if (!currentAddress()) return alert(t('user.errConnectFirst'))
+  if (!confirm(t('user.confirmClearOfficialKey'))) return
   keySaving.value = true
   try {
     const { address, nonce, signature, publicKey } = await signChallenge()
@@ -986,9 +1009,9 @@ const clearOfficialKey = async () => {
       data: { address, nonce, signature, publicKey, scope: 'official-key' },
     })
     await syncWalletAccount(address)
-    alert('✅ 官方 DeepSeek API Key 已删除')
+    alert(t('user.officialKeyCleared'))
   } catch (err) {
-    alert('删除失败：' + friendlyPluginError(err))
+    alert(t('user.delFail', { err: friendlyPluginError(err) }))
   } finally {
     keySaving.value = false
   }
@@ -996,15 +1019,10 @@ const clearOfficialKey = async () => {
 
 /** 恢复默认：清除官方 key + 官方端点覆盖 + 所有自定义端点（需签名） */
 const resetConfig = async () => {
-  if (!currentAddress()) return alert('请先连接钱包')
-  if (
-    !confirm(
-      '确认恢复默认配置吗？\n\n将清除：\n1. 官方 DeepSeek API Key\n2. ' +
-        (customCount.value > 0 ? `全部 ${customCount.value} 个自定义端点及其 API Key\n3. ` : '') +
-        '官方端点覆盖配置\n\n回到 DeepSeek 官方 API + 默认模型。此操作需要钱包签名确认，不可恢复。',
-    )
-  )
-    return
+  if (!currentAddress()) return alert(t('user.errConnectFirst'))
+  const customLine =
+    customCount.value > 0 ? t('user.confirmResetCustomLine', { n: customCount.value }) : ''
+  if (!confirm(t('user.confirmResetBase1') + customLine + t('user.confirmResetBase2'))) return
   keySaving.value = true
   try {
     const { address, nonce, signature, publicKey } = await signChallenge()
@@ -1012,9 +1030,9 @@ const resetConfig = async () => {
       data: { address, nonce, signature, publicKey },
     })
     await syncWalletAccount(address)
-    alert('✅ 已恢复默认配置（官方 API + 默认模型）')
+    alert(t('user.resetOk'))
   } catch (err) {
-    alert('恢复失败：' + friendlyPluginError(err))
+    alert(t('user.resetFail', { err: friendlyPluginError(err) }))
   } finally {
     keySaving.value = false
   }
@@ -1028,11 +1046,11 @@ const loadingProgress = ref(0)
 
 // 等待时间计算
 const waitingTime = computed(() => {
-  if (!waitingSince.value) return '0 秒'
+  if (!waitingSince.value) return t('user.waitZero')
   const ms = Date.now() - waitingSince.value
-  if (ms < 60000) return `${Math.floor(ms / 1000)} 秒`
-  if (ms < 3600000) return `${Math.floor(ms / 60000)} 分钟`
-  return `${(ms / 3600000).toFixed(1)} 小时`
+  if (ms < 60000) return t('user.waitSec', { n: Math.floor(ms / 1000) })
+  if (ms < 3600000) return t('user.waitMin', { n: Math.floor(ms / 60000) })
+  return t('user.waitHour', { n: (ms / 3600000).toFixed(1) })
 })
 
 const showLoading = (title, message, progress = 0) => {
@@ -1109,7 +1127,7 @@ const setupAccountChangeListener = () => {
         localStorage.removeItem('swtc_address')
         connected.value = false
         userInfo.value = {}
-        alert('钱包已断开连接')
+        alert(t('user.walletDisconnected'))
         return
       }
 
@@ -1140,7 +1158,7 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
 
   try {
     // 显示加载页面
-    showLoading('正在连接钱包', '验证地址...', 10)
+    showLoading(t('user.loadingConnect'), t('user.loadingVerify'), 10)
 
     // 关键：无论地址是否变化，都要确保容器存在并运行
     const containerStatus = await ensureContainer(newAddress)
@@ -1155,8 +1173,8 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
 
     // 更新加载状态
     showLoading(
-      '正在创建容器',
-      containerStatus === 'created' ? '首次创建，需要等待容器启动...' : '容器已存在，正在启动...',
+      t('user.loadingCreateContainer'),
+      containerStatus === 'created' ? t('user.loadingFirstStart') : t('user.loadingStartExisting'),
       50,
     )
 
@@ -1164,7 +1182,7 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
     localStorage.setItem('swtc_address', newAddress)
 
     // 获取用户信息
-    showLoading('正在获取用户信息', '加载账户数据...', 80)
+    showLoading(t('user.loadingFetchInfo'), t('user.loadingAccountData'), 80)
     await fetchUserInfo(newAddress)
 
     // 关键：设置 connected 为 true，否则页面不显示用户信息
@@ -1179,7 +1197,7 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
 
     // 只在地址真正变化时才显示提示
     if (!isInitialLoad && newAddress !== oldAddress) {
-      alert(`已切换到新地址：${newAddress.slice(0, 10)}...`)
+      alert(t('user.switchedAddress', { addr: `${newAddress.slice(0, 10)}...` }))
     }
 
     // 切换/连接后刷新"我的技能"为当前地址的个人视图
@@ -1188,7 +1206,7 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
     console.error('[UserCenter] 处理地址失败:', err)
     hideLoading()
     if (!isInitialLoad) {
-      alert('处理地址失败：' + err.message)
+      alert(t('user.addressFail', { err: err.message }))
     }
   }
 }
@@ -1204,7 +1222,7 @@ const connectWallet = async () => {
     })
 
     if (!accounts || accounts.length === 0) {
-      throw new Error('未获取到账户')
+      throw new Error(t('user.noAccounts'))
     }
 
     // 统一转小写
@@ -1215,7 +1233,7 @@ const connectWallet = async () => {
     await handleAddressChange(address)
   } catch (err) {
     console.error('[UserCenter] 连接失败:', err)
-    alert('连接失败：' + err.message)
+    alert(t('user.connectFail', { err: err.message }))
   } finally {
     connecting.value = false
   }
@@ -1241,7 +1259,7 @@ const connectWithOwnership = async (address) => {
     })
     const pluginAddress = accounts?.[0]
     if (!pluginAddress) {
-      throw new Error('未获取到钱包账户，请确认 CCDAO 插件已解锁并授权本网站')
+      throw new Error(t('user.errNoAccount'))
     }
     const signature = await window.ccdao.request({
       method: 'swtc_signMessage',
@@ -1390,7 +1408,7 @@ const fetchUserInfo = async (address) => {
       localStorage.removeItem('swtc_address')
       connected.value = false
       userInfo.value = {}
-      alert('保存的地址无效，请重新连接钱包')
+      alert(t('user.invalidAddress'))
       return
     }
 
@@ -1407,7 +1425,7 @@ const fetchUserInfo = async (address) => {
 
 const switchAddress = async () => {
   if (!hasCCDAO.value) {
-    alert('请先安装 CCDAO 插件')
+    alert(t('user.errInstallCcdao'))
     return
   }
 
@@ -1418,7 +1436,7 @@ const switchAddress = async () => {
     })
 
     if (!accounts || accounts.length === 0) {
-      throw new Error('未获取到账户')
+      throw new Error(t('user.noAccounts'))
     }
 
     // 统一转小写
@@ -1429,14 +1447,14 @@ const switchAddress = async () => {
     await handleAddressChange(newAddress)
   } catch (err) {
     console.error('[UserCenter] 切换失败:', err)
-    alert('切换失败：' + err.message)
+    alert(t('user.switchFail', { err: err.message }))
   }
 }
 
 const restartContainer = async () => {
   try {
     const address = userInfo.value.address
-    showLoading('正在启动容器', '请稍候...', 50)
+    showLoading(t('user.loadingStarting'), t('user.loadingPleaseWait'), 50)
 
     await connectWithOwnership(address)
 
@@ -1445,20 +1463,19 @@ const restartContainer = async () => {
 
     await fetchUserInfo(address)
     hideLoading()
-    alert('容器已启动')
+    alert(t('user.startedOk'))
   } catch (err) {
     hideLoading()
-    alert('启动失败：' + err.message)
+    alert(t('user.startFail', { err: err.message }))
   }
 }
 
 const restartDSH = async () => {
-  if (!confirm('确定要重启 DSH 服务吗？\n\n安装插件后需要重启才能生效。\n重启期间服务暂时不可用。'))
-    return
+  if (!confirm(t('user.confirmRestartDsh'))) return
 
   try {
     const address = userInfo.value.address
-    showLoading('正在重启 DSH 服务', '请稍候...', 50)
+    showLoading(t('user.loadingRestarting'), t('user.loadingPleaseWait'), 50)
 
     const res = await axios.post(`/api/user/${address}/restart`)
 
@@ -1467,26 +1484,21 @@ const restartDSH = async () => {
 
     await fetchUserInfo(address)
     hideLoading()
-    alert('DSH 服务已重启')
+    alert(t('user.restartedOk'))
   } catch (err) {
     hideLoading()
-    alert('重启失败：' + (err.response?.data?.error || err.message))
+    alert(t('user.restartFail', { err: err.response?.data?.error || err.message }))
   }
 }
 
 const resetContainer = async () => {
-  if (
-    !confirm(
-      '️ 警告：此操作将删除所有数据！\n\n确定要重置容器吗？\n- 删除所有 DSH 配置\n- 删除所有插件\n- 删除所有会话数据\n- 此操作不可恢复！',
-    )
-  )
-    return
+  if (!confirm(t('user.confirmResetContainer'))) return
 
-  if (!confirm('再次确认：您确定要放弃所有数据重新开始吗？')) return
+  if (!confirm(t('user.confirmResetContainer2'))) return
 
   try {
     const address = userInfo.value.address
-    showLoading('正在重置容器', '删除数据和重建容器...', 50)
+    showLoading(t('user.loadingResetting'), t('user.loadingDeleteRebuild'), 50)
 
     const res = await axios.post(`/api/user/${address}/reset`)
 
@@ -1497,10 +1509,10 @@ const resetContainer = async () => {
     await handleAddressChange(address)
 
     hideLoading()
-    alert('容器已重置，正在重新创建...')
+    alert(t('user.resetContainerOk'))
   } catch (err) {
     hideLoading()
-    alert('重置失败：' + (err.response?.data?.error || err.message))
+    alert(t('user.resetContainerFail', { err: err.response?.data?.error || err.message }))
   }
 }
 
@@ -1509,25 +1521,20 @@ const resetContainer = async () => {
  * （停止期间不计时，挂机不再消耗每日限额；数据保留，随时可重新启动）
  */
 const stopContainer = async () => {
-  if (
-    !confirm(
-      '确定要停止容器吗？\n\n- 停止后今日使用时长立即结算并保全，不再继续消耗\n- 所有数据保留（会话、配置、文件）\n- 随时可以重新启动继续使用',
-    )
-  )
-    return
+  if (!confirm(t('user.confirmStopContainer'))) return
 
   try {
     const address = userInfo.value.address
-    showLoading('正在停止容器', '结算今日时长并停止...', 50)
+    showLoading(t('user.loadingStopping'), t('user.loadingSettleStop'), 50)
 
     await axios.post(`/api/user/${address}/stop`)
 
     await fetchUserInfo(address)
     hideLoading()
-    alert('容器已停止，今日剩余时长已保全。随时可重新启动。')
+    alert(t('user.stoppedOk'))
   } catch (err) {
     hideLoading()
-    alert('停止失败：' + (err.response?.data?.error || err.message))
+    alert(t('user.stopFail', { err: err.response?.data?.error || err.message }))
   }
 }
 
@@ -1542,7 +1549,11 @@ const statusBadge = (status) => {
 }
 
 const statusText = (status) => {
-  const map = { running: '运行中', stopped: '已停止', destroyed: '已销毁' }
+  const map = {
+    running: t('user.statusRunning'),
+    stopped: t('user.statusStopped'),
+    destroyed: t('user.statusDestroyed'),
+  }
   return map[status] || status
 }
 
@@ -1707,46 +1718,46 @@ const onImportFile = (e) => {
 const doImport = async () => {
   const name = importName.value.trim()
   if (!name) {
-    alert('请填写技能名（kebab-case）')
+    alert(t('user.errNeedSkillName'))
     return
   }
   if (!importText.value.trim()) {
-    alert('请选择技能文件或粘贴 SKILL.md 内容')
+    alert(t('user.errNeedSkillText'))
     return
   }
   importBusy.value = true
   try {
     const sig = await signChallenge()
     await skillsApi.importSkill(sig, name, importText.value)
-    alert(`技能 ${name} 导入成功，已写入您的容器，DSH 会话中可直接使用`)
+    alert(t('user.importedOk', { name }))
     closeImportDialog()
     await loadMine()
   } catch (err) {
-    alert('导入失败：' + friendlyPluginError(err))
+    alert(t('user.importFail', { err: friendlyPluginError(err) }))
   } finally {
     importBusy.value = false
   }
 }
 
 const unpublishSkill = async (name) => {
-  if (!confirm(`确定取消共享技能 ${name} 吗？（已安装用户不受影响）`)) return
+  if (!confirm(t('user.confirmUnpublish', { name }))) return
   try {
     const sig = await signChallenge()
     await skillsApi.unpublish(sig, name)
     await loadMine()
   } catch (err) {
-    alert('操作失败：' + friendlyPluginError(err))
+    alert(t('user.opFail', { err: friendlyPluginError(err) }))
   }
 }
 
 const uninstallSkill = async (name) => {
-  if (!confirm(`确定从您的容器卸载技能 ${name} 吗？`)) return
+  if (!confirm(t('user.confirmUninstall', { name }))) return
   try {
     const sig = await signChallenge()
     await skillsApi.uninstall(sig, name)
     await loadMine()
   } catch (err) {
-    alert('卸载失败：' + friendlyPluginError(err))
+    alert(t('user.uninstallFail', { err: friendlyPluginError(err) }))
   }
 }
 
@@ -1781,12 +1792,12 @@ const closeShareDialog = () => {
 const doShare = async () => {
   const source = shareSourceName.value
   if (!source) {
-    alert('请从列表中选择要共享的技能')
+    alert(t('user.errNeedShareSource'))
     return
   }
   const renameTo = shareConflict.value ? shareRenameTo.value.trim() : ''
   if (shareConflict.value && !renameTo) {
-    alert('该名称已被占用，请填写一个新的共享名（kebab-case）')
+    alert(t('user.errNeedShareRename'))
     return
   }
   shareBusy.value = true
@@ -1795,8 +1806,8 @@ const doShare = async () => {
     await skillsApi.publish(sig, source, renameTo || undefined)
     alert(
       renameTo
-        ? `技能已以新名称「${renameTo}」发布到技能市场`
-        : `技能「${source}」已发布到技能市场`,
+        ? t('user.sharedWithRename', { name: renameTo })
+        : t('user.sharedOk', { name: source }),
     )
     closeShareDialog()
     await loadMine()
@@ -1807,7 +1818,7 @@ const doShare = async () => {
       shareRenameTo.value = ''
       return
     }
-    alert('共享失败：' + friendlyPluginError(err))
+    alert(t('user.shareFail', { err: friendlyPluginError(err) }))
   } finally {
     shareBusy.value = false
   }

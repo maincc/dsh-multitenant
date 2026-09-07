@@ -2,54 +2,70 @@
   <div class="skill-market">
     <div class="card">
       <div class="market-head">
-        <h2>🏪 技能市场</h2>
+        <h2>{{ $t('skills.marketTitle') }}</h2>
         <div class="market-tools">
-          <input v-model="keyword" class="search-input" placeholder="搜索技能名 / 描述…" />
-          <button class="btn btn-secondary" :disabled="loading" @click="loadList">🔄 刷新</button>
+          <input
+            v-model="keyword"
+            class="search-input"
+            :placeholder="$t('skills.searchPlaceholder')"
+          />
+          <button class="btn btn-secondary" :disabled="loading" @click="loadList">
+            {{ $t('skills.refresh') }}
+          </button>
         </div>
       </div>
 
       <div v-if="!ccdao" class="notice notice-error">
-        ❌ 未检测到 CCDAO 插件，无法安装技能（浏览不受影响）。请先安装
+        {{ $t('skills.noCcdao') }}
         <a
           href="https://chromewebstore.google.com/detail/ccdao-connector/fpondiojcgaollhcmjgpjmldjjkealjb"
           target="_blank"
           rel="noopener noreferrer"
           >CCDAO Connector</a
-        >。
+        >{{ $t('skills.noCcdaoTail') }}
       </div>
       <div v-else-if="!connected" class="notice">
-        💡 浏览无需登录；<strong>安装 / 下载</strong>需要钱包签名——请先到
-        <router-link to="/user">用户中心</router-link> 连接钱包。
+        {{ $t('skills.browseNoLogin') }} <strong>{{ $t('skills.installDownload') }}</strong
+        >{{ $t('skills.browseNeedSig') }}
+        <router-link to="/user">{{ $t('common.nav.user') }}</router-link>
+        {{ $t('skills.browseConnectTail') }}
       </div>
 
       <div v-if="loading" class="config-loading">
         <div class="mini-spinner"></div>
-        <span>正在获取技能列表…</span>
+        <span>{{ $t('skills.loadingList') }}</span>
       </div>
-      <div v-else-if="filtered.length === 0" class="hint">没有可用的共享技能</div>
+      <div v-else-if="filtered.length === 0" class="hint">{{ $t('skills.empty') }}</div>
       <div v-else class="skill-grid">
         <div v-for="s in filtered" :key="s.name" class="skill-card">
           <div class="skill-card-head">
             <strong>{{ s.name }}</strong>
-            <span v-if="s.installed" class="badge badge-success">已安装</span>
-            <span v-if="s.disableModelInvocation" class="badge badge-warning">仅用户侧</span>
+            <span v-if="s.installed" class="badge badge-success">{{ $t('skills.installed') }}</span>
+            <span v-if="s.disableModelInvocation" class="badge badge-warning">{{
+              $t('skills.userOnlyBadge')
+            }}</span>
           </div>
           <p class="skill-description">{{ s.description }}</p>
           <div class="skill-meta">
             <span>{{ shortAddress(s.sharer) }}</span>
             <span>{{ new Date(s.sharedAt).toLocaleDateString() }}</span>
-            <span v-if="s.hasResources" class="badge badge-info">含资源</span>
+            <span v-if="s.hasResources" class="badge badge-info">{{
+              $t('skills.hasResources')
+            }}</span>
           </div>
           <div class="skill-card-actions">
-            <button class="btn btn-small" @click="openDetail(s.name)">预览</button>
-            <a class="btn btn-small btn-secondary" :href="downloadUrl(s.name)" download>下载</a>
+            <button class="btn btn-small" @click="openDetail(s.name)">
+              {{ $t('skills.preview') }}
+            </button>
+            <a class="btn btn-small btn-secondary" :href="downloadUrl(s.name)" download>{{
+              $t('skills.download')
+            }}</a>
             <button
               class="btn btn-small btn-primary"
               :disabled="!connected || installing"
               @click="install(s.name)"
             >
-              {{ s.installed ? '重新安装' : '安装' }}
+              {{ s.installed ? $t('skills.reinstall') : $t('skills.install') }}
             </button>
           </div>
         </div>
@@ -60,12 +76,12 @@
     <div v-if="detail || detailLoading" class="modal-mask" @click.self="closeDetail">
       <div v-if="detailLoading && !detail" class="modal-panel detail-panel">
         <div class="detail-head">
-          <h3>技能详情</h3>
+          <h3>{{ $t('skills.detailTitle') }}</h3>
           <button class="btn btn-small" @click="closeDetail">✕</button>
         </div>
         <div class="config-loading">
           <div class="mini-spinner"></div>
-          <span>正在获取技能详情…</span>
+          <span>{{ $t('skills.loadingDetail') }}</span>
         </div>
       </div>
       <div v-else-if="detail" class="modal-panel detail-panel">
@@ -75,11 +91,16 @@
         </div>
         <p class="skill-description">{{ detail.description }}</p>
         <p class="skill-meta">
-          分享者 {{ detail.sharer }} · {{ new Date(detail.sharedAt).toLocaleString() }} · 哈希
+          {{
+            $t('skills.detailMeta', {
+              sharer: detail.sharer,
+              date: new Date(detail.sharedAt).toLocaleString(),
+            })
+          }}{{ $t('skills.detailHash') }}
           <code class="hash">{{ shortHash(detail.contentHash) }}</code>
-          <span v-if="detail.disableModelInvocation" class="badge badge-warning"
-            >仅用户侧可触发</span
-          >
+          <span v-if="detail.disableModelInvocation" class="badge badge-warning">{{
+            $t('skills.userOnlyTrigger')
+          }}</span>
         </p>
         <div class="detail-body">
           <pre>{{ detail.body }}</pre>
@@ -90,16 +111,22 @@
             :disabled="!connected || installing"
             @click="install(detail.name)"
           >
-            {{ installing ? '安装中…' : detail.installed ? '重新安装' : '签名并安装' }}
+            {{
+              installing
+                ? $t('skills.installing')
+                : detail.installed
+                  ? $t('skills.reinstall')
+                  : $t('skills.signInstall')
+            }}
           </button>
-          <button class="btn btn-secondary" @click="closeDetail">关闭</button>
+          <button class="btn btn-secondary" @click="closeDetail">{{ $t('skills.close') }}</button>
         </div>
         <p v-if="!connected && ccdao" class="hint">
-          安装需要钱包签名：请先到 <router-link to="/user">用户中心</router-link> 连接钱包
+          {{ $t('skills.needConnectA') }}
+          <router-link to="/user">{{ $t('common.nav.user') }}</router-link>
+          {{ $t('skills.needConnectB') }}
         </p>
-        <p class="hint hint-warn">
-          ⚠️ 技能正文会注入模型上下文，安装前请确认内容可信；可核对上方内容哈希溯源。
-        </p>
+        <p class="hint hint-warn">{{ $t('skills.detailWarn') }}</p>
       </div>
     </div>
   </div>
@@ -107,8 +134,11 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { skillsApi } from '../api/skills.js'
 import { ccdaoAvailable, friendlyPluginError, signChallenge } from '../api/wallet.js'
+
+const { t } = useI18n()
 
 const skills = ref([])
 const keyword = ref('')
@@ -141,7 +171,7 @@ const loadList = async () => {
       if (cur) detail.value = { ...detail.value, installed: cur.installed }
     }
   } catch (err) {
-    alert('加载技能列表失败：' + friendlyPluginError(err))
+    alert(t('skills.errList', { err: friendlyPluginError(err) }))
   } finally {
     loading.value = false
   }
@@ -155,7 +185,7 @@ const openDetail = async (name) => {
     const res = await skillsApi.detail(name)
     detail.value = res.skill
   } catch (err) {
-    alert('加载详情失败：' + friendlyPluginError(err))
+    alert(t('skills.errDetail', { err: friendlyPluginError(err) }))
   } finally {
     detailLoading.value = false
   }
@@ -170,23 +200,21 @@ const downloadUrl = (name) => skillsApi.downloadUrl(name)
 
 const install = async (name) => {
   if (!connected.value) {
-    alert('请先在用户中心连接钱包后再安装')
+    alert(t('skills.errNotConnected'))
     return
   }
 
   // P0-4 供应链边界：安装前确认 + 风险提示
   const isDetail = detail.value?.name === name
   const target = (isDetail ? detail.value : skills.value.find((s) => s.name === name)) || {}
-  const autoLine = target.modelAutoInvoke
-    ? '⚠️ 该技能可被模型自动调用，请确认你信任其发布者与内容。'
-    : '（平台默认：市场技能不会被模型自动调用，仅供你手动使用）'
+  const autoLine = target.modelAutoInvoke ? t('skills.confirmAutoYes') : t('skills.confirmAutoNo')
+  const publisher = target.sharer ? shortAddress(target.sharer) : t('skills.unknown')
   const confirmed = confirm(
-    `即将安装共享技能「${name}」\n\n` +
-      '⚠️ 技能内容来自社区市场，可能包含脚本、命令或外部请求，' +
-      '安装后会写入你的容器并可被执行。\n' +
-      `发布者：${target.sharer ? shortAddress(target.sharer) : '未知'}\n\n` +
-      autoLine +
-      '\n\n确定安装吗？',
+    `${t('skills.confirmTitle', { name })}\n\n` +
+      `${t('skills.confirmRisk')}\n` +
+      `${t('skills.confirmPublisher', { publisher })}\n\n` +
+      `${autoLine}\n\n` +
+      t('skills.confirmAsk'),
   )
   if (!confirmed) return
 
@@ -194,12 +222,12 @@ const install = async (name) => {
   try {
     const auth = await signChallenge()
     await skillsApi.install(auth, name)
-    alert(`技能 ${name} 安装成功，DSH 会话中可直接使用`)
+    alert(t('skills.okInstalled', { name }))
     detail.value = null
     detailLoading.value = false
     await loadList()
   } catch (err) {
-    alert('安装失败：' + friendlyPluginError(err))
+    alert(t('skills.errInstall', { err: friendlyPluginError(err) }))
   } finally {
     installing.value = false
   }
