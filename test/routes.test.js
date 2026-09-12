@@ -35,6 +35,7 @@ vi.mock('../src/services/user.service.js', () => ({
     resetContainer: vi.fn(),
     getUserInfo: vi.fn(),
     getAllUsers: vi.fn(),
+    state: { swtcUsers: {} },
   },
 }))
 
@@ -51,9 +52,30 @@ vi.mock('../src/services/tenant-config.service.js', () => ({
   },
 }))
 
+// 数据层默认走真实实现，但把「会话/状态 load/save」全部替换为内存空 + 落空：
+// 避免测试写入真实 data/（state.json、user-sessions.json、admin sessions），
+// 同时保留 loadCwt* 等只读方法的行为（routes.test.js 不涉及 CWT 用例，空值即可）
+vi.mock('../src/services/data.service.js', async (importOriginal) => {
+  const mod = await importOriginal()
+  const empty = {
+    loadSessions: vi.fn(() => ({})),
+    loadUserSessions: vi.fn(() => ({})),
+    loadCwtRegistry: vi.fn(() => ({})),
+    loadCwtApplications: vi.fn(() => []),
+    readStateFile: vi.fn(() => null), // migrateLegacy 只读探测，空即可
+    saveState: vi.fn(() => {}),
+    saveUserSessions: vi.fn(() => {}),
+    saveSessions: vi.fn(() => {}),
+    saveCwtRegistry: vi.fn(() => {}),
+    saveCwtApplications: vi.fn(() => {}),
+  }
+  return { dataService: { ...mod.dataService, ...empty } }
+})
+
 import { handleUserRoutes } from '../src/routes/user.routes.js'
 import { handleTenantRoutes } from '../src/routes/tenant.routes.js'
 import { handleAdminRoutes } from '../src/routes/admin.routes.js'
+import { userSessionStore } from '../src/middleware/user-auth.middleware.js'
 import { userService } from '../src/services/user.service.js'
 import { tenantConfigService } from '../src/services/tenant-config.service.js'
 import { NotFoundError, ForbiddenError } from '../src/utils/errors.js'
@@ -112,7 +134,22 @@ describe('user.routes.js 详情分支', () => {
     expect(res.headersSent).toBe(false)
   })
 
-  it('GET /api/user/:address 详情分支仍正常工作', async () => {
+  it('GET /api/user/:address 详情分支仍正常工作（带会话）', async () => {
+    userService.getUserInfo.mockResolvedValue({ address: TARGET_ADDR, port: 31001 })
+    const req = makeReq({
+      method: 'GET',
+      url: `/api/user/${TARGET_ADDR}`,
+      cookie: `admin_session=${ADMIN_TOKEN}`,
+    })
+    const res = makeRes()
+
+    const handled = await handleUserRoutes(req, res, `/api/user/${TARGET_ADDR}`)
+    expect(handled).toBe(true)
+    expect(res.statusCode).toBe(200)
+    expect(JSON.parse(res.body).address).toBe(TARGET_ADDR)
+  })
+
+  it('GET /api/user/:address 匿名访问 → 200 脱敏壳（无 port，P1-3 不泄露）', async () => {
     userService.getUserInfo.mockResolvedValue({ address: TARGET_ADDR, port: 31001 })
     const req = makeReq({ method: 'GET', url: `/api/user/${TARGET_ADDR}` })
     const res = makeRes()
@@ -120,7 +157,32 @@ describe('user.routes.js 详情分支', () => {
     const handled = await handleUserRoutes(req, res, `/api/user/${TARGET_ADDR}`)
     expect(handled).toBe(true)
     expect(res.statusCode).toBe(200)
-    expect(JSON.parse(res.body).address).toBe(TARGET_ADDR)
+    const body = JSON.parse(res.body)
+    // 脱敏壳：只有存在性，绝无端口/用量/tier
+    expect(body.address).toBe(TARGET_ADDR)
+    expect('port' in body).toBe(false)
+    expect('tier' in body).toBe(false)
+    expect('usage' in body).toBe(false)
+  })
+
+  it('GET /api/user/:address 已登录但非本人 → 403', async () => {
+    userService.getUserInfo.mockResolvedValue({ address: TARGET_ADDR, port: 31001 })
+    // 另一个非管理员地址的会话访问 TARGET_ADDR
+    const strangerToken = 'aa'.repeat(32)
+    adminSessionStore.sessions[sha256(strangerToken)] = {
+      address: 'jpfx5i4xxnzggbl1sgm1cfabayvyyb9vzp', // 非管理员、非 TARGET_ADDR
+      expiresAt: Date.now() + 3600e3,
+    }
+    const req = makeReq({
+      method: 'GET',
+      url: `/api/user/${TARGET_ADDR}`,
+      cookie: `admin_session=${strangerToken}`,
+    })
+    const res = makeRes()
+
+    const handled = await handleUserRoutes(req, res, `/api/user/${TARGET_ADDR}`)
+    expect(handled).toBe(true)
+    expect(res.statusCode).toBe(403)
   })
 })
 
@@ -147,7 +209,9 @@ describe('tenant.routes.js remove / restart 错误码', () => {
     expect(handled).toBe(true)
     expect(res.statusCode).toBe(404)
     expect(res.body).toContain('NOT_FOUND')
-    expect(userService.destroyContainer).toHaveBeenCalledWith(TARGET_ADDR, true)
+    expect(userService.destroyContainer).toHaveBeenCalledWith(TARGET_ADDR, true, {
+      keepVolume: false,
+    })
   })
 
   it('remove 成功返回 200', async () => {
@@ -168,6 +232,84 @@ describe('tenant.routes.js remove / restart 错误码', () => {
     expect(handled).toBe(true)
     expect(res.statusCode).toBe(200)
     expect(JSON.parse(res.body).ok).toBe(true)
+    expect(userService.destroyContainer).toHaveBeenCalledWith(TARGET_ADDR, true, {
+      keepVolume: false,
+    })
+  })
+
+  it('remove?keepVolume=1 → 保留数据卷（keepVolume=true）', async () => {
+    userService.destroyContainer.mockResolvedValue({ ok: true, status: 'removed', volume: 'kept' })
+    const req = makeReq({
+      method: 'POST',
+      url: `/api/user/${TARGET_ADDR}/remove?keepVolume=1`,
+      cookie: `admin_session=${ADMIN_TOKEN}`,
+    })
+    const res = makeRes()
+
+    const handled = await handleTenantRoutes(
+      req,
+      res,
+      `/api/user/${TARGET_ADDR}/remove`,
+      new URL(`http://127.0.0.1:8090/api/user/${TARGET_ADDR}/remove?keepVolume=1`),
+    )
+    expect(handled).toBe(true)
+    expect(res.statusCode).toBe(200)
+    expect(JSON.parse(res.body).volume).toBe('kept')
+    expect(userService.destroyContainer).toHaveBeenCalledWith(TARGET_ADDR, true, {
+      keepVolume: true,
+    })
+  })
+
+  it('reset 成功 → 200 + 重建端口 + url + 签发会话（一步进入新容器）', async () => {
+    userService.resetContainer.mockResolvedValue({
+      ok: true,
+      address: TARGET_ADDR,
+      port: 31005,
+      rebuilt: true,
+    })
+    const req = makeReq({
+      method: 'POST',
+      url: `/api/user/${TARGET_ADDR}/reset`,
+      cookie: `admin_session=${ADMIN_TOKEN}`,
+    })
+    const res = makeRes()
+
+    const handled = await handleTenantRoutes(
+      req,
+      res,
+      `/api/user/${TARGET_ADDR}/reset`,
+      new URL(`http://127.0.0.1:8090/api/user/${TARGET_ADDR}/reset`),
+    )
+    expect(handled).toBe(true)
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.port).toBe(31005)
+    expect(body.rebuilt).toBe(true)
+    expect(body.url).toBe('http://127.0.0.1:31005/') // 跟随请求 Host=127.0.0.1:8090
+    expect(res.headers['set-cookie']).toMatch(/user_session=[0-9a-f]{64}/)
+    expect(userService.resetContainer).toHaveBeenCalledWith(TARGET_ADDR)
+  })
+
+  it('reset 且无 Home 头回退 PUBLIC_HOST 构造 url 不报错', async () => {
+    userService.resetContainer.mockResolvedValue({ ok: true, address: TARGET_ADDR, port: 31006 })
+    const req = makeReq({
+      method: 'POST',
+      url: `/api/user/${TARGET_ADDR}/reset`,
+      cookie: `admin_session=${ADMIN_TOKEN}`,
+    })
+    delete req.headers.host
+    const res = makeRes()
+
+    const handled = await handleTenantRoutes(
+      req,
+      res,
+      `/api/user/${TARGET_ADDR}/reset`,
+      new URL(`http://127.0.0.1:8090/api/user/${TARGET_ADDR}/reset`),
+    )
+    expect(handled).toBe(true)
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.url).toMatch(/^http:\/\/[^/]+:31006\/$/)
   })
 
   it('restart 对不存在容器返回 404（而非 500）', async () => {
@@ -377,5 +519,74 @@ describe('user.routes.js 模型配置端点', () => {
       publicKey: 'p',
       scope: undefined,
     })
+  })
+})
+
+describe('网关门禁会话（TTL 分权 + logout 吊销）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('create(address) 默认 12h；create(address, ttl) 使用自定义 TTL（CWT 入场 30min）', () => {
+    const shortToken = userSessionStore.create(TARGET_ADDR, 30 * 60 * 1000)
+    const longToken = userSessionStore.create(TARGET_ADDR)
+    const shortEntry = userSessionStore.sessions[sha256(shortToken)]
+    const longEntry = userSessionStore.sessions[sha256(longToken)]
+    const skew = Date.now()
+    expect(shortEntry.expiresAt - skew).toBeGreaterThan(29 * 60 * 1000)
+    expect(shortEntry.expiresAt - skew).toBeLessThanOrEqual(30 * 60 * 1000)
+    expect(longEntry.expiresAt - skew).toBeGreaterThan(11 * 60 * 60 * 1000)
+    expect(longEntry.expiresAt - skew).toBeLessThanOrEqual(12 * 60 * 60 * 1000)
+  })
+
+  it('POST /api/user/logout 吊销当前会话并下发清 cookie（切钱包后旧钥匙即刻作废）', async () => {
+    const token = userSessionStore.create(TARGET_ADDR)
+    const req = makeReq({
+      method: 'POST',
+      url: '/api/user/logout',
+      cookie: `user_session=${token}`,
+    })
+    const res = makeRes()
+
+    const handled = await handleUserRoutes(req, res, '/api/user/logout')
+    expect(handled).toBe(true)
+    expect(res.statusCode).toBe(200)
+    expect(res.headers['set-cookie']).toContain('max-age=0')
+    expect(userSessionStore.resolve(token)).toBeNull() // 钥匙已被吊销
+  })
+
+  it('logout 无 cookie 时也正常返回（幂等）', async () => {
+    const res = makeRes()
+    const handled = await handleUserRoutes(
+      makeReq({ method: 'POST', url: '/api/user/logout' }),
+      res,
+      '/api/user/logout',
+    )
+    expect(handled).toBe(true)
+    expect(res.statusCode).toBe(200)
+  })
+
+  it('GET /api/user/session-info 返回 cookie 会话绑定的地址', async () => {
+    const token = userSessionStore.create(TARGET_ADDR)
+    const res = makeRes()
+    const handled = await handleUserRoutes(
+      makeReq({ url: '/api/user/session-info', cookie: `user_session=${token}` }),
+      res,
+      '/api/user/session-info',
+    )
+    expect(handled).toBe(true)
+    expect(res.statusCode).toBe(200)
+    expect(JSON.parse(res.body).address).toBe(TARGET_ADDR)
+  })
+
+  it('GET /api/user/session-info 无会话时返回 address: null', async () => {
+    const res = makeRes()
+    const handled = await handleUserRoutes(
+      makeReq({ url: '/api/user/session-info' }),
+      res,
+      '/api/user/session-info',
+    )
+    expect(handled).toBe(true)
+    expect(JSON.parse(res.body).address).toBeNull()
   })
 })

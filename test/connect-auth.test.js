@@ -1,6 +1,7 @@
 /**
- * /connect 所有权口径（P0-2 决策 B）测试：
- * 容器已存在 → 免签名直连；需要创建 → 钱包签名（challenge + 验签 + 一次性）
+ * /connect 所有权签名测试：
+ * 所有路径都要求钱包签名（challenge + 验签 + 一次性）——匿名一律 401 挑战，
+ * 绝不在 302/JSON 里带出容器端口（P2-3）；需要创建时签名证明地址归属。
  *
  * userService.mock（containerExists/ensureContainer），
  * tenant-config 挑战/验签用真实实现（内存 Map），签名用真实 @swtc/keypairs。
@@ -12,6 +13,15 @@ vi.mock('../src/services/user.service.js', () => ({
   userService: {
     containerExists: vi.fn(),
     ensureContainer: vi.fn(),
+  },
+}))
+
+// user-sessions 存储 mock 为内存：签名成功会写会话，避免污染真实 data/ 文件
+vi.mock('../src/services/data.service.js', () => ({
+  dataService: {
+    loadUserSessions: vi.fn(() => ({})),
+    saveUserSessions: vi.fn(() => {}),
+    loadSessions: vi.fn(() => ({})), // tenant.routes → tenant-proxy → admin session store 构造需要
   },
 }))
 
@@ -66,18 +76,20 @@ async function bareConnect(address) {
   return res
 }
 
-describe('/connect 所有权签名（P0-2 决策 B）', () => {
+describe('/connect 所有权签名（一律要求签名，匿名 401）', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
-  it('容器已存在 → 免签名直连 302（ensureContainer 被调）', async () => {
+  it('容器已存在 + 无签名材料 → 401（匿名一律挑战，不再免签直连泄露端口）', async () => {
     userService.containerExists.mockResolvedValue(true)
     userService.ensureContainer.mockResolvedValue(31001)
 
     const res = await bareConnect(ADDR)
-    expect(res.statusCode).toBe(302)
-    expect(userService.ensureContainer).toHaveBeenCalledWith(ADDR)
+    expect(res.statusCode).toBe(401)
+    expect(res.headers.location).toBeUndefined()
+    expect(JSON.parse(res.body).code).toBe('SIGNATURE_REQUIRED')
+    expect(userService.ensureContainer).not.toHaveBeenCalled()
   })
 
   it('容器不存在 + 无签名材料 → 401 SIGNATURE_REQUIRED 并下发 nonce', async () => {
@@ -128,6 +140,32 @@ describe('/connect 所有权签名（P0-2 决策 B）', () => {
     await handleTenantRoutes(makeReq(), res, '/connect', url)
     expect(res.statusCode).toBe(302)
     expect(userService.ensureContainer).toHaveBeenCalledWith(wallet.address)
+  })
+
+  it('container exists + signed + format=json → 200 JSON {url} + user_session cookie', async () => {
+    const wallet = makeWallet()
+    userService.containerExists.mockResolvedValue(false) // 不存在 → 第一步返回 401 挑战
+    userService.ensureContainer.mockResolvedValue(31004)
+
+    const first = await bareConnect(wallet.address)
+    expect(first.statusCode).toBe(401)
+    const nonce = JSON.parse(first.body).nonce
+
+    const res = makeRes()
+    const url = connectUrl({
+      address: wallet.address,
+      nonce,
+      signature: wallet.sign(nonce),
+      publicKey: wallet.publicKey,
+      format: 'json',
+    })
+    await handleTenantRoutes(makeReq(), res, '/connect', url)
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.ok).toBe(true)
+    expect(body.url).toMatch(/^http:\/\/[^/]+:31004\/$/)
+    expect(body.address).toBe(wallet.address)
+    expect(res.headers['set-cookie'] || '').toMatch(/^user_session=[a-f0-9]{64}/)
   })
 
   it('nonce 一次性：同 nonce 重放 → 403（防重放）', async () => {

@@ -8,11 +8,33 @@ import { dataService } from '../services/data.service.js'
 import { dockerService } from '../services/docker.service.js'
 import { cwtAdminService } from '../services/cwt-admin.service.js'
 import { tenantConfigService } from '../services/tenant-config.service.js'
+import { tenantGateway } from '../services/tenant-proxy.service.js'
 import { requireAdmin, getAdminSession, adminSessionStore } from '../middleware/auth.middleware.js'
 import { validateSwtcAddress } from '../middleware/validate.middleware.js'
 import { normalizeAddress } from '../utils/address.js'
 import { BadRequestError, NotFoundError, handleError } from '../utils/errors.js'
 import { parseBody } from '../utils/parse-body.js'
+
+/**
+ * 收集孤儿数据卷：dsh-data-swtc-* 前缀 + 不属于任何 state 用户 + 无任何容器挂载引用。
+ * 删除前务必用本函数实时重算（而非信任前端提交的列表），避免误删在用/在案卷。
+ */
+async function collectOrphanVolumes() {
+  const prefix = 'dsh-data-swtc-'
+  const volumes = await dockerService.listVolumes()
+  const stateVolumes = new Set(
+    Object.keys(userService.state.swtcUsers || {}).map((a) =>
+      (prefix + normalizeAddress(a)).toLowerCase(),
+    ),
+  )
+  const referenced = await dockerService.listReferencedVolumes()
+  return volumes.filter(
+    (v) =>
+      v.startsWith(prefix) &&
+      !stateVolumes.has(v.toLowerCase()) &&
+      !referenced.has(v.toLowerCase()),
+  )
+}
 
 /**
  * 处理管理路由
@@ -123,6 +145,39 @@ export async function handleAdminRoutes(req, res, path, url) {
     return true
   }
 
+  // GET /api/admin/tenant-url?address= - 管理员代开租户容器（网关门禁凭证）
+  // 返回带一次性 gateway_ticket 的 URL：浏览器首次访问该 URL 即换取该租户会话并放行
+  if (path === '/api/admin/tenant-url' && req.method === 'GET') {
+    if (!requireAdmin(req, res)) return true
+    let address = url.searchParams.get('address')
+    if (!validateSwtcAddress(address, res)) return true
+    address = normalizeAddress(address)
+
+    const user = userService.state.swtcUsers?.[address]
+    if (!user || user.containerStatus !== 'running') {
+      res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '租户容器未在运行', code: 'NOT_FOUND' }))
+      return true
+    }
+
+    const ticket = tenantGateway.issueTicket(address)
+    if (!ticket) {
+      res.writeHead(409, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '网关未接管该租户端口，请稍后重试', code: 'CONFLICT' }))
+      return true
+    }
+    const PUBLIC_HOST = process.env.PUBLIC_HOST || CONFIG.server.publicHost
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+    res.end(
+      JSON.stringify({
+        url: `http://${PUBLIC_HOST}:${user.port}/?gateway_ticket=${ticket}`,
+        address,
+        port: user.port,
+      }),
+    )
+    return true
+  }
+
   // GET /api/docker/status - 检查 Docker 状态
   if (path === '/api/docker/status') {
     try {
@@ -136,19 +191,41 @@ export async function handleAdminRoutes(req, res, path, url) {
     return true
   }
 
-  // POST /api/admin/merge-duplicates - 合并重复地址
-  if (path === '/api/admin/merge-duplicates' && req.method === 'POST') {
-    if (!requireAdmin(req, res)) return true
+  // ---- 孤儿数据卷管理（管理端"清理孤儿卷"） ----
 
+  // GET /api/admin/orphan-volumes - 列出孤儿数据卷
+  // 判定：dsh-data-swtc-* 前缀 + 不属于任何 state 用户 + 无任何容器（含已停止）挂载引用
+  if (path === '/api/admin/orphan-volumes' && req.method === 'GET') {
+    if (!requireAdmin(req, res)) return true
     try {
-      const merged = await userService.mergeDuplicateAddresses()
+      const orphans = await collectOrphanVolumes()
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ ok: true, merged, count: merged.length }))
+      res.end(JSON.stringify({ ok: true, orphanVolumes: orphans, total: orphans.length }))
     } catch (err) {
-      if (!res.headersSent) {
-        res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ error: err.message, code: 'INTERNAL_ERROR' }))
+      handleError(err, res)
+    }
+    return true
+  }
+
+  // POST /api/admin/cleanup-orphan-volumes - 删除孤儿数据卷
+  if (path === '/api/admin/cleanup-orphan-volumes' && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return true
+    try {
+      const orphans = await collectOrphanVolumes()
+      const removed = []
+      const failed = []
+      for (const volume of orphans) {
+        try {
+          await dockerService.removeVolume(volume)
+          removed.push(volume)
+        } catch (err) {
+          failed.push({ name: volume, error: err.message })
+        }
       }
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ ok: true, removed, failed, total: orphans.length }))
+    } catch (err) {
+      handleError(err, res)
     }
     return true
   }

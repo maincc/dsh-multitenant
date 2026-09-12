@@ -176,8 +176,8 @@
         <h2>{{ $t('user.enterDsh') }}</h2>
         <p>{{ $t('user.enterDshHint') }}</p>
         <a
-          :href="dshWebUrl"
-          target="_blank"
+          href="#"
+          @click.prevent="enterDsh"
           rel="noopener noreferrer"
           class="btn btn-success btn-large"
         >
@@ -583,10 +583,11 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import axios from 'axios'
 import { useI18n } from 'vue-i18n'
 import { skillsApi } from '../api/skills.js'
+import { requestAccounts, signMessage, getPublicKey, watchAccountsChanged } from '../api/wallet.js'
 
 const { t } = useI18n()
 
@@ -599,13 +600,6 @@ const waiting = ref(false)
 const queuePosition = ref(0)
 const queueTotal = ref(0)
 const waitingSince = ref(0)
-
-// 专属 DSH 实例地址：用用户当前访问入口页的 host 拼端口，
-// 保证内网/公网/域名部署下跳转目标正确（不再硬编码 127.0.0.1）
-const dshWebUrl = computed(() => {
-  if (!userInfo.value.port) return ''
-  return `http://${window.location.hostname}:${userInfo.value.port}/`
-})
 
 // ---- 每日使用时限展示（非 CWT 授权用户受每日分钟数限制）----
 const usageInfoLabel = computed(() => {
@@ -668,16 +662,8 @@ const applyCwt = async () => {
   }
   cwtSubmitting.value = true
   try {
-    // 插件当前账户（保留原始大小写！插件 accounts.includes 是大小写敏感严格匹配，
-    // 只有 requestAccounts 原样返回的字符串才能通过，后端会自行 normalize）
-    const accounts = await window.ccdao.request({
-      method: 'swtc_requestAccounts',
-      params: [],
-    })
-    const pluginAddress = accounts?.[0]
-    if (!pluginAddress) {
-      throw new Error(t('user.errNoAccount'))
-    }
+    // 插件当前账户（requestAccounts 返回原始大小写，插件 accounts.includes 大小写敏感）
+    const pluginAddress = await requestAccounts()
     // 插件 cwt_sign：usr 统一使用平台标识 dsh-usr（用户无需输入）
     const result = await window.ccdao.request({
       method: 'cwt_sign',
@@ -818,26 +804,13 @@ const signChallenge = async () => {
   //    插件的 accounts.includes() 是大小写敏感严格匹配：把 jNDwRet... 转成
   //    jndwret... 再传回去会被判"未授权"(4100)。只有 requestAccounts 原样
   //    返回的字符串才能通过。后端 normalizeAddress 会自己转小写，无需担心。
-  const accounts = await window.ccdao.request({
-    method: 'swtc_requestAccounts',
-    params: [],
-  })
-  const pluginAddress = accounts?.[0]
-  if (!pluginAddress) {
-    throw new Error(t('user.errNoAccount'))
-  }
+  const pluginAddress = await requestAccounts()
   // 2. 领一次性挑战
   const challengeRes = await axios.post('/api/user/config-challenge', { address: pluginAddress })
   const nonce = challengeRes.data.nonce
   // 3. 插件对 nonce 签名 + 取公钥（都用原始大小写地址）
-  const signature = await window.ccdao.request({
-    method: 'swtc_signMessage',
-    params: [pluginAddress, nonce],
-  })
-  const publicKey = await window.ccdao.request({
-    method: 'swtc_getPublicKey',
-    params: [pluginAddress],
-  })
+  const signature = await signMessage(pluginAddress, nonce)
+  const publicKey = await getPublicKey(pluginAddress)
   return { address: pluginAddress, nonce, signature, publicKey }
 }
 
@@ -1068,78 +1041,55 @@ const checkCCDAO = () => {
   hasCCDAO.value = typeof window.ccdao !== 'undefined'
 }
 
-// 监听账户变化事件
+// 账户变化处理（watchAccountsChanged 回调）
+// 只处理「已连接过且地址真正变化」：首次连接由按钮/初始恢复流程负责，
+// 避免与 connectWallet 竞态并发跑创建流程。
+const handleAccountsChanged = async (accounts) => {
+  console.log('[UserCenter] 检测到账户变化:', accounts)
+
+  if (!accounts || accounts.length === 0) {
+    // 用户断开连接
+    localStorage.removeItem('swtc_address')
+    connected.value = false
+    userInfo.value = {}
+    alert(t('user.walletDisconnected'))
+    return
+  }
+
+  const newAddress = accounts[0].toLowerCase()
+  const saved = localStorage.getItem('swtc_address')
+  if (!saved || saved === newAddress) {
+    console.log('[UserCenter] 账户未变化或尚未连接，忽略广播')
+    return
+  }
+  // 切换钱包地址：立即吊销旧地址的门禁钥匙（user_session），
+  // 防止旧 URL 凭旧 cookie 仍能进入（会话 2h/30min 也是兜底）
+  console.log('[UserCenter] 钱包地址切换，吊销旧会话钥匙...')
+  try {
+    await axios.post('/api/user/logout')
+  } catch (err) {
+    console.warn('[UserCenter] 吊销旧会话失败（非关键）:', err.message)
+  }
+  handleAddressChange(newAddress)
+}
+
+// 监听账户变化事件（三通道兼容，共用 api/wallet.js）
+let unbindAccounts = null
 const setupAccountChangeListener = () => {
   if (!hasCCDAO.value) {
     console.log('[UserCenter] CCDAO 插件未安装')
     return
   }
-
-  console.log('[UserCenter] 设置账户监听器...')
-  console.log('[UserCenter] window.ethereum:', typeof window.ethereum)
-  console.log('[UserCenter] window.ccdao:', typeof window.ccdao)
-
-  // 尝试多种方式监听账户变化
-  let eventEmitter = null
-
-  // 方式 1: window.ethereum.on (MetaMask 风格)
-  if (window.ethereum && window.ethereum.on) {
-    console.log('[UserCenter] 使用 window.ethereum.on')
-    eventEmitter = window.ethereum
-  }
-  // 方式 2: window.ccdao.on (CCDAO 风格)
-  else if (window.ccdao && window.ccdao.on) {
-    console.log('[UserCenter] 使用 window.ccdao.on')
-    eventEmitter = window.ccdao
-  }
-  // 方式 3: 轮询检查（备用方案）
-  else {
-    console.log('[UserCenter] 未找到事件监听器，使用轮询检查')
-    let lastAddress = localStorage.getItem('swtc_address')
-    setInterval(async () => {
-      try {
-        if (window.ccdao && window.ccdao.request) {
-          const accounts = await window.ccdao.request({
-            method: 'swtc_requestAccounts',
-            params: [],
-          })
-          const currentAddress = accounts?.[0]?.toLowerCase()
-          if (currentAddress && currentAddress !== lastAddress) {
-            console.log(`[UserCenter] 轮询检测到地址变化：${lastAddress} -> ${currentAddress}`)
-            lastAddress = currentAddress
-            await handleAddressChange(currentAddress)
-          }
-        }
-      } catch (err) {
-        // 忽略错误
-      }
-    }, 3000) // 每 3 秒检查一次
-    return
-  }
-
-  // 注册事件监听器
-  if (eventEmitter) {
-    eventEmitter.on('swtcAccountsChanged', async (accounts) => {
-      console.log('[UserCenter] 检测到账户变化:', accounts)
-
-      if (!accounts || accounts.length === 0) {
-        // 用户断开连接
-        localStorage.removeItem('swtc_address')
-        connected.value = false
-        userInfo.value = {}
-        alert(t('user.walletDisconnected'))
-        return
-      }
-
-      const newAddress = accounts[0].toLowerCase()
-      await handleAddressChange(newAddress)
-    })
-  }
+  console.log('[UserCenter] 设置账户监听器（三通道兼容）...')
+  unbindAccounts = watchAccountsChanged(handleAccountsChanged)
 }
 
 // 处理地址变化的通用函数
 const handleAddressChange = async (newAddress, isInitialLoad = false) => {
   const oldAddress = localStorage.getItem('swtc_address')
+  console.log(
+    `[flow] F3 handleAddressChange 进入 (${isInitialLoad ? '初始加载' : '按钮/事件'}, old=${oldAddress}, new=${newAddress})`,
+  )
 
   if (isInitialLoad) {
     console.log('[UserCenter] 初始加载，恢复地址:', newAddress)
@@ -1149,15 +1099,21 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
     console.log('[UserCenter] 地址相同，但仍需检查容器状态')
   }
 
-  // 地址真正变化时：立即清空"我的技能"并进入 loading，
-  // 避免切换后短暂闪现上一个用户的共享/安装列表
+  // 地址真正变化时：立即清空上一个地址的全部用户数据并进入 loading，
+  // 避免切换后短暂闪现上一个用户的共享/安装列表；
+  // 也保证后续失败分支（额度用完/资源排队/异常）不会残留旧地址的页面与信息
   if (!isInitialLoad && newAddress !== oldAddress) {
     mineData.value = { published: [], installed: [], inContainer: [] }
     mySkillsLoading.value = true
+    userInfo.value = {}
+    connected.value = false
+    usageInfo.value = null
+    cwtStatus.value = null
   }
 
   try {
     // 显示加载页面
+    console.log('[flow] L1 loading=10% 验证地址')
     showLoading(t('user.loadingConnect'), t('user.loadingVerify'), 10)
 
     // 关键：无论地址是否变化，都要确保容器存在并运行
@@ -1168,6 +1124,16 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
       hideLoading()
       // 保存地址
       localStorage.setItem('swtc_address', newAddress)
+      return
+    }
+
+    // 今日额度用完：明确提示（初始加载不打扰），不再弹签名/进队列
+    if (containerStatus === 'usage-limit') {
+      hideLoading()
+      localStorage.setItem('swtc_address', newAddress)
+      if (!isInitialLoad) {
+        alert(lastConnect202Message || t('user.usageLimitReached'))
+      }
       return
     }
 
@@ -1188,6 +1154,7 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
     // 关键：设置 connected 为 true，否则页面不显示用户信息
     if (userInfo.value.address) {
       connected.value = true
+      console.log('[flow] L4 connected=true → hideLoading（loading 在此结束）')
       console.log('[UserCenter] 已设置 connected = true')
       hideLoading()
     } else {
@@ -1201,7 +1168,9 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
     }
 
     // 切换/连接后刷新"我的技能"为当前地址的个人视图
+    console.log('[flow] F13 loadMine 开始（loading 已结束）')
     await loadMine()
+    console.log('[flow] F13b loadMine 完成')
   } catch (err) {
     console.error('[UserCenter] 处理地址失败:', err)
     hideLoading()
@@ -1212,21 +1181,18 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
 }
 
 const connectWallet = async () => {
+  console.log('[flow] F1 connectWallet 进入')
   if (!hasCCDAO.value) return
 
   connecting.value = true
+  // 钱包弹窗请求账户期间先给反馈；后续 handleAddressChange 会覆盖进度继续展示
+  showLoading(t('user.connecting'), t('user.loadingWalletConnect'), 5)
   try {
-    const accounts = await window.ccdao.request({
-      method: 'swtc_requestAccounts',
-      params: [],
-    })
-
-    if (!accounts || accounts.length === 0) {
-      throw new Error(t('user.noAccounts'))
-    }
+    const pluginAddress = await requestAccounts()
 
     // 统一转小写
-    const address = accounts[0].toLowerCase()
+    const address = pluginAddress.toLowerCase()
+    console.log('[flow] F2 拿到地址:', address)
     console.log('[UserCenter] 连接钱包，地址:', address)
 
     // 使用通用处理函数
@@ -1236,49 +1202,125 @@ const connectWallet = async () => {
     alert(t('user.connectFail', { err: err.message }))
   } finally {
     connecting.value = false
+    hideLoading()
   }
 }
 
 /**
- * 容器连接/创建（P0-2 决策 B：所有权签名）
- * - 容器已存在 → 免签名直连（302）
- * - 需要创建 → 后端 401 下发一次性挑战 → 插件签名（当前选中账户，原始大小写）→
- *   带 nonce/signature/publicKey 重试
- * 签名账户必须与目标地址一致，否则后端验签会 403。
+ * 容器连接/创建（所有权签名 + 网关门禁会话）
+ * - 总是走签名流程：后端验签通过后签发 user_session cookie，
+ *   浏览器凭 cookie 才能通过租户网关（0.0.0.0:<port> → 127.0.0.1:<内部端口>）
+ * - 流程：领取一次性挑战 → 插件签名（当前选中账户，原始大小写）→
+ *   带 nonce/signature/publicKey 访问 /connect
+ * - 签名账户必须与目标地址一致，否则后端验签会 403
  */
-const connectWithOwnership = async (address) => {
-  let res = await fetch(`/connect?address=${encodeURIComponent(address)}`, {
-    redirect: 'manual',
-  })
-  if (res.status === 401) {
-    const { nonce } = await res.json()
-    // 复用 signChallenge 的取账户逻辑：插件当前选中账户（保留原始大小写）
-    const accounts = await window.ccdao.request({
-      method: 'swtc_requestAccounts',
-      params: [],
-    })
-    const pluginAddress = accounts?.[0]
-    if (!pluginAddress) {
-      throw new Error(t('user.errNoAccount'))
-    }
-    const signature = await window.ccdao.request({
-      method: 'swtc_signMessage',
-      params: [pluginAddress, nonce],
-    })
-    const publicKey = await window.ccdao.request({
-      method: 'swtc_getPublicKey',
-      params: [pluginAddress],
-    })
-    const params = new URLSearchParams({ address, nonce, signature, publicKey })
-    res = await fetch(`/connect?${params}`, { redirect: 'manual' })
+// 签名连接防重入：事件监听器/用户双击/自动恢复可能并发触发，
+// 同一时刻只允许一次「请求账户 → 挑战 → 签名 → 建立连接」，
+// 避免重复弹签名窗、重复创建容器。
+let ownershipInFlight = false
+const connectWithOwnership = async (address, opts = {}) => {
+  console.log('[flow] F6 connectWithOwnership 进入（签名链路）')
+  if (ownershipInFlight) {
+    console.warn('[UserCenter] 签名连接进行中，忽略重复请求')
+    throw new Error(t('user.busy'))
   }
-  return res
+  ownershipInFlight = true
+  // 首屏标题由调用方决定：主动「连接钱包/进入 DSH」显示"连接中"；
+  // 创建容器场景（ensureContainer）显示"正在创建容器"，避免创建期间
+  // UI 又跳回"连接钱包"页面（各阶段只有副标题在变）。
+  const title = opts.title || t('user.connecting')
+  const progress0 = opts.progress ?? 10
+  try {
+    // 阶段化 loading（每次 show 不 hide，由调用方统一 hideLoading）：
+    // 覆盖"钱包弹窗请求账户 → 领取挑战 → 等待签名 → 建立连接"的每个耗时环节
+    showLoading(title, t('user.loadingVerify'), progress0)
+
+    const pluginAddress = await requestAccounts()
+    // 1) 领取一次性挑战（按插件账户下发，5 分钟有效）
+    showLoading(title, t('user.loadingWalletConnect'), Math.max(progress0, 25))
+    const challengeRes = await axios.post('/api/user/config-challenge', {
+      address: pluginAddress,
+    })
+    const nonce = challengeRes.data.nonce
+    console.log('[flow] F7 挑战获取完成 nonce.length=' + (nonce ? String(nonce).length : 0))
+    // 2) 插件签名（用户确认弹窗，可能等待较久）
+    showLoading(title, t('user.loadingSign'), Math.max(progress0, 45))
+    const signature = await signMessage(pluginAddress, nonce)
+    const publicKey = await getPublicKey(pluginAddress)
+    console.log('[flow] F8 钱包签名+公钥完成')
+    // 3) 带签名访问 /connect（已存在容器同样验签并发 cookie）
+    // format=json：浏览器 fetch 的 redirect:manual 会把 302 包成 opaque (status 0)，
+    // 取不到 location → 后端直接回 200 JSON {url}，前端 window.open。
+    showLoading(title, t('user.loadingEstablish'), Math.max(progress0, 70))
+    const params = new URLSearchParams({ address, nonce, signature, publicKey, format: 'json' })
+    console.log('[flow] F9a 发起 /connect（带签名）')
+    const cRes = await fetch(`/connect?${params}`)
+    console.log('[flow] F9b /connect 返回 status=' + cRes.status)
+    return cRes
+  } finally {
+    ownershipInFlight = false
+  }
 }
 
+/**
+ * 「进入 DSH」：签名连接 → 302 后在浏览器新标签打开租户容器。
+ * 必须先过签名（拿 user_session cookie），否则网关门禁 403。
+ */
+const enterDsh = async () => {
+  const address = currentAddress()
+  if (!address) {
+    alert(t('user.errConnectFirst'))
+    return
+  }
+  if (!window.ccdao) {
+    alert(t('user.errNoAccount'))
+    return
+  }
+  try {
+    showLoading(t('user.connecting'))
+    const res = await connectWithOwnership(address, { title: t('user.connecting') })
+    hideLoading()
+    // 200 JSON：后端已签发 user_session cookie，返回容器 url
+    if (res.status === 200) {
+      const data = await res.json()
+      if (data?.url) {
+        console.log('[flow] F14 打开容器页: ' + data.url)
+        window.open(data.url, '_blank', 'noopener')
+        return
+      }
+      alert(data?.message || data?.error || t('user.enterDshFail', { err: res.status }))
+      return
+    }
+    if (res.status === 302) {
+      const loc = res.headers.get('location')
+      if (loc) {
+        console.log('[flow] F14 302 打开容器页: ' + loc)
+        window.open(loc, '_blank', 'noopener')
+      }
+      return
+    }
+    if (res.status === 202) {
+      const data = await res.json()
+      alert(data.message || data.error || '资源不足，请等待')
+      return
+    }
+    alert(t('user.enterDshFail', { err: res.status }))
+  } catch (err) {
+    hideLoading()
+    alert(t('user.enterDshFail', { err: err.message || err }))
+  }
+}
+
+// 最近一次 /connect 202 的后端提示（资源不足/额度用完），供上层展示
+let lastConnect202Message = ''
 const ensureContainer = async (address) => {
+  console.log('[flow] F4a ensureContainer 进入')
   // 先检查容器状态
   try {
     const statusRes = await axios.get(`/connect-status?address=${encodeURIComponent(address)}`)
+    console.log(
+      `[flow] F4b /connect-status 返回 exists=${statusRes.data.exists} status=${statusRes.data.status}`,
+    )
 
     // 如果在等待队列中
     if (statusRes.data.status === 'waiting') {
@@ -1293,12 +1335,22 @@ const ensureContainer = async (address) => {
 
     // 如果容器不存在或已销毁，创建新容器
     if (!statusRes.data.exists || statusRes.data.status === 'destroyed') {
+      console.log('[flow] F5 容器不存在 → 签名并创建')
       console.log('[UserCenter] 容器不存在，正在创建...')
-      const connectRes = await connectWithOwnership(address)
+      const connectRes = await connectWithOwnership(address, {
+        title: t('user.loadingCreateContainer'),
+        progress: 50,
+      })
 
-      // 检查是否返回 202（资源不足，进入队列）
+      // 检查是否返回 202（资源不足 → 排队；额度用完 → 明确提示，不排队）
       if (connectRes.status === 202) {
         const data = await connectRes.json()
+        lastConnect202Message = data.message || data.error || '资源不足，请等待'
+        if (data.code === 'USAGE_LIMIT_REACHED') {
+          console.warn('[flow] USAGE_LIMIT_REACHED:', lastConnect202Message)
+          waiting.value = false
+          return 'usage-limit'
+        }
         waiting.value = true
         queuePosition.value = data.queuePosition
         queueTotal.value = 1 // 初始值，后续轮询会更新
@@ -1314,7 +1366,10 @@ const ensureContainer = async (address) => {
     // 如果容器已停止，启动它
     else if (statusRes.data.status === 'stopped') {
       console.log('[UserCenter] 容器已停止，正在启动...')
-      await connectWithOwnership(address)
+      await connectWithOwnership(address, {
+        title: t('user.loadingStartExisting'),
+        progress: 50,
+      })
       await new Promise((resolve) => setTimeout(resolve, 2000))
       return 'started'
     }
@@ -1326,11 +1381,20 @@ const ensureContainer = async (address) => {
   } catch (err) {
     console.error('[UserCenter] 检查容器状态失败:', err)
     // 如果检查失败，尝试直接创建容器
-    const connectRes = await connectWithOwnership(address)
+    const connectRes = await connectWithOwnership(address, {
+      title: t('user.loadingCreateContainer'),
+      progress: 50,
+    })
 
-    // 检查是否返回 202（资源不足，进入队列）
+    // 检查是否返回 202（资源不足 → 排队；额度用完 → 明确提示，不排队）
     if (connectRes.status === 202) {
       const data = await connectRes.json()
+      lastConnect202Message = data.message || data.error || '资源不足，请等待'
+      if (data.code === 'USAGE_LIMIT_REACHED') {
+        console.warn('[flow] USAGE_LIMIT_REACHED:', lastConnect202Message)
+        waiting.value = false
+        return 'usage-limit'
+      }
       waiting.value = true
       queuePosition.value = data.queuePosition
       queueTotal.value = 1
@@ -1393,8 +1457,19 @@ const cancelWaiting = () => {
 }
 
 const fetchUserInfo = async (address) => {
+  console.log('[flow] F11 fetchUserInfo 开始')
+  // 门控 loading：仅当调用方没有在展示 loading 时才自己开/关，
+  // 避免打断 handleAddressChange 的整体加载流程（它自己会 hide）
+  const opened = !loading.value
+  if (opened) showLoading(t('user.loadingFetchInfo'), t('user.loadingAccountData'), 80)
   try {
     const res = await axios.get(`/api/user/${address}`)
+    console.log(
+      '[flow] F12 用户信息返回 OK, address=' +
+        (res.data?.address || '(空)') +
+        ', status=' +
+        res.data?.status,
+    )
     userInfo.value = res.data
     fetchUsage(address)
     fetchCwtStatus(address)
@@ -1412,6 +1487,12 @@ const fetchUserInfo = async (address) => {
       return
     }
 
+    // 403（会话无效/他人地址）：不打断、不弹错——签名连接后自动解锁
+    if (err.response?.status === 403) {
+      console.warn('[UserCenter] 用户信息需完成签名连接后解锁（403），请点击「进入 DSH」')
+      return
+    }
+
     // 如果获取失败，可能是容器刚创建，重试一次
     await new Promise((resolve) => setTimeout(resolve, 2000))
     try {
@@ -1420,6 +1501,8 @@ const fetchUserInfo = async (address) => {
     } catch (err2) {
       console.error('重试获取用户信息失败:', err2)
     }
+  } finally {
+    if (opened) hideLoading()
   }
 }
 
@@ -1430,12 +1513,9 @@ const switchAddress = async () => {
   }
 
   try {
-    const accounts = await window.ccdao.request({
-      method: 'swtc_requestAccounts',
-      params: [],
-    })
+    const pluginAddress = await requestAccounts()
 
-    if (!accounts || accounts.length === 0) {
+    if (!pluginAddress) {
       throw new Error(t('user.noAccounts'))
     }
 
@@ -1454,9 +1534,12 @@ const switchAddress = async () => {
 const restartContainer = async () => {
   try {
     const address = userInfo.value.address
-    showLoading(t('user.loadingStarting'), t('user.loadingPleaseWait'), 50)
+    showLoading(t('user.loadingStarting'), t('user.loadingPleaseWait'), 40)
 
-    await connectWithOwnership(address)
+    await connectWithOwnership(address, {
+      title: t('user.loadingStarting'),
+      progress: 40,
+    })
 
     // 等待容器完全就绪
     await new Promise((resolve) => setTimeout(resolve, 5000))
@@ -1500,15 +1583,13 @@ const resetContainer = async () => {
     const address = userInfo.value.address
     showLoading(t('user.loadingResetting'), t('user.loadingDeleteRebuild'), 50)
 
+    // 后端在同一个请求里完成「清空旧容器/数据 → 重建全新容器 → 签发会话」，
+    // 返回新容器 url，前端直接打开即可（无需手动重新连接）
     const res = await axios.post(`/api/user/${address}/reset`)
 
-    // 重置后需要重新创建容器
-    await new Promise((resolve) => setTimeout(resolve, 2000))
-
-    // 重新连接
-    await handleAddressChange(address)
-
     hideLoading()
+    const { url } = res.data
+    if (url) window.open(url, '_blank', 'noopener')
     alert(t('user.resetContainerOk'))
   } catch (err) {
     hideLoading()
@@ -1568,14 +1649,27 @@ onMounted(async () => {
   // 优先从 CCDAO 插件获取当前地址，而不是 localStorage
   if (hasCCDAO.value && window.ccdao && window.ccdao.request) {
     try {
-      const accounts = await window.ccdao.request({
-        method: 'swtc_requestAccounts',
-        params: [],
-      })
+      const pluginAddress = await requestAccounts()
 
-      if (accounts && accounts.length > 0) {
-        const currentAddress = accounts[0].toLowerCase()
+      if (pluginAddress) {
+        const currentAddress = pluginAddress.toLowerCase()
         console.log('[UserCenter] 从 CCDAO 获取当前地址:', currentAddress)
+
+        // 比对 cookie 会话地址与插件当前地址：不一致说明钱包已切换
+        // （旧 user_session 可能还有效）→ 吊销旧钥匙，防止旧容器 URL 仍可进
+        try {
+          const sessionRes = await axios.get('/api/user/session-info')
+          const cookieAddr = sessionRes.data.address
+          if (cookieAddr && cookieAddr.toLowerCase() !== currentAddress) {
+            console.log(
+              `[UserCenter] 会话地址(${cookieAddr}) ≠ 插件地址(${currentAddress})，吊销旧钥匙`,
+            )
+            await axios.post('/api/user/logout')
+            alert(t('user.sessionMismatchRevoked'))
+          }
+        } catch (sessionErr) {
+          console.warn('[UserCenter] 会话比对失败（非关键）:', sessionErr.message)
+        }
 
         // 清除 localStorage 中的旧地址（如果有）
         const savedAddress = localStorage.getItem('swtc_address')
@@ -1823,6 +1917,12 @@ const doShare = async () => {
     shareBusy.value = false
   }
 }
+
+onUnmounted(() => {
+  // 解绑账户监听，避免组件重挂载后重复监听
+  unbindAccounts?.()
+  unbindAccounts = null
+})
 </script>
 
 <style scoped>
@@ -2488,5 +2588,30 @@ const doShare = async () => {
 
 .cwt-apply-form .btn {
   margin-top: 0.2rem;
+}
+
+/* ---- 凭 CWT 进入（出示 token 换会话） ---- */
+.cwt-enter {
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px dashed #d1d5db;
+}
+.cwt-enter .btn {
+  margin-right: 0.4rem;
+}
+.cwt-enter-paste {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+  flex-wrap: wrap;
+}
+.cwt-token-input {
+  flex: 1;
+  min-width: 260px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 0.5rem 0.6rem;
+  font-family: monospace;
+  font-size: 0.8rem;
 }
 </style>

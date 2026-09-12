@@ -15,6 +15,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { isAdmin } from '../config/config.js'
 import { dataService } from '../services/data.service.js'
+import { getUserSession } from './user-auth.middleware.js'
 
 const COOKIE_NAME = 'admin_session'
 /** 会话有效期：12 小时 */
@@ -104,4 +105,12 @@ export function requireAdmin(req, res) {
  */
 export function getSessionAddress(req) {
   return getAdminSession(req)
+}
+
+/**
+ * 获取请求身份（管理员会话优先，其次是普通用户会话）。
+ * 用于"本人或管理员"这类判定：普通用户终于有自己的会话了。
+ */
+export function getRequestAddress(req) {
+  return getAdminSession(req) ?? getUserSession(req)
 }

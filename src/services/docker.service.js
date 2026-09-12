@@ -60,12 +60,16 @@ export class DockerService {
       const out = await sh('docker', [
         'inspect',
         '--format',
-        '{{range $p, $c := .NetworkSettings.Ports}}{{$p}}={{$c}}{{end}}',
+        '{{json .NetworkSettings.Ports}}',
         container,
       ])
-      const m = out.match(/3080\/tcp=\[?\{?0\.0\.0\.0 (\d+)|3080\/tcp=(\d+)/)
-      if (m) return Number(m[1] || m[2])
-
+      const parsed = JSON.parse(out)
+      const binding = parsed?.['3080/tcp']?.[0]
+      if (binding?.HostPort) return Number(binding.HostPort)
+    } catch {
+      // container gone / 格式异常
+    }
+    try {
       // 如果 NetworkSettings.Ports 为空，尝试从 HostConfig.PortBindings 获取（配置的目标端口）
       const configOut = await sh('docker', [
         'inspect',
@@ -83,8 +87,13 @@ export class DockerService {
 
   /**
    * 创建并启动容器
+   * @param {string} name 容器名
+   * @param {number} internalPort 宿主回环端口（127.0.0.1 只本机可连；外部进路由网关代理）
+   * @param {string} volume 租户数据卷名
+   * @param {string} patchFile cordis patch 路径
+   * @param {object} limits 资源限额
    */
-  async createContainer(name, port, volume, patchFile, limits) {
+  async createContainer(name, internalPort, volume, patchFile, limits) {
     const args = [
       'run',
       '-d',
@@ -115,8 +124,10 @@ export class DockerService {
       limits.cpus,
       '--pids-limit',
       String(limits.pids),
+      // 回环发布：外部网络物理不可达，只有宿主本机（网关）能连。
+      // 用户浏览器访问的是网关的对外端口（0.0.0.0），网关转发到这里。
       '-p',
-      `${port}:3080`,
+      `127.0.0.1:${internalPort}:3080`,
       '-v',
       `${volume}:/dsh-home`,
       '-v',
@@ -162,6 +173,39 @@ export class DockerService {
    */
   async removeVolume(name) {
     await sh('docker', ['volume', 'rm', name])
+  }
+
+  /**
+   * 列出全量 docker 卷名
+   */
+  async listVolumes() {
+    try {
+      const out = await sh('docker', ['volume', 'ls', '--format', '{{.Name}}'])
+      return out.split('\n').filter(Boolean)
+    } catch {
+      return []
+    }
+  }
+
+  /**
+   * 所有容器（含已停止）当前挂载引用的卷名集合
+   * （清理孤儿卷时用于排除"仍有容器在用"的卷，避免误删）
+   */
+  async listReferencedVolumes() {
+    const refs = new Set()
+    try {
+      const out = await sh('docker', ['ps', '-a', '--format', '{{.Names}}'])
+      const names = out.split('\n').filter(Boolean)
+      for (const name of names) {
+        const info = await this.inspectContainer(name)
+        for (const mount of info?.Mounts || []) {
+          if (mount.Name) refs.add(mount.Name.toLowerCase())
+        }
+      }
+    } catch {
+      /* 返回已收集到的引用（尽力而为） */
+    }
+    return refs
   }
 
   /**

@@ -133,10 +133,15 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { skillsApi } from '../api/skills.js'
-import { ccdaoAvailable, friendlyPluginError, signChallenge } from '../api/wallet.js'
+import {
+  ccdaoAvailable,
+  friendlyPluginError,
+  signChallenge,
+  watchAccountsChanged,
+} from '../api/wallet.js'
 
 const { t } = useI18n()
 
@@ -148,6 +153,8 @@ const detailLoading = ref(false) // 详情拉取中的 loading（预览弹窗先
 const installing = ref(false)
 const connected = ref(Boolean(localStorage.getItem('swtc_address')))
 const ccdao = ref(ccdaoAvailable())
+// 账户监听解绑函数（卸载时调用）
+let unbindAccounts = null
 
 const filtered = computed(() => {
   const k = keyword.value.trim().toLowerCase()
@@ -236,6 +243,17 @@ const install = async (name) => {
 onMounted(() => {
   ccdao.value = ccdaoAvailable()
   loadList()
+  // 钱包地址切换：同步"已连接"状态并按新地址刷新技能列表（与用户中心共用监听通道）
+  unbindAccounts = watchAccountsChanged((accounts) => {
+    const hasAccount = Boolean(accounts && accounts.length > 0)
+    connected.value = hasAccount
+    if (hasAccount) loadList()
+  })
+})
+
+onUnmounted(() => {
+  unbindAccounts?.()
+  unbindAccounts = null
 })
 </script>
 

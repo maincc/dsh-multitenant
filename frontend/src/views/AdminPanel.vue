@@ -62,18 +62,31 @@
         </div>
       </div>
 
-      <!-- 合并重复地址按钮 -->
+      <!-- 孤儿数据卷清理 -->
       <div class="card merge-card">
         <div class="merge-info">
-          <div class="merge-icon">🔧</div>
+          <div class="merge-icon">🧹</div>
           <div class="merge-text">
-            <div class="merge-label">{{ $t('admin.mergeTitle') }}</div>
-            <div class="merge-hint">{{ $t('admin.mergeHint') }}</div>
+            <div class="merge-label">{{ $t('admin.orphanTitle') }}</div>
+            <div class="merge-hint">{{ $t('admin.orphanHint') }}</div>
           </div>
-          <button class="btn btn-warning" @click="mergeDuplicates">
-            {{ $t('admin.mergeBtn') }}
+          <button class="btn btn-warning" @click="scanOrphanVolumes" :disabled="orphanScanning">
+            {{ orphanScanning ? $t('admin.orphanScanning') : $t('admin.orphanScanBtn') }}
+          </button>
+          <button
+            v-if="orphanVolumes.length > 0"
+            class="btn btn-danger"
+            @click="cleanupOrphanVolumes"
+          >
+            {{ $t('admin.orphanCleanBtn', { n: orphanVolumes.length }) }}
           </button>
         </div>
+        <div v-if="orphanNotice" class="orphan-notice">{{ orphanNotice }}</div>
+        <ul v-if="orphanVolumes.length > 0" class="orphan-list">
+          <li v-for="v in orphanVolumes" :key="v" class="orphan-item">
+            <span class="orphan-name">{{ v }}</span>
+          </li>
+        </ul>
       </div>
 
       <div class="card">
@@ -176,8 +189,8 @@
                 </button>
                 <a
                   v-if="user.status === 'running'"
-                  :href="webUrl(user.port)"
-                  target="_blank"
+                  href="#"
+                  @click.prevent="openTenant(user.address)"
                   rel="noopener noreferrer"
                   class="btn btn-info"
                 >
@@ -385,6 +398,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import axios from 'axios'
 import { useI18n } from 'vue-i18n'
+import { requestAccounts, signMessage, getPublicKey, watchAccountsChanged } from '../api/wallet.js'
 
 const { t } = useI18n()
 
@@ -409,80 +423,132 @@ const cwtLoading = ref(false)
 const cwtBusy = ref(false)
 const expandedToken = ref(null)
 let dataRefreshInterval = null
+// 账户监听解绑函数（wallet.js watchAccountsChanged 返回），卸载时调用避免重复监听
+let unbindAccounts = null
 
 // 租户 DSH 实例地址：用当前访问入口页的 host 拼端口（不再硬编码 127.0.0.1）
+// 注：网关方案下不再直接拼 URL —— 打开租户需先取一次性 gateway_ticket（见 openTenant）
 const webUrl = (port) => `http://${window.location.hostname}:${port}/`
+
+/**
+ * 管理员代开租户容器：后端生成一次性 gateway_ticket（管理员会话授权），
+ * 浏览器打开该 URL 首跳即换取租户会话并放行（后续请求无需再带 ticket）。
+ */
+const openTenant = async (address) => {
+  try {
+    const res = await axios.get(`/api/admin/tenant-url?address=${encodeURIComponent(address)}`)
+    if (res.data.url) {
+      window.open(res.data.url, '_blank', 'noopener')
+      return
+    }
+    alert(t('admin.openFail', { err: res.data.error || res.status }))
+  } catch (err) {
+    const msg = err.response?.data?.error || err.message
+    alert(t('admin.openFail', { err: msg }))
+  }
+}
 
 const checkCCDAO = () => {
   hasCCDAO.value = typeof window.ccdao !== 'undefined'
 }
 
-// 监听账户变化事件
-const setupAccountChangeListener = () => {
-  if (!hasCCDAO.value) return
+// 账户变化统一处理（事件/轮询共用）：
+// 地址切换 → 先做无痕管理员预检（不弹签名）→ 是管理员才签名换会话；
+// 不是管理员 → 立即显示无权限页（notAdmin），绝不滞留管理面板。
+const handleAccountsChanged = async (accounts, source = 'unknown') => {
+  console.log(`[AdminPanel] 检测到账户变化(${source}):`, accounts)
 
-  // CCDAO 插件使用 ethereum 对象监听事件
-  if (window.ethereum && window.ethereum.on) {
-    window.ethereum.on('swtcAccountsChanged', async (accounts) => {
-      console.log('[AdminPanel] 检测到账户变化:', accounts)
+  if (!accounts || accounts.length === 0) {
+    // 用户断开连接
+    alert(t('admin.walletDisconnected'))
+    isAdmin.value = false
+    notAdmin.value = false
+    currentAdminAddress.value = null
+    currentAddress.value = null
+    if (dataRefreshInterval) {
+      clearInterval(dataRefreshInterval)
+      dataRefreshInterval = null
+    }
+    return
+  }
 
-      if (!accounts || accounts.length === 0) {
-        // 用户断开连接
-        alert(t('admin.walletDisconnected'))
-        isAdmin.value = false
+  const pluginAddress = accounts[0] // 保留原始大小写！swtc_signMessage 的 accounts.includes 是大小写敏感严格匹配
+  const newAddress = pluginAddress.toLowerCase()
+  currentAddress.value = newAddress
+
+  if (newAddress !== currentAdminAddress.value) {
+    console.log(`[AdminPanel] 地址切换：${currentAdminAddress.value} -> ${newAddress}`)
+
+    // 第一步：无痕预检（/api/admin/check 只查名单，不需要签名）
+    // 先确认新地址在不在管理员名单里，避免对普通地址也弹签名窗
+    let isAdminUser = false
+    try {
+      const checkRes = await axios.get('/api/admin/check', { params: { address: newAddress } })
+      isAdminUser = checkRes.data.isAdmin
+    } catch {
+      /* 预检失败走签名兜底 */
+    }
+
+    if (!isAdminUser) {
+      // 新地址不是管理员 → 直接无权限页（不弹签名、不刷新数据）
+      console.log(`[AdminPanel] 新地址 ${newAddress.slice(0, 10)}... 不是管理员，显示无权限`)
+      notAdmin.value = true
+      isAdmin.value = false
+      currentAdminAddress.value = null
+      if (dataRefreshInterval) {
+        clearInterval(dataRefreshInterval)
+        dataRefreshInterval = null
+      }
+      return
+    }
+
+    // 第二步：是管理员 → 重新钱包签名登录换会话（会话与地址绑定，P0-1）
+    // 注意：signLogin 必须传【原始大小写】pluginAddress，传小写会被插件拒绝签名
+    try {
+      const res = await signLogin(pluginAddress)
+      if (res.data.ok) {
+        const address = res.data.address
+        currentAdminAddress.value = address
+        isAdmin.value = true
         notAdmin.value = false
+        await fetchData()
+        alert(t('admin.switchedAdmin', { addr: `${address.slice(0, 10)}...` }))
+      } else {
+        // 签名通过但后端判定无权限
+        notAdmin.value = true
+        isAdmin.value = false
         currentAdminAddress.value = null
-        currentAddress.value = null
         if (dataRefreshInterval) {
           clearInterval(dataRefreshInterval)
           dataRefreshInterval = null
         }
-        return
       }
-
-      const newAddress = accounts[0].toLowerCase()
-      currentAddress.value = newAddress
-
-      if (newAddress !== currentAdminAddress.value) {
-        console.log(`[AdminPanel] 地址切换：${currentAdminAddress.value} -> ${newAddress}`)
-
-        // 新地址需要重新钱包签名登录（会话与地址绑定，P0-1）
-        try {
-          const res = await signLogin(newAddress)
-          if (res.data.ok) {
-            const address = res.data.address
-            currentAdminAddress.value = address
-            isAdmin.value = true
-            notAdmin.value = false
-            await fetchData()
-            alert(t('admin.switchedAdmin', { addr: `${address.slice(0, 10)}...` }))
-          } else {
-            // 新地址不是管理员，显示无权限
-            notAdmin.value = true
-            isAdmin.value = false
-            currentAdminAddress.value = null
-            if (dataRefreshInterval) {
-              clearInterval(dataRefreshInterval)
-              dataRefreshInterval = null
-            }
-          }
-        } catch (err) {
-          if (err.response?.status === 403) {
-            // 新地址不是管理员，显示无权限页面
-            notAdmin.value = true
-            isAdmin.value = false
-            currentAdminAddress.value = null
-            if (dataRefreshInterval) {
-              clearInterval(dataRefreshInterval)
-              dataRefreshInterval = null
-            }
-          } else {
-            console.error('[AdminPanel] 验证新地址失败:', err)
-          }
+    } catch (err) {
+      if (err.response?.status === 403) {
+        // 新地址不是管理员，显示无权限页面
+        notAdmin.value = true
+        isAdmin.value = false
+        currentAdminAddress.value = null
+        if (dataRefreshInterval) {
+          clearInterval(dataRefreshInterval)
+          dataRefreshInterval = null
         }
+      } else {
+        // 其他错误（如签名被拒/网络）：给用户明确反馈，不静默
+        console.error('[AdminPanel] 验证新地址失败:', err)
+        const msg = err.response?.data?.error || err.message
+        loginError.value = t('admin.loginFail', { err: msg })
+        alert(t('admin.loginFail', { err: msg }))
       }
-    })
+    }
   }
+}
+
+// 监听账户变化事件（三通道兼容，共用 api/wallet.js 的 watchAccountsChanged）
+const setupAccountChangeListener = () => {
+  if (!hasCCDAO.value) return
+  console.log('[AdminPanel] 设置账户监听器（三通道兼容）...')
+  unbindAccounts = watchAccountsChanged(handleAccountsChanged)
 }
 
 const checkDockerStatus = async () => {
@@ -517,14 +583,8 @@ const signLogin = async (pluginAddress) => {
   })
   const nonce = chalRes.data.nonce
   // 2. 插件对 nonce 签名 + 取公钥（都用原始大小写地址）
-  const signature = await window.ccdao.request({
-    method: 'swtc_signMessage',
-    params: [pluginAddress, nonce],
-  })
-  const publicKey = await window.ccdao.request({
-    method: 'swtc_getPublicKey',
-    params: [pluginAddress],
-  })
+  const signature = await signMessage(pluginAddress, nonce)
+  const publicKey = await getPublicKey(pluginAddress)
   // 3. 提交登录（签名验明身份 + 地址归属 → 签发服务端会话）
   return axios.post('/api/admin/login', {
     address: pluginAddress,
@@ -540,17 +600,8 @@ const adminLogin = async () => {
   logging.value = true
   loginError.value = null
   try {
-    const accounts = await window.ccdao.request({
-      method: 'swtc_requestAccounts',
-      params: [],
-    })
-
-    if (!accounts || accounts.length === 0) {
-      throw new Error(t('admin.noAccounts'))
-    }
-
     // 插件原始大小写地址（用于签名）；展示用小写
-    const pluginAddress = accounts[0]
+    const pluginAddress = await requestAccounts()
     currentAddress.value = pluginAddress.toLowerCase()
 
     // 钱包签名登录（challenge → signMessage → 会话）
@@ -600,6 +651,44 @@ const logout = async () => {
   if (dataRefreshInterval) {
     clearInterval(dataRefreshInterval)
     dataRefreshInterval = null
+  }
+}
+
+// ---- 孤儿数据卷（扫描 + 清理） ----
+const orphanVolumes = ref([])
+const orphanScanning = ref(false)
+const orphanNotice = ref('')
+
+const scanOrphanVolumes = async () => {
+  orphanScanning.value = true
+  orphanNotice.value = ''
+  try {
+    const res = await axios.get('/api/admin/orphan-volumes')
+    orphanVolumes.value = res.data.orphanVolumes || []
+    orphanNotice.value = orphanVolumes.value.length
+      ? t('admin.orphanFound', { n: orphanVolumes.value.length })
+      : t('admin.orphanNone')
+  } catch (err) {
+    alert(t('admin.orphanScanFail', { err: err.response?.data?.error || err.message }))
+  } finally {
+    orphanScanning.value = false
+  }
+}
+
+const cleanupOrphanVolumes = async () => {
+  if (!orphanVolumes.value.length) return
+  if (!confirm(t('admin.orphanConfirm', { n: orphanVolumes.value.length }))) return
+  try {
+    const res = await axios.post('/api/admin/cleanup-orphan-volumes')
+    const { removed, failed } = res.data
+    orphanNotice.value = t('admin.orphanCleaned', {
+      ok: removed.length,
+      fail: failed.length,
+    })
+    // 刷新列表：剩下的就是删除失败的
+    orphanVolumes.value = (failed || []).map((f) => f.name)
+  } catch (err) {
+    alert(t('admin.orphanCleanFail', { err: err.response?.data?.error || err.message }))
   }
 }
 
@@ -720,10 +809,15 @@ const removeUser = async (address) => {
   const port = users.value.find((u) => u.address === address)?.port
   if (!confirm(t('admin.confirmRemove', { addr: `${address.slice(0, 10)}...`, port }))) return
 
+  // 是否保留数据卷：确定=保留（留档/审计），取消=连同数据一起删除（彻底清除）
+  const keepVolume = confirm(t('admin.confirmRemoveKeepVolume'))
+
   try {
-    await axios.post(`/api/user/${address}/remove`)
+    await axios.post(`/api/user/${address}/remove`, null, {
+      params: keepVolume ? { keepVolume: 1 } : {},
+    })
     await fetchData()
-    alert(t('admin.removedOk'))
+    alert(keepVolume ? t('admin.removedOkKeepVolume') : t('admin.removedOk'))
   } catch (err) {
     alert(t('admin.removeFail', { err: err.response?.data?.error || err.message }))
   }
@@ -801,13 +895,8 @@ const formatIdle = (ms) => {
 const getCurrentAddress = async () => {
   if (!hasCCDAO.value) return
   try {
-    const accounts = await window.ccdao.request({
-      method: 'swtc_requestAccounts',
-      params: [],
-    })
-    if (accounts && accounts.length > 0) {
-      currentAddress.value = accounts[0].toLowerCase()
-    }
+    const pluginAddress = await requestAccounts()
+    currentAddress.value = pluginAddress.toLowerCase()
   } catch (err) {
     console.error('[AdminPanel] 获取当前地址失败:', err)
   }
@@ -863,7 +952,11 @@ onUnmounted(() => {
   // 清理定时器
   if (dataRefreshInterval) {
     clearInterval(dataRefreshInterval)
+    dataRefreshInterval = null
   }
+  // 解绑账户监听（避免组件重挂载后重复监听）
+  unbindAccounts?.()
+  unbindAccounts = null
 })
 </script>
 
@@ -1104,5 +1197,31 @@ table {
   margin-bottom: 0.4rem;
   font-size: 0.95rem;
   color: #444;
+}
+
+/* 孤儿数据卷 */
+.orphan-notice {
+  margin-top: 0.6rem;
+  font-size: 0.85rem;
+  color: #4b5563;
+}
+
+.orphan-list {
+  margin-top: 0.6rem;
+  list-style: none;
+  padding: 0;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.orphan-item {
+  padding: 0.25rem 0.4rem;
+  border-bottom: 1px dashed #e5e7eb;
+}
+
+.orphan-name {
+  font-family: monospace;
+  font-size: 0.78rem;
+  word-break: break-all;
 }
 </style>

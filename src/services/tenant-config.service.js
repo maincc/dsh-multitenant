@@ -32,7 +32,7 @@ import { fileURLToPath } from 'node:url'
 import { Keypairs } from '@swtc/keypairs'
 import { CONFIG } from '../config/config.js'
 import { normalizeAddress, swtcVolumeName } from '../utils/address.js'
-import { ForbiddenError, BadRequestError, InternalError } from '../utils/errors.js'
+import { ForbiddenError, BadRequestError, InternalError, NotFoundError } from '../utils/errors.js'
 
 const ROOT = join(fileURLToPath(new URL('../..', import.meta.url)))
 const SCRIPTS_DIR = join(ROOT, 'src', 'services')
@@ -131,6 +131,20 @@ export class TenantConfigService {
   }
 
   /**
+   * 该地址的租户数据卷是否存在（docker volume inspect）
+   * @param {string} address SWTC 地址
+   */
+  async volumeExists(address) {
+    const volume = swtcVolumeName(address)
+    try {
+      await sh('docker', ['volume', 'inspect', volume])
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
    * 在租户镜像的辅助容器内执行一个卷脚本（借助数据卷挂载，不依赖宿主卷路径）
    * @param {string} address SWTC 地址（决定挂哪个租户卷）
    * @param {string} script 脚本文件名（src/services/ 下的 .mjs）
@@ -138,6 +152,13 @@ export class TenantConfigService {
    */
   async runScript(address, script, scriptArgs) {
     const volume = swtcVolumeName(address)
+    // 无容器/无卷地址：拒绝执行卷脚本。docker 的 -v 会对不存在的卷隐式创建空卷，
+    // 会留下孤儿卷污染；安装/发布/卸载也会因此"成功"却无处可用。
+    if (!(await this.volumeExists(address))) {
+      throw new NotFoundError(
+        `该地址尚未创建容器（数据卷 ${volume} 不存在），请先在用户中心「连接钱包」创建容器后再操作`,
+      )
+    }
     const scriptPath = join(SCRIPTS_DIR, script)
     const args = [
       'run',

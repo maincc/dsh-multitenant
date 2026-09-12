@@ -4,7 +4,7 @@
  */
 
 import { join, resolve } from 'node:path'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, statSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -12,6 +12,7 @@ import { CONFIG, getTierLimits, isAdmin } from '../config/config.js'
 import { dockerService } from './docker.service.js'
 import { dataService } from './data.service.js'
 import { cwtStore } from './cwt.store.js'
+import { tenantGateway } from './tenant-proxy.service.js'
 import { swtcContainerName, swtcVolumeName, normalizeAddress } from '../utils/address.js'
 import { NotFoundError, BadRequestError, ConflictError } from '../utils/errors.js'
 
@@ -43,6 +44,26 @@ export class UserService {
   }
 
   /**
+   * 分配宿主内部回环端口（40000-49999 随机，避开已占用）。
+   * 内部端口只绑 127.0.0.1，对外进路由网关（tenantGateway）代理。
+   * @param {Set<number>} [exclude] 本次分配过程要排除的端口（重试时避免拿到同一个）
+   */
+  allocateInternalPort(exclude = new Set()) {
+    const used = new Set(exclude)
+    for (const u of Object.values(this.state.swtcUsers || {})) {
+      if (u?.internalPort) used.add(u.internalPort)
+    }
+    for (let i = 0; i < 300; i++) {
+      const p = 40000 + Math.floor(Math.random() * 10000)
+      if (!used.has(p)) {
+        used.add(p)
+        return p
+      }
+    }
+    throw new Error('no internal port available')
+  }
+
+  /**
    * 资源预检
    * 检查是否有足够资源创建新容器
    */
@@ -54,10 +75,11 @@ export class UserService {
       containers: false,
     }
 
-    // 1. 检查端口
+    // 1. 检查端口（含可按需征用的 destroyed 闲置端口，避免僵尸占用导致误报耗尽）
     const availablePorts = this.state.availablePorts?.length ?? 0
     const nextPort = this.state.nextPort ?? CONFIG.docker.basePort
-    checks.ports = availablePorts > 0 || nextPort < CONFIG.docker.maxPort
+    checks.ports =
+      availablePorts > 0 || nextPort < CONFIG.docker.maxPort || this.hasReclaimablePorts()
 
     // 2. 检查主机内存（需要至少 512MB 可用）
     try {
@@ -215,32 +237,58 @@ export class UserService {
       throw new NotFoundError(`Container ${name} not found`)
     }
 
+    // 绑定挂载源必须是"文件"：若 patch 缺失/被误删，Docker 会把源补建成"目录"，
+    // 挂载到镜像内的文件挂载点时报 exit 127（directory onto file，容器起不来）。
+    // 这里用重启前的对外端口显式重建 patch 文件（避免再次启动失败）。
+    const patchFile = join(PATCHES_DIR, `swtc-${address}.yml`)
+    const portForPatch = this.state.swtcUsers?.[address]?.port
+    if (portForPatch != null) {
+      let patchIsFile = false
+      try {
+        patchIsFile = statSync(patchFile).isFile()
+      } catch {
+        patchIsFile = false
+      }
+      if (!patchIsFile) {
+        mkdirSync(PATCHES_DIR, { recursive: true })
+        writeFileSync(patchFile, this.tenantPatch(portForPatch))
+        console.log(`[restart] ${address} rebuilt missing/typed patch file for :${portForPatch}`)
+      }
+    }
+
     // 重启容器
     await dockerService.restartContainer(name)
 
-    // 等待容器就绪
-    const port = await dockerService.publishedPort(name)
-    if (port === null) {
+    // 等待容器就绪（实际宿主映射 = 内部回环端口）
+    const internalPort = await dockerService.publishedPort(name)
+    if (internalPort === null) {
       throw new Error(`Container ${name} has no port mapping after restart`)
     }
 
     // 更新状态
     if (!this.state.swtcUsers) this.state.swtcUsers = {}
+    const port = this.state.swtcUsers[address]?.port ?? internalPort
     this.state.swtcUsers[address] = {
       ...(this.state.swtcUsers[address] ?? {}),
       port,
+      internalPort,
       lastSeenAt: Date.now(),
       containerStatus: 'running',
     }
     dataService.saveState(this.state)
 
     // 等待容器完全就绪
-    const ready = await dockerService.waitReady(port)
+    const ready = await dockerService.waitReady(internalPort)
     if (!ready) {
       throw new Error(`Container ${name} did not become ready after restart`)
     }
 
-    console.log(`[restart] ${address} container restarted successfully`)
+    // 恢复网关监听（进程重启后外部端口需要重新接管）
+    tenantGateway.listen(port, internalPort, address)
+
+    console.log(
+      `[restart] ${address} container restarted successfully (gateway :${port} -> :${internalPort})`,
+    )
     return { ok: true, address, port, status: 'restarted' }
   }
 
@@ -285,6 +333,10 @@ export class UserService {
     delete this.state.usages[address]
 
     if (this.state.swtcUsers?.[address]) {
+      // 关闭旧网关监听（重置后内部端口会重新分配）
+      if (this.state.swtcUsers[address].port) {
+        tenantGateway.close(this.state.swtcUsers[address].port)
+      }
       delete this.state.swtcUsers[address]
     }
 
@@ -299,8 +351,27 @@ export class UserService {
 
     dataService.saveState(this.state)
 
-    console.log(`[reset] ${address} container and volume deleted, port ${port} recycled`)
-    return { ok: true, address, portRecycled: port, volumeDeleted: volume }
+    // 5. 立即重建全新容器（重置 = 清空后重新开始，一步到位；返回新端口供前端直接跳转）
+    let newPort = null
+    try {
+      newPort = await this.ensureContainer(address)
+      console.log(`[reset] ${address} fresh container rebuilt on port ${newPort}`)
+    } catch (err) {
+      console.error(`[reset] ${address} rebuild failed after reset:`, err.message)
+      throw new Error(`容器已清空但重建失败：${err.message}`)
+    }
+
+    console.log(
+      `[reset] ${address} container & volume deleted, port ${port} recycled, rebuilt on ${newPort}`,
+    )
+    return {
+      ok: true,
+      address,
+      portRecycled: port,
+      volumeDeleted: volume,
+      port: newPort,
+      rebuilt: true,
+    }
   }
 
   /**
@@ -352,6 +423,46 @@ export class UserService {
       minutes += Math.floor((Date.now() - user.usageStartedAt) / 60000)
     }
     return minutes
+  }
+
+  /**
+   * 是否存在「容器已销毁（destroyed）但记录还占着端口」的闲置端口（可按需征用）
+   */
+  hasReclaimablePorts() {
+    for (const user of Object.values(this.state.swtcUsers || {})) {
+      if (user.containerStatus === 'destroyed' && user.port) return true
+    }
+    return false
+  }
+
+  /**
+   * 端口耗尽时的按需征用：把 destroyed 租户闲置的端口收进回收池供新用户分配。
+   * 被征用者下次连接时会重新分配新端口（端口号对用户透明，内部资产转移）。
+   * 前提：destroyed 状态时网关监听已关闭（cleanup/destroy 路径已补 close），端口确实空闲。
+   * @param {string} excludeAddress - 本次申请者自身（不征用自己的端口）
+   * @returns {number} 征用到的端口数量
+   */
+  reclaimDestroyedPorts(excludeAddress) {
+    if (!this.state.availablePorts) this.state.availablePorts = []
+    let reclaimed = 0
+    for (const [addr, user] of Object.entries(this.state.swtcUsers || {})) {
+      if (!user?.port) continue
+      if (addr === excludeAddress) continue
+      if (user.containerStatus !== 'destroyed') continue
+      if (this.state.availablePorts.includes(user.port)) continue
+      this.state.availablePorts.push(user.port)
+      reclaimed++
+      console.log(
+        `[port] reclaiming destroyed tenant ${addr.slice(0, 8)}...: port ${user.port} → pool`,
+      )
+      // 端口已被征用：该地址下次连接时重新分配新端口（记录里不再保留旧号）
+      delete user.port
+    }
+    if (reclaimed > 0) {
+      this.state.availablePorts.sort((a, b) => a - b)
+      dataService.saveState(this.state)
+    }
+    return reclaimed
   }
 
   /**
@@ -516,9 +627,13 @@ export class UserService {
       throw new Error(`Failed to delete volume: ${err.message}`)
     }
 
-    // 更新状态
+    // 更新状态：关闭网关监听 + 容器销毁
     if (this.state.swtcUsers?.[address]) {
+      if (this.state.swtcUsers[address].port) {
+        tenantGateway.close(this.state.swtcUsers[address].port)
+      }
       this.state.swtcUsers[address].containerStatus = 'destroyed'
+      delete this.state.swtcUsers[address].internalPort // 重建时会分配新的内部端口
       dataService.saveState(this.state)
     }
 
@@ -631,7 +746,7 @@ export class UserService {
     const name = swtcContainerName(address)
     const volume = swtcVolumeName(address)
 
-    // 1) 容器已存在：启动（若停止）→ 读取实际端口 → 等待就绪
+    // 1) 容器已存在：启动（若停止）→ 读取实际映射端口（内部回环）→ 等待就绪
     const info = await dockerService.containerInfo(name)
     if (info.exists) {
       if (info.status !== 'running') {
@@ -640,21 +755,22 @@ export class UserService {
         await new Promise((r) => setTimeout(r, 3000))
       }
 
-      // 获取端口映射（可能需要重试）
-      let port = await dockerService.publishedPort(name)
+      // 获取端口映射（可能需要重试）；宿主实际映射的就是内部回环端口
+      let internalPort = await dockerService.publishedPort(name)
 
       // 如果端口映射丢失，尝试重启容器
-      if (port === null) {
+      if (internalPort === null) {
         console.warn(`[user] Container ${name} has no port mapping, restarting...`)
         await dockerService.restartContainer(name)
         await new Promise((r) => setTimeout(r, 5000))
-        port = await dockerService.publishedPort(name)
+        internalPort = await dockerService.publishedPort(name)
       }
 
-      if (port === null) {
+      if (internalPort === null) {
         throw new Error(`SWTC container ${name} has no readable port mapping`)
       }
-      return await this.finalizeTenant(address, name, port)
+      const port = this.state.swtcUsers?.[address]?.port ?? internalPort
+      return await this.finalizeTenant(address, name, port, internalPort)
     }
 
     // 2) 资源预检（队列处理时跳过）
@@ -678,16 +794,24 @@ export class UserService {
     }
 
     // 3) 容器不存在：创建新容器
-    // 优先使用回收的端口，其次使用 nextPort
+    // 优先使用回收的对外端口，其次使用 nextPort；内部回环端口随机分配
     let port
     if (this.state.availablePorts && this.state.availablePorts.length > 0) {
       port = this.state.availablePorts.shift() // 取出最小的可用端口
       console.log(`[port] using recycled port ${port} for ${address}`)
     } else {
       port = this.state.swtcUsers?.[address]?.port ?? this.state.nextPort ?? CONFIG.docker.basePort
+      // 端口即将耗尽：把「容器已销毁（destroyed）、记录还占着端口」的闲置端口
+      // 一次性征用进回收池，供新用户使用（被征用者下次连接时重新分配新端口，内部透明）
+      if (port > CONFIG.docker.maxPort && this.reclaimDestroyedPorts(address) > 0) {
+        port = this.state.availablePorts.shift()
+        console.log(`[port] reclaimed destroyed tenants' ports, using ${port} for ${address}`)
+      }
     }
     const tier = this.state.swtcUsers?.[address]?.tier ?? 1
     const limits = getTierLimits(tier)
+    let internalPort = this.allocateInternalPort()
+    const excludedInternal = new Set() // 本次创建已尝试过的内部端口（冲突时换新）
 
     for (let attempt = 0; attempt < 64; attempt++) {
       if (attempt > 0) port = port + 1
@@ -696,14 +820,15 @@ export class UserService {
       }
 
       const patchFile = join(PATCHES_DIR, `swtc-${address}.yml`)
-      writeFileSync(patchFile, this.tenantPatch(port))
+      writeFileSync(patchFile, this.tenantPatch(port)) // patch 里 trustedHosts 用对外端口
 
       try {
-        await dockerService.createContainer(name, port, volume, patchFile, limits)
+        await dockerService.createContainer(name, internalPort, volume, patchFile, limits)
         this.state.nextPort = Math.max(this.state.nextPort ?? CONFIG.docker.basePort, port + 1)
-        return await this.finalizeTenant(address, name, port)
+        return await this.finalizeTenant(address, name, port, internalPort)
       } catch (err) {
         const msg = String(err.stderr)
+        // 容器已存在（并发连接）：直接接管
         if (msg.includes('already in use')) {
           const info2 = await dockerService.containerInfo(name)
           if (info2.exists) {
@@ -711,11 +836,21 @@ export class UserService {
               await dockerService.startContainer(name)
             }
             const p2 = await dockerService.publishedPort(name)
-            if (p2 !== null) return await this.finalizeTenant(address, name, p2)
+            if (p2 !== null) {
+              const p2public = this.state.swtcUsers?.[address]?.port ?? p2
+              return await this.finalizeTenant(address, name, p2public, p2)
+            }
           }
           continue
         }
-        if (msg.includes('port is already allocated')) continue
+        // 内部回环端口冲突（Bind for 127.0.0.1:xxxxx / port is already allocated）：
+        // 对外端口现在由网关监听、docker 不再发布，故 docker 层只会因内部端口冲突报错，
+        // 换一个新的内部端口重试（对外端口不动）。
+        if (msg.includes('port is already allocated') || msg.includes('Bind for 127.0.0.1')) {
+          excludedInternal.add(internalPort)
+          internalPort = this.allocateInternalPort(excludedInternal)
+          continue
+        }
         throw err
       }
     }
@@ -723,15 +858,20 @@ export class UserService {
   }
 
   /**
-   * 租户收尾：写入 state 并等待容器就绪
+   * 租户收尾：写入 state（含内部回环端口）→ 等待容器就绪 → 开放网关监听
+   * @param {string} address
+   * @param {string} name 容器名
+   * @param {number} port 对外端口（网关监听，用户 URL 用）
+   * @param {number} internalPort 内部回环端口（容器实际映射）
    */
-  async finalizeTenant(address, name, port) {
+  async finalizeTenant(address, name, port, internalPort) {
     if (!this.state.swtcUsers) this.state.swtcUsers = {}
     const tier = this.state.swtcUsers[address]?.tier ?? 1
     const startedAt = this.state.swtcUsers[address]?.usageStartedAt ?? Date.now()
     this.state.swtcUsers[address] = {
       ...(this.state.swtcUsers[address] ?? {}),
       port,
+      internalPort,
       tier,
       createdAt: this.state.swtcUsers[address]?.createdAt ?? Date.now(),
       lastSeenAt: Date.now(),
@@ -739,12 +879,14 @@ export class UserService {
       usageStartedAt: startedAt,
     }
     dataService.saveState(this.state)
-    const ready = await dockerService.waitReady(port)
+    const ready = await dockerService.waitReady(internalPort)
     if (!ready) {
       throw new Error(
-        `SWTC container ${name} did not become ready on port ${port} within ${CONFIG.docker.startupTimeoutMs}ms`,
+        `SWTC container ${name} did not become ready on port ${internalPort} within ${CONFIG.docker.startupTimeoutMs}ms`,
       )
     }
+    // 开放网关：外部只能经 0.0.0.0:port 进入，且必须先过会话门禁
+    tenantGateway.listen(port, internalPort, address)
     return port
   }
 
@@ -790,68 +932,12 @@ export class UserService {
   }
 
   /**
-   * 合并重复地址（基于前缀匹配）
-   * 保留运行中的记录，删除其他重复记录
-   */
-  async mergeDuplicateAddresses() {
-    const users = this.state.swtcUsers || {}
-    const addresses = Object.keys(users)
-    const merged = []
-
-    // 按前 10 个字符分组
-    const groups = {}
-    for (const addr of addresses) {
-      const prefix = addr.slice(0, 10)
-      if (!groups[prefix]) groups[prefix] = []
-      groups[prefix].push(addr)
-    }
-
-    // 合并每组中的重复地址
-    for (const [prefix, addrs] of Object.entries(groups)) {
-      if (addrs.length <= 1) continue
-
-      console.log(`[merge] Found ${addrs.length} addresses with prefix ${prefix}:`, addrs)
-
-      // 找到运行中的记录（优先保留）
-      let keepAddr = addrs.find((a) => users[a].containerStatus === 'running')
-      if (!keepAddr) {
-        // 如果没有运行中的，保留最后看到的
-        keepAddr = addrs.reduce((a, b) =>
-          (users[a].lastSeenAt || 0) > (users[b].lastSeenAt || 0) ? a : b,
-        )
-      }
-
-      // 删除其他记录，回收端口
-      for (const addr of addrs) {
-        if (addr !== keepAddr) {
-          const port = users[addr].port
-          if (port) {
-            if (!this.state.availablePorts) this.state.availablePorts = []
-            if (!this.state.availablePorts.includes(port)) {
-              this.state.availablePorts.push(port)
-              this.state.availablePorts.sort((a, b) => a - b)
-            }
-          }
-          delete users[addr]
-          merged.push({ removed: addr, kept: keepAddr, portRecycled: port })
-          console.log(`[merge] Removed ${addr}, kept ${keepAddr}, recycled port ${port}`)
-        }
-      }
-    }
-
-    if (merged.length > 0) {
-      this.state.swtcUsers = users
-      dataService.saveState(this.state)
-    }
-
-    return merged
-  }
-
-  /**
-   * 停止并销毁容器（保留数据卷）
+   * 停止并销毁容器（可选删除数据卷）
    * @param {boolean} removeRecord - 是否彻底删除用户记录并释放端口
+   * @param {{keepVolume?: boolean}} options - removeRecord=true 时：keepVolume=true 保留数据卷
+   *   （管理员主动留档/审计），默认删除（用户数据与平台记录一并清除，不产生孤儿卷）
    */
-  async destroyContainer(address, removeRecord = false) {
+  async destroyContainer(address, removeRecord = false, options = {}) {
     const user = this.state.swtcUsers?.[address]
     if (!user) throw new NotFoundError('User not found')
 
@@ -870,8 +956,24 @@ export class UserService {
     }
 
     if (removeRecord) {
-      // 彻底删除：移除记录，释放端口
+      const keepVolume = Boolean(options?.keepVolume)
+      // 彻底删除：关闭网关、移除记录，释放端口
       const port = user.port
+      // 网关监听随容器一并关闭（重建时会重新 listen）
+      if (port) tenantGateway.close(port)
+
+      // 数据卷：默认一并删除，不留孤儿卷；管理员选择保留则留在磁盘（可后续手动清理）
+      let volumeStatus = 'kept'
+      if (!keepVolume) {
+        try {
+          await dockerService.removeVolume(swtcVolumeName(address))
+          volumeStatus = 'deleted'
+          console.log(`[destroy] volume ${swtcVolumeName(address)} deleted (${address})`)
+        } catch {
+          // 卷可能不存在，忽略
+        }
+      }
+
       delete this.state.swtcUsers[address]
 
       // 将端口回收到可用端口池
@@ -882,11 +984,22 @@ export class UserService {
       }
 
       dataService.saveState(this.state)
-      console.log(`[destroy] ${address} completely removed, port ${port} recycled`)
-      return { ok: true, address, status: 'removed', portRecycled: port }
+      console.log(
+        `[destroy] ${address} completely removed, port ${port} recycled, volume ${volumeStatus}`,
+      )
+      return {
+        ok: true,
+        address,
+        status: 'removed',
+        portRecycled: port,
+        volume: volumeStatus,
+      }
     } else {
       // 仅销毁容器，保留记录
+      // 容器没了 → 网关转发无上游：关闭网关监听，重建时重新开放
+      if (user.port) tenantGateway.close(user.port)
       user.containerStatus = 'destroyed'
+      delete user.internalPort // 重建时会分配新的内部端口
       dataService.saveState(this.state)
       return { ok: true, address, status: 'destroyed', volume: swtcVolumeName(address) }
     }
@@ -900,7 +1013,19 @@ export class UserService {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean)
-    const trusted = [`127.0.0.1:${port}`, `localhost:${port}`, ...PUBLIC_TRUST]
+    // 对外 authority：用户浏览器经网关访问时的 Host 头（网关透传不改 Host），
+    // 显式列入 trustedHosts，保证将来关闭"局域网自动信任"后也能过 DSH 的 fence。
+    const PUBLIC_HOST = process.env.PUBLIC_HOST || CONFIG.server.publicHost
+    const externalAuthority =
+      PUBLIC_HOST && !['127.0.0.1', 'localhost'].includes(PUBLIC_HOST.toLowerCase())
+        ? `${PUBLIC_HOST}:${port}`
+        : null
+    const trusted = [
+      `127.0.0.1:${port}`,
+      `localhost:${port}`,
+      ...(externalAuthority ? [externalAuthority] : []),
+      ...PUBLIC_TRUST,
+    ]
     return (
       `# Generated by dsh-multitenant entry server for tenant ${port}.\n` +
       `- id: webserver\n` +
@@ -923,13 +1048,33 @@ export class UserService {
     const running = new Set(names)
     for (const name of names) {
       const address = name.replace(/^dsh-swtc-/, '').toLowerCase()
-      const port = await dockerService.publishedPort(name)
-      if (port === null) continue
+      const saved = this.state.swtcUsers?.[address]
 
-      // 从 Docker 容器检查实际配额
+      // 只恢复"运行中"的容器：Exited/暂停一律结算残留运行段并标记 stopped
+      // （docker ps -a 会列出已停止容器；之前无条件标 running 且恢复网关监听，
+      //   导致 state 与 docker 长期不一致、已停止容器的端口仍被网关占用）
+      const info = await dockerService.inspectContainer(name)
+      if (info?.State?.Status !== 'running') {
+        this.settleUsage(address)
+        this.state.swtcUsers[address] = {
+          ...(saved ?? {}),
+          containerStatus: 'stopped',
+          stoppedAt: saved?.stoppedAt ?? Date.now(),
+        }
+        console.log(
+          `[restore] ${address.slice(0, 10)}... 容器不在运行（${info?.State?.Status ?? 'inspect 失败'}）→ stopped，不恢复网关`,
+        )
+        continue
+      }
+
+      // 宿主实际映射端口 = 内部回环端口；对外端口从 state 保留（缺省退化为同端口）
+      const internalPort = await dockerService.publishedPort(name)
+      if (internalPort === null) continue
+      const port = saved?.port ?? internalPort
+
+      // 从 Docker 容器检查实际配额（info 已在上面成功获取）
       let actualTier = 1
       try {
-        const info = await dockerService.inspectContainer(name)
         if (info) {
           const memory = info.HostConfig?.Memory || 0
           const nanoCPUs = info.HostConfig?.NanoCPUs || 0
@@ -950,14 +1095,15 @@ export class UserService {
       const targetTier = savedTier ?? actualTier
 
       this.state.swtcUsers[address] = {
-        ...(this.state.swtcUsers[address] ?? {}),
+        ...(saved ?? {}),
         port,
+        internalPort,
         tier: targetTier,
-        createdAt: this.state.swtcUsers[address]?.createdAt ?? Date.now(),
-        lastSeenAt: this.state.swtcUsers[address]?.lastSeenAt ?? Date.now(),
+        createdAt: saved?.createdAt ?? Date.now(),
+        lastSeenAt: saved?.lastSeenAt ?? Date.now(),
         containerStatus: 'running',
         // 恢复运行中的容器：保留原运行段起点；缺失（新记录）则从恢复时刻开始计时
-        usageStartedAt: this.state.swtcUsers[address]?.usageStartedAt ?? Date.now(),
+        usageStartedAt: saved?.usageStartedAt ?? Date.now(),
       }
 
       // 如果 tier 不匹配，更新 Docker 容器
@@ -973,7 +1119,13 @@ export class UserService {
         }
       }
 
-      this.state.nextPort = Math.max(this.state.nextPort ?? CONFIG.docker.basePort, port + 1)
+      // 对外端口回收基线只沿用"有对外端口记录"的容器（新恢复的 40000+ 内部端口不推高 nextPort）
+      if (saved?.port) {
+        this.state.nextPort = Math.max(this.state.nextPort ?? CONFIG.docker.basePort, port + 1)
+      }
+
+      // 重新开放网关监听（进程重启后外部端口需要接管）
+      tenantGateway.listen(port, internalPort, address)
     }
 
     // 对齐每日时长：Docker 中已不在运行的记录，结算残留运行段并校正状态
@@ -1143,6 +1295,7 @@ export class UserService {
             user.containerStatus = 'destroyed'
             delete user.stoppedAt
             delete user.lastUpgradeAt
+            if (user.port) tenantGateway.close(user.port)
             changed = true
           } else {
             console.error(`[cleanup] failed to stop ${address}:`, err.message)
@@ -1159,6 +1312,9 @@ export class UserService {
             // 清理不相关字段
             delete user.stoppedAt
             delete user.lastUpgradeAt
+            // 关闭网关监听：容器已销毁，端口闲置但保留在记录中供重建复用；
+            // 不关的话僵尸监听会占用端口并持续转发失败（EADDRINUSE/502）
+            if (user.port) tenantGateway.close(user.port)
             const stoppedMin = (stoppedDuration / 60000).toFixed(0)
             console.log(
               `[cleanup] destroyed stopped container: ${address} (stopped ${stoppedMin}min, data preserved)`,
@@ -1169,6 +1325,7 @@ export class UserService {
               user.containerStatus = 'destroyed'
               delete user.stoppedAt
               delete user.lastUpgradeAt
+              if (user.port) tenantGateway.close(user.port)
               changed = true
             } else {
               console.error(`[cleanup] failed to destroy ${address}:`, err.message)

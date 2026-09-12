@@ -170,7 +170,11 @@ const server = createServer(async (req, res) => {
   }
 
   // 用户路由
-  if (path.startsWith('/api/user/') || path.startsWith('/api/upgrade/')) {
+  if (
+    path.startsWith('/api/user/') ||
+    path.startsWith('/api/upgrade/') ||
+    path.startsWith('/api/cwt/')
+  ) {
     if (await handleUserRoutes(req, res, path)) return
   }
 

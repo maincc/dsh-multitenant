@@ -26,6 +26,8 @@ vi.mock('../src/services/data.service.js', async (importOriginal) => {
       ...actual.dataService,
       loadSessions: vi.fn(() => ({})),
       saveSessions: vi.fn(() => {}),
+      loadUserSessions: vi.fn(() => ({})),
+      saveUserSessions: vi.fn(() => {}),
       logOperation: vi.fn(() => {}),
     },
   }

@@ -41,6 +41,7 @@ export class DataService {
       this.cwtFilePath('records.log'),
       join(this.dataDir, 'logs', 'operations.log'),
       join(this.dataDir, 'config', 'sessions.json'),
+      join(this.dataDir, 'config', 'user-sessions.json'),
     ]
     for (const filePath of targets) {
       try {
@@ -65,6 +66,22 @@ export class DataService {
    */
   saveSessions(sessions) {
     this.writeWithLock(join(this.dataDir, 'config', 'sessions.json'), sessions)
+  }
+
+  // ---------- 普通用户会话（data/config/user-sessions.json，网关门禁凭据） ----------
+
+  /**
+   * 加载普通用户会话表（sha256(token) -> { address, expiresAt }）
+   */
+  loadUserSessions() {
+    return this.readJson(join(this.dataDir, 'config', 'user-sessions.json'))
+  }
+
+  /**
+   * 保存普通用户会话表（原子写 + 0600）
+   */
+  saveUserSessions(sessions) {
+    this.writeWithLock(join(this.dataDir, 'config', 'user-sessions.json'), sessions)
   }
 
   /**

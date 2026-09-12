@@ -7,8 +7,10 @@ import { userService } from '../services/user.service.js'
 import { tenantConfigService } from '../services/tenant-config.service.js'
 import { validateSwtcAddress } from '../middleware/validate.middleware.js'
 import { rateLimit } from '../middleware/rate-limit.middleware.js'
+import { userSessionStore } from '../middleware/user-auth.middleware.js'
 import { normalizeAddress, swtcVolumeName } from '../utils/address.js'
 import { handleError } from '../utils/errors.js'
+import { tenantGateway } from '../services/tenant-proxy.service.js'
 
 /**
  * 处理租户路由
@@ -23,7 +25,9 @@ export async function handleTenantRoutes(req, res, path, url) {
   }
 
   // GET /connect：CCDAO 插件连接端点
-  // （P0-2 所有权口径 B：容器已存在→免签名直连；需要创建→钱包签名证明地址归属）
+  // 签名是所有路径的前提：容器不存在时需要证明地址归属（创建），
+  // 容器已存在时也要换发 user_session cookie 过网关门禁。
+  // 无签名的匿名请求一律 401 挑战——绝不在 302/JSON 响应里带出容器端口（P2-3）。
   if (path === '/connect') {
     let address = url.searchParams.get('address')
     if (!validateSwtcAddress(address, res)) return true
@@ -31,49 +35,79 @@ export async function handleTenantRoutes(req, res, path, url) {
     address = normalizeAddress(address)
 
     try {
-      // 只有"需要创建"才要求签名；已存在的容器直接连接
-      const exists = await userService.containerExists(address)
-      if (!exists) {
-        const nonce = url.searchParams.get('nonce')
-        const signature = url.searchParams.get('signature')
-        const publicKey = url.searchParams.get('publicKey')
-        if (!nonce || !signature || !publicKey) {
-          // 未携带签名材料 → 401 + 下发一次性挑战（签名后带参重试）
-          const challenge = tenantConfigService.issueChallenge(address)
-          if (!challenge) {
-            res.writeHead(503, { 'content-type': 'application/json; charset=utf-8' })
-            res.end(JSON.stringify({ error: '挑战发放过载，请稍后重试', code: 'OVERLOAD' }))
-            return true
-          }
-          res.writeHead(401, { 'content-type': 'application/json; charset=utf-8' })
-          res.end(
-            JSON.stringify({
-              error: '需要签名验证容器所有权',
-              code: 'SIGNATURE_REQUIRED',
-              nonce: challenge,
-              address,
-            }),
-          )
+      const nonce = url.searchParams.get('nonce')
+      const signature = url.searchParams.get('signature')
+      const publicKey = url.searchParams.get('publicKey')
+      const hasAuth = Boolean(nonce && signature && publicKey)
+
+      if (!hasAuth) {
+        // 未携带签名材料 → 401 + 下发一次性挑战（签名后带参重试）
+        const challenge = tenantConfigService.issueChallenge(address)
+        if (!challenge) {
+          res.writeHead(503, { 'content-type': 'application/json; charset=utf-8' })
+          res.end(JSON.stringify({ error: '挑战发放过载，请稍后重试', code: 'OVERLOAD' }))
           return true
         }
-        // 验签（公钥推导地址 === 声称地址）
-        if (!tenantConfigService.verifySignature(address, nonce, signature, publicKey)) {
-          res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
-          res.end(JSON.stringify({ error: '签名验证失败', code: 'FORBIDDEN' }))
-          return true
-        }
-        // 挑战一次性（防重放）
-        if (!tenantConfigService.consumeChallenge(address, nonce)) {
-          res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
-          res.end(JSON.stringify({ error: '挑战已失效，请重新获取', code: 'FORBIDDEN' }))
-          return true
-        }
+        res.writeHead(401, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(
+          JSON.stringify({
+            error: '需要签名验证容器所有权',
+            code: 'SIGNATURE_REQUIRED',
+            nonce: challenge,
+            address,
+          }),
+        )
+        return true
+      }
+      // 验签（公钥推导地址 === 声称地址）
+      if (!tenantConfigService.verifySignature(address, nonce, signature, publicKey)) {
+        res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: '签名验证失败', code: 'FORBIDDEN' }))
+        return true
+      }
+      // 挑战一次性（防重放）
+      if (!tenantConfigService.consumeChallenge(address, nonce)) {
+        res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: '挑战已失效，请重新获取', code: 'FORBIDDEN' }))
+        return true
       }
 
       // 连接/创建容器
       const port = await userService.ensureContainer(address)
+      // 跳转/返回的 host 跟随请求 Host（浏览器当前 origin）：127 入口跳 127 容器页
+      // （cookie 与 DSH 回环护栏一致，host.listDirectory 等宿主管道可用）；
+      // 局域网 IP 入口则跳该 IP（DSH 宿主管道按设计 403，属安全护栏）。
+      // PUBLIC_HOST 仍用于容器 patch 的 trustedHosts（容器端 Host 检查）。
       const PUBLIC_HOST = process.env.PUBLIC_HOST || CONFIG.server.publicHost
-      res.writeHead(302, { location: `http://${PUBLIC_HOST}:${port}/` })
+      let targetHost = PUBLIC_HOST
+      const requestHost = (req.headers?.host || '').trim().toLowerCase()
+      if (requestHost && requestHost !== 'undefined') {
+        try {
+          targetHost = new URL(`http://${requestHost}`).hostname // 去端口（Host 头含 :8090）
+        } catch {
+          targetHost = PUBLIC_HOST
+        }
+      }
+      const gwTicket = tenantGateway.issueTicket(address)
+      const containerUrl =
+        `http://${targetHost}:${port}/` + (gwTicket ? `?gateway_ticket=${gwTicket}` : '')
+      // 签名验证通过 → 签发普通用户会话（网关门禁凭据，2h；切钱包时前端会主动吊销）
+      const sessionToken = userSessionStore.create(address, 2 * 60 * 60 * 1000)
+      const cookieHeader = `user_session=${sessionToken}; path=/; max-age=43200; httponly; samesite=strict`
+      // 前端 XHR/fetch 场景：浏览器 fetch 的 redirect:manual 会把 302 包成 opaque
+      // (status 0)，前端拿不到 location。format=json 时直接给 200 JSON + cookie，
+      // 由前端 window.open；地址栏直开（无 format）保持 302 跳转语义不变。
+      if (url.searchParams.get('format') === 'json') {
+        res.writeHead(200, {
+          'content-type': 'application/json; charset=utf-8',
+          ...(cookieHeader ? { 'set-cookie': cookieHeader } : {}),
+        })
+        res.end(JSON.stringify({ ok: true, url: containerUrl, address, port }))
+        return true
+      }
+      const headers = { location: containerUrl }
+      if (cookieHeader) headers['set-cookie'] = cookieHeader
+      res.writeHead(302, headers)
       res.end()
     } catch (err) {
       // 资源不足，进入等待队列
@@ -142,6 +176,23 @@ export async function handleTenantRoutes(req, res, path, url) {
       return true
     }
 
+    // 匿名 / 非本人：只回存在性与粗略状态，不泄露端口/用量（P1-3：
+    // 端口即"地址保密"的最后一道侦察口，必须会话化）
+    const { getRequestAddress } = await import('../middleware/auth.middleware.js')
+    const viewer = getRequestAddress(req)
+    const isViewer = viewer === address || (viewer && isAdmin(viewer))
+    if (!isViewer) {
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(
+        JSON.stringify({
+          exists: true,
+          address,
+          status: user.containerStatus ?? 'running',
+        }),
+      )
+      return true
+    }
+
     const idle = Date.now() - user.lastSeenAt
     const usageCfg = userService.usageLimitConfig()
     const exempt = userService.isUsageExempt(address)
@@ -176,8 +227,8 @@ export async function handleTenantRoutes(req, res, path, url) {
   // GET /leave/<address>：显式销毁指定 SWTC 用户的容器
   // （security-hardening-plan P0-2：本人或管理员；前端当前无调用方，不影响 UX）
   if (path.startsWith('/leave/')) {
-    const { getSessionAddress } = await import('../middleware/auth.middleware.js')
-    const session = getSessionAddress(req)
+    const { getRequestAddress } = await import('../middleware/auth.middleware.js')
+    const session = getRequestAddress(req)
     const isAdminUser = session && isAdmin(session)
 
     let address = decodeURIComponent(path.slice('/leave/'.length))
@@ -210,8 +261,8 @@ export async function handleTenantRoutes(req, res, path, url) {
 
   // POST /api/user/:address/restart - 重启容器（用于安装插件后重启 DSH 服务）
   if (path.startsWith('/api/user/') && path.endsWith('/restart') && req.method === 'POST') {
-    const { getSessionAddress, requireAdmin } = await import('../middleware/auth.middleware.js')
-    const session = getSessionAddress(req)
+    const { getRequestAddress, requireAdmin } = await import('../middleware/auth.middleware.js')
+    const session = getRequestAddress(req)
     const isAdminUser = session && isAdmin(session)
 
     // 提取地址：/api/user/<address>/restart
@@ -253,8 +304,8 @@ export async function handleTenantRoutes(req, res, path, url) {
 
   // POST /api/user/:address/stop - 用户主动停止自己的容器（保全每日限时额度）
   if (path.startsWith('/api/user/') && path.endsWith('/stop') && req.method === 'POST') {
-    const { getSessionAddress } = await import('../middleware/auth.middleware.js')
-    const session = getSessionAddress(req)
+    const { getRequestAddress } = await import('../middleware/auth.middleware.js')
+    const session = getRequestAddress(req)
     const isAdminUser = session && isAdmin(session)
 
     // 提取地址：/api/user/<address>/stop
@@ -323,8 +374,33 @@ export async function handleTenantRoutes(req, res, path, url) {
 
     try {
       const result = await userService.resetContainer(address)
+      // 重置 = 清空后立即重建：构造新容器 url（跟随请求 Host，同 /connect），
+      // 并签发该地址的会话 cookie，前端直接一步进入新容器
+      let containerUrl = null
+      if (result.port) {
+        const PUBLIC_HOST = process.env.PUBLIC_HOST || CONFIG.server.publicHost
+        let targetHost = PUBLIC_HOST
+        const requestHost = (req.headers?.host || '').trim().toLowerCase()
+        if (requestHost && requestHost !== 'undefined') {
+          try {
+            targetHost = new URL(`http://${requestHost}`).hostname
+          } catch {
+            targetHost = PUBLIC_HOST
+          }
+        }
+        const gwTicket = tenantGateway.issueTicket(address)
+        containerUrl =
+          `http://${targetHost}:${result.port}/` + (gwTicket ? `?gateway_ticket=${gwTicket}` : '')
+      }
       if (!res.headersSent) {
-        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+        const headers = { 'content-type': 'application/json; charset=utf-8' }
+        if (containerUrl) {
+          const sessionToken = userSessionStore.create(address, 2 * 60 * 60 * 1000)
+          headers['set-cookie'] =
+            `user_session=${sessionToken}; path=/; max-age=43200; httponly; samesite=strict`
+          result.url = containerUrl
+        }
+        res.writeHead(200, headers)
         res.end(JSON.stringify(result))
       }
     } catch (err) {
@@ -355,7 +431,9 @@ export async function handleTenantRoutes(req, res, path, url) {
     address = normalizeAddress(address)
 
     try {
-      const result = await userService.destroyContainer(address, true)
+      // 管理端删除：默认连数据卷一起删（不留孤儿卷）；?keepVolume=1 保留数据卷（留档/审计）
+      const keepVolume = url.searchParams.get('keepVolume') === '1'
+      const result = await userService.destroyContainer(address, true, { keepVolume })
       if (!res.headersSent) {
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify(result))
