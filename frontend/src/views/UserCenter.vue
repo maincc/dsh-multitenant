@@ -158,16 +158,6 @@
             </div>
           </div>
           <div v-else class="loading">{{ $t('user.noData') }}</div>
-
-          <div class="tab-divider" />
-
-          <div class="tab-head">
-            <h4>{{ $t('user.enterDsh') }}</h4>
-            <p class="tab-hint">{{ $t('user.enterDshHint') }}</p>
-          </div>
-          <button class="btn btn-primary btn-enter" @click="enterDsh">
-            {{ $t('user.openDsh') }}
-          </button>
         </div>
 
         <!-- ════════ 模型配置 ════════ -->
@@ -399,6 +389,19 @@
             <h4>{{ $t('user.containerManage') }}</h4>
             <p class="tab-hint">{{ $t('user.containerManageHint') }}</p>
           </div>
+          <!-- 进入容器入口（原在账户信息，已移至此处） -->
+          <div class="enter-box">
+            <div class="enter-info">
+              <div class="enter-title">{{ $t('user.enterDsh') }}</div>
+              <div class="enter-hint">{{ $t('user.enterDshHint') }}</div>
+            </div>
+            <button class="btn btn-primary btn-enter" @click="enterDsh">
+              {{ $t('user.openDsh') }}
+            </button>
+          </div>
+
+          <div class="tab-divider" />
+
           <div class="action-buttons">
             <button class="btn btn-primary" @click="restartDSH">{{ $t('user.restartDsh') }}</button>
             <button
@@ -2388,6 +2391,40 @@ onUnmounted(() => {
 .btn-enter {
   padding: 0.75rem 2rem;
   font-size: 1rem;
+}
+
+/* ─── 进入容器入口卡（容器管理顶部） ─── */
+.enter-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.25rem 1.5rem;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(107, 123, 219, 0.08) 0%, rgba(108, 105, 194, 0.08) 100%);
+  border: 1px solid rgba(107, 123, 219, 0.25);
+}
+
+.enter-info {
+  min-width: 0;
+}
+
+.enter-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #1e293b;
+  margin-bottom: 0.25rem;
+}
+
+.enter-hint {
+  font-size: 0.8rem;
+  color: #64748b;
+  line-height: 1.5;
+}
+
+.enter-box .btn-enter {
+  flex-shrink: 0;
+  margin: 0;
 }
 
 /* ════ 通用小组件 ════ */
