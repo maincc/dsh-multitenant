@@ -3,7 +3,7 @@
     <nav class="navbar">
       <div class="nav-brand">
         <router-link to="/" class="brand-link" :title="$t('common.brand')">
-          <span class="brand-logo">DSH</span>
+          <img class="brand-logo" :src="dshLogo" alt="DSH logo" />
           <span class="brand-title">{{ $t('common.brand') }}</span>
         </router-link>
       </div>
@@ -19,7 +19,9 @@
   </div>
 </template>
 
-<script setup></script>
+<script setup>
+import dshLogo from './assets/dsh-logo-white.svg'
+</script>
 
 <style scoped>
 #app {
@@ -57,16 +59,9 @@
 .brand-logo {
   width: 28px;
   height: 28px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.22);
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  color: white;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  object-fit: contain;
+  display: block;
+  filter: drop-shadow(0 1px 2px rgba(15, 23, 42, 0.2));
 }
 
 .brand-title {
