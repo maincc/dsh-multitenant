@@ -166,6 +166,12 @@
 <script setup></script>
 
 <style scoped>
+.home {
+  max-width: 1140px;
+  margin: 0 auto;
+  padding: 1.25rem;
+}
+
 .hero {
   text-align: center;
   padding: 3rem 1rem;
@@ -177,7 +183,7 @@
 
 .hero h1 {
   font-size: 2.5rem;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #6b7bdb 0%, #6c69c2 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   margin-bottom: 0.5rem;
@@ -247,7 +253,7 @@
 .guide h2 {
   text-align: center;
   margin-bottom: 2rem;
-  color: #667eea;
+  color: #6b7bdb;
 }
 
 .guide-steps {
@@ -271,7 +277,7 @@
   width: 2rem;
   height: 2rem;
   border-radius: 50%;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #6b7bdb 0%, #6c69c2 100%);
   color: white;
   font-weight: 700;
   display: flex;
@@ -293,7 +299,7 @@
 }
 
 .step-body a {
-  color: #667eea;
+  color: #6b7bdb;
 }
 
 .guide-notes {
@@ -330,7 +336,7 @@
 .tiers h2 {
   text-align: center;
   margin-bottom: 2rem;
-  color: #667eea;
+  color: #6b7bdb;
 }
 
 .tier-grid {
@@ -348,7 +354,7 @@
 }
 
 .tier-card.featured {
-  border-color: #667eea;
+  border-color: #6b7bdb;
   background: linear-gradient(135deg, #f0f4ff 0%, #faf5ff 100%);
 }
 

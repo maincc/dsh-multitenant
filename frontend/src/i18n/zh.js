@@ -12,7 +12,7 @@
  */
 export default {
   common: {
-    brand: '🔗 DSH 多租户管理',
+    brand: 'DSH 多租户管理',
     nav: {
       skills: '技能市场',
       admin: '管理面板',
@@ -109,6 +109,12 @@ export default {
 
   // ---------- 以下视图文案为后续滚动迁移目标 ----------
   user: {
+    // ---- 用户中心侧栏（与 React 原型稿一致） ----
+    tabAccount: '账户信息',
+    tabModel: '模型配置',
+    tabContainer: '容器管理',
+    tabCwt: 'CWT 验证',
+    tabSkills: '我的技能',
     // ---- 连接钱包 ----
     connectTitle: '🔌 连接钱包',
     connectHint: '通过 CCDAO 插件连接您的 SWTC 钱包，自动分配专属 DSH 容器',
@@ -127,7 +133,9 @@ export default {
     waitCleanup: '系统正在清理闲置资源，请稍候...',
     cancelWait: '取消等待',
     // ---- 我的账户 ----
-    myAccount: '👤 我的账户',
+    connected: '已连接',
+    myAccount: '我的账户',
+    accountHint: '查看您的 SWTC 地址、容器状态与资源使用情况',
     swtcAddress: 'SWTC 地址：',
     switchAddress: '切换地址',
     port: '专属端口：',
@@ -363,7 +371,11 @@ export default {
   },
 
   skills: {
+    // ---- 技能市场侧栏（与 React 原型稿一致） ----
+    tabMarket: '技能市场',
+    tabMine: '我的技能',
     marketTitle: '🏪 技能市场',
+    marketHint: '发现并安装其他用户共享的技能',
     searchPlaceholder: '搜索技能名 / 描述…',
     refresh: '🔄 刷新',
     noCcdao: '未检测到 CCDAO 插件，无法安装技能（浏览不受影响）。请先安装',
@@ -378,6 +390,7 @@ export default {
     userOnlyBadge: '仅用户侧',
     userOnlyTrigger: '仅用户侧可触发',
     hasResources: '含资源',
+    hasUpdate: '有更新',
     preview: '预览',
     download: '下载',
     install: '安装',
@@ -405,9 +418,23 @@ export default {
     confirmAsk: '确定安装吗？',
     okInstalled: '技能 {name} 安装成功，DSH 会话中可直接使用',
     errInstall: '安装失败：{err}',
+    // ---- 我的技能（个人视图） ----
+    mineHint: '查看您发布与已安装的技能',
+    minePublished: '我发布的',
+    minePublishedTag: '已发布',
+    mineInstalled: '我安装的',
+    mineEmpty: '还没有安装或发布任何技能',
+    mineManageLink: '去用户中心管理技能',
+    mineManageHint:
+      '导入本地技能、共享容器内技能、卸载或取消发布，请在「用户中心 → 我的技能」操作。',
   },
 
   admin: {
+    // ---- 管理面板侧栏（与 React 原型稿一致） ----
+    tabOverview: '系统概览',
+    tabUsers: '用户管理',
+    tabQuota: '配额配置',
+    tabCwt: 'CWT 授权',
     noAccess: '🚫 无权限访问',
     noAccessHint: '您当前连接的地址不是管理员',
     switchWallet: '切换钱包',
@@ -420,6 +447,7 @@ export default {
     loginWithCcdao: '使用 CCDAO 登录',
     currentAdminLabel: '👤 当前地址：',
     logout: '退出登录',
+    overviewHint: '当前平台运行状态总览',
     dockerStatus: 'Docker 状态：',
     running: '运行中',
     notRunning: '未启动',
@@ -440,6 +468,7 @@ export default {
     statTier1: '基础配额',
     statTier2: '增强配额',
     userList: '👥 用户列表',
+    userListHint: '管理所有租户账号，支持升级配额、启停容器、删除数据',
     loading: '加载中...',
     colAddress: 'SWTC 地址',
     colPort: '端口',
@@ -463,6 +492,7 @@ export default {
     remove: '删除',
     removeTitle: '彻底删除记录并释放端口',
     tierConfig: '⚙️ 配额配置',
+    tierConfigHint: '各配额等级对应的容器资源限制',
     colTierLevel: '层级',
     colMemory: '内存',
     colCpu: 'CPU',
