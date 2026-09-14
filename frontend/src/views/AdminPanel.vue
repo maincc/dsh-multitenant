@@ -1,7 +1,7 @@
 <template>
   <div class="admin-panel">
     <!-- 无权限页面 -->
-    <div v-if="notAdmin" class="card error-card">
+    <div v-if="notAdmin" class="state-card">
       <h2>{{ $t('admin.noAccess') }}</h2>
       <p>{{ $t('admin.noAccessHint') }}</p>
       <p class="address-display">{{ currentAddress }}</p>
@@ -9,7 +9,7 @@
     </div>
 
     <!-- 管理员登录 -->
-    <div v-else-if="!isAdmin" class="card login-card">
+    <div v-else-if="!isAdmin" class="state-card">
       <h2>{{ $t('admin.loginTitle') }}</h2>
       <p>{{ $t('admin.loginHint') }}</p>
 
@@ -37,359 +37,405 @@
       </div>
     </div>
 
-    <!-- 管理面板 -->
-    <div v-else>
-      <!-- 当前管理员信息 -->
-      <div class="card admin-info-card">
-        <div class="admin-info">
-          <div class="admin-label">{{ $t('admin.currentAdminLabel') }}</div>
-          <div class="admin-address">{{ currentAddress || currentAdminAddress }}</div>
-          <button class="btn btn-small btn-danger" @click="logout">{{ $t('admin.logout') }}</button>
+    <!-- 管理面板：左侧栏 + 右侧内容（与 React 原型稿一致） -->
+    <div v-else class="gate-shell">
+      <!-- 左侧栏 -->
+      <aside class="gate-sidebar">
+        <div class="sidebar-card">
+          <nav class="sidebar-nav">
+            <button
+              v-for="tab in adminTabs"
+              :key="tab.key"
+              class="sidebar-item"
+              :class="{ active: activeTab === tab.key }"
+              @click="activeTab = tab.key"
+            >
+              <span class="sidebar-icon" v-html="tab.icon"></span>
+              <span>{{ tab.label }}</span>
+            </button>
+          </nav>
         </div>
-      </div>
+      </aside>
 
-      <!-- Docker 状态指示器 -->
-      <div class="card docker-status-card" :class="dockerAvailable ? 'docker-ok' : 'docker-error'">
-        <div class="docker-status">
-          <div class="status-icon">{{ dockerAvailable ? '' : '' }}</div>
-          <div class="status-info">
-            <div class="status-label">{{ $t('admin.dockerStatus') }}</div>
-            <div class="status-text">
-              {{ dockerAvailable ? $t('admin.running') : $t('admin.notRunning') }}
+      <!-- 右侧内容 -->
+      <section class="gate-content">
+        <!-- ════════ 系统概览 ════════ -->
+        <div v-if="activeTab === 'overview'" class="tab-content">
+          <div class="tab-head">
+            <h4>{{ $t('admin.tabOverview') }}</h4>
+            <p class="tab-hint">{{ $t('admin.overviewHint') }}</p>
+          </div>
+
+          <!-- 当前管理员信息 -->
+          <div class="admin-info-card">
+            <div class="admin-info">
+              <div class="admin-label">{{ $t('admin.currentAdminLabel') }}</div>
+              <code class="admin-address">{{ currentAddress || currentAdminAddress }}</code>
+              <button class="btn btn-small btn-danger" @click="logout">
+                {{ $t('admin.logout') }}
+              </button>
             </div>
           </div>
-          <div v-if="!dockerAvailable" class="status-hint">{{ $t('admin.dockerHint') }}</div>
-        </div>
-      </div>
 
-      <!-- 孤儿数据卷清理 -->
-      <div class="card merge-card">
-        <div class="merge-info">
-          <div class="merge-icon">🧹</div>
-          <div class="merge-text">
-            <div class="merge-label">{{ $t('admin.orphanTitle') }}</div>
-            <div class="merge-hint">{{ $t('admin.orphanHint') }}</div>
+          <!-- Docker 状态指示器 -->
+          <div class="docker-status-card" :class="dockerAvailable ? 'docker-ok' : 'docker-error'">
+            <div class="docker-status">
+              <div class="status-icon"></div>
+              <div class="status-info">
+                <div class="status-label">{{ $t('admin.dockerStatus') }}</div>
+                <div class="status-text">
+                  {{ dockerAvailable ? $t('admin.running') : $t('admin.notRunning') }}
+                </div>
+              </div>
+              <div v-if="!dockerAvailable" class="status-hint">{{ $t('admin.dockerHint') }}</div>
+            </div>
           </div>
-          <button class="btn btn-warning" @click="scanOrphanVolumes" :disabled="orphanScanning">
-            {{ orphanScanning ? $t('admin.orphanScanning') : $t('admin.orphanScanBtn') }}
-          </button>
-          <button
-            v-if="orphanVolumes.length > 0"
-            class="btn btn-danger"
-            @click="cleanupOrphanVolumes"
-          >
-            {{ $t('admin.orphanCleanBtn', { n: orphanVolumes.length }) }}
-          </button>
-        </div>
-        <div v-if="orphanNotice" class="orphan-notice">{{ orphanNotice }}</div>
-        <ul v-if="orphanVolumes.length > 0" class="orphan-list">
-          <li v-for="v in orphanVolumes" :key="v" class="orphan-item">
-            <span class="orphan-name">{{ v }}</span>
-          </li>
-        </ul>
-      </div>
 
-      <div class="card">
-        <h2>{{ $t('admin.overview') }}</h2>
-        <div class="stats-grid">
-          <div class="stat-card">
-            <h3>{{ $t('admin.statTotal') }}</h3>
-            <div class="value">{{ stats.totalUsers }}</div>
+          <!-- 系统统计 -->
+          <div class="stats-grid">
+            <div class="stat-card">
+              <h3>{{ $t('admin.statTotal') }}</h3>
+              <div class="value">{{ stats.totalUsers }}</div>
+            </div>
+            <div class="stat-card">
+              <h3>{{ $t('admin.running') }}</h3>
+              <div class="value">{{ stats.runningUsers }}</div>
+            </div>
+            <div class="stat-card">
+              <h3>{{ $t('admin.statTier1') }}</h3>
+              <div class="value">{{ stats.tierCounts[1] || 0 }}</div>
+            </div>
+            <div class="stat-card">
+              <h3>{{ $t('admin.statTier2') }}</h3>
+              <div class="value">{{ stats.tierCounts[2] || 0 }}</div>
+            </div>
           </div>
-          <div class="stat-card">
-            <h3>{{ $t('admin.running') }}</h3>
-            <div class="value">{{ stats.runningUsers }}</div>
-          </div>
-          <div class="stat-card">
-            <h3>{{ $t('admin.statTier1') }}</h3>
-            <div class="value">{{ stats.tierCounts[1] || 0 }}</div>
-          </div>
-          <div class="stat-card">
-            <h3>{{ $t('admin.statTier2') }}</h3>
-            <div class="value">{{ stats.tierCounts[2] || 0 }}</div>
+
+          <!-- 孤儿数据卷清理 -->
+          <div class="sub-section">
+            <h4>{{ $t('admin.orphanTitle') }}</h4>
+            <p class="tab-hint">{{ $t('admin.orphanHint') }}</p>
+            <div class="action-buttons">
+              <button class="btn btn-warning" @click="scanOrphanVolumes" :disabled="orphanScanning">
+                {{ orphanScanning ? $t('admin.orphanScanning') : $t('admin.orphanScanBtn') }}
+              </button>
+              <button
+                v-if="orphanVolumes.length > 0"
+                class="btn btn-danger"
+                @click="cleanupOrphanVolumes"
+              >
+                {{ $t('admin.orphanCleanBtn', { n: orphanVolumes.length }) }}
+              </button>
+            </div>
+            <div v-if="orphanNotice" class="orphan-notice">{{ orphanNotice }}</div>
+            <ul v-if="orphanVolumes.length > 0" class="orphan-list">
+              <li v-for="v in orphanVolumes" :key="v" class="orphan-item">
+                <span class="orphan-name">{{ v }}</span>
+              </li>
+            </ul>
           </div>
         </div>
-      </div>
 
-      <div class="card">
-        <h2>{{ $t('admin.userList') }}</h2>
-        <div v-if="loading" class="loading">{{ $t('admin.loading') }}</div>
-        <div v-else-if="error" class="error">{{ error }}</div>
-        <table v-else>
-          <thead>
-            <tr>
-              <th>{{ $t('admin.colAddress') }}</th>
-              <th>{{ $t('admin.colPort') }}</th>
-              <th>{{ $t('admin.colTier') }}</th>
-              <th>{{ $t('admin.colStatus') }}</th>
-              <th>{{ $t('admin.colMem') }}</th>
-              <th>{{ $t('admin.colIdle') }}</th>
-              <th>{{ $t('admin.colRole') }}</th>
-              <th>{{ $t('admin.colOps') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="user in users" :key="user.address">
-              <td>
-                <span class="address">{{ user.address.slice(0, 10) }}...</span>
-              </td>
-              <td>{{ user.port }}</td>
-              <td>
-                <span class="badge" :class="tierBadge(user.tier)">
-                  {{ user.tierLabel }}
-                </span>
-              </td>
-              <td>
-                <span class="badge" :class="statusBadge(user.status)">
-                  {{ statusText(user.status) }}
-                </span>
-              </td>
-              <td>
-                <div v-if="user.stats">
-                  {{ user.stats.memoryPercent }}
-                  <div class="progress-bar">
-                    <div class="progress-fill" :style="{ width: user.stats.memoryPercent }"></div>
+        <!-- ════════ 用户管理 ════════ -->
+        <div v-else-if="activeTab === 'users'" class="tab-content">
+          <div class="tab-head">
+            <h4>{{ $t('admin.tabUsers') }}</h4>
+            <p class="tab-hint">{{ $t('admin.userListHint') }}</p>
+          </div>
+          <div v-if="loading" class="loading">{{ $t('admin.loading') }}</div>
+          <div v-else-if="error" class="error">{{ error }}</div>
+          <table v-else>
+            <thead>
+              <tr>
+                <th>{{ $t('admin.colAddress') }}</th>
+                <th>{{ $t('admin.colPort') }}</th>
+                <th>{{ $t('admin.colTier') }}</th>
+                <th>{{ $t('admin.colStatus') }}</th>
+                <th>{{ $t('admin.colMem') }}</th>
+                <th>{{ $t('admin.colIdle') }}</th>
+                <th>{{ $t('admin.colRole') }}</th>
+                <th>{{ $t('admin.colOps') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="user in users" :key="user.address">
+                <td>
+                  <span class="address">{{ user.address.slice(0, 10) }}...</span>
+                </td>
+                <td>{{ user.port }}</td>
+                <td>
+                  <span class="badge" :class="tierBadge(user.tier)">
+                    {{ user.tierLabel }}
+                  </span>
+                </td>
+                <td>
+                  <span class="badge" :class="statusBadge(user.status)">
+                    {{ statusText(user.status) }}
+                  </span>
+                </td>
+                <td>
+                  <div v-if="user.stats">
+                    {{ user.stats.memoryPercent }}
+                    <div class="progress-bar">
+                      <div class="progress-fill" :style="{ width: user.stats.memoryPercent }"></div>
+                    </div>
                   </div>
-                </div>
-                <span v-else>-</span>
-              </td>
-              <td>{{ formatIdle(user.idle) }}</td>
-              <td>
-                <span v-if="user.isAdmin" class="badge badge-success">{{
-                  $t('admin.roleAdmin')
-                }}</span>
-                <span v-else class="badge badge-info">{{ $t('admin.roleUser') }}</span>
-              </td>
-              <td>
-                <button
-                  class="btn btn-primary"
-                  @click="upgradeUser(user.address, user.tier + 1)"
-                  :disabled="
-                    user.tier >= 3 || user.status === 'destroyed' || user.status === 'unknown'
-                  "
-                >
-                  {{ $t('admin.upgrade') }}
-                </button>
-                <button
-                  class="btn btn-success"
-                  @click="downgradeUser(user.address, user.tier - 1)"
-                  :disabled="
-                    user.tier <= 1 || user.status === 'destroyed' || user.status === 'unknown'
-                  "
-                >
-                  {{ $t('admin.downgrade') }}
-                </button>
-                <button
-                  v-if="!user.isAdmin"
-                  class="btn btn-warning"
-                  @click="promoteUser(user.address)"
-                  :disabled="user.status === 'destroyed' || user.status === 'unknown'"
-                >
-                  {{ $t('admin.promote') }}
-                </button>
-                <a
-                  v-if="user.status === 'running'"
-                  href="#"
-                  @click.prevent="openTenant(user.address)"
-                  rel="noopener noreferrer"
-                  class="btn btn-info"
-                >
-                  {{ $t('admin.visit') }}
-                </a>
-                <button
-                  v-if="user.status === 'running'"
-                  class="btn btn-warning"
-                  @click="forceStopUser(user.address)"
-                  :title="$t('admin.forceStopTitle')"
-                >
-                  {{ $t('admin.forceStop') }}
-                </button>
-                <button
-                  v-if="user.status === 'stopped' || user.status === 'destroyed'"
-                  class="btn btn-danger"
-                  @click="deleteVolume(user.address)"
-                  :title="$t('admin.deleteDataTitle')"
-                >
-                  {{ $t('admin.deleteData') }}
-                </button>
-                <button
-                  v-if="user.status === 'destroyed' || user.status === 'unknown'"
-                  class="btn btn-danger"
-                  @click="removeUser(user.address)"
-                  :title="$t('admin.removeTitle')"
-                >
-                  {{ $t('admin.remove') }}
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="card">
-        <h2>{{ $t('admin.tierConfig') }}</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>{{ $t('admin.colTierLevel') }}</th>
-              <th>{{ $t('admin.colMemory') }}</th>
-              <th>{{ $t('admin.colCpu') }}</th>
-              <th>{{ $t('admin.colPids') }}</th>
-              <th>{{ $t('admin.colSwap') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(limits, tier) in tiers" :key="tier">
-              <td>
-                <span class="badge" :class="tierBadge(Number(tier))">
-                  {{ limits.label }}
-                </span>
-              </td>
-              <td>{{ limits.memory }}</td>
-              <td>{{ limits.cpus }} {{ $t('admin.cpuUnit') }}</td>
-              <td>{{ limits.pids }}</td>
-              <td>{{ limits.memorySwap }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="card">
-        <h2>{{ $t('admin.cwtManage') }}</h2>
-        <p>{{ $t('admin.cwtManageHint') }}</p>
-
-        <h3>{{ $t('admin.cwtPending') }}</h3>
-        <div v-if="cwtLoading" class="config-loading">
-          <span>{{ $t('admin.cwtLoading') }}</span>
+                  <span v-else>-</span>
+                </td>
+                <td>{{ formatIdle(user.idle) }}</td>
+                <td>
+                  <span v-if="user.isAdmin" class="badge badge-success">{{
+                    $t('admin.roleAdmin')
+                  }}</span>
+                  <span v-else class="badge badge-info">{{ $t('admin.roleUser') }}</span>
+                </td>
+                <td>
+                  <div class="ops-cell">
+                    <button
+                      class="btn btn-primary"
+                      @click="upgradeUser(user.address, user.tier + 1)"
+                      :disabled="
+                        user.tier >= 3 || user.status === 'destroyed' || user.status === 'unknown'
+                      "
+                    >
+                      {{ $t('admin.upgrade') }}
+                    </button>
+                    <button
+                      class="btn btn-success"
+                      @click="downgradeUser(user.address, user.tier - 1)"
+                      :disabled="
+                        user.tier <= 1 || user.status === 'destroyed' || user.status === 'unknown'
+                      "
+                    >
+                      {{ $t('admin.downgrade') }}
+                    </button>
+                    <button
+                      v-if="!user.isAdmin"
+                      class="btn btn-warning"
+                      @click="promoteUser(user.address)"
+                      :disabled="user.status === 'destroyed' || user.status === 'unknown'"
+                    >
+                      {{ $t('admin.promote') }}
+                    </button>
+                    <a
+                      v-if="user.status === 'running'"
+                      href="#"
+                      @click.prevent="openTenant(user.address)"
+                      rel="noopener noreferrer"
+                      class="btn btn-info"
+                    >
+                      {{ $t('admin.visit') }}
+                    </a>
+                    <button
+                      v-if="user.status === 'running'"
+                      class="btn btn-warning"
+                      @click="forceStopUser(user.address)"
+                      :title="$t('admin.forceStopTitle')"
+                    >
+                      {{ $t('admin.forceStop') }}
+                    </button>
+                    <button
+                      v-if="user.status === 'stopped' || user.status === 'destroyed'"
+                      class="btn btn-danger"
+                      @click="deleteVolume(user.address)"
+                      :title="$t('admin.deleteDataTitle')"
+                    >
+                      {{ $t('admin.deleteData') }}
+                    </button>
+                    <button
+                      v-if="user.status === 'destroyed' || user.status === 'unknown'"
+                      class="btn btn-danger"
+                      @click="removeUser(user.address)"
+                      :title="$t('admin.removeTitle')"
+                    >
+                      {{ $t('admin.remove') }}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-        <table v-else-if="cwtApplications.length">
-          <thead>
-            <tr>
-              <th>{{ $t('admin.colUsr') }}</th>
-              <th>{{ $t('admin.colAddress') }}</th>
-              <th>{{ $t('admin.colAlg') }}</th>
-              <th>{{ $t('admin.colSubmitted') }}</th>
-              <th>{{ $t('admin.colVerify') }}</th>
-              <th>{{ $t('admin.colOps') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="app in cwtApplications" :key="app.id">
-              <td>{{ app.parsed?.usr || '-' }}</td>
-              <td class="cwt-mono">{{ shortAddr(app.parsed?.address) }}</td>
-              <td>{{ app.parsed?.alg || '-' }}</td>
-              <td>{{ fmtTime(app.submittedAt) }}</td>
-              <td>
-                <span class="badge" :class="app.sigOk ? 'badge-success' : 'badge-danger'">
-                  {{ app.sigOk ? $t('admin.sigOk') : $t('admin.sigFail') }}
-                </span>
-              </td>
-              <td>
-                <template v-if="app.status === 'pending'">
-                  <button
-                    class="btn btn-small btn-success"
-                    :disabled="cwtBusy"
-                    @click="approveCwt(app.id)"
-                  >
-                    {{ $t('admin.approve') }}
-                  </button>
-                  <button
-                    class="btn btn-small btn-danger"
-                    :disabled="cwtBusy"
-                    @click="rejectCwt(app.id)"
-                  >
-                    {{ $t('admin.reject') }}
-                  </button>
-                </template>
-                <span
-                  v-else
-                  class="badge"
-                  :class="app.status === 'approved' ? 'badge-success' : 'badge-info'"
-                >
-                  {{ app.status }}
-                </span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-        <div v-else class="cwt-empty">{{ $t('admin.noPending') }}</div>
 
-        <h3>{{ $t('admin.cwtRegistry') }}</h3>
-        <table v-if="cwtRegistry.length">
-          <thead>
-            <tr>
-              <th>{{ $t('admin.colUsr') }}</th>
-              <th>{{ $t('admin.colAddress') }}</th>
-              <th>{{ $t('admin.colStatus') }}</th>
-              <th>{{ $t('admin.colApprovedAt') }}</th>
-              <th>{{ $t('admin.colOps') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="entry in cwtRegistry" :key="entry.address">
-              <td>{{ entry.usr }}</td>
-              <td class="cwt-mono">{{ shortAddr(entry.address) }}</td>
-              <td>
-                <span
-                  class="badge"
-                  :class="entry.status === 'approved' ? 'badge-success' : 'badge-danger'"
-                >
-                  {{ entry.status }}
-                </span>
-              </td>
-              <td>{{ fmtTime(entry.approvedAt) }}</td>
-              <td>
-                <button
-                  v-if="entry.status === 'approved'"
-                  class="btn btn-small btn-danger"
-                  :disabled="cwtBusy"
-                  @click="revokeCwt(entry.address)"
-                >
-                  {{ $t('admin.revoke') }}
-                </button>
-                <span v-else-if="entry.revokedAt"
-                  >{{ fmtTime(entry.revokedAt) }} {{ $t('admin.revokedSuffix') }}</span
-                >
-              </td>
-            </tr>
-          </tbody>
-        </table>
-        <div v-else class="cwt-empty">{{ $t('admin.noRegistry') }}</div>
+        <!-- ════════ 配额配置 ════════ -->
+        <div v-else-if="activeTab === 'quota'" class="tab-content">
+          <div class="tab-head">
+            <h4>{{ $t('admin.tabQuota') }}</h4>
+            <p class="tab-hint">{{ $t('admin.tierConfigHint') }}</p>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>{{ $t('admin.colTierLevel') }}</th>
+                <th>{{ $t('admin.colMemory') }}</th>
+                <th>{{ $t('admin.colCpu') }}</th>
+                <th>{{ $t('admin.colPids') }}</th>
+                <th>{{ $t('admin.colSwap') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(limits, tier) in tiers" :key="tier">
+                <td>
+                  <span class="badge" :class="tierBadge(Number(tier))">
+                    {{ limits.label }}
+                  </span>
+                </td>
+                <td>{{ limits.memory }}</td>
+                <td>{{ limits.cpus }} {{ $t('admin.cpuUnit') }}</td>
+                <td>{{ limits.pids }}</td>
+                <td>{{ limits.memorySwap }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
-        <h3>{{ $t('admin.cwtRecords') }}</h3>
-        <table v-if="cwtRecords.length">
-          <thead>
-            <tr>
-              <th>{{ $t('admin.colAction') }}</th>
-              <th>{{ $t('admin.colUsr') }}</th>
-              <th>{{ $t('admin.colAddress') }}</th>
-              <th>{{ $t('admin.colTime') }}</th>
-              <th>{{ $t('admin.colBy') }}</th>
-              <th>{{ $t('admin.colToken') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(rec, i) in cwtRecords" :key="i">
-              <td>
-                <span class="badge" :class="actionBadge(rec.action)">{{ rec.action }}</span>
-              </td>
-              <td>{{ rec.usr || '-' }}</td>
-              <td class="cwt-mono">{{ shortAddr(rec.address) }}</td>
-              <td>{{ fmtTime(rec.at) }}</td>
-              <td class="cwt-mono">{{ shortAddr(rec.by) }}</td>
-              <td>
-                <button v-if="rec.token" class="btn btn-small" @click="toggleToken(i)">
-                  {{ expandedToken === i ? $t('admin.collapse') : $t('admin.view') }}
-                </button>
-                <div v-if="expandedToken === i" class="cwt-token-preview">
-                  {{ rec.token }}
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-        <div v-else class="cwt-empty">{{ $t('admin.noRecords') }}</div>
-      </div>
+        <!-- ════════ CWT 授权 ════════ -->
+        <div v-else class="tab-content">
+          <div class="tab-head">
+            <h4>{{ $t('admin.tabCwt') }}</h4>
+            <p class="tab-hint">{{ $t('admin.cwtManageHint') }}</p>
+          </div>
+
+          <div v-if="cwtLoading" class="config-loading">
+            <span>{{ $t('admin.cwtLoading') }}</span>
+          </div>
+
+          <div class="sub-section">
+            <h4>{{ $t('admin.cwtPending') }}</h4>
+            <table v-if="cwtApplications.length">
+              <thead>
+                <tr>
+                  <th>{{ $t('admin.colUsr') }}</th>
+                  <th>{{ $t('admin.colAddress') }}</th>
+                  <th>{{ $t('admin.colAlg') }}</th>
+                  <th>{{ $t('admin.colSubmitted') }}</th>
+                  <th>{{ $t('admin.colVerify') }}</th>
+                  <th>{{ $t('admin.colOps') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="app in cwtApplications" :key="app.id">
+                  <td>{{ app.parsed?.usr || '-' }}</td>
+                  <td class="cwt-mono">{{ shortAddr(app.parsed?.address) }}</td>
+                  <td>{{ app.parsed?.alg || '-' }}</td>
+                  <td>{{ fmtTime(app.submittedAt) }}</td>
+                  <td>
+                    <span class="badge" :class="app.sigOk ? 'badge-success' : 'badge-danger'">
+                      {{ app.sigOk ? $t('admin.sigOk') : $t('admin.sigFail') }}
+                    </span>
+                  </td>
+                  <td>
+                    <template v-if="app.status === 'pending'">
+                      <button
+                        class="btn btn-small btn-success"
+                        :disabled="cwtBusy"
+                        @click="approveCwt(app.id)"
+                      >
+                        {{ $t('admin.approve') }}
+                      </button>
+                      <button
+                        class="btn btn-small btn-danger"
+                        :disabled="cwtBusy"
+                        @click="rejectCwt(app.id)"
+                      >
+                        {{ $t('admin.reject') }}
+                      </button>
+                    </template>
+                    <span
+                      v-else
+                      class="badge"
+                      :class="app.status === 'approved' ? 'badge-success' : 'badge-info'"
+                    >
+                      {{ app.status }}
+                    </span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <div v-else class="cwt-empty">{{ $t('admin.noPending') }}</div>
+          </div>
+
+          <div class="sub-section">
+            <h4>{{ $t('admin.cwtRegistry') }}</h4>
+            <table v-if="cwtRegistry.length">
+              <thead>
+                <tr>
+                  <th>{{ $t('admin.colUsr') }}</th>
+                  <th>{{ $t('admin.colAddress') }}</th>
+                  <th>{{ $t('admin.colStatus') }}</th>
+                  <th>{{ $t('admin.colApprovedAt') }}</th>
+                  <th>{{ $t('admin.colOps') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="entry in cwtRegistry" :key="entry.address">
+                  <td>{{ entry.usr }}</td>
+                  <td class="cwt-mono">{{ shortAddr(entry.address) }}</td>
+                  <td>
+                    <span
+                      class="badge"
+                      :class="entry.status === 'approved' ? 'badge-success' : 'badge-danger'"
+                    >
+                      {{ entry.status }}
+                    </span>
+                  </td>
+                  <td>{{ fmtTime(entry.approvedAt) }}</td>
+                  <td>
+                    <button
+                      v-if="entry.status === 'approved'"
+                      class="btn btn-small btn-danger"
+                      :disabled="cwtBusy"
+                      @click="revokeCwt(entry.address)"
+                    >
+                      {{ $t('admin.revoke') }}
+                    </button>
+                    <span v-else-if="entry.revokedAt"
+                      >{{ fmtTime(entry.revokedAt) }} {{ $t('admin.revokedSuffix') }}</span
+                    >
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <div v-else class="cwt-empty">{{ $t('admin.noRegistry') }}</div>
+          </div>
+
+          <div class="sub-section">
+            <h4>{{ $t('admin.cwtRecords') }}</h4>
+            <table v-if="cwtRecords.length">
+              <thead>
+                <tr>
+                  <th>{{ $t('admin.colAction') }}</th>
+                  <th>{{ $t('admin.colUsr') }}</th>
+                  <th>{{ $t('admin.colAddress') }}</th>
+                  <th>{{ $t('admin.colTime') }}</th>
+                  <th>{{ $t('admin.colBy') }}</th>
+                  <th>{{ $t('admin.colToken') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(rec, i) in cwtRecords" :key="i">
+                  <td>
+                    <span class="badge" :class="actionBadge(rec.action)">{{ rec.action }}</span>
+                  </td>
+                  <td>{{ rec.usr || '-' }}</td>
+                  <td class="cwt-mono">{{ shortAddr(rec.address) }}</td>
+                  <td>{{ fmtTime(rec.at) }}</td>
+                  <td class="cwt-mono">{{ shortAddr(rec.by) }}</td>
+                  <td>
+                    <button v-if="rec.token" class="btn btn-small" @click="toggleToken(i)">
+                      {{ expandedToken === i ? $t('admin.collapse') : $t('admin.view') }}
+                    </button>
+                    <div v-if="expandedToken === i" class="cwt-token-preview">
+                      {{ rec.token }}
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <div v-else class="cwt-empty">{{ $t('admin.noRecords') }}</div>
+          </div>
+        </div>
+      </section>
     </div>
   </div>
 </template>
@@ -401,6 +447,31 @@ import { useI18n } from 'vue-i18n'
 import { requestAccounts, signMessage, getPublicKey, watchAccountsChanged } from '../api/wallet.js'
 
 const { t } = useI18n()
+
+// ---- 侧栏导航（与 React 原型稿一致） ----
+const activeTab = ref('overview')
+const adminTabs = [
+  {
+    key: 'overview',
+    label: t('admin.tabOverview'),
+    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>',
+  },
+  {
+    key: 'users',
+    label: t('admin.tabUsers'),
+    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+  },
+  {
+    key: 'quota',
+    label: t('admin.tabQuota'),
+    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>',
+  },
+  {
+    key: 'cwt',
+    label: t('admin.tabCwt'),
+    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
+  },
+]
 
 const users = ref([])
 const stats = ref({ totalUsers: 0, runningUsers: 0, tierCounts: {} })
@@ -962,6 +1033,8 @@ onUnmounted(() => {
 
 <style scoped>
 .admin-panel {
+  height: 100%;
+  display: flex;
   animation: fadeIn 0.3s;
 }
 
@@ -976,9 +1049,188 @@ onUnmounted(() => {
   }
 }
 
+/* ════ 状态卡片（noAccess / login） ════ */
+.state-card {
+  margin: auto;
+  width: min(540px, calc(100% - 2rem));
+  background: #fff;
+  border-radius: 16px;
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  text-align: center;
+  padding: 3rem 2rem;
+}
+
+.state-card h2 {
+  font-size: 1.4rem;
+  margin-bottom: 1rem;
+  color: #1e293b;
+}
+
+.state-card p {
+  color: #64748b;
+  margin-bottom: 2rem;
+}
+
+.error-card h2 {
+  color: #dc2626;
+}
+
+.address-display {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  background: #f8fafc;
+  padding: 0.5rem 0.75rem;
+  border-radius: 10px;
+  word-break: break-all;
+  margin-bottom: 2rem;
+  display: block;
+  font-size: 0.85rem;
+  color: #334155;
+}
+
+.btn-large {
+  padding: 0.75rem 2rem;
+  font-size: 1.05rem;
+}
+
+.btn-small {
+  padding: 0.25rem 0.75rem;
+  font-size: 0.85rem;
+  margin-left: 0.5rem;
+}
+
+.current-address {
+  margin-bottom: 1.5rem;
+}
+
+.current-address p {
+  color: #64748b;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+}
+
+/* ════ 主界面：左侧栏 + 右侧内容（与 React 原型稿一致） ════ */
+.gate-shell {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 1rem;
+  padding: 1.25rem;
+  align-items: stretch;
+}
+
+.gate-sidebar {
+  width: 176px;
+  flex-shrink: 0;
+}
+
+.sidebar-card {
+  background: #fff;
+  border-radius: 16px;
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  padding: 0.5rem;
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  padding-top: 0.25rem;
+}
+
+.sidebar-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.5rem 0.75rem;
+  border: none;
+  background: transparent;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #64748b;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.2s;
+}
+
+.sidebar-item:hover {
+  background: #f8fafc;
+  color: #475569;
+}
+
+.sidebar-item.active {
+  background: #eef0f8;
+  color: #6b7bdb;
+}
+
+.sidebar-icon {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.sidebar-icon :deep(svg) {
+  display: block;
+}
+
+/* ─── 右侧内容卡 ─── */
+.gate-content {
+  flex: 1;
+  min-width: 0;
+  background: #fff;
+  border-radius: 16px;
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  padding: 1.5rem;
+  overflow-y: auto;
+}
+
+.tab-content {
+  animation: fadeIn 0.25s;
+}
+
+.tab-head h4 {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #94a3b8;
+  margin-bottom: 0.125rem;
+}
+
+.tab-hint {
+  font-size: 11px;
+  color: #94a3b8;
+  line-height: 1.6;
+  margin-bottom: 1rem;
+}
+
+.sub-section {
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid #f8fafc;
+}
+
+.sub-section h4 {
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+  margin-bottom: 0.25rem;
+}
+
+/* ─── 管理员信息卡 ─── */
 .admin-info-card {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #6b7bdb 0%, #6c69c2 100%);
   color: white;
+  border-radius: 12px;
+  padding: 0.875rem 1.25rem;
+  margin-bottom: 1rem;
 }
 
 .admin-info {
@@ -989,39 +1241,46 @@ onUnmounted(() => {
 
 .admin-label {
   font-weight: 600;
-  font-size: 1.1rem;
+  font-size: 0.95rem;
+  flex-shrink: 0;
 }
 
 .admin-address {
-  font-family: monospace;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
   background: rgba(255, 255, 255, 0.2);
-  padding: 0.5rem 1rem;
-  border-radius: 4px;
+  padding: 0.4rem 0.875rem;
+  border-radius: 8px;
   flex: 1;
+  font-size: 0.85rem;
+  word-break: break-all;
 }
 
-.btn-danger {
-  background: #dc2626;
+.admin-info .btn-danger {
   color: white;
+  border-color: rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.12);
+  margin-left: 0;
 }
 
-.btn-danger:hover {
-  background: #b91c1c;
+.admin-info .btn-danger:hover {
+  background: rgba(255, 255, 255, 0.22);
 }
 
+/* ─── Docker 状态 ─── */
 .docker-status-card {
-  padding: 1rem 1.5rem;
+  padding: 0.875rem 1.25rem;
+  border-radius: 12px;
+  margin-bottom: 1rem;
   transition: all 0.3s;
+  color: white;
 }
 
 .docker-status-card.docker-ok {
   background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-  color: white;
 }
 
 .docker-status-card.docker-error {
   background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-  color: white;
 }
 
 .docker-status {
@@ -1040,12 +1299,12 @@ onUnmounted(() => {
 
 .status-label {
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   opacity: 0.9;
 }
 
 .status-text {
-  font-size: 1.1rem;
+  font-size: 1.05rem;
   font-weight: 700;
 }
 
@@ -1053,63 +1312,26 @@ onUnmounted(() => {
   font-size: 0.85rem;
   opacity: 0.9;
   margin-top: 0.25rem;
+  flex: 1;
+  text-align: right;
 }
 
-.login-card {
-  text-align: center;
-  padding: 3rem;
-  max-width: 500px;
-  margin: 2rem auto;
-}
-
-.login-card h2 {
-  margin-bottom: 1rem;
-}
-
-.login-card p {
-  color: #666;
-  margin-bottom: 2rem;
-}
-
-.error-card {
-  text-align: center;
-  padding: 3rem;
-  max-width: 500px;
-  margin: 2rem auto;
-}
-
-.error-card h2 {
-  margin-bottom: 1rem;
-  color: #dc2626;
-}
-
-.error-card p {
-  color: #666;
-  margin-bottom: 1rem;
-}
-
-.address-display {
-  font-family: monospace;
-  background: #f3f4f6;
-  padding: 0.5rem;
-  border-radius: 4px;
-  word-break: break-all;
-  margin-bottom: 2rem;
-}
-
-.btn-large {
-  padding: 0.75rem 2rem;
-  font-size: 1.1rem;
+/* ─── 操作按钮行 ─── */
+.action-buttons {
+  display: flex;
+  gap: 0.75rem;
+  margin: 1rem 0;
+  flex-wrap: wrap;
 }
 
 table {
-  font-size: 0.9rem;
+  font-size: 0.875rem;
 }
 
 .btn {
-  margin-right: 0.5rem;
+  margin-right: 0.375rem;
   text-decoration: none;
-  display: inline-block;
+  display: inline-flex;
 }
 
 .btn:disabled {
@@ -1117,93 +1339,53 @@ table {
   cursor: not-allowed;
 }
 
-.btn-warning {
-  background: #f59e0b;
-  color: white;
+.ops-cell {
+  display: flex;
+  gap: 0.375rem;
+  flex-wrap: wrap;
+  align-items: center;
 }
 
-.btn-warning:hover {
-  background: #d97706;
-}
-
-.btn-info {
-  background: #3b82f6;
-  color: white;
-}
-
-.btn-info:hover {
-  background: #2563eb;
-}
-
-.btn-danger {
-  background: #dc2626;
-  color: white;
-}
-
-.btn-danger:hover {
-  background: #b91c1c;
+.ops-cell .btn {
+  margin-right: 0;
+  padding: 0.25rem 0.625rem;
+  font-size: 0.8rem;
 }
 
 .badge-secondary {
-  background: #6b7280;
+  background: #64748b;
   color: white;
 }
 
-.current-address {
-  margin-bottom: 1.5rem;
-}
-
-.current-address p {
-  color: #666;
-  margin-bottom: 0.5rem;
-  font-size: 0.9rem;
-}
-
-.address-display {
-  font-family: monospace;
-  background: #f3f4f6;
-  padding: 0.5rem;
-  border-radius: 4px;
-  word-break: break-all;
-  display: block;
-  font-size: 0.85rem;
-}
-
-/* ---- CWT 授权管理（M1） ---- */
+/* ─── CWT 授权管理 ─── */
 .cwt-mono {
-  font-family: monospace;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-size: 0.82rem;
 }
 
 .cwt-empty {
-  color: #888;
+  color: #94a3b8;
   padding: 0.6rem 0;
-  font-size: 0.9rem;
+  font-size: 0.875rem;
 }
 
 .cwt-token-preview {
   margin-top: 0.4rem;
-  font-family: monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.72rem;
-  background: #f3f4f6;
-  border-radius: 4px;
+  background: #f8fafc;
+  border-radius: 8px;
   padding: 0.4rem;
   word-break: break-all;
   max-width: 420px;
+  border: 1px solid #f1f5f9;
 }
 
-.card h3 {
-  margin-top: 1.2rem;
-  margin-bottom: 0.4rem;
-  font-size: 0.95rem;
-  color: #444;
-}
-
-/* 孤儿数据卷 */
+/* ─── 孤儿数据卷 ─── */
 .orphan-notice {
   margin-top: 0.6rem;
   font-size: 0.85rem;
-  color: #4b5563;
+  color: #475569;
 }
 
 .orphan-list {
@@ -1216,11 +1398,11 @@ table {
 
 .orphan-item {
   padding: 0.25rem 0.4rem;
-  border-bottom: 1px dashed #e5e7eb;
+  border-bottom: 1px dashed #f1f5f9;
 }
 
 .orphan-name {
-  font-family: monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.78rem;
   word-break: break-all;
 }

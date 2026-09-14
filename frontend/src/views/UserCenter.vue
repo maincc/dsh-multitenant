@@ -1,7 +1,7 @@
 <template>
   <div class="user-center">
     <!-- 加载页面 -->
-    <div v-if="loading" class="card loading-card">
+    <div v-if="loading" class="state-card loading-card">
       <div class="loading-spinner">
         <div class="spinner"></div>
       </div>
@@ -16,7 +16,7 @@
     </div>
 
     <!-- 连接钱包页面 -->
-    <div v-else-if="!connected" class="card connect-card">
+    <div v-else-if="!connected" class="state-card connect-card">
       <h2>{{ $t('user.connectTitle') }}</h2>
       <p>{{ $t('user.connectHint') }}</p>
 
@@ -38,7 +38,7 @@
     </div>
 
     <!-- 等待队列页面 -->
-    <div v-else-if="waiting" class="card waiting-card">
+    <div v-else-if="waiting" class="state-card waiting-card">
       <div class="waiting-icon">⏳</div>
       <h2>{{ $t('user.waitingTitle') }}</h2>
       <p class="waiting-message">{{ $t('user.waitingMsg1') }}</p>
@@ -67,432 +67,490 @@
       <button class="btn btn-secondary" @click="cancelWaiting">{{ $t('user.cancelWait') }}</button>
     </div>
 
-    <!-- 用户信息页面 -->
-    <div v-else class="user-dashboard">
-      <div class="card">
-        <h2>{{ $t('user.myAccount') }}</h2>
-        <div class="user-info">
-          <div class="info-row">
-            <span class="label">{{ $t('user.swtcAddress') }}</span>
-            <span class="address">{{ userInfo.address }}</span>
-            <button class="btn btn-small" @click="switchAddress">
-              {{ $t('user.switchAddress') }}
-            </button>
+    <!-- 用户信息页面：左侧栏 + 右侧内容（与 React 原型稿一致） -->
+    <div v-else class="gate-shell">
+      <!-- 左侧栏 -->
+      <aside class="gate-sidebar">
+        <div class="sidebar-card">
+          <!-- 钱包摘要 -->
+          <div class="wallet-summary">
+            <span class="live-dot"></span>
+            <span class="wallet-label">{{ $t('user.connected') }}</span>
+            <code class="wallet-short">{{ shortAddrText }}</code>
           </div>
-          <div class="info-row">
-            <span class="label">{{ $t('user.port') }}</span>
-            <span>{{ userInfo.port }}</span>
-          </div>
-          <div class="info-row">
-            <span class="label">{{ $t('user.tier') }}</span>
-            <span class="badge" :class="tierBadge(userInfo.tier)">{{ userInfo.tierLabel }}</span>
-          </div>
-          <div class="info-row">
-            <span class="label">{{ $t('user.containerStatus') }}</span>
-            <span class="badge" :class="statusBadge(userInfo.status)">{{
-              statusText(userInfo.status)
-            }}</span>
+          <!-- 导航项 -->
+          <nav class="sidebar-nav">
             <button
-              v-if="userInfo.status !== 'running'"
-              class="btn btn-small btn-success"
-              @click="restartContainer"
+              v-for="tab in sidebarTabs"
+              :key="tab.key"
+              class="sidebar-item"
+              :class="{ active: activeTab === tab.key }"
+              @click="activeTab = tab.key"
             >
-              {{ $t('user.startContainer') }}
+              <span class="sidebar-icon" v-html="tab.icon"></span>
+              <span>{{ tab.label }}</span>
             </button>
-          </div>
+          </nav>
         </div>
-      </div>
+      </aside>
 
-      <div class="card">
-        <h2>{{ $t('user.cwtVerify') }}</h2>
-        <p>{{ $t('user.cwtVerifyHint') }}</p>
-
-        <div v-if="cwtLoading" class="config-loading">
-          <div class="mini-spinner"></div>
-          <span>{{ $t('user.cwtLoading') }}</span>
-        </div>
-
-        <template v-else-if="cwtStatus">
-          <!-- 已授权 -->
-          <div v-if="cwtStatus.authorized" class="info-row">
-            <span class="badge badge-success">{{ $t('user.cwtAuthorized') }}</span>
-            <span class="cwt-meta">usr: {{ cwtStatus.registry?.usr }}</span>
+      <!-- 右侧内容 -->
+      <section class="gate-content">
+        <!-- ════════ 账户信息 ════════ -->
+        <div v-if="activeTab === 'account'" class="tab-content">
+          <div class="tab-head">
+            <h4>{{ $t('user.myAccount') }}</h4>
+            <p class="tab-hint">{{ $t('user.accountHint') }}</p>
           </div>
-
-          <!-- 待审批 -->
-          <div v-else-if="hasPendingApplication" class="info-row">
-            <span class="badge badge-warning">{{ $t('user.cwtPending') }}</span>
-            <span class="cwt-meta">
-              {{ $t('user.cwtPendingHint', { text: pendingAppText }) }}
-            </span>
-          </div>
-
-          <!-- 未申请 / 被拒 / 已撤销 -->
-          <div v-else>
-            <p class="cwt-meta">
-              {{ $t('user.cwtNotVerified', { min: dailyLimitText }) }}
-              {{
-                cwtStatus.applications?.[0]?.status === 'rejected' ? $t('user.cwtRejectedHint') : ''
-              }}
-            </p>
-            <div class="cwt-apply-form">
-              <button class="btn btn-primary" :disabled="cwtSubmitting" @click="applyCwt">
-                {{ cwtSubmitting ? $t('user.cwtSigning') : $t('user.cwtApplyBtn') }}
+          <div class="stat-rows">
+            <div class="stat-row">
+              <span class="stat-label">{{ $t('user.swtcAddress') }}</span>
+              <code class="stat-value mono">{{ userInfo.address }}</code>
+              <button class="btn btn-small" @click="switchAddress">
+                {{ $t('user.switchAddress') }}
               </button>
-              <div class="action-hints">
-                <div class="hint">
-                  <strong>{{ $t('user.cwtFlowTitle') }}</strong>
-                  {{ $t('user.cwtFlow') }}
-                </div>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">{{ $t('user.port') }}</span>
+              <code class="stat-value mono">{{ userInfo.port }}</code>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">{{ $t('user.tier') }}</span>
+              <span class="badge" :class="tierBadge(userInfo.tier)">{{ userInfo.tierLabel }}</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">{{ $t('user.containerStatus') }}</span>
+              <span class="badge" :class="statusBadge(userInfo.status)">{{
+                statusText(userInfo.status)
+              }}</span>
+              <button
+                v-if="userInfo.status !== 'running'"
+                class="btn btn-small btn-success"
+                @click="restartContainer"
+              >
+                {{ $t('user.startContainer') }}
+              </button>
+            </div>
+          </div>
+
+          <div class="tab-divider" />
+
+          <div class="tab-head">
+            <h4>{{ $t('user.resourceUsage') }}</h4>
+          </div>
+          <div v-if="userInfo.stats" class="resource-usage">
+            <div class="resource-item">
+              <div class="resource-header">
+                <span>{{ $t('user.cpuUsage') }}</span>
+                <span class="mono">{{ userInfo.stats.cpu }}</span>
+              </div>
+            </div>
+            <div class="resource-item">
+              <div class="resource-header">
+                <span>{{ $t('user.memUsage') }}</span>
+                <span class="mono"
+                  >{{ userInfo.stats.memory }} ({{ userInfo.stats.memoryPercent }})</span
+                >
+              </div>
+              <div class="progress-bar">
+                <div class="progress-fill" :style="{ width: userInfo.stats.memoryPercent }"></div>
               </div>
             </div>
           </div>
-        </template>
-      </div>
-
-      <div class="card">
-        <h2>{{ $t('user.resourceUsage') }}</h2>
-        <div v-if="userInfo.stats" class="resource-usage">
-          <div class="resource-item">
-            <div class="resource-header">
-              <span>{{ $t('user.cpuUsage') }}</span>
-              <span>{{ userInfo.stats.cpu }}</span>
-            </div>
-          </div>
-          <div class="resource-item">
-            <div class="resource-header">
-              <span>{{ $t('user.memUsage') }}</span>
-              <span>{{ userInfo.stats.memory }} ({{ userInfo.stats.memoryPercent }})</span>
-            </div>
-            <div class="progress-bar">
-              <div class="progress-fill" :style="{ width: userInfo.stats.memoryPercent }"></div>
-            </div>
-          </div>
+          <div v-else class="loading">{{ $t('user.noData') }}</div>
         </div>
-        <div v-else class="loading">{{ $t('user.noData') }}</div>
-      </div>
 
-      <div class="card">
-        <h2>{{ $t('user.enterDsh') }}</h2>
-        <p>{{ $t('user.enterDshHint') }}</p>
-        <a
-          href="#"
-          @click.prevent="enterDsh"
-          rel="noopener noreferrer"
-          class="btn btn-success btn-large"
-        >
-          {{ $t('user.openDsh') }}
-        </a>
-      </div>
-
-      <div class="card">
-        <h2>{{ $t('user.modelConfig') }}</h2>
-        <p>
-          {{ $t('user.modelConfigHint') }}
-        </p>
-        <div class="key-config">
-          <!-- 获取提供方配置的 loading -->
-          <div v-if="configLoading" class="config-loading">
-            <div class="mini-spinner"></div>
-            <span>{{ $t('user.configLoading') }}</span>
+        <!-- ════════ 模型配置 ════════ -->
+        <div v-else-if="activeTab === 'model'" class="tab-content">
+          <div class="tab-head">
+            <h4>{{ $t('user.modelConfig') }}</h4>
+            <p class="tab-hint">{{ $t('user.modelConfigHint') }}</p>
           </div>
+          <div class="key-config">
+            <!-- 获取提供方配置的 loading -->
+            <div v-if="configLoading" class="config-loading">
+              <div class="mini-spinner"></div>
+              <span>{{ $t('user.configLoading') }}</span>
+            </div>
 
-          <!-- 提供方列表：DeepSeek 官方也是其中一个 item -->
-          <template v-else>
-            <div
-              v-for="(item, idx) in items"
-              :key="item.route || `new-${idx}`"
-              class="provider-row"
-            >
-              <div class="row-head">
-                <span class="row-identity">
-                  <span class="row-name" :class="{ 'row-name-missing': !item.keyConfigured }">
-                    {{ item.displayName }}
+            <!-- 提供方列表：DeepSeek 官方也是其中一个 item -->
+            <template v-else>
+              <div
+                v-for="(item, idx) in items"
+                :key="item.route || `new-${idx}`"
+                class="provider-row"
+              >
+                <div class="row-head">
+                  <span class="row-identity">
+                    <span class="row-name" :class="{ 'row-name-missing': !item.keyConfigured }">
+                      {{ item.displayName }}
+                    </span>
+                    <span v-if="item.kind === 'custom'" class="row-tag">{{
+                      $t('user.customTag')
+                    }}</span>
+                    <span
+                      class="cred-dot"
+                      :class="item.keyConfigured ? 'ok' : 'missing'"
+                      :title="
+                        item.keyConfigured ? $t('user.keyConfigured') : $t('user.keyNotConfigured')
+                      "
+                    ></span>
+                    <span
+                      v-if="item.kind === 'official'"
+                      class="key-state"
+                      :class="item.keyConfigured ? 'ok' : 'missing'"
+                    >
+                      {{ item.keyConfigured ? $t('user.configured') : $t('user.notConfigured') }}
+                    </span>
                   </span>
-                  <span v-if="item.kind === 'custom'" class="row-tag">{{
-                    $t('user.customTag')
-                  }}</span>
-                  <span
-                    class="cred-dot"
-                    :class="item.keyConfigured ? 'ok' : 'missing'"
-                    :title="
-                      item.keyConfigured ? $t('user.keyConfigured') : $t('user.keyNotConfigured')
+                  <span class="row-actions">
+                    <button class="btn btn-small" @click="toggleExpand(idx)">
+                      {{ item.expanded ? $t('user.collapse') : $t('user.edit') }}
+                    </button>
+                    <button
+                      v-if="item.removable"
+                      class="btn btn-small btn-danger"
+                      :disabled="!connected || keySaving"
+                      @click="removeItem(idx)"
+                    >
+                      {{ $t('user.delete') }}
+                    </button>
+                  </span>
+                </div>
+
+                <div v-if="item.expanded" class="row-body">
+                  <input
+                    v-if="item.kind === 'custom'"
+                    v-model="item.displayName"
+                    :placeholder="$t('user.placeholderDisplayName')"
+                    :disabled="!connected || keySaving"
+                  />
+                  <input
+                    v-if="item.kind === 'custom'"
+                    v-model="item.baseURL"
+                    type="text"
+                    :placeholder="$t('user.placeholderBaseUrl')"
+                    :disabled="!connected || keySaving"
+                  />
+                  <input
+                    v-model="item.apiKey"
+                    type="password"
+                    :placeholder="
+                      item.keyConfigured ? $t('user.placeholderKeyKeep') : $t('user.placeholderKey')
                     "
-                  ></span>
-                  <span
+                    :disabled="!connected || keySaving"
+                  />
+                  <!-- 官方：可单独删除 key（不影响自定义端点） -->
+                  <div
+                    v-if="item.kind === 'official' && item.keyConfigured"
+                    class="official-key-actions"
+                  >
+                    <button
+                      class="btn btn-small btn-danger"
+                      :disabled="!connected || keySaving"
+                      @click="clearOfficialKey"
+                    >
+                      {{ $t('user.deleteOfficialKey') }}
+                    </button>
+                    <span class="hint">{{ $t('user.deleteOfficialKeyHint') }}</span>
+                  </div>
+                  <!-- 官方：固定端点 + 默认模型；检测到旧覆盖残留时警告并在保存时清除 -->
+                  <div
                     v-if="item.kind === 'official'"
-                    class="key-state"
-                    :class="item.keyConfigured ? 'ok' : 'missing'"
+                    class="override-warning"
+                    v-show="item.officialOverride"
                   >
-                    {{ item.keyConfigured ? $t('user.configured') : $t('user.notConfigured') }}
-                  </span>
-                </span>
-                <span class="row-actions">
-                  <button class="btn btn-small" @click="toggleExpand(idx)">
-                    {{ item.expanded ? $t('user.collapse') : $t('user.edit') }}
-                  </button>
-                  <button
-                    v-if="item.removable"
-                    class="btn btn-small btn-danger"
-                    :disabled="!connected || keySaving"
-                    @click="removeItem(idx)"
-                  >
-                    {{ $t('user.delete') }}
-                  </button>
-                </span>
-              </div>
-
-              <div v-if="item.expanded" class="row-body">
-                <input
-                  v-if="item.kind === 'custom'"
-                  v-model="item.displayName"
-                  :placeholder="$t('user.placeholderDisplayName')"
-                  :disabled="!connected || keySaving"
-                />
-                <input
-                  v-if="item.kind === 'custom'"
-                  v-model="item.baseURL"
-                  type="text"
-                  :placeholder="$t('user.placeholderBaseUrl')"
-                  :disabled="!connected || keySaving"
-                />
-                <input
-                  v-model="item.apiKey"
-                  type="password"
-                  :placeholder="
-                    item.keyConfigured ? $t('user.placeholderKeyKeep') : $t('user.placeholderKey')
-                  "
-                  :disabled="!connected || keySaving"
-                />
-                <!-- 官方：可单独删除 key（不影响自定义端点） -->
-                <div
-                  v-if="item.kind === 'official' && item.keyConfigured"
-                  class="official-key-actions"
-                >
-                  <button
-                    class="btn btn-small btn-danger"
-                    :disabled="!connected || keySaving"
-                    @click="clearOfficialKey"
-                  >
-                    {{ $t('user.deleteOfficialKey') }}
-                  </button>
-                  <span class="hint">{{ $t('user.deleteOfficialKeyHint') }}</span>
-                </div>
-                <!-- 官方：固定端点 + 默认模型；检测到旧覆盖残留时警告并在保存时清除 -->
-                <div
-                  v-if="item.kind === 'official'"
-                  class="override-warning"
-                  v-show="item.officialOverride"
-                >
-                  {{ $t('user.officialOverrideWarn') }}
-                  <span v-if="item.officialBaseURL" class="override-url">{{
-                    item.officialBaseURL
-                  }}</span>
-                  {{ $t('user.officialOverrideTail') }}
-                  <code>https://api.deepseek.com</code>
-                </div>
-                <div v-if="item.kind === 'official'" class="hint">
-                  {{ $t('user.officialEndpointHint') }}
-                </div>
-                <div v-if="item.kind === 'custom'" class="models-editor">
-                  <div class="models-header">
-                    <span>{{ $t('user.modelsTitle') }}</span>
+                    {{ $t('user.officialOverrideWarn') }}
+                    <span v-if="item.officialBaseURL" class="override-url">{{
+                      item.officialBaseURL
+                    }}</span>
+                    {{ $t('user.officialOverrideTail') }}
+                    <code>https://api.deepseek.com</code>
+                  </div>
+                  <div v-if="item.kind === 'official'" class="hint">
+                    {{ $t('user.officialEndpointHint') }}
+                  </div>
+                  <div v-if="item.kind === 'custom'" class="models-editor">
+                    <div class="models-header">
+                      <span>{{ $t('user.modelsTitle') }}</span>
+                      <button
+                        class="btn btn-small"
+                        :disabled="!connected || keySaving || discovering === idx || !item.baseURL"
+                        @click="discoverItem(idx)"
+                      >
+                        {{ discovering === idx ? $t('user.discovering') : $t('user.discoverBtn') }}
+                      </button>
+                    </div>
+                    <div v-if="!item.baseURL" class="hint">
+                      {{ $t('user.discoverHint') }}
+                    </div>
+                    <table v-if="item.baseURL" class="models-table">
+                      <thead>
+                        <tr>
+                          <th>{{ $t('user.colModelId') }}</th>
+                          <th>{{ $t('user.colName') }}</th>
+                          <th>{{ $t('user.colContext') }}</th>
+                          <th>{{ $t('user.colMaxTokens') }}</th>
+                          <th></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="(m, mi) in item.models" :key="mi">
+                          <td><input v-model="m.id" placeholder="model-id" /></td>
+                          <td>
+                            <input
+                              v-model="m.name"
+                              :placeholder="$t('user.placeholderModelName')"
+                            />
+                          </td>
+                          <td>
+                            <input
+                              v-model.number="m.contextWindow"
+                              type="number"
+                              min="1"
+                              placeholder="128000"
+                            />
+                          </td>
+                          <td>
+                            <input
+                              v-model.number="m.maxTokens"
+                              type="number"
+                              min="1"
+                              placeholder="8192"
+                            />
+                          </td>
+                          <td>
+                            <button class="btn btn-small btn-danger" @click="removeModel(idx, mi)">
+                              ✕
+                            </button>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
                     <button
                       class="btn btn-small"
-                      :disabled="!connected || keySaving || discovering === idx || !item.baseURL"
-                      @click="discoverItem(idx)"
+                      :disabled="!connected || keySaving"
+                      @click="addModel(idx)"
                     >
-                      {{ discovering === idx ? $t('user.discovering') : $t('user.discoverBtn') }}
+                      {{ $t('user.addModel') }}
                     </button>
                   </div>
-                  <div v-if="!item.baseURL" class="hint">
-                    {{ $t('user.discoverHint') }}
-                  </div>
-                  <table v-if="item.baseURL" class="models-table">
-                    <thead>
-                      <tr>
-                        <th>{{ $t('user.colModelId') }}</th>
-                        <th>{{ $t('user.colName') }}</th>
-                        <th>{{ $t('user.colContext') }}</th>
-                        <th>{{ $t('user.colMaxTokens') }}</th>
-                        <th></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-for="(m, mi) in item.models" :key="mi">
-                        <td><input v-model="m.id" placeholder="model-id" /></td>
-                        <td>
-                          <input v-model="m.name" :placeholder="$t('user.placeholderModelName')" />
-                        </td>
-                        <td>
-                          <input
-                            v-model.number="m.contextWindow"
-                            type="number"
-                            min="1"
-                            placeholder="128000"
-                          />
-                        </td>
-                        <td>
-                          <input
-                            v-model.number="m.maxTokens"
-                            type="number"
-                            min="1"
-                            placeholder="8192"
-                          />
-                        </td>
-                        <td>
-                          <button class="btn btn-small btn-danger" @click="removeModel(idx, mi)">
-                            ✕
-                          </button>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                  <button
-                    class="btn btn-small"
-                    :disabled="!connected || keySaving"
-                    @click="addModel(idx)"
-                  >
-                    {{ $t('user.addModel') }}
-                  </button>
                 </div>
               </div>
-            </div>
 
-            <!-- 添加提供方 -->
-            <div class="add-actions">
+              <!-- 添加提供方 -->
+              <div class="add-actions">
+                <button
+                  class="btn btn-small"
+                  :disabled="!connected || keySaving || customCount >= 20"
+                  @click="addItem"
+                >
+                  {{ $t('user.addEndpoint') }}
+                </button>
+              </div>
+            </template>
+
+            <div class="action-buttons">
               <button
-                class="btn btn-small"
-                :disabled="!connected || keySaving || customCount >= 20"
-                @click="addItem"
+                class="btn btn-primary"
+                :disabled="!connected || keySaving"
+                @click="saveConfig"
               >
-                {{ $t('user.addEndpoint') }}
+                {{ keySaving ? $t('user.saving') : $t('user.saveConfig') }}
+              </button>
+              <button
+                class="btn btn-danger"
+                :disabled="!connected || keySaving || !hasAnyConfig"
+                @click="resetConfig"
+              >
+                {{ $t('user.resetConfig') }}
               </button>
             </div>
-          </template>
+            <div class="action-hints">
+              <div class="hint">
+                <strong>{{ $t('user.saveFlowTitle') }}</strong>
+                {{ $t('user.saveFlow') }}
+              </div>
+              <div class="hint">
+                <strong>{{ $t('user.discoverFlowTitle') }}</strong>
+                {{ $t('user.discoverFlow') }}
+              </div>
+              <div class="hint">
+                <strong>{{ $t('user.resetFlowTitle') }}</strong>
+                {{ $t('user.resetFlow') }}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ════════ 容器管理 ════════ -->
+        <div v-else-if="activeTab === 'container'" class="tab-content">
+          <div class="tab-head">
+            <h4>{{ $t('user.containerManage') }}</h4>
+            <p class="tab-hint">{{ $t('user.containerManageHint') }}</p>
+          </div>
+          <!-- 进入容器入口（原在账户信息，已移至此处） -->
+          <div class="enter-box">
+            <div class="enter-info">
+              <div class="enter-title">{{ $t('user.enterDsh') }}</div>
+              <div class="enter-hint">{{ $t('user.enterDshHint') }}</div>
+            </div>
+            <button class="btn btn-primary btn-enter" @click="enterDsh">
+              {{ $t('user.openDsh') }}
+            </button>
+          </div>
+
+          <div class="tab-divider" />
 
           <div class="action-buttons">
-            <button class="btn btn-primary" :disabled="!connected || keySaving" @click="saveConfig">
-              {{ keySaving ? $t('user.saving') : $t('user.saveConfig') }}
-            </button>
+            <button class="btn btn-primary" @click="restartDSH">{{ $t('user.restartDsh') }}</button>
             <button
-              class="btn btn-danger"
-              :disabled="!connected || keySaving || !hasAnyConfig"
-              @click="resetConfig"
+              class="btn btn-secondary"
+              :disabled="!connected || userInfo.status !== 'running'"
+              @click="stopContainer"
             >
-              {{ $t('user.resetConfig') }}
+              {{ $t('user.stopContainer') }}
+            </button>
+            <button class="btn btn-danger" @click="resetContainer">
+              {{ $t('user.resetContainer') }}
             </button>
           </div>
           <div class="action-hints">
             <div class="hint">
-              <strong>{{ $t('user.saveFlowTitle') }}</strong>
-              {{ $t('user.saveFlow') }}
+              <strong>{{ $t('user.restartDshFlowTitle') }}</strong>
+              {{ $t('user.restartDshFlow') }}
             </div>
             <div class="hint">
-              <strong>{{ $t('user.discoverFlowTitle') }}</strong>
-              {{ $t('user.discoverFlow') }}
+              <strong>{{ $t('user.stopFlowTitle') }}</strong>
+              {{ $t('user.stopFlow') }}
+              {{ usageInfoLabel ? $t('user.todayUsagePrefix') + usageInfoLabel : '' }}
             </div>
             <div class="hint">
               <strong>{{ $t('user.resetFlowTitle') }}</strong>
-              {{ $t('user.resetFlow') }}
+              {{ $t('user.resetContainerFlow') }}
             </div>
           </div>
         </div>
-      </div>
 
-      <div class="card">
-        <h2>{{ $t('user.containerManage') }}</h2>
-        <p>{{ $t('user.containerManageHint') }}</p>
-        <div class="action-buttons">
-          <button class="btn btn-primary" @click="restartDSH">{{ $t('user.restartDsh') }}</button>
-          <button
-            class="btn btn-secondary"
-            :disabled="!connected || userInfo.status !== 'running'"
-            @click="stopContainer"
-          >
-            {{ $t('user.stopContainer') }}
-          </button>
-          <button class="btn btn-danger" @click="resetContainer">
-            {{ $t('user.resetContainer') }}
-          </button>
-        </div>
-        <div class="action-hints">
-          <div class="hint">
-            <strong>{{ $t('user.restartDshFlowTitle') }}</strong>
-            {{ $t('user.restartDshFlow') }}
+        <!-- ════════ CWT 验证 ════════ -->
+        <div v-else-if="activeTab === 'cwt'" class="tab-content">
+          <div class="tab-head">
+            <h4>{{ $t('user.cwtVerify') }}</h4>
+            <p class="tab-hint">{{ $t('user.cwtVerifyHint') }}</p>
           </div>
-          <div class="hint">
-            <strong>{{ $t('user.stopFlowTitle') }}</strong>
-            {{ $t('user.stopFlow') }}
-            {{ usageInfoLabel ? $t('user.todayUsagePrefix') + usageInfoLabel : '' }}
-          </div>
-          <div class="hint">
-            <strong>{{ $t('user.resetFlowTitle') }}</strong>
-            {{ $t('user.resetContainerFlow') }}
-          </div>
-        </div>
-      </div>
 
-      <div class="card">
-        <h2>{{ $t('user.mySkills') }}</h2>
-        <p>{{ $t('user.mySkillsHint') }}</p>
-        <div class="action-buttons">
-          <button class="btn btn-primary" @click="openImportDialog">
-            {{ $t('user.importSkill') }}
-          </button>
-          <button class="btn btn-primary" @click="openShareDialog">
-            {{ $t('user.shareSkill') }}
-          </button>
-          <router-link to="/skills" class="btn btn-secondary">{{
-            $t('user.skillMarketLink')
-          }}</router-link>
-        </div>
+          <div v-if="cwtLoading" class="config-loading">
+            <div class="mini-spinner"></div>
+            <span>{{ $t('user.cwtLoading') }}</span>
+          </div>
 
-        <div v-if="mySkillsLoading" class="config-loading">
-          <div class="mini-spinner"></div>
-          <span>{{ $t('user.mySkillsLoading') }}</span>
-        </div>
-        <template v-else>
-          <div v-if="mineData.published.length > 0" class="skill-subsection">
-            <h3>{{ $t('user.myPublished') }}</h3>
-            <div v-for="s in mineData.published" :key="'p-' + s.name" class="skill-row">
-              <div class="skill-row-main">
-                <strong>{{ s.name }}</strong>
-                <span class="skill-desc">{{ s.description }}</span>
+          <template v-else-if="cwtStatus">
+            <!-- 已授权 -->
+            <div v-if="cwtStatus.authorized" class="info-row">
+              <span class="badge badge-success">{{ $t('user.cwtAuthorized') }}</span>
+              <span class="cwt-meta">usr: {{ cwtStatus.registry?.usr }}</span>
+            </div>
+
+            <!-- 待审批 -->
+            <div v-else-if="hasPendingApplication" class="info-row">
+              <span class="badge badge-warning">{{ $t('user.cwtPending') }}</span>
+              <span class="cwt-meta">
+                {{ $t('user.cwtPendingHint', { text: pendingAppText }) }}
+              </span>
+            </div>
+
+            <!-- 未申请 / 被拒 / 已撤销 -->
+            <div v-else>
+              <p class="cwt-meta">
+                {{ $t('user.cwtNotVerified', { min: dailyLimitText }) }}
+                {{
+                  cwtStatus.applications?.[0]?.status === 'rejected'
+                    ? $t('user.cwtRejectedHint')
+                    : ''
+                }}
+              </p>
+              <div class="cwt-apply-form">
+                <button class="btn btn-primary" :disabled="cwtSubmitting" @click="applyCwt">
+                  {{ cwtSubmitting ? $t('user.cwtSigning') : $t('user.cwtApplyBtn') }}
+                </button>
+                <div class="action-hints">
+                  <div class="hint">
+                    <strong>{{ $t('user.cwtFlowTitle') }}</strong>
+                    {{ $t('user.cwtFlow') }}
+                  </div>
+                </div>
               </div>
-              <button class="btn btn-small btn-danger" @click="unpublishSkill(s.name)">
-                {{ $t('user.unpublish') }}
-              </button>
             </div>
+          </template>
+        </div>
+
+        <!-- ════════ 我的技能 ════════ -->
+        <div v-else class="tab-content">
+          <div class="tab-head">
+            <h4>{{ $t('user.mySkills') }}</h4>
+            <p class="tab-hint">{{ $t('user.mySkillsHint') }}</p>
           </div>
-          <div v-if="mineData.installed.length > 0" class="skill-subsection">
-            <h3>{{ $t('user.myInstalled') }}</h3>
-            <div v-for="s in mineData.installed" :key="'i-' + s.name" class="skill-row">
-              <div class="skill-row-main">
-                <strong>{{ s.name }}</strong>
-                <span class="skill-desc">
-                  {{
-                    s.description ||
-                    $t('user.installedSource', {
-                      source: s.source,
-                      date: new Date(s.installedAt).toLocaleString(),
-                    })
-                  }}
-                </span>
-                <span v-if="s.hasUpdate" class="badge badge-warning">{{
-                  $t('user.hasUpdate')
-                }}</span>
+          <div class="action-buttons">
+            <button class="btn btn-primary" @click="openImportDialog">
+              {{ $t('user.importSkill') }}
+            </button>
+            <button class="btn btn-primary" @click="openShareDialog">
+              {{ $t('user.shareSkill') }}
+            </button>
+            <router-link to="/skills" class="btn btn-secondary">{{
+              $t('user.skillMarketLink')
+            }}</router-link>
+          </div>
+
+          <div v-if="mySkillsLoading" class="config-loading">
+            <div class="mini-spinner"></div>
+            <span>{{ $t('user.mySkillsLoading') }}</span>
+          </div>
+          <template v-else>
+            <div v-if="mineData.published.length > 0" class="skill-subsection">
+              <h3>{{ $t('user.myPublished') }}</h3>
+              <div v-for="s in mineData.published" :key="'p-' + s.name" class="skill-row">
+                <div class="skill-row-main">
+                  <strong>{{ s.name }}</strong>
+                  <span class="skill-desc">{{ s.description }}</span>
+                </div>
+                <button class="btn btn-small btn-danger" @click="unpublishSkill(s.name)">
+                  {{ $t('user.unpublish') }}
+                </button>
               </div>
-              <button class="btn btn-small btn-danger" @click="uninstallSkill(s.name)">
-                {{ $t('user.uninstall') }}
-              </button>
             </div>
-          </div>
-          <p v-if="mineData.published.length === 0 && mineData.installed.length === 0" class="hint">
-            {{ $t('user.noSkillsHint') }}
-          </p>
-        </template>
-      </div>
+            <div v-if="mineData.installed.length > 0" class="skill-subsection">
+              <h3>{{ $t('user.myInstalled') }}</h3>
+              <div v-for="s in mineData.installed" :key="'i-' + s.name" class="skill-row">
+                <div class="skill-row-main">
+                  <strong>{{ s.name }}</strong>
+                  <span class="skill-desc">
+                    {{
+                      s.description ||
+                      $t('user.installedSource', {
+                        source: s.source,
+                        date: new Date(s.installedAt).toLocaleString(),
+                      })
+                    }}
+                  </span>
+                  <span v-if="s.hasUpdate" class="badge badge-warning">{{
+                    $t('user.hasUpdate')
+                  }}</span>
+                </div>
+                <button class="btn btn-small btn-danger" @click="uninstallSkill(s.name)">
+                  {{ $t('user.uninstall') }}
+                </button>
+              </div>
+            </div>
+            <p
+              v-if="mineData.published.length === 0 && mineData.installed.length === 0"
+              class="hint"
+            >
+              {{ $t('user.noSkillsHint') }}
+            </p>
+          </template>
+        </div>
+      </section>
 
       <!-- 导入技能对话框 -->
       <div v-if="importDialogOpen" class="import-mask" @click.self="closeImportDialog">
@@ -590,6 +648,41 @@ import { skillsApi } from '../api/skills.js'
 import { requestAccounts, signMessage, getPublicKey, watchAccountsChanged } from '../api/wallet.js'
 
 const { t } = useI18n()
+
+// ---- 侧栏导航（与 React 原型稿一致） ----
+const activeTab = ref('account')
+const sidebarTabs = [
+  {
+    key: 'account',
+    label: t('user.tabAccount'),
+    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>',
+  },
+  {
+    key: 'model',
+    label: t('user.tabModel'),
+    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="7" cy="17" r="4"/><path d="M10.6 13.4L21 3"/><path d="M19 5l2 2"/><path d="M15 9l2 2"/></svg>',
+  },
+  {
+    key: 'container',
+    label: t('user.tabContainer'),
+    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41m11.32-11.32 1.41-1.41"/></svg>',
+  },
+  {
+    key: 'cwt',
+    label: t('user.tabCwt'),
+    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
+  },
+  {
+    key: 'skills',
+    label: t('user.tabSkills'),
+    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>',
+  },
+]
+
+const shortAddrText = computed(() => {
+  const a = userInfo.value.address
+  return a ? `${a.slice(0, 12)}…${a.slice(-4)}` : ''
+})
 
 const connected = ref(false)
 const connecting = ref(false)
@@ -1927,6 +2020,8 @@ onUnmounted(() => {
 
 <style scoped>
 .user-center {
+  height: 100%;
+  display: flex;
   animation: fadeIn 0.3s;
 }
 
@@ -1941,9 +2036,24 @@ onUnmounted(() => {
   }
 }
 
-.loading-card {
+/* ════ 状态卡片（loading / connect / waiting，居中显示） ════ */
+.state-card {
+  margin: auto;
+  width: min(540px, calc(100% - 2rem));
+  background: #fff;
+  border-radius: 16px;
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
   text-align: center;
-  padding: 3rem;
+  padding: 3rem 2rem;
+}
+
+.loading-card h2,
+.connect-card h2,
+.waiting-card h2 {
+  font-size: 1.4rem;
+  margin-bottom: 1rem;
+  color: #1e293b;
 }
 
 .loading-spinner {
@@ -1951,10 +2061,10 @@ onUnmounted(() => {
 }
 
 .spinner {
-  width: 60px;
-  height: 60px;
-  border: 6px solid #f3f4f6;
-  border-top: 6px solid #667eea;
+  width: 48px;
+  height: 48px;
+  border: 4px solid #eef0f8;
+  border-top: 4px solid #6b7bdb;
   border-radius: 50%;
   animation: spin 1s linear infinite;
   margin: 0 auto;
@@ -1969,14 +2079,8 @@ onUnmounted(() => {
   }
 }
 
-.loading-card h2 {
-  font-size: 1.8rem;
-  margin-bottom: 1rem;
-  color: #374151;
-}
-
 .loading-message {
-  color: #6b7280;
+  color: #64748b;
   margin-bottom: 2rem;
 }
 
@@ -1985,44 +2089,19 @@ onUnmounted(() => {
   margin: 0 auto;
 }
 
-.progress-bar {
-  width: 100%;
-  height: 8px;
-  background: #f3f4f6;
-  border-radius: 4px;
-  overflow: hidden;
-  margin-bottom: 0.5rem;
-}
-
-.progress-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-  transition: width 0.3s ease;
-}
-
 .progress-text {
   font-size: 0.9rem;
-  color: #6b7280;
-}
-
-.connect-card {
-  text-align: center;
-  padding: 3rem;
-}
-
-.connect-card h2 {
-  font-size: 1.8rem;
-  margin-bottom: 1rem;
+  color: #64748b;
 }
 
 .connect-card p {
-  color: #6b7280;
+  color: #64748b;
   margin-bottom: 2rem;
 }
 
 .btn-large {
   padding: 0.75rem 2rem;
-  font-size: 1.1rem;
+  font-size: 1.05rem;
 }
 
 .btn-small {
@@ -2031,96 +2110,9 @@ onUnmounted(() => {
   margin-left: 0.5rem;
 }
 
-.user-info {
-  display: grid;
-  gap: 1rem;
-}
-
-.info-row {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-
-.info-row .label {
-  font-weight: 600;
-  color: #374151;
-  min-width: 100px;
-}
-
-.info-row .address {
-  font-family: monospace;
-  background: #f3f4f6;
-  padding: 0.25rem 0.5rem;
-  border-radius: 4px;
-  word-break: break-all;
-}
-
-.resource-usage {
-  display: grid;
-  gap: 1.5rem;
-}
-
-.resource-item {
-  padding: 1rem;
-  background: #f9fafb;
-  border-radius: 8px;
-}
-
-.resource-header {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 0.5rem;
-  font-weight: 500;
-}
-
-.tier-options {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 1rem;
-  margin-top: 1rem;
-}
-
-.tier-option {
-  padding: 1.5rem;
-  background: #f9fafb;
-  border-radius: 12px;
-  border: 2px solid transparent;
-  text-align: center;
-}
-
-.tier-option.current {
-  border-color: #667eea;
-  background: linear-gradient(135deg, #f0f4ff 0%, #faf5ff 100%);
-}
-
-.tier-option h4 {
-  margin-bottom: 1rem;
-  color: #374151;
-}
-
-.tier-option ul {
-  list-style: none;
-  margin-bottom: 1rem;
-  text-align: left;
-}
-
-.tier-option li {
-  padding: 0.25rem 0;
-  font-size: 0.9rem;
-  color: #6b7280;
-}
-
-/* 等待队列样式 */
-.waiting-card {
-  text-align: center;
-  padding: 3rem;
-  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
-  border: 2px solid #f59e0b;
-}
-
+/* ─── 等待队列 ─── */
 .waiting-icon {
-  font-size: 4rem;
+  font-size: 3.5rem;
   margin-bottom: 1rem;
   animation: pulse 2s ease-in-out infinite;
 }
@@ -2138,8 +2130,6 @@ onUnmounted(() => {
 }
 
 .waiting-card h2 {
-  font-size: 1.8rem;
-  margin-bottom: 1rem;
   color: #92400e;
 }
 
@@ -2150,11 +2140,11 @@ onUnmounted(() => {
 }
 
 .queue-info {
-  background: white;
+  background: #fffbeb;
   border-radius: 12px;
-  padding: 1.5rem;
+  padding: 1.25rem;
   margin: 2rem 0;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  border: 1px solid #fde68a;
 }
 
 .queue-item {
@@ -2162,7 +2152,7 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 0.75rem 0;
-  border-bottom: 1px solid #f3f4f6;
+  border-bottom: 1px solid #fef3c7;
 }
 
 .queue-item:last-child {
@@ -2170,14 +2160,14 @@ onUnmounted(() => {
 }
 
 .queue-label {
-  color: #6b7280;
+  color: #92400e;
   font-size: 0.9rem;
 }
 
 .queue-value {
-  color: #1f2937;
+  color: #78350f;
   font-weight: 600;
-  font-size: 1.1rem;
+  font-size: 1.05rem;
 }
 
 .waiting-progress {
@@ -2194,98 +2184,316 @@ onUnmounted(() => {
   height: 30px;
   border: 4px solid #fde68a;
   border-top: 4px solid #f59e0b;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
 }
 
-.btn-secondary {
-  background: #6b7280;
-  color: white;
-  padding: 0.75rem 2rem;
-  border-radius: 8px;
-  border: none;
-  cursor: pointer;
-  font-size: 1rem;
-  transition: background 0.3s;
-}
-
-.btn-secondary:hover {
-  background: #4b5563;
-}
-
-/* 容器管理卡片样式 */
-.action-buttons {
+/* ════ 主界面：左侧栏 + 右侧内容（与 React 原型稿一致） ════ */
+.gate-shell {
+  flex: 1;
+  min-width: 0;
   display: flex;
   gap: 1rem;
-  margin: 1.5rem 0;
+  padding: 1.25rem;
+  align-items: stretch;
+}
+
+.gate-sidebar {
+  width: 176px;
+  flex-shrink: 0;
+}
+
+.sidebar-card {
+  background: #fff;
+  border-radius: 16px;
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  padding: 0.5rem;
+}
+
+.wallet-summary {
+  padding: 0.75rem;
+  margin-bottom: 0.25rem;
+  border-bottom: 1px solid #f1f5f9;
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex-wrap: wrap;
+}
+
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.wallet-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: #10b981;
+}
+
+.wallet-short {
+  display: block;
+  width: 100%;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px;
+  color: #94a3b8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  padding-top: 0.25rem;
+}
+
+.sidebar-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.5rem 0.75rem;
+  border: none;
+  background: transparent;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #64748b;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.2s;
+}
+
+.sidebar-item:hover {
+  background: #f8fafc;
+  color: #475569;
+}
+
+.sidebar-item.active {
+  background: #eef0f8;
+  color: #6b7bdb;
+}
+
+.sidebar-icon {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.sidebar-icon :deep(svg) {
+  display: block;
+}
+
+/* ─── 右侧内容卡 ─── */
+.gate-content {
+  flex: 1;
+  min-width: 0;
+  background: #fff;
+  border-radius: 16px;
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  padding: 1.5rem;
+  overflow-y: auto;
+}
+
+.tab-content {
+  animation: fadeIn 0.25s;
+}
+
+.tab-head h4 {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #94a3b8;
+  margin-bottom: 0.125rem;
+}
+
+.tab-hint {
+  font-size: 11px;
+  color: #94a3b8;
+  line-height: 1.6;
+  margin-bottom: 1rem;
+}
+
+.tab-divider {
+  border-top: 1px solid #f1f5f9;
+  margin: 1.25rem 0;
+}
+
+/* ─── 账户信息 ─── */
+.stat-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.stat-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.625rem 0;
+  border-bottom: 1px solid #f8fafc;
+}
+
+.stat-row:last-child {
+  border-bottom: none;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: #94a3b8;
+  width: 88px;
+  flex-shrink: 0;
+}
+
+.stat-value {
+  font-size: 13px;
+  color: #334155;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mono {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+.resource-usage {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.resource-item {
+  padding: 0.75rem 1rem;
+  background: #f8fafc;
+  border-radius: 12px;
+  border: 1px solid #f1f5f9;
+}
+
+.resource-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.375rem;
+  font-weight: 500;
+  font-size: 13px;
+  color: #475569;
+}
+
+.btn-enter {
+  padding: 0.75rem 2rem;
+  font-size: 1rem;
+}
+
+/* ─── 进入容器入口卡（容器管理顶部） ─── */
+.enter-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.25rem 1.5rem;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(107, 123, 219, 0.08) 0%, rgba(108, 105, 194, 0.08) 100%);
+  border: 1px solid rgba(107, 123, 219, 0.25);
+}
+
+.enter-info {
+  min-width: 0;
+}
+
+.enter-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #1e293b;
+  margin-bottom: 0.25rem;
+}
+
+.enter-hint {
+  font-size: 0.8rem;
+  color: #64748b;
+  line-height: 1.5;
+}
+
+.enter-box .btn-enter {
+  flex-shrink: 0;
+  margin: 0;
+}
+
+/* ════ 通用小组件 ════ */
+.action-buttons {
+  display: flex;
+  gap: 0.75rem;
+  margin: 1.25rem 0;
   flex-wrap: wrap;
 }
 
 .action-buttons .btn {
   flex: 1;
   min-width: 150px;
-  padding: 0.75rem 1.5rem;
-  font-size: 1rem;
+  padding: 0.625rem 1.25rem;
+  font-size: 0.95rem;
 }
 
 .action-hints {
   margin-top: 1rem;
-  padding-top: 1rem;
-  border-top: 1px solid #e5e7eb;
+  padding: 1rem;
+  background: #f8fafc;
+  border-radius: 12px;
+  border: 1px solid #f1f5f9;
 }
 
 .hint {
   margin-bottom: 0.75rem;
-  font-size: 0.9rem;
-  color: #6b7280;
-  line-height: 1.5;
+  font-size: 0.875rem;
+  color: #64748b;
+  line-height: 1.6;
 }
 
 .hint strong {
-  color: #374151;
+  color: #334155;
 }
 
 .hint:last-child {
   margin-bottom: 0;
 }
 
-/* 我的模型密钥卡片 */
+.info-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 0;
+}
+
+/* ─── 模型配置 ─── */
 .key-config input {
   width: 100%;
-  padding: 0.65rem 0.85rem;
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  font-size: 0.95rem;
+  padding: 0.625rem 0.85rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  font-size: 0.9rem;
   margin-bottom: 0.75rem;
   box-sizing: border-box;
+  background: #fff;
+  color: #1e293b;
 }
 
 .key-config input:focus {
   outline: none;
-  border-color: #2563eb;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+  border-color: #6b7bdb;
+  box-shadow: 0 0 0 3px rgba(107, 123, 219, 0.15);
 }
-
-.key-status {
-  display: inline-block;
-  padding: 0.3rem 0.8rem;
-  border-radius: 999px;
-  font-size: 0.85rem;
-  font-weight: 600;
-  background: #f3f4f6;
-  color: #6b7280;
-  margin-bottom: 0.75rem;
-}
-
-.key-status.ok {
-  background: #d1fae5;
-  color: #065f46;
-}
-
-/* 模型配置卡片：提供方行卡片（参考 DSH 模型设置页设计语言） */
 
 .provider-row {
-  border: 1px solid #e5e7eb;
+  border: 1px solid #e2e8f0;
   border-radius: 12px;
   padding: 10px 14px;
   display: flex;
@@ -2312,17 +2520,17 @@ onUnmounted(() => {
   font-size: 14px;
   line-height: 22px;
   font-weight: 500;
-  color: #1f2937;
+  color: #1e293b;
 }
 
 .row-tag {
   flex: none;
   padding: 1px 6px;
-  border: 1px solid #d1d5db;
+  border: 1px solid #e2e8f0;
   border-radius: 4px;
   font-size: 11px;
   line-height: 16px;
-  color: #6b7280;
+  color: #64748b;
 }
 
 .cred-dot {
@@ -2381,7 +2589,7 @@ onUnmounted(() => {
 .override-warning {
   margin-bottom: 0.75rem;
   padding: 0.5rem 0.75rem;
-  border: 1px solid #f59e0b;
+  border: 1px solid #fcd34d;
   border-radius: 8px;
   background: #fffbeb;
   color: #92400e;
@@ -2404,8 +2612,8 @@ onUnmounted(() => {
   margin: 0.25rem 0 0.75rem;
   padding: 0.75rem;
   border: 1px dashed #cbd5e1;
-  border-radius: 8px;
-  background: #fafbfc;
+  border-radius: 10px;
+  background: #f8fafc;
 }
 
 .models-header {
@@ -2414,7 +2622,7 @@ onUnmounted(() => {
   align-items: center;
   margin-bottom: 0.5rem;
   font-weight: 600;
-  color: #374151;
+  color: #334155;
   font-size: 0.9rem;
 }
 
@@ -2427,10 +2635,11 @@ onUnmounted(() => {
 .models-table th {
   text-align: left;
   font-size: 0.75rem;
-  color: #6b7280;
+  color: #94a3b8;
   font-weight: 600;
   padding: 0.3rem 0.4rem;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid #f1f5f9;
+  background: transparent;
 }
 
 .models-table td {
@@ -2440,16 +2649,11 @@ onUnmounted(() => {
 .models-table input {
   width: 100%;
   padding: 0.4rem 0.5rem;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
   font-size: 0.85rem;
   box-sizing: border-box;
-}
-
-.models-table input:focus {
-  outline: none;
-  border-color: #2563eb;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+  margin: 0;
 }
 
 .models-table td:last-child {
@@ -2457,14 +2661,14 @@ onUnmounted(() => {
   text-align: center;
 }
 
-/* ===================== 我的技能 ===================== */
+/* ─── 我的技能 ─── */
 .skill-subsection {
   margin-top: 1rem;
 }
 
 .skill-subsection h3 {
   font-size: 0.95rem;
-  color: #374151;
+  color: #334155;
   margin: 0 0 0.5rem;
 }
 
@@ -2473,10 +2677,10 @@ onUnmounted(() => {
   align-items: center;
   gap: 0.75rem;
   padding: 0.5rem 0.75rem;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
+  border: 1px solid #f1f5f9;
+  border-radius: 10px;
   margin-bottom: 0.5rem;
-  background: #fafbfc;
+  background: #f8fafc;
 }
 
 .skill-row-main {
@@ -2494,12 +2698,24 @@ onUnmounted(() => {
 
 .skill-desc {
   font-size: 0.8rem;
-  color: #6b7280;
+  color: #64748b;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* ─── CWT 验证 ─── */
+.cwt-meta {
+  color: #64748b;
+  font-size: 0.9rem;
+  margin: 0.35rem 0;
+}
+
+.cwt-apply-form .btn {
+  margin-top: 0.2rem;
+}
+
+/* ─── 对话框 ─── */
 .import-mask {
   position: fixed;
   inset: 0;
@@ -2512,7 +2728,7 @@ onUnmounted(() => {
 
 .import-panel {
   background: #fff;
-  border-radius: 14px;
+  border-radius: 16px;
   padding: 1.5rem;
   max-width: 560px;
   width: calc(100% - 2rem);
@@ -2523,6 +2739,7 @@ onUnmounted(() => {
 
 .import-panel h3 {
   margin: 0 0 0.5rem;
+  font-size: 1.05rem;
 }
 
 .import-field {
@@ -2532,28 +2749,31 @@ onUnmounted(() => {
 .import-field label {
   display: block;
   font-size: 0.8rem;
-  color: #6b7280;
+  color: #64748b;
   margin-bottom: 0.25rem;
   font-weight: 600;
 }
 
 .import-field input[type='text'],
 .import-field select,
-.import-field textarea {
+.import-field textarea,
+.import-field input:not([type='file']) {
   width: 100%;
   padding: 0.5rem 0.6rem;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
   font-size: 0.9rem;
   box-sizing: border-box;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   background: #fff;
+  color: #1e293b;
 }
 
 .share-empty-hint {
   padding: 0.5rem 0.6rem;
-  border: 1px dashed #d1d5db;
-  border-radius: 6px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
 }
 
 .import-field textarea {
@@ -2562,56 +2782,8 @@ onUnmounted(() => {
 
 .share-conflict {
   padding: 0.65rem 0.75rem;
-  border: 1px solid #f59e0b;
-  border-radius: 8px;
+  border: 1px solid #fcd34d;
+  border-radius: 10px;
   background: #fffbeb;
-}
-
-/* ---- CWT 验证卡片（M1） ---- */
-.cwt-meta {
-  color: #666;
-  font-size: 0.9rem;
-  margin: 0.35rem 0;
-}
-
-.cwt-apply-form textarea {
-  width: 100%;
-  max-width: 560px;
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  padding: 0.6rem;
-  font-family: monospace;
-  font-size: 0.82rem;
-  resize: vertical;
-  margin: 0.5rem 0;
-}
-
-.cwt-apply-form .btn {
-  margin-top: 0.2rem;
-}
-
-/* ---- 凭 CWT 进入（出示 token 换会话） ---- */
-.cwt-enter {
-  margin-top: 0.6rem;
-  padding-top: 0.6rem;
-  border-top: 1px dashed #d1d5db;
-}
-.cwt-enter .btn {
-  margin-right: 0.4rem;
-}
-.cwt-enter-paste {
-  display: flex;
-  gap: 0.4rem;
-  margin-top: 0.5rem;
-  flex-wrap: wrap;
-}
-.cwt-token-input {
-  flex: 1;
-  min-width: 260px;
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  padding: 0.5rem 0.6rem;
-  font-family: monospace;
-  font-size: 0.8rem;
 }
 </style>
