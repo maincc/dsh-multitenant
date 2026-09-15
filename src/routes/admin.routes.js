@@ -299,14 +299,33 @@ export async function handleAdminRoutes(req, res, path, url) {
     return true
   }
 
-  // GET /api/admin/cwt/applications - CWT 待审批列表
+  // GET /api/admin/cwt/applications - CWT 申请列表（分页 + 状态筛选）
+  // 查询参数：limit（默认 50，上限 200）、offset（默认 0）、status（pending|approved|rejected|all）
   if (path === '/api/admin/cwt/applications' && req.method === 'GET') {
     if (!requireAdmin(req, res)) return
     try {
-      const list = cwtAdminService.listApplications()
+      const rawLimit = Number.parseInt(url.searchParams.get('limit') ?? '10', 10)
+      const rawOffset = Number.parseInt(url.searchParams.get('offset') ?? '0', 10)
+      const statusParam = url.searchParams.get('status')
+      const VALID_STATUS = ['pending', 'approved', 'rejected', 'all']
+      const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 200) : 10
+      const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? rawOffset : 0
+      const status = statusParam && VALID_STATUS.includes(statusParam) ? statusParam : 'all'
+
+      const { items, total } = cwtAdminService.queryApplications({ limit, offset, status })
       if (!res.headersSent) {
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ ok: true, applications: list }))
+        res.end(
+          JSON.stringify({
+            ok: true,
+            applications: items,
+            total,
+            limit,
+            offset,
+            status,
+            hasMore: offset + items.length < total,
+          }),
+        )
       }
     } catch (err) {
       if (!res.headersSent) handleError(err, res)
@@ -364,14 +383,29 @@ export async function handleAdminRoutes(req, res, path, url) {
     return true
   }
 
-  // GET /api/admin/cwt/registry - 已批准注册表
+  // GET /api/admin/cwt/registry - 已批准注册表（分页）
+  // 查询参数：limit（默认 50，上限 200）、offset（默认 0）
   if (path === '/api/admin/cwt/registry' && req.method === 'GET') {
     if (!requireAdmin(req, res)) return
     try {
-      const registry = cwtAdminService.listRegistry()
+      const rawLimit = Number.parseInt(url.searchParams.get('limit') ?? '10', 10)
+      const rawOffset = Number.parseInt(url.searchParams.get('offset') ?? '0', 10)
+      const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 200) : 10
+      const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? rawOffset : 0
+
+      const { items, total } = cwtAdminService.queryRegistry({ limit, offset })
       if (!res.headersSent) {
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ ok: true, registry }))
+        res.end(
+          JSON.stringify({
+            ok: true,
+            registry: items,
+            total,
+            limit,
+            offset,
+            hasMore: offset + items.length < total,
+          }),
+        )
       }
     } catch (err) {
       if (!res.headersSent) handleError(err, res)
@@ -406,14 +440,22 @@ export async function handleAdminRoutes(req, res, path, url) {
     return true
   }
 
-  // GET /api/admin/cwt/records - 审计记录（token 原文可查可重验）
+  // GET /api/admin/cwt/records - 审计记录（分页；token 原文可查可重验）
+  // 查询参数：limit（默认 10，上限 200）、offset（默认 0）。
+  // 不返回 total：审计日志为 append-only，统计总行数需读全文件，会破坏尾部读取优化；
+  // 前端据 hasMore 判断是否还有更早记录。
   if (path === '/api/admin/cwt/records' && req.method === 'GET') {
     if (!requireAdmin(req, res)) return
     try {
-      const records = cwtAdminService.listRecords()
+      const rawLimit = Number.parseInt(url.searchParams.get('limit') ?? '10', 10)
+      const rawOffset = Number.parseInt(url.searchParams.get('offset') ?? '0', 10)
+      const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 200) : 10
+      const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? rawOffset : 0
+
+      const { records, hasMore } = cwtAdminService.listRecords(limit, offset)
       if (!res.headersSent) {
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ ok: true, records }))
+        res.end(JSON.stringify({ ok: true, records, limit, offset, hasMore }))
       }
     } catch (err) {
       if (!res.headersSent) handleError(err, res)

@@ -112,8 +112,14 @@ class CwtStore {
     dataService.appendCwtRecord(record)
   }
 
-  listRecords(limit = 200) {
-    return dataService.readCwtRecords(limit)
+  /**
+   * 分页读取审计记录（新 → 旧）
+   * @param {number} [limit] 本页条数
+   * @param {number} [offset] 偏移（0 = 最新一条开始）
+   * @returns {{ records: object[], hasMore: boolean }}
+   */
+  listRecords(limit = 10, offset = 0) {
+    return dataService.readCwtRecords(limit, offset)
   }
 }
 

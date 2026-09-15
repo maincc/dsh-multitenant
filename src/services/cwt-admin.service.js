@@ -110,19 +110,21 @@ class CwtAdminService {
   }
 
   /**
-   * ② 管理员批准：复核验签（防批准过期 token）→ 写注册表 → 授权标记 → 审计
+   * ② 管理员批准：复核签名（防记录篡改，不校验时效）→ 写注册表 → 授权标记 → 审计
    * approved 申请永久保留（cwtStore 只裁剪 rejected）
    */
   async approveApplication(id, adminAddress) {
-    const cfg = this.cwtConfig()
     const app = cwtStore.getApplications().find((a) => a.id === id)
     if (!app) throw new NotFoundError(`申请不存在：${id}`)
     if (app.status !== 'pending') throw new ConflictError(`申请状态为 ${app.status}，不能批准`)
 
-    // 批准时复核验签（token 可能在申请后过期）
-    const result = await cwtService.verify(app.token, { ttlMs: cfg.ttlMs })
+    // 批准时复核验签：校验签名有效性（防记录被篡改），但**不校验时效**。
+    // 理由：申请时刻已校验过新鲜度；审批是人工异步流程，5 分钟窗口会让管理员
+    // 每次审批都失败（用户被迫反复重新提交）。且注册表"无注册时效"（批准即永久
+    // 豁免），审批动作受短时效约束自相矛盾。管理员可据列表中的提交时间自行判断。
+    const result = await cwtService.verify(app.token, { checkFreshness: false })
     if (!result.valid) {
-      throw new BadRequestError(`复核验签失败，请让用户重新提交：${result.error}`)
+      throw new BadRequestError(`复核验签失败（签名无效或记录被篡改）：${result.error}`)
     }
     const address = normalizeAddress(result.address)
     const now = Date.now()
@@ -214,15 +216,50 @@ class CwtAdminService {
     return cwtStore.getApplications().slice().reverse()
   }
 
-  listRegistry() {
-    return Object.entries(cwtStore.getRegistry()).map(([address, entry]) => ({
-      address,
-      ...entry,
-    }))
+  /**
+   * 分页查询申请列表（供管理端 HTTP 接口使用）。
+   * 排序：按入队时间倒序（最新在前）；支持按状态筛选。
+   * @param {object} [opts]
+   * @param {number} [opts.limit] 每页条数（默认 50，调用方负责上下限钳制）
+   * @param {number} [opts.offset] 偏移量（默认 0）
+   * @param {string|null} [opts.status] 状态筛选：pending | approved | rejected；null/'all' 为全部
+   * @returns {{ items: object[], total: number }}
+   */
+  queryApplications({ limit = 10, offset = 0, status = null } = {}) {
+    let list = cwtStore.getApplications().slice().reverse()
+    if (status && status !== 'all') {
+      list = list.filter((a) => a.status === status)
+    }
+    const total = list.length
+    const start = Math.max(0, offset)
+    return { items: list.slice(start, start + Math.max(0, limit)), total }
   }
 
-  listRecords(limit = 200) {
-    return cwtStore.listRecords(limit)
+  /**
+   * 分页查询授权注册表（供管理端 HTTP 接口使用）。
+   * 排序：按批准时间倒序（最新批准在前；无 approvedAt 的排最后）。
+   * @param {object} [opts]
+   * @param {number} [opts.limit] 每页条数（默认 50，调用方负责上下限钳制）
+   * @param {number} [opts.offset] 偏移量（默认 0）
+   * @returns {{ items: object[], total: number }}
+   */
+  queryRegistry({ limit = 10, offset = 0 } = {}) {
+    const list = Object.entries(cwtStore.getRegistry())
+      .map(([address, entry]) => ({ address, ...entry }))
+      .sort((a, b) => (b.approvedAt ?? 0) - (a.approvedAt ?? 0))
+    const total = list.length
+    const start = Math.max(0, offset)
+    return { items: list.slice(start, start + Math.max(0, limit)), total }
+  }
+
+  /**
+   * 分页读取审计记录（新 → 旧）
+   * @param {number} [limit] 本页条数
+   * @param {number} [offset] 偏移（0 = 最新一条开始）
+   * @returns {{ records: object[], hasMore: boolean }}
+   */
+  listRecords(limit = 10, offset = 0) {
+    return cwtStore.listRecords(limit, offset)
   }
 }
 

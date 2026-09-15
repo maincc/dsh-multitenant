@@ -491,7 +491,18 @@
           </div>
 
           <div class="sub-section">
-            <h4>{{ $t('admin.cwtPending') }}</h4>
+            <div class="cwt-list-head">
+              <h4>{{ $t('admin.cwtPending') }}</h4>
+              <label class="cwt-filter">
+                <span>{{ $t('admin.cwtFilterLabel') }}</span>
+                <select v-model="cwtStatusFilter" @change="onCwtFilterChange">
+                  <option value="all">{{ $t('admin.cwtFilterAll') }}</option>
+                  <option value="pending">{{ $t('admin.cwtFilterPending') }}</option>
+                  <option value="approved">{{ $t('admin.cwtFilterApproved') }}</option>
+                  <option value="rejected">{{ $t('admin.cwtFilterRejected') }}</option>
+                </select>
+              </label>
+            </div>
             <table v-if="cwtApplications.length">
               <thead>
                 <tr>
@@ -542,7 +553,36 @@
                 </tr>
               </tbody>
             </table>
-            <div v-else class="cwt-empty">{{ $t('admin.noPending') }}</div>
+            <div v-else class="cwt-empty">{{ $t('admin.cwtPageEmpty') }}</div>
+
+            <!-- 分页控件（后端分页：limit/offset/total） -->
+            <div v-if="cwtTotal > 0" class="cwt-pager">
+              <span class="cwt-page-info">
+                {{
+                  $t('admin.cwtPageInfo', {
+                    from: cwtOffset + 1,
+                    to: Math.min(cwtOffset + cwtLimit, cwtTotal),
+                    total: cwtTotal,
+                  })
+                }}
+              </span>
+              <div class="cwt-page-btns">
+                <button
+                  class="btn btn-small"
+                  :disabled="cwtOffset <= 0 || cwtLoading"
+                  @click="cwtPrevPage"
+                >
+                  {{ $t('admin.cwtPagePrev') }}
+                </button>
+                <button
+                  class="btn btn-small"
+                  :disabled="!cwtHasMore || cwtLoading"
+                  @click="cwtNextPage"
+                >
+                  {{ $t('admin.cwtPageNext') }}
+                </button>
+              </div>
+            </div>
           </div>
 
           <div class="sub-section">
@@ -587,6 +627,35 @@
               </tbody>
             </table>
             <div v-else class="cwt-empty">{{ $t('admin.noRegistry') }}</div>
+
+            <!-- 分页控件（后端分页：limit/offset/total） -->
+            <div v-if="cwtRegTotal > 0" class="cwt-pager">
+              <span class="cwt-page-info">
+                {{
+                  $t('admin.cwtPageInfo', {
+                    from: cwtRegOffset + 1,
+                    to: Math.min(cwtRegOffset + cwtRegLimit, cwtRegTotal),
+                    total: cwtRegTotal,
+                  })
+                }}
+              </span>
+              <div class="cwt-page-btns">
+                <button
+                  class="btn btn-small"
+                  :disabled="cwtRegOffset <= 0 || cwtLoading"
+                  @click="cwtRegistryPrevPage"
+                >
+                  {{ $t('admin.cwtPagePrev') }}
+                </button>
+                <button
+                  class="btn btn-small"
+                  :disabled="!cwtRegHasMore || cwtLoading"
+                  @click="cwtRegistryNextPage"
+                >
+                  {{ $t('admin.cwtPageNext') }}
+                </button>
+              </div>
+            </div>
           </div>
 
           <div class="sub-section">
@@ -623,6 +692,37 @@
               </tbody>
             </table>
             <div v-else class="cwt-empty">{{ $t('admin.noRecords') }}</div>
+
+            <!-- 分页控件（后端尾部读取分页；无 total，按 hasMore 判断） -->
+            <div v-if="cwtRecords.length || cwtRecOffset > 0" class="cwt-pager">
+              <span class="cwt-page-info">
+                {{
+                  $t('admin.cwtRecPageInfo', {
+                    from: cwtRecOffset + 1,
+                    to: cwtRecOffset + cwtRecords.length,
+                  })
+                }}
+                <span v-if="cwtRecHasMore" class="cwt-more-hint">
+                  · {{ $t('admin.cwtRecHasMore') }}</span
+                >
+              </span>
+              <div class="cwt-page-btns">
+                <button
+                  class="btn btn-small"
+                  :disabled="cwtRecOffset <= 0 || cwtLoading"
+                  @click="cwtRecordsPrevPage"
+                >
+                  {{ $t('admin.cwtPagePrev') }}
+                </button>
+                <button
+                  class="btn btn-small"
+                  :disabled="!cwtRecHasMore || cwtLoading"
+                  @click="cwtRecordsNextPage"
+                >
+                  {{ $t('admin.cwtPageNext') }}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -683,8 +783,23 @@ const currentAddress = ref(null)
 const dockerAvailable = ref(false)
 // CWT 授权管理（M1）
 const cwtApplications = ref([])
+// CWT 申请列表：后端分页（limit/offset/total/hasMore）+ 状态筛选
+const cwtLimit = ref(10)
+const cwtOffset = ref(0)
+const cwtTotal = ref(0)
+const cwtHasMore = ref(false)
+const cwtStatusFilter = ref('all')
 const cwtRegistry = ref([])
+// 授权注册表：后端分页（limit/offset/total/hasMore）
+const cwtRegLimit = ref(10)
+const cwtRegOffset = ref(0)
+const cwtRegTotal = ref(0)
+const cwtRegHasMore = ref(false)
 const cwtRecords = ref([])
+// 审计记录：后端分页（尾部读取 + hasMore；日志 append-only，不提供 total）
+const cwtRecLimit = ref(10)
+const cwtRecOffset = ref(0)
+const cwtRecHasMore = ref(false)
 const cwtLoading = ref(false)
 const cwtBusy = ref(false)
 const diskScanning = ref(false)
@@ -1033,18 +1148,95 @@ const fetchCwtData = async () => {
   try {
     cwtLoading.value = true
     const [apps, reg, recs] = await Promise.all([
-      axios.get('/api/admin/cwt/applications'),
-      axios.get('/api/admin/cwt/registry'),
-      axios.get('/api/admin/cwt/records'),
+      axios.get('/api/admin/cwt/applications', {
+        params: {
+          limit: cwtLimit.value,
+          offset: cwtOffset.value,
+          status: cwtStatusFilter.value,
+        },
+      }),
+      axios.get('/api/admin/cwt/registry', {
+        params: { limit: cwtRegLimit.value, offset: cwtRegOffset.value },
+      }),
+      axios.get('/api/admin/cwt/records', {
+        params: { limit: cwtRecLimit.value, offset: cwtRecOffset.value },
+      }),
     ])
     cwtApplications.value = apps.data.applications || []
+    cwtTotal.value = apps.data.total ?? cwtApplications.value.length
+    cwtHasMore.value = Boolean(apps.data.hasMore)
+    // 服务端可能钳制了参数（如 limit 上限），以响应为准
+    if (apps.data.limit) cwtLimit.value = apps.data.limit
+
+    // 页越界回退：审批/拒绝后 total 变小，当前页可能已空 → 自动退到上一页
+    if (cwtApplications.value.length === 0 && cwtOffset.value > 0 && cwtTotal.value > 0) {
+      cwtOffset.value = Math.max(0, cwtOffset.value - cwtLimit.value)
+      return await fetchCwtData()
+    }
     cwtRegistry.value = reg.data.registry || []
+    cwtRegTotal.value = reg.data.total ?? cwtRegistry.value.length
+    cwtRegHasMore.value = Boolean(reg.data.hasMore)
+    if (reg.data.limit) cwtRegLimit.value = reg.data.limit
+    // 页越界回退：撤销授权后 total 变小，当前页可能已空 → 自动退到上一页
+    if (cwtRegistry.value.length === 0 && cwtRegOffset.value > 0 && cwtRegTotal.value > 0) {
+      cwtRegOffset.value = Math.max(0, cwtRegOffset.value - cwtRegLimit.value)
+      return await fetchCwtData()
+    }
     cwtRecords.value = recs.data.records || []
+    cwtRecHasMore.value = Boolean(recs.data.hasMore)
+    if (recs.data.limit) cwtRecLimit.value = recs.data.limit
+    // 页越界回退：日志轮转后更早的记录消失，当前页可能已空 → 自动退到上一页
+    if (cwtRecords.value.length === 0 && cwtRecOffset.value > 0) {
+      cwtRecOffset.value = Math.max(0, cwtRecOffset.value - cwtRecLimit.value)
+      return await fetchCwtData()
+    }
   } catch (err) {
     console.error('加载 CWT 数据失败:', err)
   } finally {
     cwtLoading.value = false
   }
+}
+
+/** 翻页：offset 越界时回退（如末页数据被处理致 total 变小） */
+const cwtPrevPage = () => {
+  cwtOffset.value = Math.max(0, cwtOffset.value - cwtLimit.value)
+  fetchCwtData()
+}
+
+const cwtNextPage = () => {
+  if (!cwtHasMore.value) return
+  cwtOffset.value += cwtLimit.value
+  fetchCwtData()
+}
+
+/** 切换状态筛选：回到第一页再查询（否则可能落在空页） */
+const onCwtFilterChange = () => {
+  cwtOffset.value = 0
+  fetchCwtData()
+}
+
+/** 授权注册表翻页 */
+const cwtRegistryPrevPage = () => {
+  cwtRegOffset.value = Math.max(0, cwtRegOffset.value - cwtRegLimit.value)
+  fetchCwtData()
+}
+
+const cwtRegistryNextPage = () => {
+  if (!cwtRegHasMore.value) return
+  cwtRegOffset.value += cwtRegLimit.value
+  fetchCwtData()
+}
+
+/** 审计记录翻页（无 total，仅按 hasMore 判断是否还有更早记录） */
+const cwtRecordsPrevPage = () => {
+  cwtRecOffset.value = Math.max(0, cwtRecOffset.value - cwtRecLimit.value)
+  fetchCwtData()
+}
+
+const cwtRecordsNextPage = () => {
+  if (!cwtRecHasMore.value) return
+  cwtRecOffset.value += cwtRecLimit.value
+  fetchCwtData()
 }
 
 const approveCwt = async (id) => {
@@ -1782,6 +1974,65 @@ table {
   color: #94a3b8;
   padding: 0.6rem 0;
   font-size: 0.875rem;
+}
+
+/* ─── CWT 申请列表：筛选头 + 分页 ─── */
+.cwt-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.cwt-list-head h4 {
+  margin: 0;
+}
+
+.cwt-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  color: #64748b;
+}
+
+.cwt-filter select {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 0.82rem;
+  color: #334155;
+}
+
+.cwt-filter select:focus {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px rgba(64, 126, 255, 0.15);
+}
+
+.cwt-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.cwt-page-info {
+  font-size: 0.82rem;
+  color: #64748b;
+}
+
+.cwt-more-hint {
+  color: #94a3b8;
+}
+
+.cwt-page-btns {
+  display: flex;
+  gap: 0.4rem;
 }
 
 .cwt-token-preview {

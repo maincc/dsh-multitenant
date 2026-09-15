@@ -36,7 +36,7 @@
     "enabled": true,
     "ttlMs": 300000,
     "allowCwtEnt": false,
-    "comment": "CWT 申请-审批-出示：enabled 开关；ttlMs 出示 token 全局时效（毫秒）；allowCwtEnt CWT_ENT 组形态预留（本期关闭）"
+    "comment": "CWT 申请-审批-出示：enabled 开关；ttlMs 出示 token 全局时效（毫秒，用于申请/出示时的防重放窗口）；审批时只复核签名、不校验时效（人工审批延迟不应失败）；allowCwtEnt CWT_ENT 组形态预留（本期关闭）"
   },
   "skills": {
     "autoInvoke": false,
