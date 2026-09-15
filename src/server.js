@@ -21,7 +21,7 @@
 
 import { createServer } from 'node:http'
 import { existsSync, readFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { CONFIG } from './config/config.js'
@@ -59,7 +59,19 @@ function serveStaticFile(filePath, res) {
 
   try {
     const content = readFileSync(filePath)
-    res.writeHead(200, { 'content-type': contentType })
+    // 缓存策略：
+    // - html（index.html / SPA fallback）：no-cache，每次回源校验，防止旧页面引用旧 bundle
+    // - assets/*（Vite 产物带内容 hash）：immutable 长缓存，URL 变即取新文件
+    // - 其余小文件：no-cache，避免部署后残留旧资源
+    const cacheControl =
+      ext === 'html'
+        ? 'no-cache'
+        : filePath.includes(`${sep}assets${sep}`)
+          ? 'public, max-age=31536000, immutable'
+          : 'no-cache'
+    const headers = { 'content-type': contentType }
+    if (cacheControl) headers['cache-control'] = cacheControl
+    res.writeHead(200, headers)
     res.end(content)
     return true
   } catch {
@@ -111,16 +123,49 @@ function startUsageLimitTimer() {
 
 /**
  * 启动资源监控定时器
+ * 每 monitorIntervalMs 检查一次运行中租户容器的内存使用率，
+ * 超过 autoUpgradeThreshold 自动升一级配额（userService.monitorResources）。
  */
 function startResourceMonitor() {
   const interval = CONFIG.resource.monitorIntervalMs
   const threshold = CONFIG.resource.autoUpgradeThreshold
   setInterval(() => {
-    // 资源监控逻辑（可选实现）
+    userService.monitorResources().catch((err) => {
+      console.error('[monitor] resource monitor error:', err.message)
+    })
   }, interval)
   console.log(
     `[monitor] resource monitor started: check every ${(interval / 1000).toFixed(0)}s, auto-upgrade at ${threshold}% memory`,
   )
+}
+
+/**
+ * 启动磁盘采集定时器
+ * 每 diskCheckIntervalMs 采集一次宿主磁盘 / Docker 总体 / 租户卷占用，
+ * 结果缓存到 userService.diskUsage 供 /api/stats 返回（首次启动立即采集一次）。
+ */
+function startDiskMonitor() {
+  const interval = CONFIG.resource?.diskCheckIntervalMs ?? 300000
+  setInterval(() => {
+    userService.collectDiskUsage().catch((err) => {
+      console.error('[disk] monitor error:', err.message)
+    })
+  }, interval)
+  // 立即采集一次，避免首个展示周期无数据
+  userService.collectDiskUsage().catch((err) => {
+    console.error('[disk] initial collect error:', err.message)
+  })
+
+  // 每日一次精确扫描（du 实测），校正 overlayfs 引擎口径偏差。
+  // 低频 O(n)：卷少时开销小，卷多时被 scanVolumeUsage 的 maxVolumes 上限保护跳过。
+  const dailyMs = 24 * 60 * 60 * 1000
+  setInterval(() => {
+    userService.scanVolumeUsage().catch((err) => {
+      console.error('[disk] daily precise scan error:', err.message)
+    })
+  }, dailyMs)
+
+  console.log(`[disk] monitor started: collect every ${(interval / 60000).toFixed(0)}min`)
 }
 
 /**
@@ -221,6 +266,7 @@ server.listen(PORT, '0.0.0.0', async () => {
   startCleanupTimer()
   startUsageLimitTimer()
   startResourceMonitor()
+  startDiskMonitor()
   startQueueProcessor()
   console.log(`[dsh-multitenant] entry server on http://127.0.0.1:${PORT}/`)
   console.log(

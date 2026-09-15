@@ -151,7 +151,6 @@
                 <th>{{ $t('admin.colPort') }}</th>
                 <th>{{ $t('admin.colTier') }}</th>
                 <th>{{ $t('admin.colStatus') }}</th>
-                <th>{{ $t('admin.colMem') }}</th>
                 <th>{{ $t('admin.colIdle') }}</th>
                 <th>{{ $t('admin.colRole') }}</th>
                 <th>{{ $t('admin.colOps') }}</th>
@@ -173,15 +172,6 @@
                     {{ statusText(user.status) }}
                   </span>
                 </td>
-                <td>
-                  <div v-if="user.stats">
-                    {{ user.stats.memoryPercent }}
-                    <div class="progress-bar">
-                      <div class="progress-fill" :style="{ width: user.stats.memoryPercent }"></div>
-                    </div>
-                  </div>
-                  <span v-else>-</span>
-                </td>
                 <td>{{ formatIdle(user.idle) }}</td>
                 <td>
                   <span v-if="user.isAdmin" class="badge badge-success">{{
@@ -195,7 +185,9 @@
                       class="btn btn-primary"
                       @click="upgradeUser(user.address, user.tier + 1)"
                       :disabled="
-                        user.tier >= 3 || user.status === 'destroyed' || user.status === 'unknown'
+                        user.tier >= maxTier ||
+                        user.status === 'destroyed' ||
+                        user.status === 'unknown'
                       "
                     >
                       {{ $t('admin.upgrade') }}
@@ -257,36 +249,234 @@
           </table>
         </div>
 
-        <!-- ════════ 配额配置 ════════ -->
+        <!-- ════════ 配额配置（只读） ════════ -->
         <div v-else-if="activeTab === 'quota'" class="tab-content">
           <div class="tab-head">
             <h4>{{ $t('admin.tabQuota') }}</h4>
             <p class="tab-hint">{{ $t('admin.tierConfigHint') }}</p>
+            <p class="tab-hint tab-hint-warn">{{ $t('admin.diskQuotaHint') }}</p>
           </div>
           <table>
             <thead>
               <tr>
                 <th>{{ $t('admin.colTierLevel') }}</th>
+                <th>{{ $t('admin.colTierLabel') }}</th>
                 <th>{{ $t('admin.colMemory') }}</th>
                 <th>{{ $t('admin.colCpu') }}</th>
                 <th>{{ $t('admin.colPids') }}</th>
-                <th>{{ $t('admin.colSwap') }}</th>
+                <th>{{ $t('admin.colDiskLimit') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="(limits, tier) in tiers" :key="tier">
                 <td>
-                  <span class="badge" :class="tierBadge(Number(tier))">
-                    {{ limits.label }}
-                  </span>
+                  <span class="badge" :class="tierBadge(Number(tier))">T{{ tier }}</span>
                 </td>
+                <td>{{ limits.label }}</td>
                 <td>{{ limits.memory }}</td>
                 <td>{{ limits.cpus }} {{ $t('admin.cpuUnit') }}</td>
                 <td>{{ limits.pids }}</td>
-                <td>{{ limits.memorySwap }}</td>
+                <td>{{ limits.disk }}</td>
               </tr>
             </tbody>
           </table>
+        </div>
+
+        <!-- ════════ 资源监控 ════════ -->
+        <div v-else-if="activeTab === 'monitor'" class="tab-content">
+          <div class="tab-head">
+            <h4>{{ $t('admin.tabMonitor') }}</h4>
+            <p class="tab-hint">{{ $t('admin.monitorHint') }}</p>
+          </div>
+
+          <!-- 资源监控（M2：自动升级） -->
+          <div class="sub-section">
+            <h4>{{ $t('admin.monitorTitle') }}</h4>
+
+            <!-- 监控配置卡 -->
+            <div class="monitor-config">
+              <div class="monitor-item">
+                <span class="monitor-label">{{ $t('admin.monitorThreshold') }}</span>
+                <span class="monitor-value">
+                  {{ stats.resource?.autoUpgradeThreshold ?? 80 }}%
+                </span>
+              </div>
+              <div class="monitor-item">
+                <span class="monitor-label">{{ $t('admin.monitorInterval') }}</span>
+                <span class="monitor-value">
+                  {{ ((stats.resource?.monitorIntervalMs ?? 30000) / 1000).toFixed(0) }}s
+                </span>
+              </div>
+              <div class="monitor-item">
+                <span class="monitor-label">{{ $t('admin.monitorCooldown') }}</span>
+                <span class="monitor-value">
+                  {{ ((stats.resource?.autoUpgradeCooldownMs ?? 600000) / 60000).toFixed(0) }}min
+                </span>
+              </div>
+              <div class="monitor-item">
+                <span class="monitor-label">{{ $t('admin.monitorUpgraded') }}</span>
+                <span class="monitor-value monitor-upgraded">
+                  {{
+                    $t('admin.monitorUpgradedCount', { n: stats.resource?.autoUpgradeCount ?? 0 })
+                  }}
+                </span>
+              </div>
+            </div>
+
+            <!-- 各容器资源一览 -->
+            <h5 class="monitor-subtitle">{{ $t('admin.monitorUsersTitle') }}</h5>
+            <p class="tab-hint">{{ $t('admin.monitorUsersHint') }}</p>
+            <table v-if="users.length">
+              <thead>
+                <tr>
+                  <th>{{ $t('admin.monitorColAddress') }}</th>
+                  <th>{{ $t('admin.monitorColTier') }}</th>
+                  <th>{{ $t('admin.monitorColStatus') }}</th>
+                  <th>{{ $t('admin.monitorColMem') }}</th>
+                  <th>{{ $t('admin.monitorColMemPct') }}</th>
+                  <th>{{ $t('admin.monitorColCpu') }}</th>
+                  <th>{{ $t('admin.monitorColVolume') }}</th>
+                  <th>{{ $t('admin.monitorColUpgraded') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="u in users" :key="u.address">
+                  <td class="cwt-mono">{{ shortAddr(u.address) }}</td>
+                  <td>
+                    <span class="badge" :class="tierBadge(u.tier)">
+                      {{ u.tierLabel }}
+                    </span>
+                  </td>
+                  <td>
+                    <span class="badge" :class="statusBadge(u.status)">
+                      {{ statusText(u.status) }}
+                    </span>
+                  </td>
+                  <td>{{ u.stats ? u.stats.memory : '-' }}</td>
+                  <td>
+                    <span
+                      v-if="u.stats"
+                      class="mem-pct"
+                      :class="memPctClass(u.stats.memoryPercent)"
+                    >
+                      {{ u.stats.memoryPercent }}
+                    </span>
+                    <span v-else>-</span>
+                  </td>
+                  <td>{{ u.stats ? u.stats.cpu : '-' }}</td>
+                  <td>{{ volumeSize(u.address) }}</td>
+                  <td>
+                    <span v-if="u.lastAutoUpgradeAt" class="badge badge-success">
+                      {{ $t('admin.monitorUpgradedAt', { time: fmtTime(u.lastAutoUpgradeAt) }) }}
+                    </span>
+                    <span v-else class="monitor-never">{{ $t('admin.monitorNever') }}</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <div v-else class="monitor-empty">{{ $t('admin.monitorNoUsers') }}</div>
+          </div>
+
+          <!-- 磁盘监控 -->
+          <div class="sub-section">
+            <h4>{{ $t('admin.diskTitle') }}</h4>
+            <p class="tab-hint">
+              {{
+                $t('admin.diskHint', {
+                  n: ((stats.resource?.diskCheckIntervalMs ?? 300000) / 60000).toFixed(0),
+                })
+              }}
+            </p>
+
+            <template v-if="stats.resource?.disk">
+              <!-- 宿主磁盘 -->
+              <h5 class="monitor-subtitle">{{ $t('admin.diskHostTitle') }}</h5>
+              <div class="monitor-config">
+                <div class="monitor-item">
+                  <span class="monitor-label">{{ $t('admin.diskTotal') }}</span>
+                  <span class="monitor-value">{{
+                    fmtDisk(stats.resource.disk.host?.totalKB || 0)
+                  }}</span>
+                </div>
+                <div class="monitor-item">
+                  <span class="monitor-label">{{ $t('admin.diskUsed') }}</span>
+                  <span class="monitor-value">{{
+                    fmtDisk(stats.resource.disk.host?.usedKB || 0)
+                  }}</span>
+                </div>
+                <div class="monitor-item">
+                  <span class="monitor-label">{{ $t('admin.diskAvailable') }}</span>
+                  <span class="monitor-value">{{
+                    fmtDisk(stats.resource.disk.host?.availableKB || 0)
+                  }}</span>
+                </div>
+                <div class="monitor-item">
+                  <span class="monitor-label">{{ $t('admin.diskUsage') }}</span>
+                  <span
+                    class="monitor-value"
+                    :class="usagePctClass(stats.resource.disk.host?.usePercent)"
+                  >
+                    {{ stats.resource.disk.host?.usePercent || '-' }}
+                  </span>
+                </div>
+              </div>
+
+              <!-- Docker 存储 -->
+              <h5 class="monitor-subtitle">{{ $t('admin.diskDockerTitle') }}</h5>
+              <table v-if="stats.resource.disk.docker?.items?.length">
+                <thead>
+                  <tr>
+                    <th>{{ $t('admin.diskColType') }}</th>
+                    <th>{{ $t('admin.diskColSize') }}</th>
+                    <th>{{ $t('admin.diskColReclaimable') }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="item in stats.resource.disk.docker.items" :key="item.name">
+                    <td>{{ dockerTypeLabel(item.name) }}</td>
+                    <td>{{ item.size }}</td>
+                    <td class="reclaimable-cell">{{ item.reclaimable }}</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <!-- 租户数据卷 -->
+              <div class="disk-vol-head">
+                <h5 class="monitor-subtitle">{{ $t('admin.diskVolumesTitle') }}</h5>
+                <button
+                  class="btn btn-small"
+                  :class="diskScanning ? 'btn-disabled' : 'btn-primary'"
+                  :disabled="diskScanning"
+                  @click="runDiskScan"
+                >
+                  {{ diskScanning ? $t('admin.diskScanning') : $t('admin.diskScanBtn') }}
+                </button>
+              </div>
+              <p class="tab-hint">{{ $t('admin.diskScanHint') }}</p>
+              <table v-if="stats.resource.disk.volumes?.length">
+                <thead>
+                  <tr>
+                    <th>{{ $t('admin.diskColVolume') }}</th>
+                    <th>{{ $t('admin.diskColVolSize') }}（{{ $t('admin.diskHostEngine') }}）</th>
+                    <th>{{ $t('admin.diskColVolSize') }}（{{ $t('admin.diskHostActual') }}）</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="v in stats.resource.disk.volumes" :key="v.volume">
+                    <td class="cwt-mono">{{ v.volume.replace('dsh-data-swtc-', '…') }}</td>
+                    <td class="mem-pct-ok">{{ v.size }}</td>
+                    <td>
+                      <span v-if="v.sizeActual" :class="actualSizeClass(v.size, v.sizeActual)">
+                        {{ fmtBytes(v.sizeActual) }}
+                      </span>
+                      <span v-else class="monitor-never">-</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </template>
+            <div v-else class="monitor-empty">{{ $t('admin.diskNoData') }}</div>
+          </div>
         </div>
 
         <!-- ════════ CWT 授权 ════════ -->
@@ -441,7 +631,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import axios from 'axios'
 import { useI18n } from 'vue-i18n'
 import { requestAccounts, signMessage, getPublicKey, watchAccountsChanged } from '../api/wallet.js'
@@ -464,7 +654,12 @@ const adminTabs = [
   {
     key: 'quota',
     label: t('admin.tabQuota'),
-    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>',
+    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+  },
+  {
+    key: 'monitor',
+    label: t('admin.tabMonitor'),
+    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
   },
   {
     key: 'cwt',
@@ -492,6 +687,15 @@ const cwtRegistry = ref([])
 const cwtRecords = ref([])
 const cwtLoading = ref(false)
 const cwtBusy = ref(false)
+const diskScanning = ref(false)
+
+// 最高配额等级（随 tier 配置动态变化，不硬编码 3）
+const maxTier = computed(() => {
+  const keys = Object.keys(tiers.value || {})
+    .map(Number)
+    .filter(Number.isFinite)
+  return keys.length ? Math.max(...keys) : 3
+})
 const expandedToken = ref(null)
 let dataRefreshInterval = null
 // 账户监听解绑函数（wallet.js watchAccountsChanged 返回），卸载时调用避免重复监听
@@ -783,6 +987,26 @@ const fetchData = async () => {
   fetchCwtData()
 }
 
+/** 手动触发精确扫描：du 实测每个租户卷真实占用（O(n)，管理员按需调用） */
+const runDiskScan = async () => {
+  if (diskScanning.value) return
+  diskScanning.value = true
+  try {
+    const res = await axios.post('/api/admin/disk-scan')
+    // 扫描结果直接合并进本地 stats，避免等待下一次轮询
+    const { scanned, volumes } = res.data
+    if (scanned && stats.value.resource?.disk) {
+      stats.value.resource.disk.volumes = volumes
+      stats.value.resource.disk.preciseScannedAt = res.data.preciseScannedAt
+    }
+    alert(t('admin.diskScanDone', { n: volumes?.length ?? 0 }))
+  } catch (err) {
+    alert(t('admin.diskScanFail', { err: err.response?.data?.error || err.message }))
+  } finally {
+    diskScanning.value = false
+  }
+}
+
 // ---------- CWT 授权管理（M1） ----------
 
 const shortAddr = (a) => (a ? `${a.slice(0, 8)}…${a.slice(-4)}` : '-')
@@ -855,7 +1079,7 @@ const revokeCwt = async (address) => {
 }
 
 const upgradeUser = async (address, tier) => {
-  if (tier > 3) return
+  if (tier > maxTier.value) return
   try {
     await axios.post(`/api/upgrade/${address}`, { tier })
     await fetchData()
@@ -956,6 +1180,90 @@ const statusText = (status) => {
   return map[status] || status
 }
 
+/** 内存占比样式：达到自动升级阈值（80%）时高亮警示 */
+const memPctClass = (pct) => {
+  const n = Number.parseFloat(String(pct ?? ''))
+  if (!Number.isFinite(n)) return ''
+  if (n >= 80) return 'mem-pct-high'
+  if (n >= 60) return 'mem-pct-warn'
+  return 'mem-pct-ok'
+}
+
+/** KB → 人类可读容量（如 "52.2 GB"） */
+const fmtDisk = (kb) => {
+  const b = Number(kb)
+  if (!Number.isFinite(b) || b <= 0) return '-'
+  if (b >= 1024 * 1024 * 1024) return `${(b / (1024 * 1024 * 1024)).toFixed(1)} TB`
+  if (b >= 1024 * 1024) return `${(b / (1024 * 1024)).toFixed(1)} GB`
+  if (b >= 1024) return `${(b / 1024).toFixed(1)} MB`
+  return `${kb} KB`
+}
+
+/** 宿主磁盘使用率样式 */
+const usagePctClass = (pct) => {
+  const n = Number.parseFloat(String(pct ?? ''))
+  if (!Number.isFinite(n)) return ''
+  if (n >= 80) return 'mem-pct-high'
+  if (n >= 60) return 'mem-pct-warn'
+  return 'mem-pct-ok'
+}
+
+/** Docker 存储类型 → 中文名 */
+const dockerTypeLabel = (name) => {
+  const map = {
+    Images: t('admin.diskTypeImages'),
+    Containers: t('admin.diskTypeContainers'),
+    'Local Volumes': t('admin.diskTypeLocalVolumes'),
+    'Build Cache': t('admin.diskTypeBuildCache'),
+  }
+  return map[name] || name
+}
+
+/** 解析 docker 大小字符串（"101.3kB" / "602.1MB" / "1.2GB"）→ 字节数 */
+const parseSize = (s) => {
+  const m = String(s ?? '')
+    .trim()
+    .match(/^([\d.]+)\s*([kKmMgGtT]?)[bB]?$/)
+  if (!m) return 0
+  const n = Number.parseFloat(m[1])
+  const unit = (m[2] || '').toLowerCase()
+  const mult = { k: 1024, m: 1024 ** 2, g: 1024 ** 3, t: 1024 ** 4 }[unit] || 1
+  return n * mult
+}
+
+/** 字节数 → 人类可读（如 "2.4 MB"） */
+const fmtBytes = (b) => {
+  const n = Number(b)
+  if (!Number.isFinite(n) || n < 0) return '-'
+  if (n >= 1024 ** 4) return `${(n / 1024 ** 4).toFixed(2)} TB`
+  if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(2)} GB`
+  if (n >= 1024 ** 2) return `${(n / 1024 ** 2).toFixed(2)} MB`
+  if (n >= 1024) return `${(n / 1024).toFixed(1)} kB`
+  return `${n} B`
+}
+
+/** 实测值与引擎口径差异高亮：偏差 ≥2 倍标黄，≥10 倍标红（提示引擎口径失真） */
+const actualSizeClass = (engineSize, actualBytes) => {
+  const engine = parseSize(engineSize)
+  const actual = Number(actualBytes)
+  if (!engine || !Number.isFinite(actual) || actual <= 0) return ''
+  const ratio = actual / engine
+  if (ratio >= 10) return 'mem-pct-high'
+  if (ratio >= 2) return 'mem-pct-warn'
+  return 'mem-pct-ok'
+}
+
+/** 按地址查租户数据卷大小（volume 名形如 dsh-data-swtc-<address>） */
+const volumeSize = (address) => {
+  const volumes = stats.value.resource?.disk?.volumes
+  if (!Array.isArray(volumes) || !address) return '-'
+  const hit = volumes.find((v) => v.volume === `dsh-data-swtc-${address}`)
+  if (!hit) return '-'
+  // 有 du 实测值优先展示（真实占用），否则回退引擎口径
+  return hit.sizeActual ? fmtBytes(hit.sizeActual) : hit.size
+}
+
+/** 磁盘占用进度条宽度：该卷占所有租户卷最大者的百分比（最小 4% 保证可见） */
 const formatIdle = (ms) => {
   if (ms < 60000) return `${Math.floor(ms / 1000)}${t('admin.secUnit')}`
   if (ms < 3600000) return `${Math.floor(ms / 60000)}${t('admin.minUnit')}`
@@ -1037,6 +1345,8 @@ onUnmounted(() => {
   display: flex;
   animation: fadeIn 0.3s;
 }
+
+/* ─── 磁盘扫描（租户卷区块） ─── */
 
 @keyframes fadeIn {
   from {
@@ -1222,6 +1532,100 @@ onUnmounted(() => {
   font-weight: 600;
   color: #334155;
   margin-bottom: 0.25rem;
+}
+
+/* ─── 资源监控（配额配置页） ─── */
+.monitor-config {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+  margin: 0.75rem 0 1.25rem;
+  padding: 1rem 1.25rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+}
+
+.monitor-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.monitor-label {
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+
+.monitor-value {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.monitor-upgraded {
+  color: #10b981;
+}
+
+.monitor-subtitle {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #334155;
+  margin: 1rem 0 0.25rem;
+}
+
+.mem-pct {
+  font-weight: 600;
+}
+
+.mem-pct-ok {
+  color: #10b981;
+}
+
+.mem-pct-warn {
+  color: #f59e0b;
+}
+
+.mem-pct-high {
+  color: #ef4444;
+}
+
+.monitor-never {
+  color: #94a3b8;
+  font-size: 0.8rem;
+}
+
+.monitor-empty {
+  padding: 1.25rem;
+  text-align: center;
+  color: #94a3b8;
+  font-size: 0.85rem;
+  background: #f8fafc;
+  border: 1px dashed #e2e8f0;
+  border-radius: 12px;
+}
+
+/* ─── 磁盘监控（配额配置页） ─── */
+.reclaimable-cell {
+  color: #f59e0b;
+  font-size: 0.8rem;
+}
+
+/* ─── 磁盘扫描（租户卷区块） ─── */
+.disk-vol-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.disk-vol-head .monitor-subtitle {
+  margin: 0.5rem 0 0;
+}
+
+.btn-disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* ─── 管理员信息卡 ─── */

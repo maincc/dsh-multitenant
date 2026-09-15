@@ -37,6 +37,26 @@
 | P1-5  | 卷无配额                                   | --storage-opt size= + I/O 限速；不支持时降级告警                  | 写满卷被拒                 | 环境        | ⬜   |
 | P1-6  | 容器特权过大                               | 评估去 SYS_ADMIN；至少 --cap-drop ALL + no-new-privileges         | 容器内无提权操作           | **决策 ↑**  | ⬜   |
 
+### P1-5 补充：磁盘配额存储驱动选型矩阵
+
+> ⚠️ 常见误区：**「Linux 部署」≠ 配额自动生效**。决定配额是否硬执行的是 **Docker 存储驱动**，不是操作系统。
+> Linux 默认存储驱动是 **overlay2**（与 Docker Desktop 的 overlayfs 同族），对 `--storage-opt size=` 同样是"接受参数但不强制"。
+> Docker 官方仅对 devicemapper / btrfs / zfs / windowsfilter 支持该配额参数。
+
+| 部署环境                                   | Docker 存储驱动            | `--storage-opt size=` 效果                      | 生产选型结论                 |
+| ------------------------------------------ | -------------------------- | ----------------------------------------------- | ---------------------------- |
+| Docker Desktop (macOS / Windows)           | overlayfs                  | ❌ 记录不强制（审计可见 HostConfig.StorageOpt） | 现状：软配额 + 监控兜底      |
+| Linux（默认安装）                          | **overlay2**               | ❌ **同样记录不强制**                           | 不选型 = 维持软配额          |
+| Linux（初始化时特意选）                    | btrfs / zfs / devicemapper | ✅ 硬强制，写满被拒                             | **推荐**：代码零改动自动生效 |
+| Linux（overlay2 + 底层 xfs + 开启 pquota） | overlay2 + xfs             | ✅ 经文件系统项目配额实现（需专门配置）         | 备选：需环境配置             |
+
+**落地动作**（部署时）：
+
+1. 生产 Docker 初始化时选 btrfs/zfs（或 overlay2+xfs+pquota），`/etc/docker/daemon.json` 设 `"storage-driver"`。
+2. 换驱动通常需格式化 Docker 数据目录（`/var/lib/docker`），属**新环境初始化选型**，非线上热切换。
+3. 当前代码已传 `--storage-opt size=<tier.disk>`：btrfs/zfs 下自动硬生效；overlay2 下触发降级告警（软配额）。
+4. 管理端「配额设置」已内嵌 ⚠️ 提示：磁盘大小配额在 overlayfs/overlay2 下为尽力而为。
+
 ## 3. P2 部署/体验类
 
 | 项    | 内容                                                      | 依赖       |
