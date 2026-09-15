@@ -94,6 +94,20 @@ export class DockerService {
    * @param {object} limits 资源限额
    */
   async createContainer(name, internalPort, volume, patchFile, limits) {
+    // 磁盘配额防御：旧版配置用 tiers.*.memorySwap，无 disk 字段；缺失/非法时
+    // 不传 --storage-opt（否则 btrfs/zfs 驱动会因 "size=undefined" 拒绝启动容器），
+    // 并告警提示迁移（memorySwap → disk）。
+    const diskQuota =
+      typeof limits.disk === 'string' && /^\d+(\.\d+)?[kmgt]$/i.test(limits.disk)
+        ? limits.disk
+        : null
+    if (!diskQuota) {
+      console.warn(
+        `[docker] disk quota missing/invalid for ${name} (disk=${limits.disk ?? 'undefined'})；` +
+          '已跳过 --storage-opt。旧配置请把 tiers.*.memorySwap 改名为 disk 后重启。',
+      )
+    }
+
     const args = [
       'run',
       '-d',
@@ -125,8 +139,8 @@ export class DockerService {
       // 磁盘配额（尽力而为）：--storage-opt size= 仅对支持配额的后端生效
       // （btrfs/zfs/devicemapper）；overlayfs/overlay2 下接受但不强制，
       // 记录在 HostConfig.StorageOpt 供审计。换存储驱动后自动变为硬限制。
-      '--storage-opt',
-      `size=${limits.disk}`,
+      // 配额值缺失/非法时跳过本参数（见上方 diskQuota 防御）。
+      ...(diskQuota ? ['--storage-opt', `size=${diskQuota}`] : []),
       // 回环发布：外部网络物理不可达，只有宿主本机（网关）能连。
       // 用户浏览器访问的是网关的对外端口（0.0.0.0），网关转发到这里。
       '-p',

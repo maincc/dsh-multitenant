@@ -268,15 +268,15 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="(limits, tier) in tiers" :key="tier">
+              <tr v-for="row in tierRows" :key="row.tier">
                 <td>
-                  <span class="badge" :class="tierBadge(Number(tier))">T{{ tier }}</span>
+                  <span class="badge" :class="tierBadge(row.tier)">T{{ row.tier }}</span>
                 </td>
-                <td>{{ limits.label }}</td>
-                <td>{{ limits.memory }}</td>
-                <td>{{ limits.cpus }} {{ $t('admin.cpuUnit') }}</td>
-                <td>{{ limits.pids }}</td>
-                <td>{{ limits.disk }}</td>
+                <td>{{ row.limits.label }}</td>
+                <td>{{ row.limits.memory }}</td>
+                <td>{{ row.limits.cpus }} {{ $t('admin.cpuUnit') }}</td>
+                <td>{{ row.limits.pids }}</td>
+                <td>{{ row.limits.disk || '-' }}</td>
               </tr>
             </tbody>
           </table>
@@ -696,6 +696,17 @@ const maxTier = computed(() => {
     .filter(Number.isFinite)
   return keys.length ? Math.max(...keys) : 3
 })
+
+/**
+ * 配额档位行（升序）。过滤非数字键：运维可能在 tiers 里加 comment 等说明键
+ * （其他配置块都带 comment），这些不该被渲染成一档配额。
+ */
+const tierRows = computed(() =>
+  Object.entries(tiers.value || {})
+    .filter(([key]) => Number.isFinite(Number(key)))
+    .map(([tier, limits]) => ({ tier: Number(tier), limits }))
+    .sort((a, b) => a.tier - b.tier),
+)
 const expandedToken = ref(null)
 let dataRefreshInterval = null
 // 账户监听解绑函数（wallet.js watchAccountsChanged 返回），卸载时调用避免重复监听

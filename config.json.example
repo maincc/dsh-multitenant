@@ -22,30 +22,30 @@
   "resource": {
     "monitorIntervalMs": 30000,
     "autoUpgradeThreshold": 80,
-    "comment": "monitorIntervalMs: 资源监控间隔（毫秒），默认 30 秒；autoUpgradeThreshold: 内存使用率超过此值自动升级配额（百分比）"
+    "autoUpgradeCooldownMs": 600000,
+    "diskCheckIntervalMs": 300000,
+    "comment": "monitorIntervalMs: 资源监控间隔（毫秒），默认 30 秒；autoUpgradeThreshold: 内存使用率超过此值自动升级配额（百分比）；autoUpgradeCooldownMs: 自动升级后冷却期（毫秒），防止反复升级重启；diskCheckIntervalMs: 磁盘使用采集间隔（毫秒），默认 5 分钟"
+  },
+  "usageLimit": {
+    "enabled": true,
+    "dailyMinutes": 120,
+    "checkIntervalMs": 60000,
+    "comment": "每日使用时限：enabled 开关；dailyMinutes 每个地址每天累计使用上限（分钟），容器运行即计时，超过后优雅停止，次日重置；已通过 CWT 验证的用户豁免；checkIntervalMs 超时检查间隔（毫秒）"
+  },
+  "cwt": {
+    "enabled": true,
+    "ttlMs": 300000,
+    "allowCwtEnt": false,
+    "comment": "CWT 申请-审批-出示：enabled 开关；ttlMs 出示 token 全局时效（毫秒）；allowCwtEnt CWT_ENT 组形态预留（本期关闭）"
+  },
+  "skills": {
+    "autoInvoke": false,
+    "comment": "技能市场信任边界（P0-4）：autoInvoke=false 时，市场技能安装到用户卷的副本强制注入 disable-model-invocation: true，模型不会自动调用，仅供用户显式使用；改 true 则放行自动调用（风险自担）"
   },
   "tiers": {
-    "1": {
-      "label": "基础",
-      "memory": "512m",
-      "memorySwap": "1g",
-      "cpus": "1.0",
-      "pids": 256
-    },
-    "2": {
-      "label": "增强",
-      "memory": "1g",
-      "memorySwap": "2g",
-      "cpus": "2.0",
-      "pids": 512
-    },
-    "3": {
-      "label": "高性能",
-      "memory": "2g",
-      "memorySwap": "4g",
-      "cpus": "4.0",
-      "pids": 1024
-    }
+    "1": { "label": "基础", "memory": "512m", "disk": "1g", "cpus": "1.0", "pids": 256 },
+    "2": { "label": "增强", "memory": "1g", "disk": "2g", "cpus": "2.0", "pids": 512 },
+    "3": { "label": "高性能", "memory": "2g", "disk": "4g", "cpus": "4.0", "pids": 1024 }
   },
   "docker": {
     "image": "dsh-multitenant:latest",
