@@ -37,12 +37,14 @@ const DEFAULTS = {
   },
   resource: {
     monitorIntervalMs: 30000,
-    autoUpgradeThreshold: 80,
+    autoUpgradeThreshold: 80, // 内存使用率超过此值自动升一级配额（百分比）
+    autoUpgradeCooldownMs: 600000, // 自动升级后冷却期（毫秒），防止反复升级重启
+    diskCheckIntervalMs: 300000, // 磁盘使用采集间隔（宿主 + docker + 租户卷，毫秒）
   },
   tiers: {
-    1: { label: '基础', memory: '512m', memorySwap: '1g', cpus: '1.0', pids: 256 },
-    2: { label: '增强', memory: '1g', memorySwap: '2g', cpus: '2.0', pids: 512 },
-    3: { label: '高性能', memory: '2g', memorySwap: '4g', cpus: '4.0', pids: 1024 },
+    1: { label: '基础', memory: '512m', disk: '1g', cpus: '1.0', pids: 256 },
+    2: { label: '增强', memory: '1g', disk: '2g', cpus: '2.0', pids: 512 },
+    3: { label: '高性能', memory: '2g', disk: '4g', cpus: '4.0', pids: 1024 },
   },
   docker: {
     image: 'dsh-multitenant:latest',
@@ -92,6 +94,10 @@ export function isAdmin(address) {
   return getAdminAddresses().has(address.toLowerCase())
 }
 
+/**
+ * 读取指定 tier 配额。配额仅由 config.json 管理（管理端只读展示，
+ * 不支持运行时修改，避免误填/越权）；改配额 = 编辑 config.json + 重启服务。
+ */
 export function getTierLimits(tier) {
   const config = loadConfig()
   return config.tiers[tier] || config.tiers[1]

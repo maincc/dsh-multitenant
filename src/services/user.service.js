@@ -527,6 +527,151 @@ export class UserService {
   }
 
   /**
+   * 资源监控：内存使用率超阈自动升级配额（升一级）
+   *
+   * 规则（config.json → resource）：
+   *   - 仅检查 containerStatus === 'running' 的容器；
+   *   - 读取 docker stats 的 memPercent，超过 autoUpgradeThreshold（默认 80%）→ 自动升一级 tier；
+   *   - 已达最高 tier 不再升级；
+   *   - 同一容器升级后进入冷却期（autoUpgradeCooldownMs，默认 10min），防止升级重启反复触发；
+   *   - stats 读取失败（容器刚停/不存在）→ 跳过该容器，不报错。
+   *
+   * 防重入：_monitorRunning 标志（与 cleanup/usage-limit 同风格），
+   * 本轮未结束的重复触发直接跳过。
+   */
+  async monitorResources() {
+    if (this._monitorRunning) return
+    this._monitorRunning = true
+    try {
+      const cfg = CONFIG.resource || {}
+      const threshold = Number(cfg.autoUpgradeThreshold ?? 80)
+      const cooldownMs = Number(cfg.autoUpgradeCooldownMs ?? 10 * 60 * 1000)
+      if (!Number.isFinite(threshold) || threshold <= 0) return
+
+      // 最高 tier（config.tiers 的最大 key）
+      const maxTier = Object.keys(CONFIG.tiers || {})
+        .map(Number)
+        .filter(Number.isFinite)
+        .reduce((m, t) => (t > m ? t : m), 1)
+
+      let changed = false
+      const now = Date.now()
+      for (const [address, user] of Object.entries(this.state.swtcUsers || {})) {
+        if (user.containerStatus !== 'running') continue
+        const tier = user.tier ?? 1
+        if (tier >= maxTier) continue
+        // 冷却期内不重复升级
+        if (user.lastAutoUpgradeAt && now - user.lastAutoUpgradeAt < cooldownMs) continue
+
+        const name = swtcContainerName(address)
+        let stats
+        try {
+          stats = await dockerService.getContainerStats(name)
+        } catch {
+          // stats 读取失败（容器刚停等）→ 跳过
+          continue
+        }
+        if (!stats) continue
+
+        // docker stats memPercent 形如 "12.34%"，parseFloat 取数值
+        const memPercent = Number.parseFloat(String(stats.memPercent ?? ''))
+        if (!Number.isFinite(memPercent) || memPercent < threshold) continue
+
+        // 超阈：自动升一级
+        const nextTier = tier + 1
+        try {
+          await this.upgradeContainer(address, nextTier)
+          // 冷却标记（upgradeContainer 内部已 saveState，落盘由它完成）
+          this.state.swtcUsers[address].lastAutoUpgradeAt = Date.now()
+          changed = true
+          console.log(
+            `[monitor] ${address} memory ${memPercent.toFixed(1)}% >= ${threshold}%, auto-upgraded to tier ${nextTier}`,
+          )
+        } catch (err) {
+          console.error(`[monitor] auto-upgrade failed for ${address}:`, err.message)
+        }
+      }
+      if (changed) dataService.saveState(this.state)
+    } finally {
+      this._monitorRunning = false
+    }
+  }
+
+  /**
+   * 采集磁盘使用情况（宿主 + Docker 总体 + 租户数据卷），结果缓存到 this.diskUsage
+   * 供 /api/stats 返回给管理面板展示；采集任一失败则该项为 null，不影响其他项。
+   * 防重入：_diskCollectRunning 标志。
+   */
+  async collectDiskUsage() {
+    if (this._diskCollectRunning) return
+    this._diskCollectRunning = true
+    try {
+      const [host, docker, volumes] = await Promise.all([
+        dockerService.hostDiskUsage(),
+        dockerService.dockerDiskSummary(),
+        dockerService.tenantVolumeUsage(),
+      ])
+      this.diskUsage = {
+        collectedAt: Date.now(),
+        host,
+        docker,
+        volumes,
+      }
+    } catch (err) {
+      console.error('[disk] collect failed:', err.message)
+      this.diskUsage = { collectedAt: Date.now(), host: null, docker: null, volumes: null }
+    } finally {
+      this._diskCollectRunning = false
+    }
+  }
+
+  /**
+   * 精确扫描：用 du 实测每个租户卷的真实占用（覆盖 docker system df 的
+   * overlayfs 口径偏差），结果写入 this.diskUsage.volumes[i].sizeActual（字节数）。
+   *
+   * 设计取舍：
+   *   - 引擎口径（collectDiskUsage）O(1) 可扩展，但 Docker Desktop overlayfs 下数值偏小；
+   *   - du 实测准确但 O(n)（每卷起一次临时容器，~1s），卷多时不可进定时器热路径；
+   *   - 因此扫描按需/低频执行：管理员手动触发（POST /api/admin/disk-scan）或
+   *     每日自动快照（见 server.js startDiskMonitor）。
+   *
+   * 防重入：_volumeScanRunning 标志；卷数超过 maxVolumes 时跳过（保护宿主资源）。
+   * @param {number} [maxVolumes] 单次扫描卷数上限，超出不扫描返回 false
+   * @returns {Promise<boolean>} 是否执行了扫描
+   */
+  async scanVolumeUsage(maxVolumes = 50) {
+    if (this._volumeScanRunning) return false
+    const volumes = this.diskUsage?.volumes
+    if (!Array.isArray(volumes) || volumes.length === 0) return false
+    if (volumes.length > maxVolumes) {
+      console.warn(
+        `[disk] precise scan skipped: ${volumes.length} volumes exceed limit ${maxVolumes}`,
+      )
+      return false
+    }
+    this._volumeScanRunning = true
+    try {
+      console.log(`[disk] precise scan started: ${volumes.length} volumes (du)`)
+      // 串行逐卷 du（避免同时起多个临时容器争抢宿主资源）
+      for (const v of volumes) {
+        const bytes = await dockerService.duVolumeSize(v.volume)
+        if (bytes !== null) {
+          v.sizeActual = bytes
+          v.sizeActualAt = Date.now()
+        }
+      }
+      this.diskUsage.preciseScannedAt = Date.now()
+      console.log(`[disk] precise scan finished: ${volumes.length} volumes`)
+      return true
+    } catch (err) {
+      console.error('[disk] precise scan failed:', err.message)
+      return false
+    } finally {
+      this._volumeScanRunning = false
+    }
+  }
+
+  /**
    * 用户主动停止自己的容器：结算当前运行段（保全每日额度），优雅停止
    */
   async stopContainerForUser(address) {
@@ -718,6 +863,7 @@ export class UserService {
           status: actualStatus,
           createdAt: user.createdAt,
           lastSeenAt: user.lastSeenAt,
+          lastAutoUpgradeAt: user.lastAutoUpgradeAt ?? null,
           idle: Date.now() - user.lastSeenAt,
           isAdmin: isAdmin(address),
           stats: stats
@@ -1357,11 +1503,23 @@ export class UserService {
       const tier = u.tier ?? 1
       tierCounts[tier] = (tierCounts[tier] || 0) + 1
     })
+    // 资源监控相关（供管理面板展示）
+    const resource = CONFIG.resource || {}
+    const autoUpgradeCount = Object.values(users).filter((u) => u.lastAutoUpgradeAt).length
     return {
       totalUsers,
       runningUsers,
       tierCounts,
       tiers: CONFIG.tiers,
+      resource: {
+        enabled: true,
+        monitorIntervalMs: resource.monitorIntervalMs ?? 30000,
+        autoUpgradeThreshold: resource.autoUpgradeThreshold ?? 80,
+        autoUpgradeCooldownMs: resource.autoUpgradeCooldownMs ?? 600000,
+        diskCheckIntervalMs: resource.diskCheckIntervalMs ?? 300000,
+        autoUpgradeCount,
+        disk: this.diskUsage ?? null,
+      },
     }
   }
 }

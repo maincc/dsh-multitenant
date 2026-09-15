@@ -94,6 +94,20 @@ export class DockerService {
    * @param {object} limits 资源限额
    */
   async createContainer(name, internalPort, volume, patchFile, limits) {
+    // 磁盘配额防御：旧版配置用 tiers.*.memorySwap，无 disk 字段；缺失/非法时
+    // 不传 --storage-opt（否则 btrfs/zfs 驱动会因 "size=undefined" 拒绝启动容器），
+    // 并告警提示迁移（memorySwap → disk）。
+    const diskQuota =
+      typeof limits.disk === 'string' && /^\d+(\.\d+)?[kmgt]$/i.test(limits.disk)
+        ? limits.disk
+        : null
+    if (!diskQuota) {
+      console.warn(
+        `[docker] disk quota missing/invalid for ${name} (disk=${limits.disk ?? 'undefined'})；` +
+          '已跳过 --storage-opt。旧配置请把 tiers.*.memorySwap 改名为 disk 后重启。',
+      )
+    }
+
     const args = [
       'run',
       '-d',
@@ -118,12 +132,15 @@ export class DockerService {
       'apparmor=unconfined',
       '--memory',
       limits.memory,
-      '--memory-swap',
-      limits.memorySwap,
       '--cpus',
       limits.cpus,
       '--pids-limit',
       String(limits.pids),
+      // 磁盘配额（尽力而为）：--storage-opt size= 仅对支持配额的后端生效
+      // （btrfs/zfs/devicemapper）；overlayfs/overlay2 下接受但不强制，
+      // 记录在 HostConfig.StorageOpt 供审计。换存储驱动后自动变为硬限制。
+      // 配额值缺失/非法时跳过本参数（见上方 diskQuota 防御）。
+      ...(diskQuota ? ['--storage-opt', `size=${diskQuota}`] : []),
       // 回环发布：外部网络物理不可达，只有宿主本机（网关）能连。
       // 用户浏览器访问的是网关的对外端口（0.0.0.0），网关转发到这里。
       '-p',
@@ -220,15 +237,14 @@ export class DockerService {
   }
 
   /**
-   * 更新容器资源配额
+   * 更新容器资源配额（热更新）
+   * 注：docker update 不支持 --storage-opt，磁盘配额须在重建容器时应用（见 createContainer）
    */
   async updateContainer(name, limits) {
     await sh('docker', [
       'update',
       '--memory',
       limits.memory,
-      '--memory-swap',
-      limits.memorySwap,
       '--cpus',
       limits.cpus,
       '--pids-limit',
@@ -341,6 +357,98 @@ export class DockerService {
     try {
       const out = await sh('docker', ['inspect', name])
       return JSON.parse(out)[0]
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * 宿主磁盘使用情况（df -k /）
+   * 返回 { totalKB, usedKB, availableKB, usePercent }，失败返回 null
+   */
+  async hostDiskUsage() {
+    try {
+      const out = await sh('df', ['-k', '/'])
+      const lines = out.split('\n')
+      if (lines.length < 2) return null
+      const parts = lines[1].split(/\s+/)
+      return {
+        totalKB: parseInt(parts[1], 10) || 0,
+        usedKB: parseInt(parts[2], 10) || 0,
+        availableKB: parseInt(parts[3], 10) || 0,
+        usePercent: parts[4] || '0%',
+      }
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Docker 整体磁盘占用（docker system df）
+   * 使用 --format 输出（| 分隔），避免 Local Volumes / Build Cache 多词类型名被空白拆开。
+   * 返回各类型 { name, total, active, size, reclaimable } 列表，失败返回 null
+   */
+  async dockerDiskSummary() {
+    try {
+      const out = await sh('docker', [
+        'system',
+        'df',
+        '--format',
+        '{{.Type}}|{{.TotalCount}}|{{.Active}}|{{.Size}}|{{.Reclaimable}}',
+      ])
+      const items = out
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => {
+          const [name, total, active, size, reclaimable] = line.split('|')
+          return { name, total, active, size, reclaimable }
+        })
+      return { items }
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * 租户数据卷占用（docker system df -v，筛选 dsh-data-swtc-*）
+   * 返回 [ { volume, size } ]，失败返回 null
+   */
+  async tenantVolumeUsage() {
+    try {
+      const out = await sh('docker', ['system', 'df', '-v'])
+      const volumes = []
+      out.split('\n').forEach((line) => {
+        const parts = line.trim().split(/\s+/)
+        if (parts.length >= 3 && parts[0].startsWith('dsh-data-swtc-')) {
+          volumes.push({ volume: parts[0], size: parts[2] })
+        }
+      })
+      return volumes
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * 单卷真实占用（du -s 实测，起一次临时容器）
+   * 返回字节数；失败返回 null
+   * 注：低频校正用途（如手动扫描/每日快照），勿在定时器热路径中逐卷调用。
+   */
+  async duVolumeSize(volume) {
+    try {
+      const out = await sh('docker', [
+        'run',
+        '--rm',
+        '--entrypoint',
+        'sh',
+        '-v',
+        `${volume}:/dsh-home`,
+        IMAGE,
+        '-c',
+        'du -sb /dsh-home 2>/dev/null | cut -f1',
+      ])
+      const bytes = Number.parseInt(out, 10)
+      return Number.isFinite(bytes) && bytes >= 0 ? bytes : null
     } catch {
       return null
     }

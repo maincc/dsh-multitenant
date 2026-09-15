@@ -84,6 +84,23 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 4.5 配置迁移检测（memorySwap → disk）
+# ---------------------------------------------------------------------------
+if [ -f config.json ]; then
+  if grep -q '"memorySwap"' config.json; then
+    if grep -q '"disk"' config.json; then
+      echo ">> [警告] config.json 同时存在 memorySwap 与 disk：memorySwap 已废弃，建议删除。"
+    else
+      echo ">> [警告] config.json 的 tiers 仍是旧字段 memorySwap，磁盘配额将不生效（新容器会跳过 --storage-opt）。"
+      echo ">>        迁移：cp config.json config.json.bak && sed -i 's/\"memorySwap\":/\"disk\":/' config.json"
+      echo ">>        详见 deploy/README.md「从旧版本升级：配置迁移」。"
+    fi
+  elif ! grep -q '"disk"' config.json; then
+    echo ">> [提示] config.json 的 tiers 缺少 disk 字段（磁盘配额未设置），沿用默认行为。"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # 5. 重启服务
 # ---------------------------------------------------------------------------
 systemctl restart dsh-multitenant

@@ -252,7 +252,7 @@ export async function handleAdminRoutes(req, res, path, url) {
     return true
   }
 
-  // GET /api/users - 获取所有用户列表
+  // GET /api/users - 获取所有用户列表 + 只读 tier 配置
   if (path === '/api/users') {
     if (!requireAdmin(req, res)) return
     try {
@@ -442,6 +442,26 @@ export async function handleAdminRoutes(req, res, path, url) {
         res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify({ error: err.message, code: err.code || 'INTERNAL_ERROR' }))
       }
+    }
+    return true
+  }
+
+  // POST /api/admin/disk-scan - 精确扫描租户卷真实占用（du 实测）
+  if (path === '/api/admin/disk-scan' && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return
+    try {
+      const scanned = await userService.scanVolumeUsage()
+      const disk = userService.diskUsage
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(
+        JSON.stringify({
+          scanned,
+          preciseScannedAt: disk?.preciseScannedAt ?? null,
+          volumes: disk?.volumes ?? [],
+        }),
+      )
+    } catch (err) {
+      handleError(err, res)
     }
     return true
   }

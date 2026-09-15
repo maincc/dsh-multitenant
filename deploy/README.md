@@ -81,6 +81,71 @@ sudo ./deploy/update.sh
 - rsync 上传**前**建议先备份（见下节）；上传会同步删除服务器上多余文件，但
   `data/ patches/ config.json state.json` 等已排除，不会丢。
 
+## ⚠️ 从旧版本升级：配置迁移（memorySwap → disk）
+
+配额字段已改名：`tiers.*.memorySwap` → **`tiers.*.disk`**（磁盘配额，语义为
+`--storage-opt size=`）。旧 config.json 升级后 `disk` 缺失，容器仍能启动
+（代码会跳过该参数并告警），但**磁盘配额不生效**、且在 btrfs/zfs 后端有风险。
+
+**症状**（服务器日志 `journalctl -u dsh-multitenant | grep 'disk quota'`）：
+
+```
+[docker] disk quota missing/invalid for dsh-swtc-<地址> (disk=undefined)；
+已跳过 --storage-opt。旧配置请把 tiers.*.memorySwap 改名为 disk 后重启。
+```
+
+**修复**（在服务器项目目录执行，注意先备份）：
+
+```bash
+cp config.json config.json.bak
+sed -i 's/"memorySwap":/"disk":/' config.json      # 值不变，仅改名
+systemctl restart dsh-multitenant
+node -e "const t=require('./config.json').tiers;console.log(t)"   # 确认各档有 disk
+```
+
+> 也可 `FORCE=1 ./deploy/install.sh` 重新生成 config.json，但会丢失自定义项
+> （需重新设置 ADMIN_ADDRESS / PUBLIC_HOST / 端口等），仅在配置无自定义时使用。
+
+**同一版本新增的配置项**（缺失时有默认值兜底，可选补充到 config.json）：
+`resource.autoUpgradeCooldownMs`、`resource.diskCheckIntervalMs`、`usageLimit` 块、`cwt` 块。
+参考最新模板 `config.json.example`。
+
+**磁盘配额的生效条件**：`disk` 仅在 btrfs/zfs/devicemapper 存储驱动下硬生效；
+overlay2/overlayfs（含 Linux 默认安装）下为"记录不强制"。选型矩阵见
+`docs/roadmap-next.md` §P1-5。
+
+**自查当前环境**（一条命令给结论）：
+
+```bash
+bash deploy/check-storage.sh          # 检测驱动 / 底层文件系统 / Docker 版本 → 判定
+bash deploy/check-storage.sh --test   # 附加实测：临时容器写超配额，验证是否真被拦
+```
+
+**已知实测**（2026-09 线上测试机 192.168.66.58 与本地 Docker Desktop）：
+
+| 环境                | 存储驱动  | 底层 FS | 判定                          |
+| ------------------- | --------- | ------- | ----------------------------- |
+| 线上 Linux 测试机   | overlay2  | ext4    | ⚠️ 软配额（参数记录、不强制） |
+| 本地 Docker Desktop | overlayfs | —       | ⚠️ 软配额                     |
+
+### ⚠️ 配额语义边界（重要）
+
+`--storage-opt size=` 限制的是**容器可写层**（容器 `/` 下未被挂载覆盖的部分），
+**不作用于命名卷**。而租户数据全部在命名卷 `dsh-data-swtc-*`（挂载为 `/dsh-home`），
+因此：
+
+- 即使把存储驱动换成 btrfs/zfs，`tiers.*.disk` 也**管不到** `/dsh-home` 里的租户数据；
+- 命名卷配额是**另一套机制**（btrfs qgroup / 卷驱动的 `size` 选项），属独立课题；
+- **现阶段真正的磁盘护栏是监控**：管理端「资源监控」的引擎口径 + `du` 实测 + 精确扫描，
+  能看清每个租户占多少；配额字段是"声明 + 为将来预留"。
+
+### 另一处坑：Docker 29+ 的 containerd image store
+
+Docker Engine 29 起新装默认启用 containerd image store，镜像不再经由 graph driver，
+此时 `--storage-opt size` 可能**静默失效**（既不报错也不生效，与驱动是否支持配额无关）。
+`check-storage.sh` 会自动检测并提示；如需回退经典存储，可在 `daemon.json` 设置
+`"features": {"containerd-snapshotter": false}` 后重启并重建镜像。
+
 ## 恢复
 
 ```bash

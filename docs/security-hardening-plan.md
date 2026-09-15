@@ -69,18 +69,18 @@
 
 ## 2. P1 —— 纵深与资源防线（每个独立可做，S~M）
 
-| 编号  | 问题                                                     | 方案                                                                                                                               | 测试/验收                    |
-| ----- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
-| P1-1  | API Key 经 argv 泄露（tenant-config.service.js:157-161） | `merge-credentials.mjs` 增加 stdin 读值模式；`execFile('docker', args, {stdin})`；`runScript` 错误剥离命令行只留退出码+裁剪 stderr | docker 失败时响应/日志无密钥 |
-| P1-2  | SSRF（probe-models.mjs）                                 | 服务端拒绝私网/链路本地/环回/云 metadata 段；DNS 解析后校验目标 IP；并发限流                                                       | baseURL 指向 169.254.x 被拒  |
-| P1-3  | IDOR `/api/user/:address`（user.routes.js:194-202）      | 无会话一律 403，仅 `session===address \|\| isAdmin`；用户会话见 P0-1 会话体系扩展                                                  | 无 Cookie 读任意用户 403     |
-| P1-4  | 内存预检 Linux 恒真（user.service.js:60-68）             | 改用 Linux 可用内存（`/proc/meminfo` 或 `free`）；查询失败 **fail-closed** 拒绝供应                                                | Linux 下耗尽时拒绝创建       |
-| P1-5  | 卷无配额（docker.service.js:120-121）                    | Linux 下 `--storage-opt size=`（ext4/xfs）+ I/O 限速；环境不支持时跳过并降级告警                                                   | 写满卷被拒而非写满宿主       |
-| P1-6  | 容器特权过大（docker.service.js:104-109）                | 评估去掉 `SYS_ADMIN`（需容器内验证 bwrap 可用性）；至少 `--cap-drop ALL` + `--security-opt no-new-privileges`                      | 租户容器内无特权/提权操作    |
-| P1-7  | CWT 申请队列/token 无限（cwt-admin.service.js:59-73）    | token ≤8KB；pending 队列总条数上限（超限 503）；approved 的 token 改存 SHA-256 摘要（复核时需重新出示）                            | 洪泛申请被拒；磁盘增长受控   |
-| P1-8  | CWT 状态泄露 approvedBy（cwt-admin.service.js:100-107）  | approvedBy 仅管理员可见；usr 对非本人脱敏                                                                                          | 匿名查不到审批人             |
-| P1-9  | 数据文件 0644（data.service.js 全量）                    | `writeFileSync` 显式 `{mode:0o600}`（state/cwt/日志）                                                                              | 落到磁盘 0600                |
-| P1-10 | 技能正文审核（接 P0-4 第 2 步）                          | 发布扫描 + 未审核标记 + 举报                                                                                                       | 恶意技能被标记拦截           |
+| 编号  | 问题                                                     | 方案                                                                                                                                                                                        | 测试/验收                                                |
+| ----- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| P1-1  | API Key 经 argv 泄露（tenant-config.service.js:157-161） | `merge-credentials.mjs` 增加 stdin 读值模式；`execFile('docker', args, {stdin})`；`runScript` 错误剥离命令行只留退出码+裁剪 stderr                                                          | docker 失败时响应/日志无密钥                             |
+| P1-2  | SSRF（probe-models.mjs）                                 | 服务端拒绝私网/链路本地/环回/云 metadata 段；DNS 解析后校验目标 IP；并发限流                                                                                                                | baseURL 指向 169.254.x 被拒                              |
+| P1-3  | IDOR `/api/user/:address`（user.routes.js:194-202）      | 无会话一律 403，仅 `session===address \|\| isAdmin`；用户会话见 P0-1 会话体系扩展                                                                                                           | 无 Cookie 读任意用户 403                                 |
+| P1-4  | 内存预检 Linux 恒真（user.service.js:60-68）             | 改用 Linux 可用内存（`/proc/meminfo` 或 `free`）；查询失败 **fail-closed** 拒绝供应                                                                                                         | Linux 下耗尽时拒绝创建                                   |
+| P1-5  | 卷无配额（docker.service.js:125-129）                    | `--storage-opt size=<tier.disk>` 已接入；仅 btrfs/zfs/devicemapper（及 overlay2+xfs+pquota）硬生效；overlay2/overlayfs 下记录不强制 → 降级告警 + 监控兜底。选型矩阵见 roadmap-next.md §P1-5 | 写满卷被拒而非写满宿主（配额后端）；软配额环境有降级告警 |
+| P1-6  | 容器特权过大（docker.service.js:104-109）                | 评估去掉 `SYS_ADMIN`（需容器内验证 bwrap 可用性）；至少 `--cap-drop ALL` + `--security-opt no-new-privileges`                                                                               | 租户容器内无特权/提权操作                                |
+| P1-7  | CWT 申请队列/token 无限（cwt-admin.service.js:59-73）    | token ≤8KB；pending 队列总条数上限（超限 503）；approved 的 token 改存 SHA-256 摘要（复核时需重新出示）                                                                                     | 洪泛申请被拒；磁盘增长受控                               |
+| P1-8  | CWT 状态泄露 approvedBy（cwt-admin.service.js:100-107）  | approvedBy 仅管理员可见；usr 对非本人脱敏                                                                                                                                                   | 匿名查不到审批人                                         |
+| P1-9  | 数据文件 0644（data.service.js 全量）                    | `writeFileSync` 显式 `{mode:0o600}`（state/cwt/日志）                                                                                                                                       | 落到磁盘 0600                                            |
+| P1-10 | 技能正文审核（接 P0-4 第 2 步）                          | 发布扫描 + 未审核标记 + 举报                                                                                                                                                                | 恶意技能被标记拦截                                       |
 
 ## 3. P2 —— 部署与体验类（依赖外部环境，S）
 
