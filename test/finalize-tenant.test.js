@@ -43,6 +43,10 @@ beforeEach(() => {
   delete userService.state.swtcUsers[ADDR]
   vi.spyOn(dataService, 'saveState').mockImplementation(() => {})
   vi.spyOn(dockerService, 'waitReady').mockResolvedValue(true)
+  // 启动失败时要采集现场；stub 掉以免测试真的去 docker inspect/logs
+  vi.spyOn(dockerService, 'containerDiagnostics').mockResolvedValue(
+    '[诊断] status=exited exit=1 oom=false memLimit=536870912',
+  )
   // finalizeTenant 会记录镜像能力（网关据此决定放行/拒绝）：
   // 默认给"老版本、不需要认证"→ 让这些测试专注收尾顺序本身
   vi.spyOn(dockerService, 'imageCapability').mockResolvedValue({
@@ -71,7 +75,10 @@ describe('finalizeTenant：成功路径', () => {
     const result = await userService.finalizeTenant(ADDR, NAME, PORT, INTERNAL_PORT)
 
     expect(result).toBe(PORT)
-    expect(dockerService.waitReady).toHaveBeenCalledWith(INTERNAL_PORT)
+    // 第三个参数带 containerName：让 waitReady 能在容器早退时快速失败
+    expect(dockerService.waitReady).toHaveBeenCalledWith(INTERNAL_PORT, undefined, {
+      containerName: NAME,
+    })
     // 能力随路由交给网关（网关不 import user.service，避免循环依赖）
     expect(tenantGateway.listen).toHaveBeenCalledWith(PORT, INTERNAL_PORT, ADDR, {
       requiresToken: false,
@@ -114,9 +121,14 @@ describe('finalizeTenant：waitReady 失败 → 回滚容器', () => {
 
     dockerService.waitReady.mockResolvedValue(false)
 
+    // 失败时必须带上现场：状态/退出码/OOM/日志尾部（回滚会删容器，日志随之消失）
     await expect(userService.finalizeTenant(ADDR, NAME, PORT, INTERNAL_PORT)).rejects.toThrow(
-      /did not become ready/,
+      /did not become ready[\s\S]*\[诊断\] status=exited exit=1/,
     )
+    // 采集必须发生在回滚之前才能拿到日志
+    const diagOrder = dockerService.containerDiagnostics.mock.invocationCallOrder[0]
+    const removeOrder = dockerService.removeContainer.mock.invocationCallOrder[0]
+    expect(diagOrder).toBeLessThan(removeOrder)
 
     // 容器被停掉并移除（removeContainer 不删卷，用户数据保留）
     expect(dockerService.stopContainer).toHaveBeenCalledWith(NAME, 10)

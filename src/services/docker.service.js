@@ -46,6 +46,26 @@ export function clearDshVersionCache() {
 }
 
 /**
+ * 执行命令并把 **stdout 与 stderr 合并**返回（永不 reject）。
+ *
+ * 为什么需要：`sh()` 只在失败时保留 stderr。而 `docker logs` 把容器的
+ * stdout 写 stdout、stderr 写 stderr —— 启动失败的堆栈几乎都在 stderr，
+ * 用 `sh()` 采集日志会把最关键的行丢掉。诊断信息本身绝不能抛错把
+ * 原始错误顶掉，所以这里统一 resolve。
+ * @param {string} cmd
+ * @param {string[]} args
+ * @param {object} [opts]
+ * @returns {Promise<string>}
+ */
+function shCaptureBoth(cmd, args, opts = {}) {
+  return new Promise((resolve) => {
+    execFile(cmd, args, { maxBuffer: 16 * 1024 * 1024, ...opts }, (err, stdout, stderr) =>
+      resolve(`${stdout ?? ''}${stderr ?? ''}`.trim()),
+    )
+  })
+}
+
+/**
  * 宿主机是否支持 `docker run --storage-opt size=`（磁盘配额）。
  *
  * null = 尚未遇到；false = 已确认不支持（后续创建直接跳过该参数）。
@@ -841,8 +861,41 @@ export class DockerService {
    * @param {number} timeoutMs 最长等待
    * @returns {Promise<boolean>}
    */
-  async waitReady(port, timeoutMs = STARTUP_TIMEOUT_MS) {
+  /**
+   * 采集容器"起不来"的现场信息：状态 / 退出码 / 是否 OOM / 内存上限 / 日志尾部。
+   *
+   * 为什么需要：原来启动失败只抛一句 "did not become ready after restart"，
+   * 既没说容器是崩了还是没监听，也没带日志 —— 远程排查必须上机器 `docker logs`，
+   * 而 finalizeTenant 失败时还会**回滚删容器**，日志随之永久消失。
+   * 这里把现场拼成一段可读文本带进错误里；诊断本身绝不抛错。
+   *
+   * @param {string} name 容器名
+   * @param {number} [tailLines] 日志尾部行数
+   * @returns {Promise<string>}
+   */
+  async containerDiagnostics(name, tailLines = 30) {
+    const parts = []
+    try {
+      const fmt =
+        'status={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} ' +
+        'error={{.State.Error}} memLimit={{.HostConfig.Memory}}'
+      parts.push(await sh('docker', ['inspect', '--format', fmt, name]))
+    } catch (err) {
+      parts.push(`inspect 失败: ${err.message}`)
+    }
+    try {
+      // docker logs 的容器 stderr 走进程 stderr：必须合并采集，否则丢关键行
+      const logs = await shCaptureBoth('docker', ['logs', '--tail', String(tailLines), name])
+      parts.push(logs ? `--- 日志尾部(${tailLines} 行) ---\n${logs}` : '（容器无日志输出）')
+    } catch (err) {
+      parts.push(`日志读取失败: ${err.message}`)
+    }
+    return parts.join('\n')
+  }
+
+  async waitReady(port, timeoutMs = STARTUP_TIMEOUT_MS, opts = {}) {
     const deadline = Date.now() + timeoutMs
+    let lastAliveCheck = 0
     while (Date.now() < deadline) {
       try {
         const res = await fetch(`http://127.0.0.1:${port}/`)
@@ -858,6 +911,13 @@ export class DockerService {
         if ((s >= 200 && s < 400) || s === 401 || s === 403) return true
       } catch {
         // 连接被拒 / 尚未监听，继续等
+      }
+      // 容器已经退出就不可能再就绪：每 5s 查一次存活，避免白等满超时
+      // （线上实测：DSH 起不来时用户要等 120s 才看到一句含糊的报错）
+      if (opts.containerName && Date.now() - lastAliveCheck > 5000) {
+        lastAliveCheck = Date.now()
+        const st = await this.containerInfo(opts.containerName)
+        if (st.exists && st.status !== 'running') return false
       }
       await new Promise((r) => setTimeout(r, 500))
     }

@@ -440,9 +440,13 @@ export class UserService {
     dataService.saveState(this.state)
 
     // 等待容器完全就绪
-    const ready = await dockerService.waitReady(internalPort)
+    const ready = await dockerService.waitReady(internalPort, undefined, {
+      containerName: name,
+    })
     if (!ready) {
-      throw new Error(`Container ${name} did not become ready after restart`)
+      // 带上现场（状态/退出码/OOM/日志尾部）：只报"没就绪"无法定位
+      const diag = await dockerService.containerDiagnostics(name)
+      throw new Error(`Container ${name} did not become ready after restart\n${diag}`)
     }
 
     // 恢复网关监听（进程重启后外部端口需要重新接管）
@@ -1430,13 +1434,18 @@ export class UserService {
     // 且 waitReady 失败时容器已创建在跑，却不回滚 → 孤儿容器 + 状态不一致。
 
     // ① 就绪探测（失败 → 回滚容器，不留下半启动态）
-    const ready = await dockerService.waitReady(internalPort)
+    const ready = await dockerService.waitReady(internalPort, undefined, {
+      containerName: name,
+    })
     if (!ready) {
+      // 必须先采集现场再回滚 —— 回滚会删容器，日志随之永久消失
+      const diag = await dockerService.containerDiagnostics(name)
       await this._rollbackFailedContainer(address, name, internalPort, {
         reason: `did not become ready on port ${internalPort} within ${CONFIG.docker.startupTimeoutMs}ms`,
       })
       throw new Error(
-        `SWTC container ${name} did not become ready on port ${internalPort} within ${CONFIG.docker.startupTimeoutMs}ms`,
+        `SWTC container ${name} did not become ready on port ${internalPort} within ` +
+          `${CONFIG.docker.startupTimeoutMs}ms\n${diag}`,
       )
     }
 

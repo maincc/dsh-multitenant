@@ -427,6 +427,7 @@ cookie 转发进容器，纵深防御尚未收口。
 21. **租户列表看不到 DSH 版本** - 后端未下发版本、且「版本」列实际渲染的是状态徽章；已加 `containerDshVersion()`（问容器 `dsh --version`，按镜像 ID 缓存）并在两个列表里正确展示
 22. **「重启 DSH」报 `Container ... not found`（线上实测）** - 状态漂移：容器已停止 >60min 被清理定时器销毁，而界面还停在打开状态，用户点重启时后端仍按"重启已有容器"执行 `docker restart` → 404。修法：四处 `containerInfo` 为不存在时的处理全部改为**按各自目标语义对齐**，而不是把不一致抛给用户 —— `restartContainer` 降级为启动（委托 `ensureContainer`，沿用 `pinnedImage`，重建无损）、`stopContainerForUser` 照常结算额度并返回成功（停止目标已达成）、`forceStopContainer` 对齐状态且不把 `destroyed` 覆写回 `stopped`、`upgradeContainer` 只记录 tier 待下次创建生效
 23. **容器创建报 `--storage-opt is supported only for overlay over xfs with 'pquota'`（线上实测，阻断性）** - 磁盘配额参数只在特定宿主后端可用（overlay2 需 xfs+pquota；btrfs/zfs 原生）。在不支持的宿主上 Docker **直接拒绝整个 `docker run`（exit 125）**，容器根本创建不出来、租户全部进不去 —— 旧注释/`deploy/check-storage.sh` 假设的「参数被接受但不强制（软配额）」在部分 Docker 版本上不成立（本地实测 overlayfs 确实接受并记入 `HostConfig.StorageOpt`，所以本地永远复现不出来）。已改为：首次被该原因拒绝 → 去掉参数重试一次（配额降级为不限制）并记住宿主能力，后续创建直接跳过；**只对这一种明确原因降级**，其它错误照旧上抛。同时修正 `check-storage.sh` 的判定与 `--test` 分支（原先会把「驱动拒绝」误报成「软配额」）
+24. **启动失败只报 `did not become ready`（线上实测，无法定位）** - 容器创建/重启成功但容器内 DSH 没就绪时，错误里只有一句「没就绪」：看不出是崩了还是没监听，也没有日志。更糟的是 `finalizeTenant` 失败会**回滚删容器**，日志随之永久消失。已加 `containerDiagnostics()`：采集 `status/exitCode/OOMKilled/内存上限` + **合并 stdout/stderr 的日志尾部**（`docker logs` 把容器 stderr 写到进程 stderr，只用 `sh()` 会丢关键行）并写进错误；且采集严格发生在回滚**之前**。同时 `waitReady` 支持 `{containerName}`：容器已退出时**立即失败**，不再白等满 120 秒
 
 ## 🧹 空闲清理机制（不会误停正在干活的容器）
 
