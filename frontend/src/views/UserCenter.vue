@@ -110,54 +110,8 @@
                 {{ $t('user.switchAddress') }}
               </button>
             </div>
-            <div class="stat-row">
-              <span class="stat-label">{{ $t('user.port') }}</span>
-              <code class="stat-value mono">{{ userInfo.port }}</code>
-            </div>
-            <div class="stat-row">
-              <span class="stat-label">{{ $t('user.tier') }}</span>
-              <span class="badge" :class="tierBadge(userInfo.tier)">{{ userInfo.tierLabel }}</span>
-            </div>
-            <div class="stat-row">
-              <span class="stat-label">{{ $t('user.containerStatus') }}</span>
-              <span class="badge" :class="statusBadge(userInfo.status)">{{
-                statusText(userInfo.status)
-              }}</span>
-              <button
-                v-if="userInfo.status !== 'running'"
-                class="btn btn-small btn-success"
-                @click="restartContainer"
-              >
-                {{ $t('user.startContainer') }}
-              </button>
-            </div>
           </div>
-
-          <div class="tab-divider" />
-
-          <div class="tab-head">
-            <h4>{{ $t('user.resourceUsage') }}</h4>
-          </div>
-          <div v-if="userInfo.stats" class="resource-usage">
-            <div class="resource-item">
-              <div class="resource-header">
-                <span>{{ $t('user.cpuUsage') }}</span>
-                <span class="mono">{{ userInfo.stats.cpu }}</span>
-              </div>
-            </div>
-            <div class="resource-item">
-              <div class="resource-header">
-                <span>{{ $t('user.memUsage') }}</span>
-                <span class="mono"
-                  >{{ userInfo.stats.memory }} ({{ userInfo.stats.memoryPercent }})</span
-                >
-              </div>
-              <div class="progress-bar">
-                <div class="progress-fill" :style="{ width: userInfo.stats.memoryPercent }"></div>
-              </div>
-            </div>
-          </div>
-          <div v-else class="loading">{{ $t('user.noData') }}</div>
+          <p class="account-foot">{{ $t('user.accountMovedHint') }}</p>
         </div>
 
         <!-- ════════ 模型配置 ════════ -->
@@ -389,7 +343,55 @@
             <h4>{{ $t('user.containerManage') }}</h4>
             <p class="tab-hint">{{ $t('user.containerManageHint') }}</p>
           </div>
-          <!-- 进入容器入口（原在账户信息，已移至此处） -->
+          <!-- 容器信息（原在账户信息）：端口/配额/状态/资源使用都归容器 -->
+          <div class="stat-rows">
+            <div class="stat-row">
+              <span class="stat-label">{{ $t('user.port') }}</span>
+              <code class="stat-value mono">{{ userInfo.port }}</code>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">{{ $t('user.tier') }}</span>
+              <span class="badge" :class="tierBadge(userInfo.tier)">{{ userInfo.tierLabel }}</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">{{ $t('user.containerStatus') }}</span>
+              <span class="badge" :class="statusBadge(userInfo.status)">{{
+                statusText(userInfo.status)
+              }}</span>
+              <button
+                v-if="userInfo.status !== 'running'"
+                class="btn btn-small btn-success"
+                @click="restartContainer"
+              >
+                {{ $t('user.startContainer') }}
+              </button>
+            </div>
+          </div>
+
+          <div v-if="userInfo.stats" class="resource-usage">
+            <div class="resource-item">
+              <div class="resource-header">
+                <span>{{ $t('user.cpuUsage') }}</span>
+                <span class="mono">{{ userInfo.stats.cpu }}</span>
+              </div>
+            </div>
+            <div class="resource-item">
+              <div class="resource-header">
+                <span>{{ $t('user.memUsage') }}</span>
+                <span class="mono"
+                  >{{ userInfo.stats.memory }} ({{ userInfo.stats.memoryPercent }})</span
+                >
+              </div>
+              <div class="progress-bar">
+                <div class="progress-fill" :style="{ width: userInfo.stats.memoryPercent }"></div>
+              </div>
+            </div>
+          </div>
+          <div v-else class="loading">{{ $t('user.noData') }}</div>
+
+          <div class="tab-divider" />
+
+          <!-- 进入容器入口（连同容器状态/端口/配额/资源使用一起，均已从账户信息迁来） -->
           <div class="enter-box">
             <div class="enter-info">
               <div class="enter-title">{{ $t('user.enterDsh') }}</div>
@@ -650,7 +652,9 @@ import { requestAccounts, signMessage, getPublicKey, watchAccountsChanged } from
 const { t } = useI18n()
 
 // ---- 侧栏导航（与 React 原型稿一致） ----
-const activeTab = ref('account')
+// 落地页 = 容器管理：多数操作（进入 DSH、启停、资源查看）都发生在这里，
+// 账户信息只剩地址一项，不该默认挡在前面。
+const activeTab = ref('container')
 const sidebarTabs = [
   {
     key: 'account',
@@ -2326,6 +2330,13 @@ onUnmounted(() => {
 .tab-divider {
   border-top: 1px solid #f1f5f9;
   margin: 1.25rem 0;
+}
+
+/* 账户信息页脚：字段迁走后的去向提示 */
+.account-foot {
+  margin-top: 1rem;
+  font-size: 11px;
+  color: #94a3b8;
 }
 
 /* ─── 账户信息 ─── */
