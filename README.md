@@ -425,6 +425,7 @@ cookie 转发进容器，纵深防御尚未收口。
 19. **沙箱逃生开关变量名写错（写了也不生效）** - Dockerfile 注释让运维在 bubblewrap 不可用时改用 `ENV DSH_SANDBOX_MODE=danger-full-access`，但 DSH 只认 `DSH_PERMISSION_MODE`（`DSH_SANDBOX_MODE` 在整个 DSH 包里出现 0 次）。照注释改会以为已放开沙箱，实际仍以 `workspace-write` 启动后失败。已改为正确变量名并注明副作用（`danger-full-access` 会同时把审批策略变成 `never`）
 20. **租户容器缺 agent 常用工具** - 容器内实测没有 `curl`/`jq`/`ripgrep`：抓网页只能 `node -e "fetch(...)"`、解析 JSON 要写一行式、搜索只能用 `grep -r`，每次绕路都消耗 token。已在 apt 层补上这三个包（镜像仅增 ~10MB）
 21. **租户列表看不到 DSH 版本** - 后端未下发版本、且「版本」列实际渲染的是状态徽章；已加 `containerDshVersion()`（问容器 `dsh --version`，按镜像 ID 缓存）并在两个列表里正确展示
+22. **「重启 DSH」报 `Container ... not found`（线上实测）** - 状态漂移：容器已停止 >60min 被清理定时器销毁，而界面还停在打开状态，用户点重启时后端仍按"重启已有容器"执行 `docker restart` → 404。修法：四处 `containerInfo` 为不存在时的处理全部改为**按各自目标语义对齐**，而不是把不一致抛给用户 —— `restartContainer` 降级为启动（委托 `ensureContainer`，沿用 `pinnedImage`，重建无损）、`stopContainerForUser` 照常结算额度并返回成功（停止目标已达成）、`forceStopContainer` 对齐状态且不把 `destroyed` 覆写回 `stopped`、`upgradeContainer` 只记录 tier 待下次创建生效
 
 ## 🧹 空闲清理机制（不会误停正在干活的容器）
 

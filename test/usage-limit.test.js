@@ -159,9 +159,17 @@ describe('每日使用时限', () => {
     expect(userService.state.swtcUsers[ADDR].usageStartedAt).toBeUndefined()
   })
 
-  it('stopContainerForUser：容器不存在时抛 NotFoundError', async () => {
+  it('stopContainerForUser：容器已不存在（漂移/被销毁）→ 结算并成功，不抛 404', async () => {
+    // 旧断言"抛 NotFoundError"被线上故障证伪：容器被清理定时器销毁后点
+    // "停止"报 404，用户既停不下，运行段也没结算（白扣/白丢额度两头都亏）。
     vi.spyOn(dockerService, 'containerInfo').mockResolvedValue({ exists: false })
-    await expect(userService.stopContainerForUser(ADDR)).rejects.toThrow(/not found/i)
+    injectUser({ usageStartedAt: Date.now() - 5 * 60000 })
+    const result = await userService.stopContainerForUser(ADDR)
+
+    expect(result).toMatchObject({ ok: true, status: 'already_stopped' })
+    expect(userService.state.usages[ADDR].minutes).toBeGreaterThanOrEqual(5)
+    expect(userService.state.swtcUsers[ADDR].usageStartedAt).toBeUndefined()
+    expect(userService.state.swtcUsers[ADDR].containerStatus).toBe('stopped')
   })
 
   it('stopContainerForUser：已在停止状态不重复 stop，但仍结算', async () => {

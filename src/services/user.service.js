@@ -363,8 +363,19 @@ export class UserService {
     const name = swtcContainerName(address)
     const info = await dockerService.containerInfo(name)
 
+    // 容器不在了 ≠ 报错（线上故障：「重启 DSH」抛 Container ... not found）。
+    // 界面停留期间清理定时器可能把已停止 >60min 的容器销毁（或有人手工
+    // docker rm）—— 状态漂移。用户点"重启"的意图是"让我的 DSH 跑起来"，
+    // 所以这里降级为"启动"：委托 ensureContainer（停止→start、缺失→重建，
+    // 且沿用该租户 pinnedImage）。数据卷一直保留，重建是无损的。
     if (!info.exists) {
-      throw new NotFoundError(`Container ${name} not found`)
+      if (!this.state.swtcUsers?.[address]) {
+        // 平台没有这个租户的任何记录：不能凭空给未知地址造容器
+        throw new NotFoundError(`租户不存在: ${address}`)
+      }
+      console.warn(`[restart] ${address.slice(0, 10)}… 容器不存在（状态漂移），降级为启动/重建`)
+      const port = await this.ensureContainer(address)
+      return { ok: true, recreated: true, port }
     }
 
     // 绑定挂载源必须是"文件"：若 patch 缺失/被误删，Docker 会把源补建成"目录"，
@@ -936,7 +947,17 @@ export class UserService {
     const name = swtcContainerName(address)
     const info = await dockerService.containerInfo(name)
     if (!info.exists) {
-      throw new NotFoundError(`Container ${name} not found`)
+      // 状态漂移（清理定时器已销毁/手工 rm）：用户要的"停"已达成了。
+      // 照常结算运行段（额度保全不能丢）并把状态对齐，绝不 404。
+      this.settleUsage(address)
+      const driftUser = this.state.swtcUsers?.[address]
+      if (driftUser && driftUser.containerStatus !== 'destroyed') {
+        driftUser.containerStatus = 'stopped'
+        driftUser.stoppedAt = Date.now()
+        dataService.saveState(this.state)
+      }
+      console.log(`[user-stop] ${address} container already absent (state aligned)`)
+      return { ok: true, address, status: 'already_stopped' }
     }
 
     // 结算当前运行段：时间停在停止时刻，剩余额度保全
@@ -967,7 +988,15 @@ export class UserService {
     const info = await dockerService.containerInfo(name)
 
     if (!info.exists) {
-      throw new NotFoundError(`Container ${name} not found`)
+      // 漂移：容器本就不在，"强制下线"的目标状态已达成 —— 对齐状态即可。
+      // （已销毁的记录别改回 stopped，否则会把清理定时器的结论覆盖掉）
+      const driftUser = this.state.swtcUsers?.[address]
+      if (driftUser && driftUser.containerStatus !== 'destroyed') {
+        driftUser.containerStatus = 'stopped'
+        driftUser.stoppedAt = Date.now()
+        dataService.saveState(this.state)
+      }
+      return { ok: true, address, status: 'already_stopped' }
     }
 
     if (info.status === 'stopped' || info.status === 'exited') {
@@ -1762,7 +1791,22 @@ export class UserService {
 
     const name = swtcContainerName(address)
     const info = await dockerService.containerInfo(name)
-    if (!info.exists) throw new NotFoundError(`Container ${name} not found`)
+    if (!info.exists) {
+      // 漂移：没有容器可"重启升级"。但 tier 是租户记录上的字段，
+      // 新限额在下次创建时生效（limits 在 createContainer 读取），
+      // 所以这里落配额、不动容器 —— 绝不 404（资源监控循环里会炸日志）。
+      if (!this.state.swtcUsers) this.state.swtcUsers = {}
+      this.state.swtcUsers[address] = {
+        ...(this.state.swtcUsers[address] ?? {}),
+        tier,
+        lastUpgradeAt: Date.now(),
+      }
+      dataService.saveState(this.state)
+      console.log(
+        `[upgrade] ${address} container absent: tier ${tier} (${limits.label}) 已记录，下次创建生效`,
+      )
+      return { tier, limits, deferredToNextCreate: true }
+    }
 
     // 先结算当前运行段，再停止容器
     if (info.status === 'running') {

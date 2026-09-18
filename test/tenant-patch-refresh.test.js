@@ -23,6 +23,12 @@ vi.mock('../src/services/docker.service.js', () => ({
   dockerService: {
     containerInfo: vi.fn(),
     restartContainer: vi.fn(),
+    // 漂移重建路径会用到（ensureContainer → 创建容器）
+    createContainer: vi.fn(),
+    startContainer: vi.fn(),
+    removeContainer: vi.fn(),
+    stopContainer: vi.fn(),
+    updateContainer: vi.fn(),
     publishedPort: vi.fn(),
     waitReady: vi.fn(),
     imageCapability: vi.fn(),
@@ -44,7 +50,8 @@ vi.mock('../src/services/tenant-proxy.service.js', () => ({
 }))
 
 vi.mock('../src/services/cwt.store.js', () => ({
-  cwtStore: {},
+  // ensureContainer 的额度门会查豁免名单（isUsageExempt → getRegistry）
+  cwtStore: { getRegistry: () => ({}) },
 }))
 
 const { dockerService } = await import('../src/services/docker.service.js')
@@ -196,5 +203,133 @@ describe('syncTenantPatches：启动时自愈配置漂移', () => {
 
     expect(res.failed.length).toBe(1)
     expect(res.refreshed.length).toBe(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 线上故障：「重启 DSH」报 Container ... not found
+//
+// 成因：状态漂移 —— 清理定时器在界面停留期间把已停止 >60min 的容器销毁了，
+// 用户再点重启，restartContainer 对着不存在的容器执行 docker restart → 404。
+// 修法：容器不在了就把"重启"降级为"启动"（ensureContainer：停止→start、
+// 缺失→重建含 pinnedImage），而不是报错。
+// ---------------------------------------------------------------------------
+describe('restartContainer：容器已不存在的漂移场景', () => {
+  it('容器已被销毁 → 重建（不再抛 404）', async () => {
+    dockerService.containerInfo.mockResolvedValue({ exists: false })
+    const create = vi.spyOn(dockerService, 'createContainer').mockResolvedValue(undefined)
+    vi.spyOn(dockerService, 'startContainer').mockResolvedValue(undefined)
+    // 预检会真的 spawn sysctl/df/docker：全量并发跑时会拖过 5s 超时。
+    // 这里打桩，保证测试只验证"漂移 → 重建"这条逻辑，不依赖主机状态。
+    vi.spyOn(userService, 'preflightCheck').mockResolvedValue({
+      ok: true,
+      checks: {},
+      failed: [],
+    })
+
+    userService.state = {
+      swtcUsers: { [ADDR]: { port: PORT, internalPort: 45377, tier: 1 } },
+      nextPort: 31017,
+      usages: {},
+    }
+
+    const spy = vi.spyOn(userService, 'ensureContainer')
+    const res = await userService.restartContainer(ADDR)
+
+    expect(spy).toHaveBeenCalledWith(ADDR) // 语义 = 用户按"启动"
+    expect(create).toHaveBeenCalled() // 真走了创建
+    expect(res).toMatchObject({ recreated: true })
+    // 绝不能再对不存在的容器执行 restart
+    expect(dockerService.restartContainer).not.toHaveBeenCalled()
+  })
+
+  it('钉过版本的租户漂移后重建 → 仍用钉住的镜像（pin 不被重启路径重置）', async () => {
+    dockerService.containerInfo.mockResolvedValue({ exists: false })
+    const create = vi.spyOn(dockerService, 'createContainer').mockResolvedValue(undefined)
+    vi.spyOn(userService, 'preflightCheck').mockResolvedValue({
+      ok: true,
+      checks: {},
+      failed: [],
+    })
+
+    userService.state = {
+      swtcUsers: {
+        [ADDR]: {
+          port: PORT,
+          internalPort: 45377,
+          tier: 1,
+          pinnedImage: 'dsh-multitenant:0.1.1-rc.2',
+        },
+      },
+      nextPort: 31017,
+      usages: {},
+    }
+
+    await userService.restartContainer(ADDR)
+
+    expect(create.mock.calls[0][5]).toMatchObject({ image: 'dsh-multitenant:0.1.1-rc.2' })
+  })
+
+  it('state 里没有该租户 → 仍报 404（不能凭空给未知地址造容器）', async () => {
+    dockerService.containerInfo.mockResolvedValue({ exists: false })
+    userService.state = { swtcUsers: {}, usages: {} }
+
+    await expect(userService.restartContainer(ADDR)).rejects.toThrow(/租户不存在/)
+  })
+
+  it('容器还在 → 正常重启路径不受影响（回归保护）', async () => {
+    const spy = vi.spyOn(userService, 'ensureContainer')
+    await userService.restartContainer(ADDR)
+
+    expect(dockerService.restartContainer).toHaveBeenCalledWith(NAME)
+    expect(spy).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 同一漂移（容器已不存在）下，其余三个操作的正确语义。
+// 共同点：绝不抛 "Container not found" —— 那只是把状态不一致转嫁给用户。
+// ---------------------------------------------------------------------------
+describe('其余操作的漂移语义（容器不存在时）', () => {
+  beforeEach(() => {
+    dockerService.containerInfo.mockResolvedValue({ exists: false })
+    userService.state = {
+      swtcUsers: {
+        [ADDR]: { port: PORT, internalPort: 45377, tier: 1, usageStartedAt: Date.now() - 60000 },
+      },
+      nextPort: 31017,
+      usages: {},
+    }
+  })
+
+  it('stopContainerForUser：目标已达成 → 结算额度 + 对齐状态 + 成功返回', async () => {
+    const res = await userService.stopContainerForUser(ADDR)
+
+    expect(res).toMatchObject({ ok: true, status: 'already_stopped' })
+    // 额度保全：运行段必须结算（usageStartedAt 被清掉）
+    expect(userService.state.swtcUsers[ADDR].usageStartedAt).toBeUndefined()
+    expect(userService.state.swtcUsers[ADDR].containerStatus).toBe('stopped')
+    expect(dockerService.stopContainer).not.toHaveBeenCalled()
+  })
+
+  it('forceStopContainer：已销毁状态不被覆盖回 stopped', async () => {
+    userService.state.swtcUsers[ADDR].containerStatus = 'destroyed'
+
+    const res = await userService.forceStopContainer(ADDR)
+
+    expect(res).toMatchObject({ ok: true, status: 'already_stopped' })
+    // 清理定时器的结论不能被管理动作改写（否则 destroyed 记录倒退回可销毁态）
+    expect(userService.state.swtcUsers[ADDR].containerStatus).toBe('destroyed')
+  })
+
+  it('upgradeContainer：无容器 → 只落配额，下次创建生效，不炸调用方', async () => {
+    const res = await userService.upgradeContainer(ADDR, 2)
+
+    expect(res).toMatchObject({ tier: 2, deferredToNextCreate: true })
+    expect(userService.state.swtcUsers[ADDR].tier).toBe(2)
+    // 没有任何"对不存在容器动手"的调用
+    expect(dockerService.updateContainer).not.toHaveBeenCalled()
+    expect(dockerService.stopContainer).not.toHaveBeenCalled()
+    expect(dockerService.startContainer).not.toHaveBeenCalled()
   })
 })
