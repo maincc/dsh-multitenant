@@ -893,6 +893,38 @@ export class DockerService {
     return parts.join('\n')
   }
 
+  /**
+   * 隔离卷内某个文件：改名成 `<文件名>.broken-<时间戳>`，返回新路径。
+   *
+   * 用途：容器内 DSH 因配置文件损坏而起不来时的自愈 —— 把坏文件挪开，让 DSH
+   * 用默认值启动。用"改名"而不是"删除"：内容留档，可人工抢救（例如里面的
+   * API Key 可能只是格式坏了）。
+   *
+   * 注入安全：文件名与后缀经**位置参数**传入，不拼进脚本文本。
+   *
+   * @param {string} volume 数据卷名
+   * @param {string} fileName 卷内文件名（相对卷根，如 .credentials.yaml）
+   * @returns {Promise<string|null>} 新路径；文件不存在时返回 null
+   */
+  async quarantineVolumeFile(volume, fileName) {
+    const suffix = `broken-${new Date().toISOString().replace(/[:.]/g, '-')}`
+    const out = await sh('docker', [
+      'run',
+      '--rm',
+      '-v',
+      `${volume}:/dsh-home`,
+      '--entrypoint',
+      'sh',
+      IMAGE,
+      '-c',
+      'f="/dsh-home/$1"; if [ -f "$f" ]; then mv "$f" "$f.$2"; echo "$f.$2"; fi',
+      'sh',
+      fileName,
+      suffix,
+    ])
+    return out ? out.trim() : null
+  }
+
   async waitReady(port, timeoutMs = STARTUP_TIMEOUT_MS, opts = {}) {
     const deadline = Date.now() + timeoutMs
     let lastAliveCheck = 0

@@ -224,3 +224,77 @@ describe('ensureContainer：沿用租户钉住的镜像', () => {
     expect(create.mock.calls[0][5]).toMatchObject({ image: 'dsh-multitenant:0.1.5-rc.2' })
   })
 })
+
+// ---------------------------------------------------------------------------
+// 启动自愈：凭据文件损坏不该让整个租户进不去（线上故障的兜底）
+//
+// 线上实测：/dsh-home/.credentials.yaml 损坏 → DSH credentials-local 拒绝
+// 加载 → 进程退出 1 → 3080 永不监听 → 平台只报"容器未能就绪"，用户完全
+// 进不去（数据卷其实是好的）。这里隔离坏文件并再启一次。
+//
+// 关键约束：只对"凭据损坏"这一种原因自愈 —— 别的故障（OOM/端口占用）
+// 若被误判，会白白丢掉用户已保存的 API Key。
+// ---------------------------------------------------------------------------
+describe('finalizeTenant：凭据文件损坏时的自愈', () => {
+  const corruptDiag =
+    'status=exited exit=1 oom=false memLimit=536870912\n--- 日志尾部(30 行) ---\n' +
+    'Error: credentials-local: invalid document at /dsh-home/.credentials.yaml: ' +
+    'MULTILINE_IMPLICIT_KEY at line 1, column 5'
+
+  it('隔离坏文件 + 重启一次 → 成功，并记录隔离痕迹', async () => {
+    injectUser()
+    dockerService.waitReady.mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+    dockerService.containerDiagnostics.mockResolvedValue(corruptDiag)
+    const quarantine = vi
+      .spyOn(dockerService, 'quarantineVolumeFile')
+      .mockResolvedValue('/dsh-home/.credentials.yaml.broken-2026-09-18')
+    const start = vi.spyOn(dockerService, 'startContainer').mockResolvedValue(undefined)
+
+    const result = await userService.finalizeTenant(ADDR, NAME, PORT, INTERNAL_PORT)
+
+    expect(result).toBe(PORT)
+    expect(quarantine).toHaveBeenCalledWith(`dsh-data-swtc-${ADDR}`, '.credentials.yaml')
+    expect(start).toHaveBeenCalledWith(NAME)
+    // 自愈成功 → 不能回滚删容器
+    expect(dockerService.removeContainer).not.toHaveBeenCalled()
+    expect(userService.state.swtcUsers[ADDR].containerStatus).toBe('running')
+    // 留下痕迹，便于界面提示"模型配置需重填"
+    expect(userService.state.swtcUsers[ADDR].credentialsQuarantinedAt).toBeTypeOf('number')
+    expect(userService.state.swtcUsers[ADDR].credentialsQuarantinedPath).toContain('broken-')
+  })
+
+  it('其它故障（OOM）不自愈：照旧回滚 + 抛错，绝不隔离用户凭据', async () => {
+    injectUser()
+    dockerService.waitReady.mockResolvedValue(false)
+    dockerService.containerDiagnostics.mockResolvedValue(
+      'status=exited exit=137 oom=true memLimit=536870912',
+    )
+    const quarantine = vi.spyOn(dockerService, 'quarantineVolumeFile')
+
+    await expect(userService.finalizeTenant(ADDR, NAME, PORT, INTERNAL_PORT)).rejects.toThrow(
+      /did not become ready[\s\S]*oom=true/,
+    )
+
+    expect(quarantine).not.toHaveBeenCalled()
+    expect(dockerService.removeContainer).toHaveBeenCalledWith(NAME)
+    expect(userService.state.swtcUsers[ADDR].credentialsQuarantinedAt).toBeUndefined()
+  })
+
+  it('隔离后仍不就绪 → 回滚 + 抛错（只自愈一次，不无限重试）', async () => {
+    injectUser()
+    dockerService.waitReady.mockResolvedValue(false)
+    dockerService.containerDiagnostics.mockResolvedValue(corruptDiag)
+    const quarantine = vi
+      .spyOn(dockerService, 'quarantineVolumeFile')
+      .mockResolvedValue('/dsh-home/.credentials.yaml.broken-x')
+    vi.spyOn(dockerService, 'startContainer').mockResolvedValue(undefined)
+
+    await expect(userService.finalizeTenant(ADDR, NAME, PORT, INTERNAL_PORT)).rejects.toThrow(
+      /did not become ready/,
+    )
+
+    expect(quarantine).toHaveBeenCalledTimes(1)
+    expect(dockerService.removeContainer).toHaveBeenCalledWith(NAME)
+    expect(userService.state.swtcUsers[ADDR].containerStatus).toBe('destroyed')
+  })
+})

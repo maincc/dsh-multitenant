@@ -29,6 +29,9 @@ vi.mock('../src/services/docker.service.js', () => ({
     removeContainer: vi.fn(),
     stopContainer: vi.fn(),
     updateContainer: vi.fn(),
+    // 启动自愈路径会用到（凭据文件损坏 → 隔离 + 重启一次）
+    containerDiagnostics: vi.fn(),
+    quarantineVolumeFile: vi.fn(),
     publishedPort: vi.fn(),
     waitReady: vi.fn(),
     imageCapability: vi.fn(),
@@ -331,5 +334,39 @@ describe('其余操作的漂移语义（容器不存在时）', () => {
     expect(dockerService.updateContainer).not.toHaveBeenCalled()
     expect(dockerService.stopContainer).not.toHaveBeenCalled()
     expect(dockerService.startContainer).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 重启路径的启动自愈：凭据文件损坏 → 隔离 + 重启一次
+// ---------------------------------------------------------------------------
+describe('restartContainer：凭据文件损坏时自愈', () => {
+  it('诊断为凭据损坏 → 隔离坏文件并再启一次，最终成功', async () => {
+    dockerService.containerDiagnostics.mockResolvedValue(
+      'status=exited exit=1\nError: credentials-local: invalid document at ' +
+        '/dsh-home/.credentials.yaml: MULTILINE_IMPLICIT_KEY at line 1',
+    )
+    const quarantine = dockerService.quarantineVolumeFile.mockResolvedValue(
+      '/dsh-home/.credentials.yaml.broken-2026-09-18',
+    )
+    dockerService.waitReady.mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+
+    const res = await userService.restartContainer(ADDR)
+
+    expect(res).toMatchObject({ ok: true })
+    expect(quarantine).toHaveBeenCalledWith(`dsh-data-swtc-${ADDR}`, '.credentials.yaml')
+    // 隔离后必须真再启一次，并用第二次探测确认就绪
+    expect(dockerService.startContainer).toHaveBeenCalledWith(NAME)
+    expect(dockerService.waitReady).toHaveBeenCalledTimes(2)
+    expect(userService.state.swtcUsers[ADDR].credentialsQuarantinedAt).toBeTypeOf('number')
+  })
+
+  it('非凭据故障 → 不隔离、原样抛错（不误伤用户凭据）', async () => {
+    dockerService.containerDiagnostics.mockResolvedValue('status=exited exit=137 oom=true')
+    dockerService.waitReady.mockResolvedValue(false)
+
+    await expect(userService.restartContainer(ADDR)).rejects.toThrow(/did not become ready/)
+
+    expect(dockerService.quarantineVolumeFile).not.toHaveBeenCalled()
   })
 })

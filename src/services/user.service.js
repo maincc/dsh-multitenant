@@ -156,6 +156,25 @@ const WAIT_QUEUE_STALE_MS = 60 * 60 * 1000
 // 确保 patches 目录存在（旧版入口在启动时创建，模块化版需自行保证）
 mkdirSync(patchesDir(), { recursive: true })
 
+/** 租户卷内 DSH 凭据文件（损坏会让 DSH 拒绝启动） */
+const CREDENTIALS_BASENAME = '.credentials.yaml'
+
+/**
+ * 判断一次启动失败是否由**凭据文件损坏**引起。
+ *
+ * 用 DSH 自己的报错当判据（生产依赖里没有 YAML 库，写不出等价的解析器；
+ * DSH 的 credentials-local 才是权威）。必须同时命中文件名与错误类型，
+ * 否则会把 OOM、端口占用等无关故障误判成"凭据坏了" —— 那会白白隔离掉
+ * 用户已保存的 API Key。
+ * @param {string} text 诊断文本（containerDiagnostics 的输出）
+ * @returns {boolean}
+ */
+function isCredentialsCorruption(text) {
+  const s = String(text || '')
+  if (!s.includes(CREDENTIALS_BASENAME)) return false
+  return /invalid document|credentials-local|failed to parse/i.test(s)
+}
+
 /** 本地日期 YYYY-MM-DD（每日限时按此重置） */
 function todayStr() {
   const d = new Date()
@@ -444,9 +463,11 @@ export class UserService {
       containerName: name,
     })
     if (!ready) {
-      // 带上现场（状态/退出码/OOM/日志尾部）：只报"没就绪"无法定位
-      const diag = await dockerService.containerDiagnostics(name)
-      throw new Error(`Container ${name} did not become ready after restart\n${diag}`)
+      // 自愈：凭据文件损坏就隔离后重启一次；其它原因带着现场原样上报
+      const heal = await this._healStartupFailure(address, name, internalPort)
+      if (!heal.ready) {
+        throw new Error(`Container ${name} did not become ready after restart\n${heal.diagnostics}`)
+      }
     }
 
     // 恢复网关监听（进程重启后外部端口需要重新接管）
@@ -1433,20 +1454,23 @@ export class UserService {
     // 期间状态/接口都报 running 并给出端口，用户 302 过去是 connection refused；
     // 且 waitReady 失败时容器已创建在跑，却不回滚 → 孤儿容器 + 状态不一致。
 
-    // ① 就绪探测（失败 → 回滚容器，不留下半启动态）
+    // ① 就绪探测（失败 → 自愈一次，仍失败则回滚容器，不留下半启动态）
     const ready = await dockerService.waitReady(internalPort, undefined, {
       containerName: name,
     })
     if (!ready) {
-      // 必须先采集现场再回滚 —— 回滚会删容器，日志随之永久消失
-      const diag = await dockerService.containerDiagnostics(name)
-      await this._rollbackFailedContainer(address, name, internalPort, {
-        reason: `did not become ready on port ${internalPort} within ${CONFIG.docker.startupTimeoutMs}ms`,
-      })
-      throw new Error(
-        `SWTC container ${name} did not become ready on port ${internalPort} within ` +
-          `${CONFIG.docker.startupTimeoutMs}ms\n${diag}`,
-      )
+      // _healStartupFailure 会先采集现场（回滚会删容器，日志随之永久消失），
+      // 仅在确认是凭据文件损坏时才隔离并重启；其它故障原样走回滚。
+      const heal = await this._healStartupFailure(address, name, internalPort)
+      if (!heal.ready) {
+        await this._rollbackFailedContainer(address, name, internalPort, {
+          reason: `did not become ready on port ${internalPort} within ${CONFIG.docker.startupTimeoutMs}ms`,
+        })
+        throw new Error(
+          `SWTC container ${name} did not become ready on port ${internalPort} within ` +
+            `${CONFIG.docker.startupTimeoutMs}ms\n${heal.diagnostics}`,
+        )
+      }
     }
 
     // ①′ 记录该容器所用镜像的 DSH 版本与能力（缓存过，命中不产生 docker 开销）。
@@ -1459,6 +1483,16 @@ export class UserService {
       imageId: cap.imageId ?? null,
       requiresToken: cap.requiresToken, // true/false/null(未知)
     }
+
+    // 自愈留下的隔离痕迹要带到最终记录里：下面的 `...prev` 是函数入口的快照，
+    // 早于 _healStartupFailure 写入，不显式合并就会被覆盖掉。
+    const cur = this.state.swtcUsers?.[address]
+    const healFields = cur?.credentialsQuarantinedAt
+      ? {
+          credentialsQuarantinedAt: cur.credentialsQuarantinedAt,
+          credentialsQuarantinedPath: cur.credentialsQuarantinedPath ?? null,
+        }
+      : {}
 
     // ② 开放网关：外部只能经 0.0.0.0:port 进入，且必须先过会话门禁
     //    bind 失败必须让调用方看见（旧实现吞成日志却照样记 routes + 写 running）
@@ -1483,6 +1517,7 @@ export class UserService {
         containerStatus: 'stopped',
         stoppedAt: Date.now(),
         ...capFields,
+        ...healFields,
       }
       dataService.saveState(this.state)
       throw new Error(`网关端口 ${port} 绑定失败（该端口可能被宿主其他程序占用）：${err.message}`)
@@ -1499,6 +1534,7 @@ export class UserService {
       containerStatus: 'running',
       usageStartedAt: startedAt,
       ...capFields,
+      ...healFields,
     }
     delete this.state.swtcUsers[address].stoppedAt
     dataService.saveState(this.state)
@@ -1535,6 +1571,64 @@ export class UserService {
       delete this.state.swtcUsers[address].usageStartedAt
       dataService.saveState(this.state)
     }
+  }
+
+  /**
+   * 启动未就绪时的自愈：若失败原因是**凭据文件损坏**，隔离该文件并再启一次。
+   *
+   * 背景（线上故障）：`/dsh-home/.credentials.yaml` 一旦损坏，DSH 的
+   * credentials-local 会在启动时拒绝加载 → 进程退出 1 → 3080 永不监听 →
+   * 平台只能报"容器未能就绪"，用户完全进不去（数据卷其实是好的）。
+   * 这里把坏文件改名为 `.credentials.yaml.broken-<时间戳>`（留档不删），
+   * DSH 便能用默认值起来；代价是已保存的 API Key 需要重填，因此
+   * 在租户记录里留下 `credentialsQuarantinedAt/Path` 以便界面提示。
+   *
+   * 判据来自 DSH 自己的报错（见 isCredentialsCorruption）：只对这一种
+   * 故障自愈，其它原因照旧走回滚，绝不误伤用户凭据。
+   *
+   * @returns {Promise<{ready:boolean, quarantined:string|null, diagnostics:string}>}
+   */
+  async _healStartupFailure(address, name, internalPort) {
+    const diagnostics = await dockerService.containerDiagnostics(name)
+    if (!isCredentialsCorruption(diagnostics)) {
+      return { ready: false, quarantined: null, diagnostics }
+    }
+
+    let quarantined = null
+    try {
+      quarantined = await dockerService.quarantineVolumeFile(
+        swtcVolumeName(address),
+        CREDENTIALS_BASENAME,
+      )
+    } catch (err) {
+      console.error(`[heal] ${address} 隔离凭据文件失败：${err.message}`)
+      return { ready: false, quarantined: null, diagnostics }
+    }
+    console.warn(
+      `[heal] ${address} 凭据文件无法解析，已隔离为 ${quarantined ?? '(文件不存在)'}；` +
+        '重启容器重试（已保存的 API Key 需在「模型配置」重填）',
+    )
+
+    // 记录以便界面提示；调用方随后会 saveState
+    if (!this.state.swtcUsers) this.state.swtcUsers = {}
+    this.state.swtcUsers[address] = {
+      ...(this.state.swtcUsers[address] ?? {}),
+      credentialsQuarantinedAt: Date.now(),
+      credentialsQuarantinedPath: quarantined,
+    }
+
+    try {
+      await dockerService.startContainer(name)
+    } catch (err) {
+      return {
+        ready: false,
+        quarantined,
+        diagnostics: `${diagnostics}\n隔离后重启失败: ${err.message}`,
+      }
+    }
+
+    const ready = await dockerService.waitReady(internalPort, undefined, { containerName: name })
+    return { ready, quarantined, diagnostics }
   }
 
   // ---------------------------------------------------------------------------

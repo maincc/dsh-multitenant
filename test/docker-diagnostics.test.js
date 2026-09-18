@@ -89,3 +89,28 @@ describe('waitReady：容器早退时快速失败', () => {
     expect(execFile).not.toHaveBeenCalled() // 没有注入存活检查
   })
 })
+
+describe('quarantineVolumeFile：隔离卷内损坏文件', () => {
+  it('改名成 .broken-<时间戳> 并返回新路径（不删除，内容留档）', async () => {
+    execFile.mockImplementation((cmd, args, opts, cb) =>
+      cb(null, '/dsh-home/.credentials.yaml.broken-2026-09-18T10-00-00-000Z\n', ''),
+    )
+
+    const out = await dockerService.quarantineVolumeFile('dsh-data-swtc-x', '.credentials.yaml')
+
+    expect(out).toBe('/dsh-home/.credentials.yaml.broken-2026-09-18T10-00-00-000Z')
+    const args = execFile.mock.calls.at(-1)[1]
+    // 挂载租户卷 + 用镜像里的 sh（不依赖 alpine）
+    expect(args).toEqual(expect.arrayContaining(['-v', 'dsh-data-swtc-x:/dsh-home']))
+    expect(args).toEqual(expect.arrayContaining(['--entrypoint', 'sh']))
+    // 注入安全：文件名/后缀走位置参数，不拼进脚本
+    expect(args[args.indexOf('-c') + 2]).toBe('sh') // $0
+    expect(args[args.indexOf('-c') + 3]).toBe('.credentials.yaml')
+    expect(args[args.indexOf('-c') + 4]).toMatch(/^broken-/)
+  })
+
+  it('文件不存在 → 返回 null（幂等，不报错）', async () => {
+    execFile.mockImplementation((cmd, args, opts, cb) => cb(null, '', ''))
+    expect(await dockerService.quarantineVolumeFile('v', '.credentials.yaml')).toBeNull()
+  })
+})
