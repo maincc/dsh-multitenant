@@ -426,6 +426,7 @@ cookie 转发进容器，纵深防御尚未收口。
 20. **租户容器缺 agent 常用工具** - 容器内实测没有 `curl`/`jq`/`ripgrep`：抓网页只能 `node -e "fetch(...)"`、解析 JSON 要写一行式、搜索只能用 `grep -r`，每次绕路都消耗 token。已在 apt 层补上这三个包（镜像仅增 ~10MB）
 21. **租户列表看不到 DSH 版本** - 后端未下发版本、且「版本」列实际渲染的是状态徽章；已加 `containerDshVersion()`（问容器 `dsh --version`，按镜像 ID 缓存）并在两个列表里正确展示
 22. **「重启 DSH」报 `Container ... not found`（线上实测）** - 状态漂移：容器已停止 >60min 被清理定时器销毁，而界面还停在打开状态，用户点重启时后端仍按"重启已有容器"执行 `docker restart` → 404。修法：四处 `containerInfo` 为不存在时的处理全部改为**按各自目标语义对齐**，而不是把不一致抛给用户 —— `restartContainer` 降级为启动（委托 `ensureContainer`，沿用 `pinnedImage`，重建无损）、`stopContainerForUser` 照常结算额度并返回成功（停止目标已达成）、`forceStopContainer` 对齐状态且不把 `destroyed` 覆写回 `stopped`、`upgradeContainer` 只记录 tier 待下次创建生效
+23. **容器创建报 `--storage-opt is supported only for overlay over xfs with 'pquota'`（线上实测，阻断性）** - 磁盘配额参数只在特定宿主后端可用（overlay2 需 xfs+pquota；btrfs/zfs 原生）。在不支持的宿主上 Docker **直接拒绝整个 `docker run`（exit 125）**，容器根本创建不出来、租户全部进不去 —— 旧注释/`deploy/check-storage.sh` 假设的「参数被接受但不强制（软配额）」在部分 Docker 版本上不成立（本地实测 overlayfs 确实接受并记入 `HostConfig.StorageOpt`，所以本地永远复现不出来）。已改为：首次被该原因拒绝 → 去掉参数重试一次（配额降级为不限制）并记住宿主能力，后续创建直接跳过；**只对这一种明确原因降级**，其它错误照旧上抛。同时修正 `check-storage.sh` 的判定与 `--test` 分支（原先会把「驱动拒绝」误报成「软配额」）
 
 ## 🧹 空闲清理机制（不会误停正在干活的容器）
 

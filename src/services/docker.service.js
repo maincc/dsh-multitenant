@@ -46,6 +46,44 @@ export function clearDshVersionCache() {
 }
 
 /**
+ * 宿主机是否支持 `docker run --storage-opt size=`（磁盘配额）。
+ *
+ * null = 尚未遇到；false = 已确认不支持（后续创建直接跳过该参数）。
+ *
+ * 为什么必须探测而不是"直接用"：`--storage-opt size=` 只在特定后端可用
+ * ——overlay2 需要底层 xfs 且挂载带 `pquota`，btrfs/zfs 原生支持。
+ * 在不支持的宿主上 Docker **直接拒绝整个 `docker run`** 并返回 125：
+ *   "--storage-opt is supported only for overlay over xfs with 'pquota' mount option"
+ * 而不是像旧注释假设的那样"接受但不强制"。线上实测：新服务器
+ * （/home/oc-skywelld-1，非 xfs+pquota）因此完全无法创建容器，租户全部进不去。
+ *
+ * 降级策略：首次被拒 → 记 false → 去掉该参数重试一次（配额退化为不限制），
+ * 之后不再白发一次失败请求。宿主换成支持配额的存储后，重启平台即重新探测。
+ */
+let storageOptSupported = null
+
+/** 仅供测试：重置/预设宿主配额支持状态 */
+export function setStorageOptSupportedForTest(v) {
+  storageOptSupported = v
+}
+
+/**
+ * 判断一次 `docker run` 失败是否**明确**由"宿主不支持 --storage-opt"引起。
+ *
+ * 必须精确匹配：其它错误（端口占用、镜像缺失、名称冲突）要原样上抛，
+ * 否则会被这里吞成"配额不可用"，把真正的故障藏起来。
+ * @param {any} err
+ * @returns {boolean}
+ */
+function isStorageOptUnsupported(err) {
+  const text = `${err?.stderr ?? ''}\n${err?.message ?? ''}`
+  return (
+    /--storage-opt is supported only for/i.test(text) ||
+    /storage-opt.*(?:not supported|unsupported)/i.test(text)
+  )
+}
+
+/**
  * 把 `docker images` 的体积字符串（如 "1.22GB" / "843MB" / "0B"）解析为字节数。
  *
  * 用于给管理员一个量级参考。解析失败返回 0（宁可为 0 也不报错——体积只是
@@ -208,6 +246,8 @@ export class DockerService {
           '已跳过 --storage-opt。旧配置请把 tiers.*.memorySwap 改名为 disk 后重启。',
       )
     }
+    // 宿主已确认不支持配额时直接不带该参数（避免每次创建都先失败一次再重试）
+    const wantQuota = Boolean(diskQuota) && storageOptSupported !== false
 
     const args = [
       'run',
@@ -237,11 +277,12 @@ export class DockerService {
       limits.cpus,
       '--pids-limit',
       String(limits.pids),
-      // 磁盘配额（尽力而为）：--storage-opt size= 仅对支持配额的后端生效
-      // （btrfs/zfs/devicemapper）；overlayfs/overlay2 下接受但不强制，
-      // 记录在 HostConfig.StorageOpt 供审计。换存储驱动后自动变为硬限制。
+      // 磁盘配额（尽力而为）：--storage-opt size= 只在支持配额的后端可用
+      // （overlay2 需 xfs+pquota；btrfs/zfs 原生）。不支持的宿主会**整个拒绝**
+      // 本次 docker run（exit 125），因此这里只在"已知支持"时才带上，
+      // 并在下面捕获该拒绝后降级重试（见 isStorageOptUnsupported）。
       // 配额值缺失/非法时跳过本参数（见上方 diskQuota 防御）。
-      ...(diskQuota ? ['--storage-opt', `size=${diskQuota}`] : []),
+      ...(wantQuota ? ['--storage-opt', `size=${diskQuota}`] : []),
       // 回环发布：外部网络物理不可达，只有宿主本机（网关）能连。
       // 用户浏览器访问的是网关的对外端口（0.0.0.0），网关转发到这里。
       '-p',
@@ -253,7 +294,24 @@ export class DockerService {
       // 允许按租户指定镜像（版本选择）；不传则用平台默认（latest）
       opts.image || IMAGE,
     ]
-    await sh('docker', args)
+    try {
+      await sh('docker', args)
+    } catch (err) {
+      // 宿主不支持磁盘配额：去掉该参数重试一次，让容器照常起来。
+      // 只在这一种明确原因下降级 —— 其它错误必须原样上抛。
+      if (wantQuota && isStorageOptUnsupported(err)) {
+        storageOptSupported = false
+        console.warn(
+          `[docker] 宿主存储驱动不支持 --storage-opt size=${diskQuota}（容器 ${name}）：` +
+            '已降级为不限制磁盘后重试。如需硬配额，宿主需 overlay2 + xfs(pquota) 或 btrfs/zfs。',
+        )
+        const i = args.indexOf('--storage-opt')
+        const retryArgs = i === -1 ? args : [...args.slice(0, i), ...args.slice(i + 2)]
+        await sh('docker', retryArgs)
+      } else {
+        throw err
+      }
+    }
   }
 
   /**
