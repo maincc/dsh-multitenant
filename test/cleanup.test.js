@@ -95,6 +95,56 @@ describe('空闲清理活动检测', () => {
     expect(await userService.isContainerActive(ADDR, NAME)).toBe(true)
   })
 
+  it('check-rpc 返回 401（认证没带上）→ 保守判活跃，绝不误停正在跑任务的容器', async () => {
+    // 新版 DSH 给 /api 也加了浏览器认证。若认证失败就把 ok:false 当"无 running
+    // 会话"，正在跑任务的容器会被误判空闲并停掉——比界面进不去危险得多。
+    // 因此认证类失败必须保守地视为"可能活跃"。
+    vi.spyOn(dockerService, 'runVolumeScript').mockImplementation(
+      (volume, scriptPath, scriptName) => {
+        if (scriptName === 'check-rpc.mjs') {
+          return Promise.resolve(
+            JSON.stringify({ ok: false, error: 'HTTP 401', authRequired: true }),
+          )
+        }
+        if (scriptName === 'check-connections.mjs') {
+          return Promise.resolve(JSON.stringify({ established: 0 }))
+        }
+        return Promise.resolve(JSON.stringify({ latestSessionMtime: 0, sessionCount: 0 }))
+      },
+    )
+    vi.spyOn(dockerService, 'topProcessCount').mockResolvedValue(2)
+    expect(await userService.isContainerActive(ADDR, NAME)).toBe(true)
+  })
+
+  it('需要认证的租户：check-rpc 会带上 authority 参数', async () => {
+    userService.state.swtcUsers[ADDR] = {
+      port: 31111,
+      internalPort: 43111,
+      requiresToken: true,
+      baseImageVersion: '0.1.5-rc.1',
+      containerStatus: 'running',
+    }
+    let seenArgs = null
+    vi.spyOn(dockerService, 'runVolumeScript').mockImplementation(
+      (volume, scriptPath, scriptName, args) => {
+        if (scriptName === 'check-rpc.mjs') {
+          seenArgs = args
+          return Promise.resolve(JSON.stringify({ ok: true, runningSessions: 0, totalSessions: 1 }))
+        }
+        if (scriptName === 'check-connections.mjs') {
+          return Promise.resolve(JSON.stringify({ established: 0 }))
+        }
+        return Promise.resolve(JSON.stringify({ latestSessionMtime: 0, sessionCount: 0 }))
+      },
+    )
+    vi.spyOn(dockerService, 'topProcessCount').mockResolvedValue(2)
+
+    await userService.isContainerActive(ADDR, NAME)
+
+    // 至少要带 authority（cookie 取决于能否激活成功，这里不强求）
+    expect(seenArgs?.some((a) => a.startsWith('--authority='))).toBe(true)
+  })
+
   it('cleanup：活跃容器被跳过并刷新 lastSeenAt（不调用 stop）', async () => {
     vi.spyOn(dockerService, 'runVolumeScript').mockResolvedValue(
       JSON.stringify({ latestSessionMtime: Date.now(), sessionCount: 1 }),

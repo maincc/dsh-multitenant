@@ -53,5 +53,18 @@
     "maxPort": 65535,
     "startupTimeoutMs": 120000,
     "comment": "image: Docker 镜像名称；basePort: 起始端口；maxPort: 最大端口；startupTimeoutMs: 容器启动超时（毫秒）"
+  },
+  "dsh": {
+    "buildContext": ".",
+    "allowLocalBuild": true,
+    "allowPull": true,
+    "registry": "https://registry.npmjs.org",
+    "versionCacheTtlMs": 600000,
+    "npmCacheDir": "",
+    "npmTimeoutMs": 20000,
+    "allowPrerelease": false,
+    "backupDir": "",
+    "backupBeforeApply": true,
+    "comment": "DSH 版本升级/回退（管理端 /admin）。buildContext: docker build 上下文（相对项目根），需含 Dockerfile；allowLocalBuild: 允许平台自己构建镜像（需服务器有完整源码树）；allowPull: 允许拉取现成镜像；registry: 版本列表来源 npm registry；versionCacheTtlMs: 版本列表缓存时长（毫秒，默认 10 分钟）；npmTimeoutMs: npm view 超时（毫秒）；npmCacheDir: npm view 缓存目录（留空自动用 data/npm-cache，规避宿主 ~/.npm 不可写导致的 EPERM）；allowPrerelease: 默认是否展示 rc/alpha 等预发布版本（DSH 版本决定容器内安全边界，建议保持 false）；backupDir: 切换版本前卷快照目录（留空=平台 data/backups，运行用户必然可写；填绝对路径如 /backup/dsh-multitenant 需该目录可写，不可写会自动降级）；backupBeforeApply: 应用镜像前强制备份租户卷（强烈建议保持 true——版本间可能有存储格式差异，这是唯一可能真丢数据的风险点）"
   }
 }

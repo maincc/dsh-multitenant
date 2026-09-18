@@ -110,6 +110,32 @@ function startCleanupTimer() {
 }
 
 /**
+ * 启动网关路由自愈定时器。
+ *
+ * 容器可能在平台运行期间被重建（清理销毁 → 用户再连接新建），此时平台侧
+ * 路由不会被自动补回，用户访问容器 URL 会拿到网关 403
+ * "该租户容器需要登录会话才能访问"（容器本身是好的）——实测踩过。
+ * 每 60 秒对"running 但无路由"的租户补一次监听（幂等，只补不拆）。
+ */
+function startGatewayHealTimer() {
+  const interval = 60_000
+  const tick = async () => {
+    try {
+      const { checked, restored, failed } = await userService.ensureGatewayRoutes()
+      if (restored > 0 || failed > 0) {
+        console.log(`[gateway-heal] 检查 ${checked} 个，补回 ${restored} 个，失败 ${failed} 个`)
+      }
+    } catch (err) {
+      console.error('[gateway-heal] 失败:', err.message)
+    }
+  }
+  setInterval(tick, interval)
+  // 启动时立即跑一次（restoreFromDocker 之后状态才完整）
+  void tick()
+  console.log(`[gateway-heal] timer started: check every ${interval / 1000}s`)
+}
+
+/**
  * 启动每日使用时限检查定时器
  */
 function startUsageLimitTimer() {
@@ -189,82 +215,109 @@ function startQueueProcessor() {
 
 // 创建 HTTP 服务器
 const server = createServer(async (req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host}`)
-  const path = url.pathname
+  // 顶层兜底：任何路由逃逸的异常都在此收敛。
+  // 修复前整个 handler 无 try/catch，一次逃逸就是 unhandledRejection——
+  // 只打一行日志、不响应客户端，连接会一直挂到超时。
+  try {
+    const url = new URL(req.url, `http://${req.headers.host}`)
+    const path = url.pathname
 
-  // GET /health：健康检查
-  if (path === '/health') {
-    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-    res.end(JSON.stringify({ ok: true }))
-    return
-  }
-
-  // 管理路由
-  if (
-    path.startsWith('/api/admin/') ||
-    path === '/api/users' ||
-    path === '/api/stats' ||
-    path === '/api/docker/status'
-  ) {
-    if (await handleAdminRoutes(req, res, path, url)) return
-  }
-
-  // 技能市场路由
-  if (path.startsWith('/api/skills')) {
-    if (await handleSkillRoutes(req, res, path)) return
-  }
-
-  // 用户路由
-  if (
-    path.startsWith('/api/user/') ||
-    path.startsWith('/api/upgrade/') ||
-    path.startsWith('/api/cwt/')
-  ) {
-    if (await handleUserRoutes(req, res, path)) return
-  }
-
-  // 租户路由
-  if (
-    path === '/connect' ||
-    path === '/connect-status' ||
-    path.startsWith('/leave/') ||
-    (path.startsWith('/api/user/') &&
-      (path.endsWith('/remove') ||
-        path.endsWith('/restart') ||
-        path.endsWith('/reset') ||
-        path.endsWith('/stop')))
-  ) {
-    if (await handleTenantRoutes(req, res, path, url)) return
-  }
-
-  // 静态资源
-  if (path.startsWith('/assets/') || path === '/favicon.ico') {
-    const filePath = join(FRONTEND_DIST, path)
-    if (serveStaticFile(filePath, res)) {
+    // GET /health：健康检查
+    if (path === '/health') {
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ ok: true }))
       return
     }
-    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
-    res.end('Not found')
-    return
-  }
 
-  // SPA 路由 fallback；未注册的 /api/* 一律返回 404 JSON，绝不能吞成前端 HTML
-  if (!res.headersSent) {
-    if (path.startsWith('/api/')) {
-      res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ error: 'Not found', code: 'NOT_FOUND' }))
+    // 管理路由
+    if (
+      path.startsWith('/api/admin/') ||
+      path === '/api/users' ||
+      path === '/api/stats' ||
+      path === '/api/docker/status'
+    ) {
+      if (await handleAdminRoutes(req, res, path, url)) return
+    }
+
+    // 技能市场路由
+    if (path.startsWith('/api/skills')) {
+      if (await handleSkillRoutes(req, res, path)) return
+    }
+
+    // 用户路由
+    if (
+      path.startsWith('/api/user/') ||
+      path.startsWith('/api/upgrade/') ||
+      path.startsWith('/api/cwt/')
+    ) {
+      if (await handleUserRoutes(req, res, path)) return
+    }
+
+    // 租户路由
+    if (
+      path === '/connect' ||
+      path === '/connect-status' ||
+      path.startsWith('/leave/') ||
+      (path.startsWith('/api/user/') &&
+        (path.endsWith('/remove') ||
+          path.endsWith('/restart') ||
+          path.endsWith('/reset') ||
+          path.endsWith('/stop')))
+    ) {
+      if (await handleTenantRoutes(req, res, path, url)) return
+    }
+
+    // 静态资源
+    if (path.startsWith('/assets/') || path === '/favicon.ico') {
+      const filePath = join(FRONTEND_DIST, path)
+      if (serveStaticFile(filePath, res)) {
+        return
+      }
+      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+      res.end('Not found')
       return
     }
-    serveFrontend(res)
+
+    // SPA 路由 fallback；未注册的 /api/* 一律返回 404 JSON，绝不能吞成前端 HTML
+    if (!res.headersSent) {
+      if (path.startsWith('/api/')) {
+        res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: 'Not found', code: 'NOT_FOUND' }))
+        return
+      }
+      serveFrontend(res)
+    }
+  } catch (err) {
+    handleError(err, res)
   }
 })
 
 // 启动服务器
 const PORT = Number(process.env.PORT || CONFIG.server.port)
 server.listen(PORT, '0.0.0.0', async () => {
-  await userService.restoreFromDocker()
+  try {
+    await userService.restoreFromDocker()
+  } catch (err) {
+    // 恢复失败不应阻止服务启动（Docker 未就绪/部分容器异常），但必须可见
+    console.error('[startup] restoreFromDocker failed:', err.message)
+  }
+  // 修复 patch 配置漂移：改了 server.publicHost 后，旧容器的 trustedHosts 会过期，
+  // 表现为 directoryPicker 等宿主管道 403 forbidden（普通页面却照常打开，极难自查）。
+  // 失败不阻止启动，只记录。
+  try {
+    const { checked, refreshed, failed } = await userService.syncTenantPatches()
+    if (refreshed.length || failed.length) {
+      console.log(
+        `[startup] patch 同步：检查 ${checked} 个租户，刷新 ${refreshed.length} 个，失败 ${failed.length} 个`,
+      )
+    }
+  } catch (err) {
+    console.error('[startup] syncTenantPatches failed:', err.message)
+  }
   startCleanupTimer()
   startUsageLimitTimer()
+  // 路由自愈必须在 restoreFromDocker 之后：那时 state 才是完整的
+  startGatewayHealTimer()
   startResourceMonitor()
   startDiskMonitor()
   startQueueProcessor()

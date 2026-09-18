@@ -28,6 +28,29 @@ beforeEach(() => {
   }
 })
 
+/**
+ * 挑战与验签的 mock（真实实现依赖 SWTC 密码学；这里只关心编排）。
+ * `consumeChallenge` 模拟真实的一次性语义：只有发放过的 nonce 能通过一次。
+ */
+const issuedChallenges = new Set()
+function mockChallengeFlow() {
+  issuedChallenges.clear()
+  tenantConfigService.issueChallenge.mockImplementation((addr) => {
+    const nonce = `nonce-${addr}-${issuedChallenges.size}`
+    issuedChallenges.add(nonce)
+    return nonce
+  })
+  tenantConfigService.consumeChallenge.mockImplementation((addr, nonce) => {
+    if (!issuedChallenges.has(nonce)) return false
+    issuedChallenges.delete(nonce)
+    return true
+  })
+  // 真实实现校验"nonce 签名有效 且 公钥推导地址 === 声称地址"；mock 只认本测试的格式
+  tenantConfigService.verifySignature.mockImplementation(
+    (addr, message, signature) => signature === `sig:${message}`,
+  )
+}
+
 vi.mock('../src/services/user.service.js', () => ({
   userService: {
     destroyContainer: vi.fn(),
@@ -84,11 +107,11 @@ const ADMIN_ADDR = 'jndwretndumoqbt2uauclmfmx7xbqjykva' // 真实 config.json �
 const TARGET_ADDR = 'jga9j9tkqtbcuohe2zqhvffbguved6o9or'
 
 /** 构造最小可用的 mock req（支持 parseBody 的 on('data'/'end')） */
-function makeReq({ method = 'GET', url = '/', cookie = '', body } = {}) {
+function makeReq({ method = 'GET', url = '/', cookie = '', body, ...extraHeaders } = {}) {
   return {
     method,
     url,
-    headers: { host: '127.0.0.1:8090', cookie },
+    headers: { host: '127.0.0.1:8090', cookie, ...extraHeaders },
     _body: body,
     on(ev, cb) {
       if (ev === 'data' && this._body !== undefined) cb(JSON.stringify(this._body))
@@ -116,12 +139,48 @@ function makeRes() {
   }
 }
 
+/**
+ * 为一次破坏性操作生成有效的签名请求头。
+ *
+ * 加固后 promote / force-stop / remove / delete-volume / dsh·apply 都要求
+ * "当场钱包签名"：挑战先发放（服务端据此记下绑定串），执行时再校验。
+ * 这里走真实的挑战→执行流程（只把 tenantConfigService 的验签 mock 掉），
+ * 从而覆盖"绑定串一致才放行"这条新契约。
+ *
+ * @param {{method?:string,url?:string,cookie?:string}} base makeReq 的参数
+ * @param {string} operation
+ * @param {object} payload
+ */
+async function makeSignedReq(base, operation, payload) {
+  const chalReq = makeReq({
+    method: 'POST',
+    url: '/api/admin/challenge',
+    cookie: base.cookie,
+    body: { address: ADMIN_ADDR, operation, payload },
+  })
+  const chalRes = makeRes()
+  await handleAdminRoutes(chalReq, chalRes, '/api/admin/challenge')
+  if (chalRes.statusCode !== 200) {
+    throw new Error(`挑战发放失败: ${chalRes.statusCode} ${chalRes.body}`)
+  }
+  const { nonce, message } = JSON.parse(chalRes.body)
+  return makeReq({
+    ...base,
+    body: undefined,
+    // 签名材料走请求头（与前端一致）
+    'x-admin-nonce': nonce,
+    'x-admin-signature': `sig:${message}`,
+    'x-admin-pubkey': 'PUBKEY',
+  })
+}
+
 describe('user.routes.js 详情分支', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
   it('POST /api/user/:address/remove 不应被详情分支拦截（返回 false，不写响应）', async () => {
+    // 本用例只验证"详情分支不拦截 /remove"，不进入 handler，因此不需要签名材料
     const req = makeReq({
       method: 'POST',
       url: `/api/user/${TARGET_ADDR}/remove`,
@@ -189,15 +248,20 @@ describe('user.routes.js 详情分支', () => {
 describe('tenant.routes.js remove / restart 错误码', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockChallengeFlow()
   })
 
   it('remove 对不存在用户返回 404（而非 400）', async () => {
     userService.destroyContainer.mockRejectedValue(new NotFoundError('User not found'))
-    const req = makeReq({
-      method: 'POST',
-      url: `/api/user/${TARGET_ADDR}/remove`,
-      cookie: `admin_session=${ADMIN_TOKEN}`,
-    })
+    const req = await makeSignedReq(
+      {
+        method: 'POST',
+        url: `/api/user/${TARGET_ADDR}/remove`,
+        cookie: `admin_session=${ADMIN_TOKEN}`,
+      },
+      'remove',
+      { address: TARGET_ADDR, keepVolume: false },
+    )
     const res = makeRes()
 
     const handled = await handleTenantRoutes(
@@ -216,11 +280,15 @@ describe('tenant.routes.js remove / restart 错误码', () => {
 
   it('remove 成功返回 200', async () => {
     userService.destroyContainer.mockResolvedValue({ ok: true, status: 'removed' })
-    const req = makeReq({
-      method: 'POST',
-      url: `/api/user/${TARGET_ADDR}/remove`,
-      cookie: `admin_session=${ADMIN_TOKEN}`,
-    })
+    const req = await makeSignedReq(
+      {
+        method: 'POST',
+        url: `/api/user/${TARGET_ADDR}/remove`,
+        cookie: `admin_session=${ADMIN_TOKEN}`,
+      },
+      'remove',
+      { address: TARGET_ADDR, keepVolume: false },
+    )
     const res = makeRes()
 
     const handled = await handleTenantRoutes(
@@ -239,11 +307,15 @@ describe('tenant.routes.js remove / restart 错误码', () => {
 
   it('remove?keepVolume=1 → 保留数据卷（keepVolume=true）', async () => {
     userService.destroyContainer.mockResolvedValue({ ok: true, status: 'removed', volume: 'kept' })
-    const req = makeReq({
-      method: 'POST',
-      url: `/api/user/${TARGET_ADDR}/remove?keepVolume=1`,
-      cookie: `admin_session=${ADMIN_TOKEN}`,
-    })
+    const req = await makeSignedReq(
+      {
+        method: 'POST',
+        url: `/api/user/${TARGET_ADDR}/remove?keepVolume=1`,
+        cookie: `admin_session=${ADMIN_TOKEN}`,
+      },
+      'remove',
+      { address: TARGET_ADDR, keepVolume: true },
+    )
     const res = makeRes()
 
     const handled = await handleTenantRoutes(

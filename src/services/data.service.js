@@ -54,6 +54,8 @@ export class DataService {
       join(this.dataDir, 'logs', 'operations.log'),
       join(this.dataDir, 'config', 'sessions.json'),
       join(this.dataDir, 'config', 'user-sessions.json'),
+      // 镜像版本记录也应 0600：它暴露平台在用哪个 DSH 版本（攻击面信息）
+      join(this.dataDir, 'dsh-image.json'),
     ]
     for (const filePath of targets) {
       try {
@@ -369,6 +371,43 @@ export class DataService {
     const filePath = join(this.dataDir, 'config', 'admin.json')
     config.updatedAt = Date.now()
     this.writeWithLock(filePath, config)
+  }
+
+  // ---------- DSH 镜像版本记录（data/dsh-image.json） ----------
+
+  /** data/dsh-image.json 路径 */
+  dshImageFile() {
+    return join(this.dataDir, 'dsh-image.json')
+  }
+
+  /**
+   * 读取镜像版本记录
+   * @returns {{current: object|null, history: Array<object>}}
+   */
+  getDshImage() {
+    const data = this.readJson(this.dshImageFile())
+    return {
+      current: data?.current ?? null,
+      history: Array.isArray(data?.history) ? data.history : [],
+    }
+  }
+
+  /**
+   * 记录一次镜像升级（追加历史，保留最近 50 条）
+   * @param {{version:string|null, imageId:string|null, tag?:string|null, by?:string}} info
+   */
+  saveDshImage(info) {
+    const prev = this.getDshImage()
+    const record = {
+      version: info.version ?? null,
+      imageId: info.imageId ?? null,
+      tag: info.tag ?? null,
+      at: Date.now(),
+      by: info.by ?? 'system',
+    }
+    const history = [...prev.history, record].slice(-50)
+    this.writeWithLock(this.dshImageFile(), { current: record, history })
+    return record
   }
 
   /**

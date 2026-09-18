@@ -13,6 +13,12 @@
 #    PORT             可选：入口端口（默认 8090）
 #    RUN_USER         可选：运行入口服务的系统用户（默认 root；非 root 时自动建用户并加入 docker 组）
 #    DSH_TENANT_IMAGE 可选：租户镜像名（默认 dsh-multitenant:latest）
+#    DSH_VERSION      可选：镜像内安装的 DSH 版本（默认 0.1.1-rc.2）
+#                             默认值是"最后一个不需要浏览器认证的 DSH 版本"
+#                             （保守默认；≥0.1.2-alpha.2 也能用——平台已代做
+#                              launch token 激活；详见 Dockerfile 注释）。
+#                             传确切版本可复现构建，如 DSH_VERSION=0.1.5-rc.2
+#                             传 latest 会装上当时最新版（可用；已支持代激活）。
 #    SKIP_IMAGE=1     跳过 docker build；SKIP_FRONTEND=1 跳过前端构建
 #    FORCE=1          已存在 config.json 时也重新生成
 # ============================================================================
@@ -31,6 +37,7 @@ if [ "$(id -u)" -ne 0 ]; then
     PORT="${PORT:-}" \
     RUN_USER="${RUN_USER:-root}" \
     DSH_TENANT_IMAGE="${DSH_TENANT_IMAGE:-dsh-multitenant:latest}" \
+    DSH_VERSION="${DSH_VERSION:-0.1.1-rc.2}" \
     SKIP_IMAGE="${SKIP_IMAGE:-0}" \
     SKIP_FRONTEND="${SKIP_FRONTEND:-0}" \
     FORCE="${FORCE:-0}" \
@@ -43,9 +50,10 @@ PUBLIC_TRUST="${PUBLIC_TRUST:-$PUBLIC_HOST}"
 PORT="${PORT:-8090}"
 RUN_USER="${RUN_USER:-root}"
 IMAGE="${DSH_TENANT_IMAGE:-dsh-multitenant:latest}"
+DSH_VERSION="${DSH_VERSION:-0.1.1-rc.2}"
 
 echo ">> 项目目录: $ROOT"
-echo ">> PUBLIC_HOST=$PUBLIC_HOST  PORT=$PORT  RUN_USER=$RUN_USER  IMAGE=$IMAGE"
+echo ">> PUBLIC_HOST=$PUBLIC_HOST  PORT=$PORT  RUN_USER=$RUN_USER  IMAGE=$IMAGE  DSH_VERSION=$DSH_VERSION"
 
 # ---- 依赖检查 ----
 command -v docker >/dev/null || { echo "[错误] 未安装 docker"; exit 1; }
@@ -128,12 +136,19 @@ EOF
 fi
 
 # ---- 构建租户镜像 ----
+# 传确切版本时额外打一个版本 tag（dsh-multitenant:<版本>）：
+# 这是回滚的唯一退路——latest 被下一个版本覆盖后，旧版本只能靠版本 tag 找回。
 if [ "${SKIP_IMAGE:-0}" != "1" ]; then
   if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
     echo ">> 构建租户镜像 $IMAGE ...（首次需几分钟，需编译 node-pty）"
-    docker build -t "$IMAGE" .
+    if [ "$DSH_VERSION" != "latest" ]; then
+      docker build --build-arg "DSH_VERSION=$DSH_VERSION" \
+        -t "$IMAGE" -t "${IMAGE%%:*}:$DSH_VERSION" .
+    else
+      docker build --build-arg "DSH_VERSION=$DSH_VERSION" -t "$IMAGE" .
+    fi
   else
-    echo ">> 镜像 $IMAGE 已存在，跳过构建（如需强制：docker build -t $IMAGE .）"
+    echo ">> 镜像 $IMAGE 已存在，跳过构建（如需强制：FORCE 或手动 docker build）"
   fi
 fi
 

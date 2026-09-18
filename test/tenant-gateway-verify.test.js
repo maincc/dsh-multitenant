@@ -15,6 +15,7 @@
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { createHash } from 'node:crypto'
+import { createServer } from 'node:http'
 
 vi.mock('../src/services/data.service.js', async (importOriginal) => {
   const mod = await importOriginal()
@@ -35,11 +36,17 @@ const OWNER = 'jga9j9tkqtbcuohe2zqhvffbguved6o9or'
 
 describe('租户网关门禁：顶层导航一致性校验（插件地址 vs 会话地址）', () => {
   let publicPort, internalPort
+  /** 老版本能力：不需要 DSH 浏览器认证 → 平台门禁通过后直接转发 */
+  const declaredCapability = { requiresToken: false, version: '0.1.1-rc.2' }
   beforeEach(async () => {
     publicPort = 39100 + Math.floor(Math.random() * 500)
     internalPort = 39700 + Math.floor(Math.random() * 200)
-    tenantGateway.listen(publicPort, internalPort, OWNER)
-    await new Promise((r) => setTimeout(r, 40)) // 等 server.listen 就绪
+    // listen 现在是 Promise（bind 成功才 resolve）；必须 await，否则 bind 失败
+    // 会变成 unhandled rejection 而不是测试失败
+    // 第 4 参 declaredCapability：本文件测的是"平台门禁"这条链路，
+    // 因此声明为老版本（不需要 DSH 浏览器认证）→ 走到转发；
+    // 需要认证的分岔由本文件末尾的专门用例覆盖。
+    await tenantGateway.listen(publicPort, internalPort, OWNER, declaredCapability)
   })
   afterEach(() => {
     tenantGateway.closeAll()
@@ -220,5 +227,59 @@ describe('租户网关门禁：顶层导航一致性校验（插件地址 vs 会
     })
     const j = await vRes.json()
     expect(j.valid).toBe(true) // body 被正确解析 + 真实签名验证通过
+  })
+})
+
+/**
+ * listen 的 Promise 语义（修复"假 running"的关键一环）
+ *
+ * 修复前 listen 是同步的：bind 失败只 console.error，然后无条件写入 routes。
+ * 调用方（finalizeTenant）因此以为成功、落盘 running，用户拿到一个没人监听的 URL。
+ * 现在 bind 失败必须 reject。
+ */
+describe('tenantGateway.listen：绑定结果可见性', () => {
+  afterEach(() => {
+    tenantGateway.closeAll()
+  })
+
+  it('端口被占用 → listen reject（不再静默吞掉）', async () => {
+    const port = 39600 + Math.floor(Math.random() * 300)
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    // 用一个独立的裸 server 占住端口（不能复用 listen 自身：listen 内部会先
+    // close 旧监听再重绑，同端口是幂等成功而不是失败）
+    const blocker = createServer(() => {})
+    await new Promise((resolve, reject) => {
+      blocker.once('error', reject)
+      blocker.listen(port, '0.0.0.0', resolve)
+    })
+
+    try {
+      await expect(tenantGateway.listen(port, 39701, OWNER)).rejects.toThrow()
+      // 失败时不得把路由写进去，否则端口归属会被指错
+      expect(tenantGateway.ownerOf(port)).toBeNull()
+    } finally {
+      await new Promise((r) => blocker.close(r))
+      spy.mockRestore()
+    }
+  })
+
+  it('同端口重复 listen → 幂等成功（重启/重绑场景）', async () => {
+    const port = 39600 + Math.floor(Math.random() * 300)
+    const other = 'jga9j9tkqtbcuohe2zqhvffbguved6o9or'
+
+    await tenantGateway.listen(port, 39700, OWNER)
+    expect(tenantGateway.ownerOf(port)).toBe(OWNER)
+
+    // listen 内部会 close(port) 再重绑，因此同端口应成功并换主
+    await expect(tenantGateway.listen(port, 39701, other)).resolves.toBeUndefined()
+    expect(tenantGateway.ownerOf(port)).toBe(other)
+  })
+
+  it('成功时 resolve，并把路由写入 routes', async () => {
+    const port = 39600 + Math.floor(Math.random() * 300)
+
+    await expect(tenantGateway.listen(port, 39702, OWNER)).resolves.toBeUndefined()
+    expect(tenantGateway.ownerOf(port)).toBe(OWNER)
   })
 })

@@ -430,6 +430,24 @@ export async function handleTenantRoutes(req, res, path, url) {
     if (!validateSwtcAddress(address, res)) return true
     address = normalizeAddress(address)
 
+    // 删除租户（默认连数据卷一起删）是不可逆的 → 除会话外还要求当场钱包签名。
+    // 签名走请求头，这里显式挂一次（本文件不走 admin.routes 的统一解析）。
+    const { requireAdminSignature, attachAdminSignature } =
+      await import('../middleware/admin-signature.middleware.js')
+    const { getAdminSession } = await import('../middleware/auth.middleware.js')
+    attachAdminSignature(req)
+    if (
+      !requireAdminSignature(
+        req,
+        res,
+        'remove',
+        { address, keepVolume: url.searchParams.get('keepVolume') === '1' },
+        getAdminSession(req),
+      )
+    ) {
+      return true
+    }
+
     try {
       // 管理端删除：默认连数据卷一起删（不留孤儿卷）；?keepVolume=1 保留数据卷（留档/审计）
       const keepVolume = url.searchParams.get('keepVolume') === '1'

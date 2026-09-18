@@ -65,18 +65,36 @@ const challenges = new Map()
 /** 自定义 provider route 对应的凭据引用名：<ROUTE>_API_KEY（大写、非字母数字转下划线） */
 const credentialRefFor = (route) => `${route.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_API_KEY`
 
-/** 封装 execFile 为 Promise */
-function sh(cmd, args) {
+/**
+ * Docker CLI 子进程默认超时（毫秒）。
+ * 修复前只有 maxBuffer 没有 timeout：辅助容器卡住会让 HTTP 请求永久挂起。
+ * 取 180s：这些调用要起辅助容器（必要时拉镜像），比普通 docker 命令慢。
+ */
+const DEFAULT_TIMEOUT_MS = Number(process.env.DOCKER_CLI_TIMEOUT_MS || 180000)
+
+/** 封装 execFile 为 Promise（带超时 + 超时错误标注） */
+function sh(cmd, args, opts = {}) {
+  const timeout = Number(opts.timeout ?? DEFAULT_TIMEOUT_MS)
   return new Promise((resolvePromise, reject) => {
-    execFile(cmd, args, { maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (err) {
-        err.stdout = String(stdout ?? '')
-        err.stderr = String(stderr ?? '')
-        reject(err)
-      } else {
-        resolvePromise(String(stdout ?? '').trim())
-      }
-    })
+    execFile(
+      cmd,
+      args,
+      { maxBuffer: 16 * 1024 * 1024, ...opts, timeout },
+      (err, stdout, stderr) => {
+        if (err) {
+          err.stdout = String(stdout ?? '')
+          err.stderr = String(stderr ?? '')
+          if (err.killed || err.signal === 'SIGTERM') {
+            err.code = err.code ?? 'ETIMEDOUT'
+            err.timedOut = true
+            err.stderr = `${err.stderr}\n[docker-cli] timed out after ${timeout}ms`.trim()
+          }
+          reject(err)
+        } else {
+          resolvePromise(String(stdout ?? '').trim())
+        }
+      },
+    )
   })
 }
 

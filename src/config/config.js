@@ -52,6 +52,23 @@ const DEFAULTS = {
     maxPort: 65535,
     startupTimeoutMs: 120000,
   },
+  dsh: {
+    // 镜像内 DSH 版本的升级/回退管理
+    buildContext: '.', // 构建上下文（相对启动目录）；平台自己构建镜像时用
+    allowLocalBuild: true, // 允许平台执行 docker build（需要源码树在场）
+    allowPull: true, // 允许 docker pull 现成镜像
+    registry: 'https://registry.npmjs.org', // npm registry（版本列表来源）
+    versionCacheTtlMs: 600000, // 版本列表缓存 10 分钟（网络调用，不宜每次请求都打）
+    npmTimeoutMs: 20000, // npm view 超时
+    npmCacheDir: '', // npm view 的缓存目录；留空则自动选可写目录（默认 data/npm-cache）
+    allowPrerelease: false, // 默认不展示 rc/alpha；前端可显式请求包含
+    // 版本切换前卷快照目录。默认放在平台自己的 data/ 下：它由运行用户创建，
+    // 必然可写。原来的 /backup/dsh-multitenant 在多机部署里更合适，但在"普通用户
+    // 直接跑在宿主机"的形态下根目录无权创建 → 备份 EPERM → 更新必然失败。
+    // 要放独立备份盘/共享存储，在这里或 config.json 里显式指定即可。
+    backupDir: join(ROOT, 'data', 'backups'),
+    backupBeforeApply: true, // 应用镜像/切换版本前强制备份租户卷
+  },
   admin: { addresses: [] },
 }
 

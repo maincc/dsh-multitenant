@@ -22,6 +22,12 @@ import { getUserSession, userSessionStore } from '../middleware/user-auth.middle
 import { getAdminSession } from '../middleware/auth.middleware.js'
 import { isAdmin } from '../config/config.js'
 import { tenantConfigService } from './tenant-config.service.js'
+// 只取纯函数 requiresToken（dsh-version.service 仅依赖 config，不成环）。
+// 用于区分"容器落后于平台镜像"与"平台镜像本身就需要认证"这两种拒绝原因。
+import { requiresToken } from './dsh-version.service.js'
+// DSH 浏览器认证代激活（读容器日志里的 token → 换 cookie → 注入转发）
+import { authCookieCache, AUTH_COOKIE_PREFIX } from './dsh-auth.service.js'
+import { swtcContainerName } from '../utils/address.js'
 import { parseBody } from '../utils/parse-body.js'
 
 /** 逐跳头：转发时必须剥离（由代理重新处理），否则会篡改上下游语义 */
@@ -39,6 +45,74 @@ const HOP_BY_HOP = new Set([
   'transfer-encoding',
   'upgrade',
 ])
+
+/**
+ * cookie 替换策略。
+ *
+ * - `'replace'`（生产默认）：剔除浏览器带来的 `dsh-auth-*`，只注入平台现换的那份。
+ * - `'legacy'`  ：旧行为（"有 dsh-auth 就跳过注入"），**仅供回归测试复现 bug**。
+ *
+ * 保留这个开关是为了让测试能证明"旧行为确实会把失效 cookie 转发出去并 401"，
+ * 而不是只断言新行为看起来对。
+ */
+let dshAuthCookieMode = 'replace'
+/** @internal 仅供测试 */
+export function _setDshAuthCookieModeForTest(mode) {
+  dshAuthCookieMode = mode === 'legacy' ? 'legacy' : 'replace'
+}
+
+/**
+ * 按当前策略合并 Cookie 头。
+ * @param {string|undefined} original 浏览器带来的 Cookie 头
+ * @param {string|null} authCookie 平台代激活得到的那一份（`dsh-auth-<hash>=<值>`）
+ * @returns {string} 要转发给容器的 Cookie 头（可能为空串）
+ */
+function mergeDshAuthCookie(original, authCookie) {
+  const rest = stripDshAuthCookies(original)
+  if (!authCookie) return rest
+  if (dshAuthCookieMode === 'legacy' && hasAuthCookie(original)) {
+    // 旧行为：浏览器已有 dsh-auth-* 就原样转发（失效 cookie 会害 DSH 回 401）
+    return original
+  }
+  return rest ? `${rest}; ${authCookie}` : authCookie
+}
+
+/**
+ * 浏览器请求里是否已经带了 DSH 的认证 cookie（仅 legacy 复现用）。
+ */
+function hasAuthCookie(cookieHeader) {
+  return typeof cookieHeader === 'string' && cookieHeader.includes(AUTH_COOKIE_PREFIX)
+}
+
+/**
+ * 剔除请求里所有 `dsh-auth-*` cookie，返回剩余部分。
+ *
+ * 为什么必须剔除而不是"有就跳过注入"：
+ *
+ * DSH 的认证 cookie 把 **authority 与进程密钥**都写进签名载荷。容器重建、
+ * DSH 重启、或平台换过 `publicHost` 之后，浏览器里那一份旧 cookie 就已经
+ * 失效；但 `hasAuthCookie()` 只看前缀，会认为"已经有了"从而**跳过平台
+ * 代激活的新 cookie**，把失效 cookie 原样转发给容器 → DSH 回 401：
+ *   `dsh web authentication required; reopen the URL printed by dsh web.`
+ * 用户看到的就是这句（实测复现）。
+ *
+ * 浏览器的 cookie 不按端口隔离（RFC 6265），但**只发送与当前 host 匹配的
+ * cookie**；网关每个公网端口只服务一个 tenant + 一个 authority，所以这里
+ * 清掉 `dsh-auth-*` 不会影响同 host 其它端口的页面（那些请求压根不带本
+ * 端口的 cookie）。平台的 cookie 由服务端从容器 launch token 现换，天然
+ * 权威 —— 必须让它说了算。
+ *
+ * @param {string|undefined} cookieHeader
+ * @returns {string} 过滤后的 Cookie 头（可能为空串）
+ */
+function stripDshAuthCookies(cookieHeader) {
+  if (typeof cookieHeader !== 'string' || !cookieHeader) return ''
+  return cookieHeader
+    .split(';')
+    .map((c) => c.trim())
+    .filter((c) => c && !c.startsWith(AUTH_COOKIE_PREFIX))
+    .join('; ')
+}
 
 /**
  * 顶层导航一致性校验页（写入浏览器前由网关直接返回，不转发给容器）。
@@ -307,143 +381,203 @@ class TenantGateway {
   }
 
   /**
-   * 为一个租户开放对外端口：0.0.0.0:publicPort → 127.0.0.1:internalPort
+   * 该端口所属租户所用镜像的 DSH 版本能力。
+   * @returns {{requiresToken: boolean|null, version: string|null}|null}
+   *   requiresToken: true=该 DSH 版本要求浏览器认证（平台尚未代做激活）；
+   *   false=老版本，网关放行即可进；null=未知（版本读不到，须保守处理）。
    */
-  listen(publicPort, internalPort, address) {
+  capabilityOf(publicPort) {
+    return this.routes.get(publicPort)?.capability ?? null
+  }
+
+  /**
+   * 取（必要时创建）该租户的 DSH 认证 cookie。
+   *
+   * 激活用的 authority 取自**这次请求的 Host**——平台原样转发 Host，
+   * 所以它就是浏览器看到的 authority，与 DSH 校验的完全一致。
+   * 这也意味着激活必须在有真实请求时做（不能在容器创建时凭空造一个）。
+   *
+   * @returns {Promise<string|null>} "name=value"，失败返回 null
+   */
+  async _ensureDshAuthCookie(publicPort, internalPort, req) {
+    const route = this.routes.get(publicPort)
+    if (!route?.address) return null
+    try {
+      return await authCookieCache.get(publicPort, {
+        internalPort,
+        host: req.headers?.host,
+        containerName: swtcContainerName(route.address),
+      })
+    } catch (err) {
+      console.error(`[gateway] :${publicPort} DSH 认证激活异常:`, err.message)
+      return null
+    }
+  }
+
+  /**
+   * 一个"进不去"的明确拒绝响应。
+   *
+   * 现在的策略是：制造 token 认证的版本由平台**代做激活**（见 dsh-auth.service.js）。
+   * 走到这里只剩三种情况：
+   *   (1) 代激活失败（容器刚重启 token 还没打印、密钥变化…）→ 提示稍后重试
+   *   (2) 租户容器落后于平台镜像、而平台镜像是可用的 → 提示重建容器
+   *   (3) 平台镜像本身就需要认证 → 提示回退镜像
+   *
+   * 不区分的话就会出现实测过的那种误导：容器其实跑着可用的 0.1.1-rc.2，
+   * 平台却把当前镜像 0.1.5-rc.1 的结论套上来，报"该容器使用的 DSH 0.1.5-rc.1"，
+   * 既拦错了容器，报出的版本也是假的。
+   *
+   * @returns {boolean} 已写响应
+   */
+  _rejectTokenAuthRequired(res, capability, opts = {}) {
+    const version = capability?.version ?? '未知版本'
+    const platformVersion = capability?.platformVersion ?? null
+
+    let code = 'DSH_AUTH_REQUIRED'
+    let error
+
+    if (opts.activateFailed) {
+      code = 'DSH_ACTIVATION_FAILED'
+      error =
+        `无法进入：平台代 DSH ${version} 做浏览器认证激活失败。` +
+        `常见原因是容器刚重启、launch token 还没打印出来。请稍后重试；` +
+        `若持续失败，请查看容器日志中是否出现 "dsh web: http://..." 那一行。`
+    } else {
+      const containerIsStaleButUsable =
+        platformVersion !== null &&
+        platformVersion !== version &&
+        requiresToken(platformVersion) === false
+
+      if (containerIsStaleButUsable) {
+        code = 'DSH_CONTAINER_STALE'
+        error =
+          `该租户容器还在用旧镜像（DSH ${version}），但当前平台镜像 DSH ${platformVersion} 是可用的。` +
+          `请重建该租户容器以换用新镜像（数据卷会保留），而不是回退镜像。`
+      } else {
+        error =
+          `无法判定 DSH ${version} 是否需要浏览器认证，平台无法安全地代为激活。` +
+          `请在管理端把镜像回退到 ≤ 0.1.1-rc.2（最后一个不需要该认证的版本）后重试。`
+      }
+    }
+
+    res.writeHead(503, { 'content-type': 'application/json; charset=utf-8' })
+    res.end(
+      JSON.stringify({
+        error,
+        code,
+        dshVersion: capability?.version ?? null,
+        platformDshVersion: platformVersion,
+        tokenAuthSince: capability?.tokenAuthSince ?? null,
+      }),
+    )
+    return true
+  }
+
+  /**
+   * 为一个租户开放对外端口：0.0.0.0:publicPort → 127.0.0.1:internalPort
+   *
+   * 返回 Promise：bind 成功 resolve，端口被占/绑定失败 reject。
+   * 修复前是"同步返回 + error 只打日志 + 无条件写 routes"，导致调用方
+   * （finalizeTenant）以为成功、落盘 running，实际给用户一个没人监听的 URL。
+   *
+   * @param {number} publicPort 对外端口（网关监听）
+   * @param {number} internalPort 容器内部回环端口
+   * @param {string} address 租户地址
+   * @param {{requiresToken:boolean|null, version:string|null, tokenAuthSince?:string}} [capability]
+   *   该租户镜像的 DSH 能力。**由调用方（finalizeTenant）随路由一起传入**，
+   *   网关刻意不 import user.service（会形成循环依赖），只在路由表里保存这一份。
+   * @returns {Promise<void>}
+   */
+  listen(publicPort, internalPort, address, capability = null) {
     this.close(publicPort) // 幂等：先关旧监听（重启/端口重绑场景）
 
-    const server = createServer((req, res) => {
-      // ---- 网关本地 API（校验页专用，绝不转发给容器）----
-      let pathname = ''
+    const server = createServer(async (req, res) => {
+      // async 事件回调里抛出的异常不会有人接住 → 会变成 unhandled rejection，
+      // 严重时直接让入口进程退出（影响所有租户）。这里统一兜底。
       try {
-        pathname = new URL(req.url, 'http://x').pathname
-      } catch {
-        pathname = String(req.url || '')
+        await this._handleHttp(req, res, publicPort, internalPort)
+      } catch (err) {
+        console.error(`[gateway] :${publicPort} handler error:`, err?.message || err)
+        if (!res.headersSent) {
+          res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
+        }
+        try {
+          res.end(JSON.stringify({ error: '网关内部错误', code: 'GATEWAY_ERROR' }))
+        } catch {
+          // 响应已不可写，忽略
+        }
       }
-      if (pathname === '/__gw__/session-info' && (req.method || 'GET') === 'GET') {
-        const cookie = req.headers.cookie || ''
-        const m = cookie.match(/user_session=([^;]+)/)
-        const address = m ? getUserSession(req) : null
-        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ ok: true, address }))
-        return
-      }
-      if (pathname === '/__gw__/logout' && (req.method || 'POST') === 'POST') {
-        const cookie = req.headers.cookie || ''
-        const m = cookie.match(/user_session=([^;]+)/)
-        if (m) userSessionStore.revoke(decodeURIComponent(m[1]))
-        res.writeHead(200, {
-          'content-type': 'application/json; charset=utf-8',
-          'set-cookie': [
-            'user_session=; path=/; max-age=0; httponly; samesite=strict',
-            'gw_ok=; path=/; max-age=0',
-          ],
-        })
-        res.end(JSON.stringify({ ok: true }))
-        return
-      }
-      if (pathname === '/__gw__/challenge' && (req.method || 'GET') === 'GET') {
-        // 签名校验页用：为"会话地址"发放一次性 nonce（复用平台配置签名挑战）
-        const cookie = req.headers.cookie || ''
-        const m = cookie.match(/user_session=([^;]+)/)
-        const address = m ? getUserSession(req) : null
-        if (!address) {
-          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-          res.end(JSON.stringify({ ok: true, address: null }))
+    })
+
+    server.on('upgrade', async (req, socket, head) => {
+      // 同 HTTP：async 回调必须兜底，否则异常会变成 unhandled rejection
+      try {
+        if (!this.authorize(req, publicPort)) {
+          socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
+          socket.destroy()
           return
         }
-        const nonce = tenantConfigService.issueChallenge(address)
-        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ ok: Boolean(nonce), nonce, address }))
-        return
-      }
-      if (pathname === '/__gw__/verify' && (req.method || 'POST') === 'POST') {
-        // 签名证明：nonce 由插件私钥签名，公钥推导地址必须 === 会话地址 才算本人
-        ;(async () => {
-          let body = {}
-          try {
-            // parseBody 返回【原文】，需 JSON.parse 成对象
-            const raw = (await parseBody(req)) || ''
-            body = raw ? JSON.parse(raw) : {}
-          } catch {
-            body = {}
-          }
-          const address = String(body.address || '').toLowerCase()
-          const nonce = String(body.nonce || '')
-          const signature = String(body.signature || '')
-          const publicKey = String(body.publicKey || '')
-          const cookieM = (req.headers.cookie || '').match(/user_session=([^;]+)/)
-          const sessionAddr = cookieM ? getUserSession(req) : null
-          const valid =
-            Boolean(sessionAddr) &&
-            sessionAddr === address &&
-            Boolean(nonce) &&
-            tenantConfigService.verifySignature(address, nonce, signature, publicKey)
-          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-          res.end(JSON.stringify({ ok: true, valid, address }))
-        })()
-        return
-      }
-
-      // ---- 顶层导航 ----
-      // 优先级：①有会话 → URL 带一次性 ticket（平台「进入」/ 管理员代开）直接放行
-      //              → 否则返回签名校验页（外部粘贴 URL：插件实时签名证明身份）
-      //         ②无会话 → ticket → 403
-      if (isNavigationRequest(req) && !hasGwOk(req)) {
-        if (this.authorize(req, publicPort)) {
-          // 有会话：先消费一次性 ticket（官网「进入」URL 携带），命中即放行
-          if (!this.tryTicket(req, res, publicPort)) {
-            // 无 ticket → 签名校验页（插件在容器域读到的账户不可靠，
-            // 改为"插件对会话地址签名"证明：能签出来 = 身份一致，才放行）
-            res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-            res.end(buildVerifyPage(req))
+        // 升级通道同样受 DSH 认证层保护：它需要同一个 cookie，
+        // 否则前端会拿到一个"连上又被踢"的长连接，报错比 HTTP 更难排查。
+        const capability = this.capabilityOf(publicPort)
+        let authCookie = null
+        if (capability?.requiresToken === true) {
+          authCookie = await this._ensureDshAuthCookie(publicPort, internalPort, req)
+          if (!authCookie) {
+            const version = capability?.version ?? '未知版本'
+            socket.write(
+              `HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n` +
+                `content-type: text/plain; charset=utf-8\r\n\r\n` +
+                `DSH ${version} 需要浏览器认证，平台代激活失败（容器可能刚重启，token 尚未就绪）；请稍后重试。\n`,
+            )
+            socket.destroy()
             return
           }
-        } else if (!this.tryTicket(req, res, publicPort)) {
-          // 无会话：管理员代开 ticket（一次性换取会话后放行），否则 403
-          res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
-          res.end(
-            JSON.stringify({
-              error: '该租户容器需要登录会话才能访问，请回到平台重新连接',
-              code: 'FORBIDDEN',
-            }),
+        } else if (capability?.requiresToken !== false) {
+          const version = capability?.version ?? '未知版本'
+          socket.write(
+            `HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n` +
+              `content-type: text/plain; charset=utf-8\r\n\r\n` +
+              `无法判定 DSH ${version} 是否需要浏览器认证；请回退到 ≤ 0.1.1-rc.2。\n`,
           )
+          socket.destroy()
           return
         }
-      } else if (!this.authorize(req, publicPort)) {
-        // 非导航请求（子资源/fetch/WS 之外的 HTTP）：维持原始门禁
-        if (!this.tryTicket(req, res, publicPort)) {
-          res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
-          res.end(
-            JSON.stringify({
-              error: '该租户容器需要登录会话才能访问，请回到平台重新连接',
-              code: 'FORBIDDEN',
-            }),
-          )
-          return
+        this.forwardUpgrade(req, socket, head, internalPort, authCookie)
+      } catch (err) {
+        console.error(`[gateway] :${publicPort} upgrade handler error:`, err?.message || err)
+        try {
+          socket.destroy()
+        } catch {
+          // ignore
         }
       }
-      this.forward(req, res, internalPort)
     })
 
-    // WebSocket / SSE 升级通道透传（DSH 的会话流、终端等长连接）
-    server.on('upgrade', (req, socket, head) => {
-      if (!this.authorize(req, publicPort)) {
-        socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
-        socket.destroy()
-        return
+    // 绑定结果可见：成功才写入 routes，失败向调用方抛出（不再静默继续）
+    return new Promise((resolvePromise, reject) => {
+      const onBindError = (err) => {
+        console.error(`[gateway] listen :${publicPort} failed:`, err.message)
+        reject(err)
       }
-      this.forwardUpgrade(req, socket, head, internalPort)
+      server.once('error', onBindError)
+      server.once('listening', () => {
+        server.removeListener('error', onBindError)
+        // 绑定后的运行时错误：兜底记录，避免 'error' 事件无监听导致进程崩溃
+        server.on('error', (err) => {
+          console.error(`[gateway] :${publicPort} runtime error:`, err.message)
+        })
+        this.routes.set(publicPort, { server, address, internalPort, capability })
+        console.log(`[gateway] :${publicPort} -> 127.0.0.1:${internalPort} (${address})`)
+        resolvePromise()
+      })
+      try {
+        server.listen(publicPort, '0.0.0.0')
+      } catch (err) {
+        server.removeListener('error', onBindError)
+        reject(err)
+      }
     })
-
-    server.on('error', (err) => {
-      // 端口占用/绑定失败：打日志即可，不抛（网关不该拖垮入口进程）
-      console.error(`[gateway] listen :${publicPort} failed:`, err.message)
-    })
-
-    server.listen(publicPort, '0.0.0.0')
-    this.routes.set(publicPort, { server, address, internalPort })
-    console.log(`[gateway] :${publicPort} -> 127.0.0.1:${internalPort} (${address})`)
   }
 
   /** 关闭一个对外端口（租户销毁/重置时）；stop 场景不要调（重连即恢复） */
@@ -464,15 +598,174 @@ class TenantGateway {
     for (const port of [...this.routes.keys()]) this.close(port)
   }
 
+  /**
+   * 确认某公网端口上已有到指定租户的路由。
+   * @returns {boolean}
+   */
+  hasRoute(publicPort, address) {
+    const route = this.routes.get(publicPort)
+    return Boolean(route && route.address === address)
+  }
+
   // ---------------------------------------------------------------------------
   // 转发（透明代理：不改 Host、不缓存、不加工 body）
   // ---------------------------------------------------------------------------
 
-  forward(req, res, internalPort) {
+  /**
+   * 处理一个租户网关的 HTTP 请求（从 createServer 回调里抽出，便于统一兜底异常）。
+   */
+  async _handleHttp(req, res, publicPort, internalPort) {
+    // ---- 网关本地 API（校验页专用，绝不转发给容器）----
+    let pathname = ''
+    try {
+      pathname = new URL(req.url, 'http://x').pathname
+    } catch {
+      pathname = String(req.url || '')
+    }
+    if (pathname === '/__gw__/session-info' && (req.method || 'GET') === 'GET') {
+      const cookie = req.headers.cookie || ''
+      const m = cookie.match(/user_session=([^;]+)/)
+      const address = m ? getUserSession(req) : null
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ ok: true, address }))
+      return
+    }
+    if (pathname === '/__gw__/logout' && (req.method || 'POST') === 'POST') {
+      const cookie = req.headers.cookie || ''
+      const m = cookie.match(/user_session=([^;]+)/)
+      if (m) userSessionStore.revoke(decodeURIComponent(m[1]))
+      res.writeHead(200, {
+        'content-type': 'application/json; charset=utf-8',
+        'set-cookie': [
+          'user_session=; path=/; max-age=0; httponly; samesite=strict',
+          'gw_ok=; path=/; max-age=0',
+        ],
+      })
+      res.end(JSON.stringify({ ok: true }))
+      return
+    }
+    if (pathname === '/__gw__/challenge' && (req.method || 'GET') === 'GET') {
+      // 签名校验页用：为"会话地址"发放一次性 nonce（复用平台配置签名挑战）
+      const cookie = req.headers.cookie || ''
+      const m = cookie.match(/user_session=([^;]+)/)
+      const address = m ? getUserSession(req) : null
+      if (!address) {
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ ok: true, address: null }))
+        return
+      }
+      const nonce = tenantConfigService.issueChallenge(address)
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ ok: Boolean(nonce), nonce, address }))
+      return
+    }
+    if (pathname === '/__gw__/verify' && (req.method || 'POST') === 'POST') {
+      // 签名证明：nonce 由插件私钥签名，公钥推导地址必须 === 会话地址 才算本人
+      ;(async () => {
+        let body = {}
+        try {
+          // parseBody 返回【原文】，需 JSON.parse 成对象
+          const raw = (await parseBody(req)) || ''
+          body = raw ? JSON.parse(raw) : {}
+        } catch {
+          body = {}
+        }
+        const address = String(body.address || '').toLowerCase()
+        const nonce = String(body.nonce || '')
+        const signature = String(body.signature || '')
+        const publicKey = String(body.publicKey || '')
+        const cookieM = (req.headers.cookie || '').match(/user_session=([^;]+)/)
+        const sessionAddr = cookieM ? getUserSession(req) : null
+        const valid =
+          Boolean(sessionAddr) &&
+          sessionAddr === address &&
+          Boolean(nonce) &&
+          tenantConfigService.verifySignature(address, nonce, signature, publicKey)
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ ok: true, valid, address }))
+      })()
+      return
+    }
+
+    // ---- 顶层导航 ----
+    // 优先级：①有会话 → URL 带一次性 ticket（平台「进入」/ 管理员代开）直接放行
+    //              → 否则返回签名校验页（外部粘贴 URL：插件实时签名证明身份）
+    //         ②无会话 → ticket → 403
+    if (isNavigationRequest(req) && !hasGwOk(req)) {
+      if (this.authorize(req, publicPort)) {
+        // 有会话：先消费一次性 ticket（官网「进入」URL 携带），命中即放行
+        if (!this.tryTicket(req, res, publicPort)) {
+          // 无 ticket → 签名校验页（插件在容器域读到的账户不可靠，
+          // 改为"插件对会话地址签名"证明：能签出来 = 身份一致，才放行）
+          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+          res.end(buildVerifyPage(req))
+          return
+        }
+      } else if (!this.tryTicket(req, res, publicPort)) {
+        // 无会话：管理员代开 ticket（一次性换取会话后放行），否则 403
+        res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(
+          JSON.stringify({
+            error: '该租户容器需要登录会话才能访问，请回到平台重新连接',
+            code: 'FORBIDDEN',
+          }),
+        )
+        return
+      }
+    } else if (!this.authorize(req, publicPort)) {
+      // 非导航请求（子资源/fetch/WS 之外的 HTTP）：维持原始门禁
+      if (!this.tryTicket(req, res, publicPort)) {
+        res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(
+          JSON.stringify({
+            error: '该租户容器需要登录会话才能访问，请回到平台重新连接',
+            code: 'FORBIDDEN',
+          }),
+        )
+        return
+      }
+    }
+
+    // ---- 按 DSH 版本能力分岔 ----
+    // 平台门禁已通过，但"能不能进"还取决于容器内 DSH 自己是否要求浏览器认证：
+    //   requiresToken === false → 老版本，无认证层，直接放行（以前的行为）
+    //   requiresToken === true  → 该版本要求 launch token 激活；平台**代做激活**
+    //                             （读容器日志里的 token → 换 cookie → 注入转发）
+    //   requiresToken === null  → 版本未知，**保守拒绝**：把未知当"老版本可直通"
+    //                             会让新镜像静默坏掉，那比多拦一次更糟
+    const capability = this.capabilityOf(publicPort)
+    let authCookie = null
+    if (capability?.requiresToken === true) {
+      authCookie = await this._ensureDshAuthCookie(publicPort, internalPort, req)
+      if (!authCookie) {
+        // 激活失败（token 还没打印出来、容器刚重启、密钥变化…）
+        // → 明确告知，而不是把用户放进一个注定 401 的页面
+        this._rejectTokenAuthRequired(res, capability, { activateFailed: true })
+        return
+      }
+    } else if (capability?.requiresToken !== false) {
+      this._rejectTokenAuthRequired(res, capability)
+      return
+    }
+
+    this.forward(req, res, internalPort, authCookie)
+
+    // WebSocket / SSE 升级通道透传（DSH 的会话流、终端等长连接）
+  }
+
+  forward(req, res, internalPort, authCookie = null) {
     const headers = { ...req.headers }
     for (const h of HOP_BY_HOP) delete headers[h]
     headers['x-forwarded-for'] = req.socket?.remoteAddress ?? ''
     headers['x-forwarded-host'] = req.headers.host
+    // 代激活得到的 dsh-auth cookie 必须注入，否则容器内 DSH 会回 401。
+    // 关键：**剔除浏览器带来的所有 dsh-auth-*（可能是失效的旧 cookie）**，
+    // 只保留平台现换的那一份 —— 否则旧 cookie 会被原样转发，DSH 回
+    // "dsh web authentication required"（实测踩过）。
+    // 其它 cookie（平台自己的 user_session 等）保留不动。
+    if (authCookie) {
+      headers.cookie = mergeDshAuthCookie(headers.cookie, authCookie)
+    }
 
     const upstream = httpRequest(
       {
@@ -502,13 +795,22 @@ class TenantGateway {
     req.pipe(upstream)
   }
 
-  forwardUpgrade(req, socket, head, internalPort) {
+  forwardUpgrade(req, socket, head, internalPort, authCookie = null) {
+    // 与 forward() 同理：必须**替换**浏览器带来的 dsh-auth-*，不能"有就跳过"。
+    // 而且这里要避免 push 出第二行 `cookie:` —— 两行 cookie 会让容器自行挑一个，
+    // 挑中失效的那份就又是 "dsh web authentication required"。
+    const cookieHeader = mergeDshAuthCookie(req.headers.cookie, authCookie)
+
     const upstream = netConnect(internalPort, '127.0.0.1', () => {
       // 重发 upgrade 请求（WebSocket 握手必须原样，含 Connection/Upgrade 头）
       const lines = []
       for (const [k, v] of Object.entries(req.headers)) {
+        // cookie 单独处理：跳过原始的那一行，改用上面合并后的
+        if (k.toLowerCase() === 'cookie') continue
         lines.push(`${k}: ${Array.isArray(v) ? v.join(', ') : v}`)
       }
+      // 代激活的 dsh-auth cookie 同样要带上（WS 握手也要过 DSH 认证）
+      if (cookieHeader) lines.push(`cookie: ${cookieHeader}`)
       upstream.write(`${req.method} ${req.url} HTTP/1.1\r\n${lines.join('\r\n')}\r\n\r\n`)
       if (head && head.length) upstream.write(head)
       socket.pipe(upstream)
