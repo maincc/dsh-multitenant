@@ -14,6 +14,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import YAML from 'yaml'
 
 const SCRIPT = join(process.cwd(), 'src', 'services', 'merge-credentials.mjs')
 
@@ -189,6 +190,106 @@ describe('merge-credentials.mjs', () => {
         }
       }
       expect(existsSync(file)).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 回归：凭据文件被写坏（线上实测故障）
+//
+// 故障链条：DSH ≥0.1.5 会自己往 .credentials.yaml 写
+// `client-connection/browser-session`（认证 cookie 签名密钥靠它持久化）；
+// 旧实现"整篇解析 → 重新渲染"，把不认识的行当注释收集后**搬到文件开头**，
+// 且 refs 块结束分支缺 continue 导致同一行被 push 两次 → 重复键 /
+// 缩进行跑到文档开头 → YAML 非法 → DSH credentials-local 拒绝加载 →
+// 容器退出 1 → 平台只看到"容器未能就绪"。
+//
+// 用真正的 YAML 解析器断言"文件合法"，因为这就是当时的失败表现。
+// ---------------------------------------------------------------------------
+describe('merge-credentials.mjs：不破坏 DSH 自己写入的内容（回归）', () => {
+  it('保留 DSH 的 client-connection 嵌套块，且位置不被搬到文件开头', () => {
+    const { dir, file } = tmpFile()
+    try {
+      writeFileSync(
+        file,
+        'version: 1\nrefs:\n  DEEPSEEK_API_KEY: "sk-a"\n' +
+          'client-connection:\n  browser-session:\n    signingKey: "deadbeef"\n',
+      )
+
+      run('set', file, 'NEW_KEY', 'sk-new')
+
+      const parsed = YAML.parse(readFileSync(file, 'utf8'))
+      expect(parsed.refs.NEW_KEY).toBe('sk-new')
+      expect(parsed.refs.DEEPSEEK_API_KEY).toBe('sk-a')
+      // 会话签名密钥必须原样活着（丢了就等于强制所有人重新登录）
+      expect(parsed['client-connection']).toEqual({
+        'browser-session': { signingKey: 'deadbeef' },
+      })
+
+      // 位置：嵌套块仍在 refs 之后，没有被搬到文档开头
+      const lines = readFileSync(file, 'utf8').split('\n')
+      const refsAt = lines.findIndex((l) => l === 'refs:')
+      const ccAt = lines.findIndex((l) => l.startsWith('client-connection:'))
+      expect(refsAt).toBeGreaterThanOrEqual(0)
+      expect(ccAt).toBeGreaterThan(refsAt)
+      expect(lines[0]).toBe('version: 1')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('refs 里带连字符的键不再产生重复键（旧实现的双 push 缺陷）', () => {
+    const { dir, file } = tmpFile()
+    try {
+      writeFileSync(file, 'version: 1\nrefs:\n  MY-KEY: "v1"\n')
+
+      run('set', file, 'OK_KEY', 'v2')
+
+      const text = readFileSync(file, 'utf8')
+      const parsed = YAML.parse(text) // 重复键会在这里抛错
+      expect(parsed.refs['MY-KEY']).toBe('v1')
+      expect(parsed.refs.OK_KEY).toBe('v2')
+      // 同一个键只出现一次
+      expect(text.split('\n').filter((l) => l.includes('MY-KEY')).length).toBe(1)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('反复 set 不累积垃圾行（旧实现会把未知/未识别内容越堆越多）', () => {
+    const { dir, file } = tmpFile()
+    try {
+      writeFileSync(
+        file,
+        'version: 1\nrefs:\n  A: "1"\nclient-connection:\n  browser-session:\n    signingKey: "k"\n',
+      )
+
+      run('set', file, 'A', '2')
+      run('set', file, 'A', '3')
+      run('set', file, 'B', '4')
+
+      const lines = readFileSync(file, 'utf8').split('\n')
+      expect(lines.filter((l) => l.startsWith('version:'))).toHaveLength(1)
+      expect(lines.filter((l) => l === 'refs:')).toHaveLength(1)
+      expect(lines.filter((l) => l.startsWith('client-connection:'))).toHaveLength(1)
+      expect(YAML.parse(lines.join('\n')).refs).toEqual({ A: '3', B: '4' })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('裸标量值被规范化为字符串（DSH 要求 refs 值是字符串，123 会变数字）', () => {
+    const { dir, file } = tmpFile()
+    try {
+      writeFileSync(file, 'version: 1\nrefs:\n  NUM_KEY: 123\n  NULL_KEY: null\n')
+
+      run('set', file, 'OTHER', 'x')
+
+      const parsed = YAML.parse(readFileSync(file, 'utf8'))
+      expect(parsed.refs.NUM_KEY).toBe('123')
+      expect(parsed.refs.NULL_KEY).toBe('null')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

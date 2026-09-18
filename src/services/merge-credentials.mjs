@@ -8,21 +8,25 @@
  *   refs:
  *     SOME_API_KEY: "value"
  *
- * 约束严格（credentials-local 校验）：根必须是 `version` + `refs` 映射；
- * `refs` 下每个引用名必须是 POSIX 标识符（^[A-Za-z_][A-Za-z0-9_]*$），
- * 值必须是字符串；空值、非法键、非字符串值都会导致 DSH 拒绝加载整个文件。
+ * 本工具只做**原地最小编辑**：定位 `refs:` 块，只增删改块内的目标条目，
+ * 文件其余内容（注释、其它顶层块、DSH 自己写入的嵌套记录）一律逐字节保留、
+ * 位置不动。
  *
- * 历史上（pre-release）曾使用扁平布局（顶层 KEY: value），当前 DSH 会
- * 拒绝这种文件并提示 "Add version: 1 and nest the existing 1 entry under
- * refs:"。本工具读写一律采用 versioned 嵌套布局；读取到旧扁平文件时
- * 自动迁移为嵌套布局再写回，保证 DSH 每次都能加载。
+ * 为什么必须原地编辑（真实故障）：旧实现是"整篇解析 → 重新渲染"，
+ * 把不认识的行当作注释收集，渲染时又把这些行**搬到文件开头**；且
+ * `inRefs` 结束分支缺少 `continue`，导致同一行被 push 两次 →
+ * 重复键 / 缩进行跑到文档开头 → YAML 非法。
+ * 触发条件很现实：DSH ≥0.1.5 会自己往本文件写
+ * `client-connection/browser-session`（认证 cookie 签名密钥靠它持久化），
+ * 旧解析器不认识这个嵌套块；此后用户只要在「模型配置」保存一次 API Key，
+ * 文件就被写坏 → DSH 启动时 credentials-local 解析失败 → 容器退出 1 →
+ * 平台只能看到"容器未能就绪"。
  *
- * 本工具按行做最小合并，避免引入 YAML 解析依赖，保证：
- *   - set：替换 refs 下已有同键条目，没有则追加（原子写：临时文件 + rename）
- *   - del：删除 refs 下同键条目
- *   - get：只输出 configured / absent（绝不输出值）
- *   - list：只输出所有已配置的引用名（JSON 数组，绝不输出值）
- * 顶层注释行会保留在文件头部。
+ * 约束（credentials-local 校验）：根是 version + refs 映射；refs 值必须是
+ * 字符串。引用名放宽到 ^[A-Za-z_][A-Za-z0-9_.-]*$ —— 键名允许 . 与 -
+ * （旧实现只认 POSIX 标识符，会把合法的 `MY-KEY` 条目当"不认识的行"处理）。
+ *
+ * 原子写：临时文件 + rename，权限 0600。
  *
  * 用法：
  *   node merge-credentials.mjs get <file> <key>            # configured | absent
@@ -37,9 +41,12 @@ const [action, file, key, value] = process.argv.slice(2)
 
 if (!['get', 'set', 'del', 'list'].includes(action) || !file) {
   console.error('usage: node merge-credentials.mjs <get|set|del|list> <file> <key> [value]')
-  process.exit(2)
+  process.exit(1)
 }
-if (action !== 'list' && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+
+/** 引用名：允许 . 与 -（DSH 自己写的键就含连字符） */
+const REF_NAME_RE = /^[A-Za-z_][A-Za-z0-9_.-]*$/
+if (action !== 'list' && !REF_NAME_RE.test(String(key ?? ''))) {
   console.error('invalid credential key: ' + key)
   process.exit(2)
 }
@@ -63,106 +70,137 @@ function yamlUnquote(raw) {
   return s
 }
 
-/** 顶层引用行：KEY: value */
-const REF_RE = /^([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$/
-/** 缩进引用行：  KEY: value（refs 块内） */
-const INDENTED_REF_RE = /^(\s+)([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$/
+/** 顶层 `refs:` 头（可为 `refs:` 或 `refs: {}`） */
+const REFS_HEADER_RE = /^(\s*)refs:\s*(\{\})?\s*$/
+/** 条目行：缩进 + KEY: value */
+const ENTRY_LINE_RE = /^(\s*)([A-Za-z_][A-Za-z0-9_.-]*):[ \t]*(.*?)[ \t]*$/
+/** 顶层 version 行 */
+const VERSION_LINE_RE = /^version:\s*\S/
 
-/**
- * 解析文档为 { entries, comments, hadRefs, hadVersion }。
- * 同时识别两种历史布局，统一收进 entries：
- *   - versioned 嵌套：version: 1 + refs: 块
- *   - pre-release 扁平：顶层 KEY: value
- */
-function parseDocument(text) {
-  const lines = text.split('\n')
-  const entries = new Map()
-  const comments = []
-  let hadRefs = false
-  let hadVersion = false
-  let inRefs = false
-  let refsIndent = 0
+const indentOf = (line) => (line.match(/^\s*/) || [''])[0]
 
-  for (const line of lines) {
-    const trimmed = line.trim()
-    if (trimmed === '') {
-      if (!inRefs) comments.push(line)
-      continue
-    }
-    if (trimmed.startsWith('#')) {
-      comments.push(line)
-      continue
-    }
-    if (!inRefs && /^refs:\s*(\{\})?\s*$/.test(trimmed)) {
-      hadRefs = true
-      inRefs = true
-      refsIndent = line.length - line.trimStart().length
-      continue
-    }
-    if (inRefs) {
-      // refs 块内：缩进的 KEY: value 条目
-      const m = line.match(INDENTED_REF_RE)
-      if (m && line.length - line.trimStart().length > refsIndent) {
-        entries.set(m[2], yamlUnquote(m[3]))
-        continue
-      }
-      // 缩进结束（回到顶层）：退出 refs 块，按顶层行继续处理
-      inRefs = false
-      if (/^\S/.test(line)) refsIndent = 0
-      else comments.push(line)
-    }
-    if (/^version:\s*\S/.test(trimmed)) {
-      hadVersion = true
-      // 渲染时统一输出 version: 1，不保留输入里的 version 行（避免重复）
-      continue
-    }
-    // 顶层引用行（扁平布局或 refs 外的孤儿条目）
-    const top = line.match(REF_RE)
-    if (top) {
-      entries.set(top[1], yamlUnquote(top[2]))
-      continue
-    }
-    comments.push(line)
-  }
-  return { entries, comments, hadRefs, hadVersion }
+function readLines() {
+  if (!existsSync(file)) return []
+  return readFileSync(file, 'utf8').split('\n')
 }
 
-/** 渲染成 versioned 嵌套布局（注释保留在头部） */
-function renderDocument({ entries, comments }) {
-  const out = [...comments]
-  out.push('version: 1')
-  if (entries.size === 0) {
-    out.push('refs: {}')
-  } else {
-    out.push('refs:')
-    for (const [k, v] of entries) {
-      out.push(`${'  '}${k}: ${yamlQuote(v)}`)
-    }
-  }
-  return out.join('\n') + '\n'
-}
-
-function readParsed() {
-  if (!existsSync(file)) return { entries: new Map(), comments: [] }
-  return parseDocument(readFileSync(file, 'utf8'))
-}
-
-function writeParsed(doc) {
+/** 原子写回（保持 0600） */
+function writeLines(lines) {
   const tmp = join(dirname(file), `.${key}.${process.pid}.tmp`)
-  writeFileSync(tmp, renderDocument(doc), { mode: 0o600 })
+  writeFileSync(tmp, lines.join('\n'), { mode: 0o600 })
   renameSync(tmp, file)
 }
 
+/**
+ * 定位顶层 refs 块。
+ * @returns {{headerIndex:number, headerIndent:string, entryIndent:string, endIndex:number}|null}
+ *   endIndex = 块内容结束后的第一行下标（块内 = headerIndex+1 .. endIndex-1）
+ */
+function findRefsBlock(lines) {
+  for (let i = 0; i < lines.length; i++) {
+    if (indentOf(lines[i]) !== '') continue // 必须是顶层
+    const m = lines[i].match(REFS_HEADER_RE)
+    if (!m) continue
+    let end = i + 1
+    let entryIndent = null
+    while (end < lines.length) {
+      const line = lines[end]
+      if (line.trim() === '') break
+      if (indentOf(line) === '') break // 回到顶层 → 块结束
+      if (entryIndent === null) entryIndent = indentOf(line)
+      end++
+    }
+    return {
+      headerIndex: i,
+      headerIndent: '',
+      entryIndent: entryIndent ?? '  ',
+      endIndex: end,
+    }
+  }
+  return null
+}
+
+/** 在块内查找某个键的行号（-1 = 不存在） */
+function findEntryLine(lines, block, name) {
+  for (let i = block.headerIndex + 1; i < block.endIndex; i++) {
+    const m = lines[i].match(ENTRY_LINE_RE)
+    if (m && m[2] === name) return i
+  }
+  return -1
+}
+
+/** 块内已有的条目名（供 del 后判断是否需要写回 `refs: {}`） */
+function entryLinesInBlock(lines, block) {
+  const out = []
+  for (let i = block.headerIndex + 1; i < block.endIndex; i++) {
+    if (ENTRY_LINE_RE.test(lines[i])) out.push(i)
+  }
+  return out
+}
+
+/**
+ * 确保存在顶层 `version: 1`（DSH 只接受 versioned 布局）。
+ * 已存在同名行则原样保留；缺失则插到文件头注释之后。
+ * @returns {number} version 行的下标
+ */
+function ensureVersionLine(lines) {
+  const idx = lines.findIndex((l) => indentOf(l) === '' && VERSION_LINE_RE.test(l.trim()))
+  if (idx >= 0) return idx
+  let at = 0
+  while (at < lines.length && (lines[at].trim() === '' || lines[at].trim().startsWith('#'))) at++
+  lines.splice(at, 0, 'version: 1')
+  return at
+}
+
+/**
+ * 把 refs 块内所有条目行规范化为 `KEY: "value"`。
+ *
+ * 为什么必须规范化：YAML 的裸标量会按类型解析 —— `sk-123` 尚可，但
+ * `123` 会变成数字、`null`/`~` 会变成空值，而 DSH 的 credentials-local
+ * 要求 refs 的值**必须是字符串**，否则拒绝加载整个文件。
+ * 只重写块内条目行，块外内容与行数不变。
+ */
+function normalizeBlockEntries(lines, block) {
+  for (let i = block.headerIndex + 1; i < block.endIndex; i++) {
+    const m = lines[i].match(ENTRY_LINE_RE)
+    if (m) lines[i] = `${m[1]}${m[2]}: ${yamlQuote(yamlUnquote(m[3]))}`
+  }
+}
+
+/**
+ * 读取所有条目（仅用于 get / list）。
+ * 优先 refs 块；兼容历史扁平布局（顶层 KEY: value）。
+ * @returns {Map<string,string>}
+ */
+function readEntries(lines) {
+  const entries = new Map()
+  const block = findRefsBlock(lines)
+  if (block) {
+    for (let i = block.headerIndex + 1; i < block.endIndex; i++) {
+      const m = lines[i].match(ENTRY_LINE_RE)
+      if (m) entries.set(m[2], yamlUnquote(m[3]))
+    }
+    return entries
+  }
+  for (const line of lines) {
+    if (line.trim() === '' || line.trim().startsWith('#')) continue
+    if (VERSION_LINE_RE.test(line.trim())) continue
+    if (indentOf(line) !== '') continue // 只认顶层行
+    const m = line.match(ENTRY_LINE_RE)
+    if (m) entries.set(m[2], yamlUnquote(m[3]))
+  }
+  return entries
+}
+
 if (action === 'get') {
-  const { entries } = readParsed()
-  console.log(entries.has(key) ? 'configured' : 'absent')
+  console.log(readEntries(readLines()).has(key) ? 'configured' : 'absent')
   process.exit(0)
 }
 
 if (action === 'list') {
   // 只输出非空引用名（绝不输出值）
   const refs = []
-  for (const [k, v] of readParsed().entries) {
+  for (const [k, v] of readEntries(readLines())) {
     const s = String(v).trim()
     if (s !== '' && s.toLowerCase() !== 'null') refs.push(k)
   }
@@ -171,19 +209,89 @@ if (action === 'list') {
 }
 
 if (action === 'del') {
-  const doc = readParsed()
-  if (!doc.entries.has(key)) {
+  const lines = readLines()
+  ensureVersionLine(lines)
+  const block = findRefsBlock(lines)
+  if (block) {
+    const idx = findEntryLine(lines, block, key)
+    if (idx === -1) {
+      console.log('absent')
+      process.exit(0)
+    }
+    lines.splice(idx, 1)
+    // 删空后写成 `refs: {}`：空的 `refs:` 会解析成 null，DSH 要求是映射
+    const after = findRefsBlock(lines)
+    if (!after || entryLinesInBlock(lines, after).length === 0) {
+      lines[block.headerIndex] = 'refs: {}'
+    } else {
+      normalizeBlockEntries(lines, after)
+    }
+    writeLines(lines)
+    console.log('deleted')
+    process.exit(0)
+  }
+  // 兼容扁平布局：删掉顶层同键行
+  const flatIdx = lines.findIndex((l) => {
+    const m = l.match(ENTRY_LINE_RE)
+    return m && indentOf(l) === '' && m[2] === key && !VERSION_LINE_RE.test(l.trim())
+  })
+  if (flatIdx === -1) {
     console.log('absent')
     process.exit(0)
   }
-  doc.entries.delete(key)
-  writeParsed(doc)
+  lines.splice(flatIdx, 1)
+  writeLines(lines)
   console.log('deleted')
   process.exit(0)
 }
 
-// action === 'set'
-const doc = readParsed()
-doc.entries.set(key, String(value))
-writeParsed(doc)
-console.log('written')
+// ---- action === 'set' ----
+{
+  const lines = readLines()
+  ensureVersionLine(lines) // DSH 只接受 versioned 布局
+  let block = findRefsBlock(lines)
+
+  if (!block) {
+    // 没有 refs 块：把顶层 KEY: value 行就地归拢成一个 refs 块（兼容旧扁平布局），
+    // 其余行（注释/version/未知内容）位置一律不动。
+    const flatIdx = []
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      if (line.trim() === '' || line.trim().startsWith('#')) continue
+      if (indentOf(line) !== '') continue
+      if (VERSION_LINE_RE.test(line.trim())) continue
+      if (ENTRY_LINE_RE.test(line)) flatIdx.push(i)
+    }
+    if (flatIdx.length > 0) {
+      const entries = flatIdx.map((i) => {
+        const m = lines[i].match(ENTRY_LINE_RE)
+        return `  ${m[2]}: ${yamlQuote(yamlUnquote(m[3]))}`
+      })
+      const first = flatIdx[0]
+      // 从后往前删，避免下标位移
+      for (let k = flatIdx.length - 1; k >= 1; k--) lines.splice(flatIdx[k], 1)
+      lines.splice(first, 1, 'refs:', ...entries)
+    } else {
+      // 空文件 / 只有注释与 version：在 version 之后（或文件末尾）补一个 refs 块
+      const versionIdx = lines.findIndex((l) => indentOf(l) === '' && VERSION_LINE_RE.test(l.trim()))
+      const insertAt = versionIdx >= 0 ? versionIdx + 1 : lines.length
+      lines.splice(insertAt, 0, 'refs:')
+    }
+    block = findRefsBlock(lines)
+  }
+
+  // 既有条目一律规范化为 `KEY: "value"`（保证值是字符串，见 normalizeBlockEntries）
+  normalizeBlockEntries(lines, block)
+  if (/refs:\s*\{\}\s*$/.test(lines[block.headerIndex])) {
+    lines[block.headerIndex] = `${block.headerIndent}refs:`
+  }
+  const idx = findEntryLine(lines, block, key)
+  if (idx >= 0) {
+    lines[idx] = `${indentOf(lines[idx])}${key}: ${yamlQuote(value)}`
+  } else {
+    // 追加到块尾（不插到头部，保持既有条目的相对顺序与最小 diff）
+    lines.splice(block.endIndex, 0, `${block.entryIndent}${key}: ${yamlQuote(value)}`)
+  }
+  writeLines(lines)
+  console.log('written')
+}
