@@ -56,12 +56,17 @@ const DEFAULTS = {
     // 镜像内 DSH 版本的升级/回退管理
     buildContext: '.', // 构建上下文（相对启动目录）；平台自己构建镜像时用
     allowLocalBuild: true, // 允许平台执行 docker build（需要源码树在场）
-    allowPull: true, // 允许 docker pull 现成镜像
+    // 这里曾有一个 allowPull（「允许 docker pull 现成镜像」）开关，但平台
+    // **根本没有 pull 逻辑**（只有构建），没有任何代码读取它，已删除。
     registry: 'https://registry.npmjs.org', // npm registry（版本列表来源）
     versionCacheTtlMs: 600000, // 版本列表缓存 10 分钟（网络调用，不宜每次请求都打）
     npmTimeoutMs: 20000, // npm view 超时
     npmCacheDir: '', // npm view 的缓存目录；留空则自动选可写目录（默认 data/npm-cache）
-    allowPrerelease: false, // 默认不展示 rc/alpha；前端可显式请求包含
+    // 注意：这里曾有一个 allowPrerelease 开关，但它**从未被任何代码读取**
+    // （版本列表始终同时返回 stable 与 prerelease，由前端统一展示）——
+    // 留着会让人以为改它能过滤版本，已删除。真要过滤请在 dsh-version.service
+    // 的 _fetchFromRegistry 之后加过滤。
+    authActivateTimeoutMs: 8000, // DSH 浏览器认证「代激活」请求超时（毫秒）
     // 版本切换前卷快照目录。默认放在平台自己的 data/ 下：它由运行用户创建，
     // 必然可写。原来的 /backup/dsh-multitenant 在多机部署里更合适，但在"普通用户
     // 直接跑在宿主机"的形态下根目录无权创建 → 备份 EPERM → 更新必然失败。

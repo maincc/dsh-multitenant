@@ -8,7 +8,9 @@
     "addresses": [
       "your-admin-address-here"
     ],
-    "comment": "管理员地址列表（小写），只有这些地址可以访问管理页面"
+    "refreshIntervalMs": 15000,
+    "usersCacheTtlMs": 3000,
+    "comment": "管理员地址列表（小写），只有这些地址可以访问管理页面；refreshIntervalMs: 管理端列表页自动刷新间隔（毫秒），只在前台可见时轮询（切后台/切走标签页会停，回前台与切 tab 都会立即刷一次），默认 15000（15 秒），想更省可填 300000（5 分钟），此时用顶栏「刷新」按钮补实时性；usersCacheTtlMs: 列表接口的服务端短缓存（毫秒），多个管理员/标签页共享一次 docker 采样，任何状态写入都会立即失效它，默认 3000"
   },
   "cleanup": {
     "stopTimeoutMs": 900000,
@@ -36,7 +38,7 @@
     "enabled": true,
     "ttlMs": 300000,
     "allowCwtEnt": false,
-    "comment": "CWT 申请-审批-出示：enabled 开关；ttlMs 出示 token 全局时效（毫秒，用于申请/出示时的防重放窗口）；审批时只复核签名、不校验时效（人工审批延迟不应失败）；allowCwtEnt CWT_ENT 组形态预留（本期关闭）"
+    "comment": "CWT 申请-审批-出示：enabled 开关；ttlMs 出示 token 全局时效（毫秒，用于申请/出示时的防重放窗口）；审批时只复核签名、不校验时效（人工审批延迟不应失败）；allowCwtEnt: 预留字段——当前代码无任何实现，改它不会有效果（CWT_ENT 组形态尚未开发）"
   },
   "skills": {
     "autoInvoke": false,
@@ -46,11 +48,6 @@
     "1": { "label": "基础", "memory": "512m", "disk": "1g", "cpus": "1.0", "pids": 256 },
     "2": { "label": "增强", "memory": "1g", "disk": "2g", "cpus": "2.0", "pids": 512 },
     "3": { "label": "高性能", "memory": "2g", "disk": "4g", "cpus": "4.0", "pids": 1024 }
-  },
-  "admin": {
-    "refreshIntervalMs": 15000,
-    "usersCacheTtlMs": 3000,
-    "comment": "refreshIntervalMs: 管理端列表页的自动刷新间隔（毫秒）。只在前台可见时轮询（切后台/切走标签页会停，回到前台立即刷一次，切 tab 也立即刷一次）；默认 15000（15 秒），想更省可填 300000（5 分钟）——此时用页面顶部的「刷新」按钮补实时性。usersCacheTtlMs: 列表接口的服务端短缓存（毫秒），多个管理员/多个标签页共享一次 docker 采样；任何状态写入都会立即失效它，默认 3000"
   },
   "docker": {
     "image": "dsh-multitenant:latest",
@@ -62,14 +59,14 @@
   "dsh": {
     "buildContext": ".",
     "allowLocalBuild": true,
-    "allowPull": true,
+    
     "registry": "https://registry.npmjs.org",
     "versionCacheTtlMs": 600000,
     "npmCacheDir": "",
     "npmTimeoutMs": 20000,
-    "allowPrerelease": false,
+    "authActivateTimeoutMs": 8000,
     "backupDir": "",
     "backupBeforeApply": true,
-    "comment": "DSH 版本升级/回退（管理端 /admin）。buildContext: docker build 上下文（相对项目根），需含 Dockerfile；allowLocalBuild: 允许平台自己构建镜像（需服务器有完整源码树）；allowPull: 允许拉取现成镜像；registry: 版本列表来源 npm registry；versionCacheTtlMs: 版本列表缓存时长（毫秒，默认 10 分钟）；npmTimeoutMs: npm view 超时（毫秒）；npmCacheDir: npm view 缓存目录（留空自动用 data/npm-cache，规避宿主 ~/.npm 不可写导致的 EPERM）；allowPrerelease: 默认是否展示 rc/alpha 等预发布版本（DSH 版本决定容器内安全边界，建议保持 false）；backupDir: 切换版本前卷快照目录（留空=平台 data/backups，运行用户必然可写；填绝对路径如 /backup/dsh-multitenant 需该目录可写，不可写会自动降级）；backupBeforeApply: 应用镜像前强制备份租户卷（强烈建议保持 true——版本间可能有存储格式差异，这是唯一可能真丢数据的风险点）"
+    "comment": "DSH 版本升级/回退（管理端 /admin）。buildContext: docker build 上下文（相对项目根），需含 Dockerfile；allowLocalBuild: 允许平台自己构建镜像（需服务器有完整源码树）；registry: 版本列表来源 npm registry；versionCacheTtlMs: 版本列表缓存时长（毫秒，默认 10 分钟）；npmTimeoutMs: npm view 超时（毫秒）；npmCacheDir: npm view 缓存目录（留空自动用 data/npm-cache，规避宿主 ~/.npm 不可写导致的 EPERM）；authActivateTimeoutMs: DSH 浏览器认证「代激活」请求超时（毫秒，默认 8000）——容器刚重启、launch token 还没打印时可能超时，网络慢可调大；backupDir: 切换版本前卷快照目录（留空=平台 data/backups，运行用户必然可写；填绝对路径如 /backup/dsh-multitenant 需该目录可写，不可写会自动降级）；backupBeforeApply: 应用镜像前强制备份租户卷（强烈建议保持 true——版本间可能有存储格式差异，这是唯一可能真丢数据的风险点）"
   }
 }
