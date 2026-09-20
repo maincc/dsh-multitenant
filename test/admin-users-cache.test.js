@@ -26,7 +26,17 @@ vi.mock('../src/services/docker.service.js', () => ({
   },
 }))
 vi.mock('../src/services/data.service.js', () => ({
-  dataService: { saveState: vi.fn(), loadState: vi.fn(() => ({})), saveUserSessions: vi.fn() },
+  dataService: {
+    saveState: vi.fn(),
+    loadState: vi.fn(() => ({})),
+    saveUserSessions: vi.fn(),
+    // 管理会话解析会用到（缺了会让 /api/stats 报 loadUserSessions is not a function）
+    loadUserSessions: vi.fn(() => ({})),
+    loadSessions: vi.fn(() => ({})),
+    saveSessions: vi.fn(),
+    getAdminConfig: vi.fn(() => ({ addresses: [], history: [], updatedAt: null })),
+    saveAdminConfig: vi.fn(),
+  },
 }))
 vi.mock('../src/services/tenant-proxy.service.js', () => ({
   tenantGateway: {
@@ -95,5 +105,46 @@ describe('管理端列表：短 TTL 缓存', () => {
     await userService.getAllUsers()
     // 没有 running 租户 → 传空列表（批量函数自身也不会执行 docker 命令）
     expect(dockerService.getContainerStatsMany).toHaveBeenCalledWith([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// /api/stats 下发 uiConfig.refreshIntervalMs
+//
+// 前端用它设定轮询间隔，从而做到「改 config.json 后只需重启服务，
+// 不必重新构建前端」。这里锁住路由确实把它带出来了。
+// ---------------------------------------------------------------------------
+describe('/api/stats：下发管理端刷新间隔', () => {
+  it('响应里带 uiConfig.refreshIntervalMs（默认 15000）', async () => {
+    const { handleAdminRoutes } = await import('../src/routes/admin.routes.js')
+    const { adminSessionStore } = await import('../src/middleware/auth.middleware.js')
+    const { CONFIG } = await import('../src/config/config.js')
+    const { createHash } = await import('node:crypto')
+
+    // 用真实配置里的管理员地址，避免写死一个不在名单里的地址（会被 403）
+    const adminAddr = (CONFIG.admin?.addresses ?? [])[0]
+    expect(adminAddr, 'config.json 需要至少一个管理员地址').toBeTruthy()
+    const token = 'ab'.repeat(32)
+    adminSessionStore.sessions[createHash('sha256').update(token).digest('hex')] = {
+      address: adminAddr,
+      expiresAt: Date.now() + 3600_000,
+    }
+    const res = {
+      statusCode: 0,
+      headers: {},
+      body: '',
+      writeHead(c, h) {
+        this.statusCode = c
+        Object.assign(this.headers, h ?? {})
+      },
+      end(b) {
+        this.body = b ?? ''
+      },
+    }
+    const req = { method: 'GET', headers: { cookie: `admin_session=${token}` }, socket: {} }
+
+    await handleAdminRoutes(req, res, '/api/stats', new URL('http://127.0.0.1:8090/api/stats'))
+    const body = JSON.parse(res.body)
+    expect(body.uiConfig.refreshIntervalMs).toBeGreaterThanOrEqual(3000)
   })
 })
