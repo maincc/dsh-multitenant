@@ -364,8 +364,10 @@ describe('resolveTenantCapability：不盲目沿用过期快照', () => {
 
 describe('租户网关：按 DSH 版本能力分岔', () => {
   let publicPort
+  let publicPortSeq = 0
   /** 端口池：同一文件内多个网关用例各自独占，避免 TIME_WAIT 复用 */
-  let internalPort = 39800
+  // 38xxx：未被其它测试文件占用，且低于 macOS 临时端口段（49152 起）
+  let internalPort = 38100
   const OLD_CAP = { requiresToken: false, version: '0.1.1-rc.2' }
   const NEW_CAP = { requiresToken: true, version: '0.1.5-rc.1', tokenAuthSince: '0.1.2-alpha.2' }
 
@@ -385,7 +387,11 @@ describe('租户网关：按 DSH 版本能力分岔', () => {
   }
 
   beforeEach(() => {
-    publicPort = 39500 + Math.floor(Math.random() * 300)
+    // 端口要避两件事：① 其它测试文件也在用的 39xxx/40xxx 段（并行跑会撞车）；
+    // ② macOS 临时端口段 49152+（listen(0) 拿到的端口会被并行进程抢走）。
+    // 这里用未被占用的 37xxx 且逐用例递增 —— 随机取值会在同文件内撞车。
+    publicPortSeq += 1
+    publicPort = 37100 + publicPortSeq
   })
 
   afterEach(() => {

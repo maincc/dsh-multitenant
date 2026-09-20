@@ -114,3 +114,38 @@ describe('quarantineVolumeFile：隔离卷内损坏文件', () => {
     expect(await dockerService.quarantineVolumeFile('v', '.credentials.yaml')).toBeNull()
   })
 })
+
+// ---------------------------------------------------------------------------
+// ensureDshWorkspace：补建 DSH 会话的默认工作目录
+//
+// 根因（本地实测复现）：DSH 新建会话的 cwd 默认是 $HOME/workspace
+// （本镜像 /root/workspace）。该目录不存在时，bash 工具的沙箱以它作为
+// spawn 的 cwd —— Node 在 cwd 不存在时也抛 ENOENT，而报错文案是
+//     Error: spawn bwrap ENOENT
+// 于是被误判成"bwrap 没装"（DSH 自己的提示也是这么说的），实际 bwrap 正常，
+// 只是容器内【所有】bash 命令都失败。镜像已内置该目录，平台再兜一层。
+// ---------------------------------------------------------------------------
+describe('ensureDshWorkspace：补建会话工作目录', () => {
+  it('执行 docker exec <name> mkdir -p /root/workspace', async () => {
+    execFile.mockImplementation((cmd, args, opts, cb) => cb(null, '', ''))
+    const ok = await dockerService.ensureDshWorkspace('dsh-swtc-x')
+    expect(ok).toBe(true)
+    expect(execFile.mock.calls.at(-1)[1]).toEqual([
+      'exec',
+      'dsh-swtc-x',
+      'mkdir',
+      '-p',
+      '/root/workspace',
+    ])
+  })
+
+  it('失败只记日志并返回 false（绝不影响容器启动）', async () => {
+    execFile.mockImplementation((cmd, args, opts, cb) =>
+      cb(Object.assign(new Error('No such container'), { stderr: 'No such container' }), '', ''),
+    )
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const ok = await dockerService.ensureDshWorkspace('dsh-swtc-gone')
+    expect(ok).toBe(false)
+    expect(warn).toHaveBeenCalled()
+  })
+})

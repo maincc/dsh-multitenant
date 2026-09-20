@@ -470,6 +470,9 @@ export class UserService {
       }
     }
 
+    // 确保 DSH 会话的默认工作目录存在（同 finalizeTenant：缺它 bash 全线失败）
+    await dockerService.ensureDshWorkspace(name)
+
     // 恢复网关监听（进程重启后外部端口需要重新接管）
     // bind 可能失败（端口被宿主其他程序占用）——必须上报，否则用户拿到连不上的 URL
     try {
@@ -1472,6 +1475,11 @@ export class UserService {
         )
       }
     }
+
+    // ①″ 确保 DSH 会话的默认工作目录存在（/root/workspace）。
+    //     缺它会让 bash 沙箱的 spawn 因 cwd 不存在抛 ENOENT，且报错被误写成
+    //     `spawn bwrap ENOENT`（容器内所有 bash 命令都会失败）。
+    await dockerService.ensureDshWorkspace(name)
 
     // ①′ 记录该容器所用镜像的 DSH 版本与能力（缓存过，命中不产生 docker 开销）。
     //    为什么在收尾时记录：容器一旦创建就固定引用某个镜像，版本随之固定；

@@ -32,6 +32,8 @@ vi.mock('../src/services/docker.service.js', () => ({
     // 启动自愈路径会用到（凭据文件损坏 → 隔离 + 重启一次）
     containerDiagnostics: vi.fn(),
     quarantineVolumeFile: vi.fn(),
+    // 就绪后会补建 DSH 会话工作目录
+    ensureDshWorkspace: vi.fn(),
     publishedPort: vi.fn(),
     waitReady: vi.fn(),
     imageCapability: vi.fn(),
@@ -286,6 +288,8 @@ describe('restartContainer：容器已不存在的漂移场景', () => {
 
     expect(dockerService.restartContainer).toHaveBeenCalledWith(NAME)
     expect(spy).not.toHaveBeenCalled()
+    // 重启路径也要补建会话工作目录（同 finalizeTenant）
+    expect(dockerService.ensureDshWorkspace).toHaveBeenCalledWith(NAME)
   })
 })
 

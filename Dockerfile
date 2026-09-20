@@ -31,6 +31,19 @@ RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debia
   && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
+# DSH 会话的默认工作目录必须存在
+# ---------------------------------------------------------------------------
+# DSH 新建会话时 cwd 默认取 $HOME/workspace（本镜像 HOME=/root → /root/workspace）。
+# 该目录不存在时，bash 工具的沙箱以它作为 spawn 的 cwd，Node 会因 cwd 不存在
+# 抛 ENOENT —— 而报错文案是 `spawn bwrap ENOENT`，于是被误判成"bwrap 没装"
+# （DSH 自己也这么提示），实际 bwrap 一直好好的：
+#     spawn('bwrap', …, {cwd:'/root/workspace'}) → ENOENT  syscall=spawn bwrap
+#     spawn('bwrap', …, {cwd:'/srv'})            → 成功
+#     mkdir -p /root/workspace 后                  → 沙箱正常运行
+# 结果是容器里【所有】bash 命令都失败。镜像内置该目录即可根治。
+RUN mkdir -p /root/workspace
+
+# ---------------------------------------------------------------------------
 # 运行时环境变量
 # ---------------------------------------------------------------------------
 # DSH_HOME：DSH 把 settings / credentials / sessions / storages 全部放在

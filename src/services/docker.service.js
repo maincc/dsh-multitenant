@@ -894,6 +894,29 @@ export class DockerService {
   }
 
   /**
+   * 确保 DSH 会话的默认工作目录存在（幂等，失败只记日志）。
+   *
+   * 为什么需要：DSH 新建会话时 cwd 默认取 $HOME/workspace（本镜像 /root/workspace）。
+   * 该目录不存在时，bash 工具的沙箱以它作为 spawn 的 cwd —— Node 在 cwd 不存在时
+   * 也抛 ENOENT，而报错文案是 `spawn bwrap ENOENT`，于是被误判成"bwrap 没装"
+   * （连 DSH 自己都这么提示），实际容器里所有 bash 命令都会失败。
+   * 镜像已内置该目录（Dockerfile），这里再兜一层：老镜像建的容器也能自愈。
+   *
+   * @param {string} name 容器名
+   * @param {string} [dir] 工作目录
+   * @returns {Promise<boolean>} 是否成功（失败不影响容器启动）
+   */
+  async ensureDshWorkspace(name, dir = '/root/workspace') {
+    try {
+      await sh('docker', ['exec', name, 'mkdir', '-p', dir])
+      return true
+    } catch (err) {
+      console.warn(`[docker] 创建 ${dir} 失败（容器 ${name}）：${err.message}`)
+      return false
+    }
+  }
+
+  /**
    * 隔离卷内某个文件：改名成 `<文件名>.broken-<时间戳>`，返回新路径。
    *
    * 用途：容器内 DSH 因配置文件损坏而起不来时的自愈 —— 把坏文件挪开，让 DSH

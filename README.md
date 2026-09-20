@@ -436,6 +436,7 @@ cookie 转发进容器，纵深防御尚未收口。
 30. **「启动容器」提示成功但状态仍是「已销毁」** - 前端 `restartContainer` 走 `/connect` 后**完全不检查 HTTP 状态**，容器创建失败时后端回 502（未就绪/内部错误）、202（额度用尽或排队）、503（队列满），前端一律弹「启动成功」，于是出现「提示启动了、状态却还是已销毁」——真实原因被吞掉。已改为检查 `res.ok`，失败时把后端的 `message/error` 展示出来（「进入 DSH」本来就有检查，只有这一处漏了）
 31. **凭据文件被搅乱的结构继续被写入** - 实测真实损坏形态：DSH 的 `records:` 块被塞进 `refs:` 内部（`records: ""` 却带更深子级）→ DSH 完全起不来。本工具是按行编辑，遇到这种输入只能尽力而为。已加**写入前结构自检（fail closed）**：找不到顶层 refs、refs 内有重复键、单行标量条目却跟着更深子行、出现无法识别的行 → **拒绝写入并报错**，绝不二次破坏（文件保持原样）
 32. **「保存 Key」写坏凭据文件的真正根因** - DSH 在没有 API Key 时写的文件是 `version: 1` + `records:`（**没有 `refs:` 块**）。而「旧扁平布局迁移」把 `records:` —— 一个**块头**（自身无值、后面跟更深子级）—— 误当成凭据条目迁进 refs，其子级随即成为 refs 下的孤儿 → 文件损坏 → DSH 起不来（容器 120s 不就绪 → 回滚 → 界面「已销毁」；保存 Key 的接口则因第 31 条的 fail-closed 自检而报「拒绝写入」）。已修：只有**值非空的顶层标量行**才算旧扁平凭据条目，块头及其子级一律原样保留。这条才是「填 Key 反而坏文件」的根因
+33. **容器里所有 bash 命令报 `Error: spawn bwrap ENOENT`（本地/线上都有）** - 报错文案是**误导**：bwrap 一直好好的，真因是 **DSH 会话的默认工作目录 `/root/workspace`（= `$HOME/workspace`）在镜像里不存在**。bash 工具的沙箱以该目录作为 `spawn` 的 cwd，而 **Node 在 cwd 不存在时同样抛 ENOENT**，报错文案却是 `spawn bwrap ENOENT` —— 于是被误判成「bwrap 没装」（连 DSH 自己的提示都这么说）。本地精确复现：`spawn('bwrap', …, {cwd:'/root/workspace'})` → `ENOENT syscall=spawn bwrap`；换成存在的 `/srv` → 正常；`mkdir -p /root/workspace` 后 → 沙箱正常运行且可写。已修：镜像内置该目录（Dockerfile），平台在容器就绪后（finalizeTenant / restartContainer）再 `mkdir -p` 兜一层，老镜像建的容器也能自愈
 
 ## 🧹 空闲清理机制（不会误停正在干活的容器）
 

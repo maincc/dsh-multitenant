@@ -47,6 +47,8 @@ beforeEach(() => {
   vi.spyOn(dockerService, 'containerDiagnostics').mockResolvedValue(
     '[诊断] status=exited exit=1 oom=false memLimit=536870912',
   )
+  // 就绪后会 mkdir /root/workspace：stub 掉，别在测试里真跑 docker exec
+  vi.spyOn(dockerService, 'ensureDshWorkspace').mockResolvedValue(true)
   // finalizeTenant 会记录镜像能力（网关据此决定放行/拒绝）：
   // 默认给"老版本、不需要认证"→ 让这些测试专注收尾顺序本身
   vi.spyOn(dockerService, 'imageCapability').mockResolvedValue({
@@ -92,6 +94,9 @@ describe('finalizeTenant：成功路径', () => {
     expect(userService.state.swtcUsers[ADDR].baseImageVersion).toBe('0.1.1-rc.2')
     expect(userService.state.swtcUsers[ADDR].stoppedAt).toBeUndefined()
     expect(dataService.saveState).toHaveBeenCalled()
+    // 会话工作目录必须补建（缺它容器内所有 bash 命令都会以
+    // `spawn bwrap ENOENT` 失败）
+    expect(dockerService.ensureDshWorkspace).toHaveBeenCalledWith(NAME)
   })
 
   it('先 waitReady 再 listen 再落盘：顺序不可颠倒', async () => {
