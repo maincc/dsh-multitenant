@@ -308,6 +308,9 @@ describe('merge-credentials.mjs：不破坏 DSH 自己写入的内容（回归�
 // 约束：只对**完整单行裸标量**补引号；跨行折叠值原样保留；替换/删除条目时
 // 必须连续行一起处理。
 // ---------------------------------------------------------------------------
+// 注：本文件的 fixture 值一律使用明显的占位符（TEST-ONLY / NOT-A-REAL-KEY）。
+// 切勿把真实密钥/会话 secret 写进测试 —— 会被 GitHub Push Protection 拦下，
+// 且一旦推送就永久留在历史里。
 describe('merge-credentials.mjs：多行折叠值（回归）', () => {
   const MULTILINE =
     'version: 1\n' +
