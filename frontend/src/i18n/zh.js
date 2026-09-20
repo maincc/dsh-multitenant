@@ -380,6 +380,7 @@ export default {
     marketHint: '发现并安装其他用户共享的技能',
     searchPlaceholder: '搜索技能名 / 描述…',
     refresh: '🔄 刷新',
+    refreshAuto: '每 {n} 秒自动刷新（可在 config.json 的 admin.refreshIntervalMs 调整）',
     noCcdao: '未检测到 CCDAO 插件，无法安装技能（浏览不受影响）。请先安装',
     noCcdaoTail: '。',
     browseNoLogin: '💡 浏览无需登录；',

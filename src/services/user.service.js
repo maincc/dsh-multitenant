@@ -184,6 +184,8 @@ function todayStr() {
 }
 
 export class UserService {
+  /** 管理端列表的短 TTL 缓存：{ at, data }；由 _saveState 失效 */
+  _usersCache = { at: 0, data: null }
   constructor() {
     this.state = dataService.loadState()
     this.state.usages = this.state.usages || {} // 每日使用时长记录 { address: { date, minutes } }
@@ -456,7 +458,7 @@ export class UserService {
       lastSeenAt: Date.now(),
       containerStatus: 'running',
     }
-    dataService.saveState(this.state)
+    this._saveState()
 
     // 等待容器完全就绪
     const ready = await dockerService.waitReady(internalPort, undefined, {
@@ -568,7 +570,7 @@ export class UserService {
           internalPort: prev.internalPort ?? null,
           containerStatus: 'running',
         }
-        dataService.saveState(this.state)
+        this._saveState()
       } catch (err) {
         console.error(`[startup] ${address} 保存状态失败:`, err.message)
       }
@@ -645,7 +647,7 @@ export class UserService {
       }
     }
 
-    dataService.saveState(this.state)
+    this._saveState()
 
     // 5. 立即重建全新容器（重置 = 清空后重新开始，一步到位；返回新端口供前端直接跳转）
     let newPort = null
@@ -756,7 +758,7 @@ export class UserService {
     }
     if (reclaimed > 0) {
       this.state.availablePorts.sort((a, b) => a - b)
-      dataService.saveState(this.state)
+      this._saveState()
     }
     return reclaimed
   }
@@ -816,7 +818,7 @@ export class UserService {
           `[usage-limit] ${address} reached ${limit}min daily limit, container stopped (grace ${grace}s)`,
         )
       }
-      if (changed) dataService.saveState(this.state)
+      if (changed) this._saveState()
     } finally {
       this._usageCheckRunning = false
     }
@@ -887,7 +889,7 @@ export class UserService {
           console.error(`[monitor] auto-upgrade failed for ${address}:`, err.message)
         }
       }
-      if (changed) dataService.saveState(this.state)
+      if (changed) this._saveState()
     } finally {
       this._monitorRunning = false
     }
@@ -982,7 +984,7 @@ export class UserService {
       if (driftUser && driftUser.containerStatus !== 'destroyed') {
         driftUser.containerStatus = 'stopped'
         driftUser.stoppedAt = Date.now()
-        dataService.saveState(this.state)
+        this._saveState()
       }
       console.log(`[user-stop] ${address} container already absent (state aligned)`)
       return { ok: true, address, status: 'already_stopped' }
@@ -1001,7 +1003,7 @@ export class UserService {
     if (user) {
       user.containerStatus = 'stopped'
       user.stoppedAt = Date.now()
-      dataService.saveState(this.state)
+      this._saveState()
     }
     console.log(`[user-stop] ${address} container stopped by user (data preserved)`)
     return { ok: true, address, status: 'stopped' }
@@ -1022,7 +1024,7 @@ export class UserService {
       if (driftUser && driftUser.containerStatus !== 'destroyed') {
         driftUser.containerStatus = 'stopped'
         driftUser.stoppedAt = Date.now()
-        dataService.saveState(this.state)
+        this._saveState()
       }
       return { ok: true, address, status: 'already_stopped' }
     }
@@ -1031,7 +1033,7 @@ export class UserService {
       // 已经停止了，直接更新状态
       if (this.state.swtcUsers?.[address]) {
         this.state.swtcUsers[address].containerStatus = 'stopped'
-        dataService.saveState(this.state)
+        this._saveState()
       }
       return { ok: true, address, status: 'already_stopped' }
     }
@@ -1046,7 +1048,7 @@ export class UserService {
     if (this.state.swtcUsers?.[address]) {
       this.state.swtcUsers[address].containerStatus = 'stopped'
       this.state.swtcUsers[address].stoppedAt = Date.now()
-      dataService.saveState(this.state)
+      this._saveState()
     }
 
     console.log(`[force-stop] ${address} container stopped by admin`)
@@ -1093,7 +1095,7 @@ export class UserService {
       }
       this.state.swtcUsers[address].containerStatus = 'destroyed'
       delete this.state.swtcUsers[address].internalPort // 重建时会分配新的内部端口
-      dataService.saveState(this.state)
+      this._saveState()
     }
 
     return { ok: true, address, volumeDeleted: volume }
@@ -1146,11 +1148,52 @@ export class UserService {
   /**
    * 获取所有用户列表
    */
-  async getAllUsers() {
+  /**
+   * 管理端列表（带短 TTL 缓存）。
+   *
+   * 为什么加缓存：管理端每轮刷新都要为每个 running 租户跑一次 docker 采样，
+   * 而多个管理员/多个标签页会**各自**触发一遍 → docker CLI 被打爆。
+   * 缓存只活几秒（默认 3s），且任何状态写入都会立即失效（见 _saveState），
+   * 所以「管理员点完按钮看到旧状态」不会发生。
+   *
+   * @param {{force?: boolean}} [opts] force=true 跳过缓存
+   */
+  async getAllUsers({ force = false } = {}) {
+    const ttl = Number(CONFIG.admin?.usersCacheTtlMs ?? 3000)
+    const cached = this._usersCache
+    if (!force && cached?.data && Date.now() - cached.at < ttl) {
+      return cached.data
+    }
+    const data = await this._computeAllUsers()
+    this._usersCache = { at: Date.now(), data }
+    return data
+  }
+
+  /** 让列表缓存立即失效 */
+  invalidateUsersCache() {
+    this._usersCache = { at: 0, data: null }
+  }
+
+  /**
+   * 状态落盘 + 列表缓存失效。所有 saveState 统一走这里 ——
+   * 少挂一处就会让管理员点完按钮看到旧状态。
+   */
+  _saveState() {
+    this.invalidateUsersCache()
+    dataService.saveState(this.state)
+  }
+
+  async _computeAllUsers() {
     const users = this.state.swtcUsers || {}
 
     // 检查 Docker 是否可用
     const dockerAvailable = await dockerService.isDockerAvailable()
+
+    // 只对 running 的租户批量取一次 stats（一次 docker 进程拿全部，替 N 次）
+    const runningNames = Object.entries(users)
+      .filter(([, u]) => dockerAvailable && u.containerStatus === 'running')
+      .map(([address]) => swtcContainerName(address))
+    const statsMap = await dockerService.getContainerStatsMany(runningNames)
 
     return Promise.all(
       Object.entries(users).map(async ([address, user]) => {
@@ -1159,7 +1202,7 @@ export class UserService {
 
         // 只有 Docker 可用时才查询实时状态
         if (dockerAvailable && user.containerStatus === 'running') {
-          stats = await dockerService.getContainerStats(swtcContainerName(address))
+          stats = statsMap.get(swtcContainerName(address)) ?? null
           // 如果获取 stats 失败，可能容器实际已停止
           if (!stats) {
             actualStatus = 'unknown'
@@ -1527,7 +1570,7 @@ export class UserService {
         ...capFields,
         ...healFields,
       }
-      dataService.saveState(this.state)
+      this._saveState()
       throw new Error(`网关端口 ${port} 绑定失败（该端口可能被宿主其他程序占用）：${err.message}`)
     }
 
@@ -1545,7 +1588,7 @@ export class UserService {
       ...healFields,
     }
     delete this.state.swtcUsers[address].stoppedAt
-    dataService.saveState(this.state)
+    this._saveState()
     return port
   }
 
@@ -1577,7 +1620,7 @@ export class UserService {
       }
       delete this.state.swtcUsers[address].stoppedAt
       delete this.state.swtcUsers[address].usageStartedAt
-      dataService.saveState(this.state)
+      this._saveState()
     }
   }
 
@@ -1726,7 +1769,7 @@ export class UserService {
         }
         if (!dryRun) {
           this.state.swtcUsers[address] = { ...user, pinnedImage: targetImage }
-          dataService.saveState(this.state)
+          this._saveState()
         }
         return {
           skipped: true,
@@ -1849,7 +1892,7 @@ export class UserService {
       lastDshVersion: user.baseImageVersion ?? null,
     }
     delete this.state.swtcUsers[address].usageStartedAt
-    dataService.saveState(this.state)
+    this._saveState()
 
     // ⑤ 重建容器（ensureContainer 会复用记录里的 port → 对外 URL 不变）
     let newPort
@@ -1877,7 +1920,7 @@ export class UserService {
       pinnedImage: targetImage,
       versionChangedAt: Date.now(),
     }
-    dataService.saveState(this.state)
+    this._saveState()
 
     console.log(
       `[apply] ${address} rebuilt on image ${imageId} (dsh ${targetVersion ?? 'unknown'}), port ${newPort}`,
@@ -1912,7 +1955,7 @@ export class UserService {
         tier,
         lastUpgradeAt: Date.now(),
       }
-      dataService.saveState(this.state)
+      this._saveState()
       console.log(
         `[upgrade] ${address} container absent: tier ${tier} (${limits.label}) 已记录，下次创建生效`,
       )
@@ -1941,7 +1984,7 @@ export class UserService {
       lastSeenAt: Date.now(),
       usageStartedAt: Date.now(), // 升级重启 = 新的运行段
     }
-    dataService.saveState(this.state)
+    this._saveState()
 
     console.log(
       `[upgrade] ${address} upgraded to tier ${tier} (${limits.label}), container restarted`,
@@ -2001,7 +2044,7 @@ export class UserService {
         this.state.availablePorts.sort((a, b) => a - b)
       }
 
-      dataService.saveState(this.state)
+      this._saveState()
       console.log(
         `[destroy] ${address} completely removed, port ${port} recycled, volume ${volumeStatus}`,
       )
@@ -2018,7 +2061,7 @@ export class UserService {
       if (user.port) tenantGateway.close(user.port)
       user.containerStatus = 'destroyed'
       delete user.internalPort // 重建时会分配新的内部端口
-      dataService.saveState(this.state)
+      this._saveState()
       return { ok: true, address, status: 'destroyed', volume: swtcVolumeName(address) }
     }
   }
@@ -2280,7 +2323,7 @@ export class UserService {
         user.stoppedAt = user.stoppedAt ?? Date.now()
       }
     }
-    dataService.saveState(this.state)
+    this._saveState()
   }
 
   /**
@@ -2499,7 +2542,7 @@ export class UserService {
     }
 
     if (changed) {
-      dataService.saveState(this.state)
+      this._saveState()
     }
   }
 

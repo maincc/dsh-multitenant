@@ -479,7 +479,9 @@ export async function handleAdminRoutes(req, res, path, url) {
   if (path === '/api/users') {
     if (!requireAdmin(req, res)) return
     try {
-      const users = await userService.getAllUsers()
+      // force=1：跳过服务端短缓存 —— 手动刷新与写操作后必须拿到最新
+      const force = url.searchParams.get('force') === '1'
+      const users = await userService.getAllUsers({ force })
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify({ users, tiers: CONFIG.tiers }))
     } catch (err) {
@@ -493,7 +495,16 @@ export async function handleAdminRoutes(req, res, path, url) {
     if (!requireAdmin(req, res)) return
     const stats = userService.getStats()
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-    res.end(JSON.stringify(stats))
+    // uiConfig 随 stats 一起下发：前端用它设定轮询间隔，改 config.json 只需重启服务，
+    // 不必重新构建前端。（refreshIntervalMs 默认 15000，可填 300000 = 5 分钟）
+    res.end(
+      JSON.stringify({
+        ...stats,
+        uiConfig: {
+          refreshIntervalMs: Number(CONFIG.admin?.refreshIntervalMs ?? 15000),
+        },
+      }),
+    )
     return true
   }
 

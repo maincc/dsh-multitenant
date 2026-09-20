@@ -47,6 +47,11 @@
     "2": { "label": "增强", "memory": "1g", "disk": "2g", "cpus": "2.0", "pids": 512 },
     "3": { "label": "高性能", "memory": "2g", "disk": "4g", "cpus": "4.0", "pids": 1024 }
   },
+  "admin": {
+    "refreshIntervalMs": 15000,
+    "usersCacheTtlMs": 3000,
+    "comment": "refreshIntervalMs: 管理端列表页的自动刷新间隔（毫秒）。只在前台可见时轮询（切后台/切走标签页会停，回到前台立即刷一次，切 tab 也立即刷一次）；默认 15000（15 秒），想更省可填 300000（5 分钟）——此时用页面顶部的「刷新」按钮补实时性。usersCacheTtlMs: 列表接口的服务端短缓存（毫秒），多个管理员/多个标签页共享一次 docker 采样；任何状态写入都会立即失效它，默认 3000"
+  },
   "docker": {
     "image": "dsh-multitenant:latest",
     "basePort": 31000,

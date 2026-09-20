@@ -69,7 +69,17 @@ const DEFAULTS = {
     backupDir: join(ROOT, 'data', 'backups'),
     backupBeforeApply: true, // 应用镜像/切换版本前强制备份租户卷
   },
-  admin: { addresses: [] },
+  admin: {
+    addresses: [],
+    // 管理端列表页的自动刷新间隔（毫秒）。只在前台可见时轮询：切到后台会停、
+    // 回到前台立即刷一次、切 tab 也立即刷一次。
+    // 15000 = 15 秒（默认）；想更省可填 300000（5 分钟），此时靠手动「刷新」补实时性。
+    refreshIntervalMs: 15000,
+    // 列表接口的服务端短缓存（毫秒）：多个管理员/多个标签页共享一次 docker 采样，
+    // 避免「每个标签页各自每 15 秒」把 docker CLI 打爆。
+    // 任何状态写入都会立即失效它（见 user.service 的 _saveState）。
+    usersCacheTtlMs: 3000,
+  },
 }
 
 export function loadConfig() {

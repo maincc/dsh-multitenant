@@ -149,3 +149,50 @@ describe('ensureDshWorkspace：补建会话工作目录', () => {
     expect(warn).toHaveBeenCalled()
   })
 })
+
+// ---------------------------------------------------------------------------
+// getContainerStatsMany：批量取 stats（一次 docker 进程替 N 次）
+// ---------------------------------------------------------------------------
+describe('getContainerStatsMany：批量 stats', () => {
+  it('一次进程拿全部容器（命令里带齐所有名字）', async () => {
+    execFile.mockImplementation((cmd, args, opts, cb) =>
+      cb(null, 'a\t1.5%\t10MiB / 512MiB\t2.0%\nb\t0.0%\t5MiB / 512MiB\t1.0%\n', ''),
+    )
+    const map = await dockerService.getContainerStatsMany(['a', 'b'])
+
+    const args = execFile.mock.calls.at(-1)[1]
+    expect(args[0]).toBe('stats')
+    expect(args).toContain('--no-stream')
+    expect(args.slice(-2)).toEqual(['a', 'b']) // 两个名字在同一条命令里
+    expect(map.get('a')).toEqual({ cpu: '1.5%', mem: '10MiB / 512MiB', memPercent: '2.0%' })
+    expect(map.get('b')).toMatchObject({ cpu: '0.0%' })
+  })
+
+  it('某个容器取不到（已停/不存在）→ 它是 null，不影响其它容器', async () => {
+    execFile.mockImplementation(
+      (cmd, args, opts, cb) => cb(null, 'a\t1.0%\t1MiB / 512MiB\t0.5%\n', ''), // b 没有输出
+    )
+    const map = await dockerService.getContainerStatsMany(['a', 'b'])
+    expect(map.get('a')).toMatchObject({ cpu: '1.0%' })
+    expect(map.get('b')).toBeNull()
+  })
+
+  it('整批失败（docker 不可用）→ 全部 null，且不抛错', async () => {
+    execFile.mockImplementation((cmd, args, opts, cb) =>
+      cb(
+        Object.assign(new Error('Cannot connect to the Docker daemon'), { stderr: 'daemon down' }),
+        '',
+        '',
+      ),
+    )
+    const map = await dockerService.getContainerStatsMany(['a', 'b'])
+    expect(map.get('a')).toBeNull()
+    expect(map.get('b')).toBeNull()
+  })
+
+  it('空列表 → 不执行任何 docker 命令', async () => {
+    const map = await dockerService.getContainerStatsMany([])
+    expect(map.size).toBe(0)
+    expect(execFile).not.toHaveBeenCalled()
+  })
+})

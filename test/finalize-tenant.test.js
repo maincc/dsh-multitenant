@@ -41,6 +41,11 @@ function injectUser(overrides = {}) {
 
 beforeEach(() => {
   delete userService.state.swtcUsers[ADDR]
+  // 隔离：这些用例与用量无关，但 state 是从**真实 state.json** 加载的，
+  // 平台自己跑出来的「今日已用 120 分钟」（ADDR 就是真实租户地址）会让
+  // ensureUsageAllowed 直接拒绝，导致用例无故失败。清掉继承来的用量。
+  userService.state.usages = {}
+  userService.state.usageLimit = { enabled: false }
   vi.spyOn(dataService, 'saveState').mockImplementation(() => {})
   vi.spyOn(dockerService, 'waitReady').mockResolvedValue(true)
   // 启动失败时要采集现场；stub 掉以免测试真的去 docker inspect/logs

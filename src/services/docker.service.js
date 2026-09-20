@@ -917,6 +917,40 @@ export class DockerService {
   }
 
   /**
+   * 批量取多个容器的实时 stats —— **一次 docker 进程**拿全部。
+   *
+   * 为什么需要：管理端列表每轮都要每个 running 租户跑一次 `docker stats`，
+   * 租户多时就是 N 个进程；实测 2 个租户逐个 3.75s、批量 2.77s，租户越多差距越大。
+   *
+   * 容错：某个容器不存在/已停时它的名字不会出现在结果里（值为 null），
+   * 整批失败（docker 不可用）时全部为 null —— 调用方按"未知"处理，绝不因此报错。
+   *
+   * @param {string[]} names 容器名
+   * @returns {Promise<Map<string, {cpu:string,mem:string,memPercent:string}|null>>}
+   */
+  async getContainerStatsMany(names = []) {
+    const map = new Map(names.map((n) => [n, null]))
+    if (names.length === 0) return map
+    try {
+      const out = await sh('docker', [
+        'stats',
+        '--no-stream',
+        '--format',
+        '{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}',
+        ...names,
+      ])
+      for (const line of out.split('\n')) {
+        const [name, cpu, mem, memPercent] = line.split('\t')
+        if (!name || !map.has(name)) continue
+        map.set(name, { cpu, mem, memPercent })
+      }
+    } catch (err) {
+      console.warn(`[docker] 批量 stats 失败（${names.length} 个容器）：${err.message}`)
+    }
+    return map
+  }
+
+  /**
    * 隔离卷内某个文件：改名成 `<文件名>.broken-<时间戳>`，返回新路径。
    *
    * 用途：容器内 DSH 因配置文件损坏而起不来时的自愈 —— 把坏文件挪开，让 DSH

@@ -59,6 +59,16 @@
 
       <!-- 右侧内容 -->
       <section class="gate-content">
+        <!-- 全局刷新条：所有 tab 通用。轮询间隔调长（如 5 分钟）时靠它手动取最新 -->
+        <div class="refresh-bar">
+          <span class="refresh-hint">{{
+            $t('admin.refreshAuto', { n: Math.round(refreshIntervalMs / 1000) })
+          }}</span>
+          <button class="btn btn-small" :disabled="loading" @click="refreshNow(true)">
+            {{ loading ? $t('admin.loading') : $t('admin.refresh') }}
+          </button>
+        </div>
+
         <!-- ════════ 系统概览 ════════ -->
         <div v-if="activeTab === 'overview'" class="tab-content">
           <div class="tab-head">
@@ -1223,7 +1233,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import axios from 'axios'
 import { useI18n } from 'vue-i18n'
 import {
@@ -1519,6 +1529,33 @@ const tierRows = computed(() =>
 )
 const expandedToken = ref(null)
 let dataRefreshInterval = null
+/** 上次拉取时间：切 tab 时做 1 秒节流，避免狂点 tab 打爆后端 */
+let lastFetchAt = 0
+/** 自动刷新间隔（毫秒）：后端 /api/stats 的 uiConfig 下发，默认 15 秒。
+ *  想改成 5 分钟只需改 config.json 的 admin.refreshIntervalMs 并重启服务。 */
+const refreshIntervalMs = ref(15000)
+
+/** 停止轮询 */
+const stopPolling = () => {
+  stopPolling()
+}
+
+/**
+ * 启动轮询：间隔取 refreshIntervalMs；定时器内再判一次 document.hidden，
+ * 页面在后台时不空转（回到前台会有 visibilitychange 立即补一次）。
+ */
+const startPolling = () => {
+  stopPolling()
+  dataRefreshInterval = setInterval(() => {
+    if (!document.hidden) fetchData()
+  }, refreshIntervalMs.value)
+}
+
+/** 立即刷新（手动按钮 / 切 tab / 回到前台）；force 跳过服务端 3 秒短缓存 */
+const refreshNow = async (force = false) => {
+  lastFetchAt = Date.now()
+  await fetchData(force)
+}
 // 账户监听解绑函数（wallet.js watchAccountsChanged 返回），卸载时调用避免重复监听
 let unbindAccounts = null
 
@@ -1561,10 +1598,7 @@ const handleAccountsChanged = async (accounts, source = 'unknown') => {
     notAdmin.value = false
     currentAdminAddress.value = null
     currentAddress.value = null
-    if (dataRefreshInterval) {
-      clearInterval(dataRefreshInterval)
-      dataRefreshInterval = null
-    }
+    stopPolling()
     return
   }
 
@@ -1591,10 +1625,7 @@ const handleAccountsChanged = async (accounts, source = 'unknown') => {
       notAdmin.value = true
       isAdmin.value = false
       currentAdminAddress.value = null
-      if (dataRefreshInterval) {
-        clearInterval(dataRefreshInterval)
-        dataRefreshInterval = null
-      }
+      stopPolling()
       return
     }
 
@@ -1614,10 +1645,7 @@ const handleAccountsChanged = async (accounts, source = 'unknown') => {
         notAdmin.value = true
         isAdmin.value = false
         currentAdminAddress.value = null
-        if (dataRefreshInterval) {
-          clearInterval(dataRefreshInterval)
-          dataRefreshInterval = null
-        }
+        stopPolling()
       }
     } catch (err) {
       if (err.response?.status === 403) {
@@ -1625,10 +1653,7 @@ const handleAccountsChanged = async (accounts, source = 'unknown') => {
         notAdmin.value = true
         isAdmin.value = false
         currentAdminAddress.value = null
-        if (dataRefreshInterval) {
-          clearInterval(dataRefreshInterval)
-          dataRefreshInterval = null
-        }
+        stopPolling()
       } else {
         // 其他错误（如签名被拒/网络）：给用户明确反馈，不静默
         console.error('[AdminPanel] 验证新地址失败:', err)
@@ -1751,11 +1776,8 @@ const adminLogin = async () => {
       currentAdminAddress.value = address
       await fetchData()
 
-      // 启动数据刷新（每 10 秒刷新一次）
-      if (dataRefreshInterval) {
-        clearInterval(dataRefreshInterval)
-      }
-      dataRefreshInterval = setInterval(fetchData, 10000)
+      // 启动数据刷新（间隔由 refreshIntervalMs 决定，默认 15 秒）
+      startPolling()
     }
   } catch (err) {
     if (err.response?.status === 403) {
@@ -1785,10 +1807,7 @@ const logout = async () => {
   }
   isAdmin.value = false
   currentAdminAddress.value = null
-  if (dataRefreshInterval) {
-    clearInterval(dataRefreshInterval)
-    dataRefreshInterval = null
-  }
+  stopPolling()
 }
 
 // ---- 孤儿数据卷（扫描 + 清理） ----
@@ -1829,13 +1848,20 @@ const cleanupOrphanVolumes = async () => {
   }
 }
 
-const fetchData = async () => {
+const fetchData = async (force = false) => {
   try {
     loading.value = true
     const [usersRes, statsRes] = await Promise.all([
-      axios.get('/api/users'),
+      // force=1：绕过服务端短缓存（手动刷新/写操作后拿到的必须是最新）
+      axios.get(force ? '/api/users?force=1' : '/api/users'),
       axios.get('/api/stats'),
     ])
+    // 间隔由后端下发：改 config.json 后重启服务即生效，无需重新构建前端
+    const iv = Number(statsRes.data?.uiConfig?.refreshIntervalMs)
+    if (Number.isFinite(iv) && iv >= 3000 && iv !== refreshIntervalMs.value) {
+      refreshIntervalMs.value = iv
+      if (dataRefreshInterval) startPolling() // 间隔变了 → 用新间隔重建定时器
+    }
     users.value = usersRes.data.users
     tiers.value = usersRes.data.tiers
     stats.value = statsRes.data
@@ -2493,7 +2519,7 @@ onMounted(async () => {
           await checkAdmin()
           if (isAdmin.value) {
             await fetchData()
-            dataRefreshInterval = setInterval(fetchData, 10000)
+            startPolling()
           } else {
             // cookie 无效，需要重新登录
             notAdmin.value = false
@@ -2516,12 +2542,22 @@ onMounted(async () => {
   }
 })
 
+// 切 tab → 立即拉一次（1 秒节流，避免狂点侧栏把后端打爆）。
+// 轮询间隔若被调长（例如 5 分钟），这一步保证「切过去看到的就是新的」。
+watch(activeTab, () => {
+  if (Date.now() - lastFetchAt > 1000) refreshNow()
+})
+
+// 回到前台 → 立即补一次；后台由 startPolling 的定时器判断跳过
+const onVisibilityChange = () => {
+  if (!document.hidden && isAdmin.value) refreshNow()
+}
+onMounted(() => document.addEventListener('visibilitychange', onVisibilityChange))
+
 onUnmounted(() => {
-  // 清理定时器
-  if (dataRefreshInterval) {
-    clearInterval(dataRefreshInterval)
-    dataRefreshInterval = null
-  }
+  // 清理定时器与监听
+  stopPolling()
+  document.removeEventListener('visibilitychange', onVisibilityChange)
   stopDshPolling()
   // 遮罩是组件状态：离开页面时必须清掉，否则再次进来会残留"执行中"
   dshUpdate.value = { kind: null, address: '', phase: '' }
@@ -3614,5 +3650,22 @@ table {
   font-size: 0.8rem;
   line-height: 1.55;
   color: #15803d;
+}
+
+/* 全局刷新条 */
+.refresh-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+.refresh-hint {
+  font-size: 11px;
+  color: #94a3b8;
 }
 </style>
