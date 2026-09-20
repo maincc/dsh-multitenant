@@ -170,7 +170,9 @@
             <tbody>
               <tr v-for="user in users" :key="user.address">
                 <td>
-                  <span class="address">{{ user.address.slice(0, 10) }}...</span>
+                  <span class="address" :title="user.address"
+                    >{{ user.address.slice(0, 10) }}...</span
+                  >
                 </td>
                 <td>{{ user.port }}</td>
                 <td>
@@ -356,7 +358,7 @@
               </thead>
               <tbody>
                 <tr v-for="u in users" :key="u.address">
-                  <td class="cwt-mono">{{ shortAddr(u.address) }}</td>
+                  <td class="cwt-mono" :title="u.address">{{ shortAddr(u.address) }}</td>
                   <td>
                     <span class="badge" :class="tierBadge(u.tier)">
                       {{ u.tierLabel }}
@@ -532,7 +534,9 @@
               <tbody>
                 <tr v-for="app in cwtApplications" :key="app.id">
                   <td>{{ app.parsed?.usr || '-' }}</td>
-                  <td class="cwt-mono">{{ shortAddr(app.parsed?.address) }}</td>
+                  <td class="cwt-mono" :title="app.parsed?.address">
+                    {{ shortAddr(app.parsed?.address) }}
+                  </td>
                   <td>{{ app.parsed?.alg || '-' }}</td>
                   <td>{{ fmtTime(app.submittedAt) }}</td>
                   <td>
@@ -615,7 +619,7 @@
               <tbody>
                 <tr v-for="entry in cwtRegistry" :key="entry.address">
                   <td>{{ entry.usr }}</td>
-                  <td class="cwt-mono">{{ shortAddr(entry.address) }}</td>
+                  <td class="cwt-mono" :title="entry.address">{{ shortAddr(entry.address) }}</td>
                   <td>
                     <span
                       class="badge"
@@ -692,9 +696,9 @@
                     <span class="badge" :class="actionBadge(rec.action)">{{ rec.action }}</span>
                   </td>
                   <td>{{ rec.usr || '-' }}</td>
-                  <td class="cwt-mono">{{ shortAddr(rec.address) }}</td>
+                  <td class="cwt-mono" :title="rec.address">{{ shortAddr(rec.address) }}</td>
                   <td>{{ fmtTime(rec.at) }}</td>
-                  <td class="cwt-mono">{{ shortAddr(rec.by) }}</td>
+                  <td class="cwt-mono" :title="rec.by">{{ shortAddr(rec.by) }}</td>
                   <td>
                     <button v-if="rec.token" class="btn btn-small" @click="toggleToken(i)">
                       {{ expandedToken === i ? $t('admin.collapse') : $t('admin.view') }}
@@ -979,7 +983,7 @@
               <tbody>
                 <tr v-for="t in dshStatus.tenants" :key="t.address">
                   <td>
-                    <code class="dsh-addr">{{ shortAddress(t.address) }}</code>
+                    <code class="dsh-addr" :title="t.address">{{ shortAddress(t.address) }}</code>
                   </td>
                   <td>
                     <span class="dsh-badge" :class="`dsh-badge-${t.containerStatus}`">
@@ -995,7 +999,9 @@
                     </span>
                   </td>
                   <td>
-                    <code class="dsh-img">{{ shortImageId(t.containerImageId) }}</code>
+                    <code class="dsh-img" :title="t.containerImageId || ''">{{
+                      shortImageId(t.containerImageId)
+                    }}</code>
                     <div v-if="t.pinnedImage" class="dsh-pinned">
                       {{ $t('admin.dshPinnedTo', { ref: t.pinnedImage }) }}
                     </div>
@@ -1047,7 +1053,7 @@
 
             <ul v-if="dshApplyResults.length" class="dsh-result-list">
               <li v-for="(r, i) in dshApplyResults" :key="i" :class="r.ok ? 'ok' : 'fail'">
-                <code>{{ shortAddress(r.address) }}</code>
+                <code :title="r.address">{{ shortAddress(r.address) }}</code>
                 <span v-if="r.ok">
                   <template v-if="r.dryRun">
                     {{ $t('admin.dshPlan') }}: {{ shortImageId(r.fromImageId) }} →
@@ -1101,7 +1107,9 @@
                 />
                 <span v-else class="dsh-hist-check-spacer"></span>
                 <code>{{ h.version || '?' }}</code>
-                <span class="dsh-muted">{{ shortImageId(h.imageId) }}</span>
+                <span class="dsh-muted" :title="h.imageId || ''">{{
+                  shortImageId(h.imageId)
+                }}</span>
                 <!-- 关键：镜像是否还在本地。历史会保留每次构建，tag 只有一个，
                      旧构建会被覆盖成悬空镜像 —— 不标出来会误以为都能回滚 -->
                 <span v-if="h.present" class="dsh-ver-tag">
@@ -1152,7 +1160,7 @@
                   {{ $t('admin.dshDanglingFrom', { version: im.historyVersion }) }}
                 </code>
                 <code v-else>{{ $t('admin.dshDangling') }}</code>
-                <span class="dsh-muted">{{ shortImageId(im.id) }}</span>
+                <span class="dsh-muted" :title="im.id || ''">{{ shortImageId(im.id) }}</span>
                 <span class="dsh-muted">{{ formatBytes(im.sizeBytes) }}</span>
                 <span v-if="im.isCurrent" class="dsh-ver-tag">
                   {{ $t('admin.dshKeepReason_current') }}
@@ -1213,7 +1221,7 @@
           }}
         </h4>
         <p v-if="dshUpdate.address" class="dsh-overlay-addr">
-          <code>{{ shortAddress(dshUpdate.address) }}</code>
+          <code :title="dshUpdate.address">{{ shortAddress(dshUpdate.address) }}</code>
         </p>
         <p v-if="dshUpdate.phase" class="dsh-overlay-phase">→ {{ dshUpdate.phase }}</p>
         <p v-if="dshUpdate.kind === 'batch'" class="dsh-overlay-count">
@@ -3667,5 +3675,17 @@ table {
 .refresh-hint {
   font-size: 11px;
   color: #94a3b8;
+}
+
+/* 缩写地址：悬停用原生 title 显示完整值，光标提示可悬停 */
+.address[title],
+.cwt-mono[title],
+.dsh-addr[title] {
+  cursor: help;
+}
+
+.dsh-img[title],
+.dsh-muted[title] {
+  cursor: help;
 }
 </style>

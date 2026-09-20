@@ -71,7 +71,7 @@
             </div>
             <p class="skill-description">{{ s.description }}</p>
             <div class="skill-meta">
-              <span>{{ shortAddress(s.sharer) }}</span>
+              <span class="skill-sharer" :title="s.sharer">{{ shortAddress(s.sharer) }}</span>
               <span>{{ new Date(s.sharedAt).toLocaleDateString() }}</span>
               <span v-if="s.hasResources" class="badge badge-info">{{
                 $t('skills.hasResources')
@@ -170,7 +170,9 @@
               date: new Date(detail.sharedAt).toLocaleString(),
             })
           }}{{ $t('skills.detailHash') }}
-          <code class="hash">{{ shortHash(detail.contentHash) }}</code>
+          <code class="hash" :title="detail.contentHash || ''">{{
+            shortHash(detail.contentHash)
+          }}</code>
           <span v-if="detail.disableModelInvocation" class="badge badge-warning">{{
             $t('skills.userOnlyTrigger')
           }}</span>
@@ -713,5 +715,14 @@ onUnmounted(() => {
   font-size: 0.875rem;
   color: #64748b;
   line-height: 1.6;
+}
+
+/* 分享者缩写地址：悬停显示完整地址 */
+.skill-sharer[title] {
+  cursor: help;
+}
+
+.hash[title] {
+  cursor: help;
 }
 </style>

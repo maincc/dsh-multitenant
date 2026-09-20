@@ -76,7 +76,7 @@
           <div class="wallet-summary">
             <span class="live-dot"></span>
             <span class="wallet-label">{{ $t('user.connected') }}</span>
-            <code class="wallet-short">{{ shortAddrText }}</code>
+            <code class="wallet-short" :title="userInfo.address">{{ shortAddrText }}</code>
           </div>
           <!-- 导航项 -->
           <nav class="sidebar-nav">
@@ -2815,5 +2815,10 @@ onUnmounted(() => {
   border: 1px solid #fcd34d;
   border-radius: 10px;
   background: #fffbeb;
+}
+
+/* 侧栏缩写地址：悬停显示完整地址 */
+.wallet-short[title] {
+  cursor: help;
 }
 </style>
