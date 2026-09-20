@@ -107,10 +107,9 @@
           <div class="stat-rows">
             <div class="stat-row">
               <span class="stat-label">{{ $t('user.swtcAddress') }}</span>
-              <code class="stat-value mono">{{ userInfo.address }}</code>
-              <button class="btn btn-small" @click="switchAddress">
-                {{ $t('user.switchAddress') }}
-              </button>
+              <code class="stat-value mono addr-tip" :data-full="userInfo.address">{{
+                userInfo.address
+              }}</code>
             </div>
           </div>
           <p class="account-foot">{{ $t('user.accountMovedHint') }}</p>
@@ -1602,31 +1601,6 @@ const fetchUserInfo = async (address) => {
     }
   } finally {
     if (opened) hideLoading()
-  }
-}
-
-const switchAddress = async () => {
-  if (!hasCCDAO.value) {
-    alert(t('user.errInstallCcdao'))
-    return
-  }
-
-  try {
-    const pluginAddress = await requestAccounts()
-
-    if (!pluginAddress) {
-      throw new Error(t('user.noAccounts'))
-    }
-
-    // 统一转小写
-    const newAddress = accounts[0].toLowerCase()
-    console.log('[UserCenter] 切换地址:', newAddress)
-
-    // 使用通用处理函数
-    await handleAddressChange(newAddress)
-  } catch (err) {
-    console.error('[UserCenter] 切换失败:', err)
-    alert(t('user.switchFail', { err: err.message }))
   }
 }
 

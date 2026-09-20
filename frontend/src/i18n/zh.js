@@ -139,7 +139,6 @@ export default {
     accountMovedHint: '容器状态、端口与资源使用已移至「容器管理」',
     containerManageHint: '查看容器状态与资源使用，管理您的 DSH 容器',
     swtcAddress: 'SWTC 地址：',
-    switchAddress: '切换地址',
     port: '专属端口：',
     tier: '当前配额：',
     containerStatus: '容器状态：',
@@ -283,10 +282,7 @@ export default {
     sessionMismatchRevoked: '检测到钱包已切换，旧会话钥匙已注销，正在使用当前地址重新连接…',
     addressFail: '处理地址失败：{err}',
     connectFail: '连接失败：{err}',
-    noAccounts: '未获取到账户',
     invalidAddress: '保存的地址无效，请重新连接钱包',
-    errInstallCcdao: '请先安装 CCDAO 插件',
-    switchFail: '切换失败：{err}',
     startedOk: '容器已启动',
     startFail: '启动失败：{err}',
     confirmRestartDsh:
