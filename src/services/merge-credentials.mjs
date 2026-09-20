@@ -153,17 +153,64 @@ function ensureVersionLine(lines) {
 }
 
 /**
- * 把 refs 块内所有条目行规范化为 `KEY: "value"`。
+ * 条目的"范围"：从条目行到它的**续行**结束（不含）。
  *
- * 为什么必须规范化：YAML 的裸标量会按类型解析 —— `sk-123` 尚可，但
- * `123` 会变成数字、`null`/`~` 会变成空值，而 DSH 的 credentials-local
- * 要求 refs 的值**必须是字符串**，否则拒绝加载整个文件。
- * 只重写块内条目行，块外内容与行数不变。
+ * 为什么需要：YAML 的引号标量可以跨行折叠。DSH 自己写出的 API Key 就是这种
+ * 形状（实测真实文件）：
+ *     CUSTOM_xxx_API_KEY: "sk-sp-AAAA
+ *       BBBB...ZZZZ"
+ * 第二行是**同一个值**的延续（缩进比条目行更深）。按单行处理会把值截断、
+ * 并在文件里留下孤立残行 → YAML 非法（正是本工具曾经写坏文件的那类事故）。
+ *
+ * @returns {number} 结束下标（不含）
+ */
+function entryExtent(lines, block, i) {
+  const indent = indentOf(lines[i]).length
+  let j = i + 1
+  while (j < block.endIndex) {
+    const line = lines[j]
+    if (line.trim() === '') break
+    if (indentOf(line).length <= indent) break // 回到同级/顶层 → 本条目结束
+    j++
+  }
+  return j
+}
+
+/**
+ * 值是否为"跨行的"标量（起始引号在本行未闭合）。
+ * 这种值一律**原样保留**：它已经是带引号的字符串，不需要补引号，
+ * 而任何按单行的重写都会把它改坏。
+ */
+function isMultilineScalar(rawValue) {
+  const v = String(rawValue ?? '').trim()
+  if (v.length < 2) return false
+  const q = v[0]
+  if (q !== '"' && q !== "'") return false
+  return !v.endsWith(q)
+}
+
+/**
+ * 把 refs 块内的**完整单行**裸标量规范化为 `KEY: "value"`。
+ *
+ * 为什么需要规范化：YAML 的裸标量按类型解析 —— `sk-123` 尚可，但 `123` 会
+ * 变成数字、`null`/`~` 会变成空值，而 DSH 的 credentials-local 要求 refs 的
+ * 值**必须是字符串**，否则拒绝加载整个文件。
+ *
+ * 安全边界：只改"单行裸标量"；已是完整引号串的、以及跨行折叠的值都不动，
+ * 并且会跳过续行（见 entryExtent），绝不留下孤立残行。
  */
 function normalizeBlockEntries(lines, block) {
-  for (let i = block.headerIndex + 1; i < block.endIndex; i++) {
+  let i = block.headerIndex + 1
+  while (i < block.endIndex) {
     const m = lines[i].match(ENTRY_LINE_RE)
-    if (m) lines[i] = `${m[1]}${m[2]}: ${yamlQuote(yamlUnquote(m[3]))}`
+    if (m) {
+      if (!isMultilineScalar(m[3])) {
+        lines[i] = `${m[1]}${m[2]}: ${yamlQuote(yamlUnquote(m[3]))}`
+      }
+      i = entryExtent(lines, block, i) // 跳过续行
+    } else {
+      i += 1
+    }
   }
 }
 
@@ -218,7 +265,8 @@ if (action === 'del') {
       console.log('absent')
       process.exit(0)
     }
-    lines.splice(idx, 1)
+    // 整段删除：含多行折叠值的续行
+    lines.splice(idx, entryExtent(lines, block, idx) - idx)
     // 删空后写成 `refs: {}`：空的 `refs:` 会解析成 null，DSH 要求是映射
     const after = findRefsBlock(lines)
     if (!after || entryLinesInBlock(lines, after).length === 0) {
@@ -287,7 +335,10 @@ if (action === 'del') {
   }
   const idx = findEntryLine(lines, block, key)
   if (idx >= 0) {
-    lines[idx] = `${indentOf(lines[idx])}${key}: ${yamlQuote(value)}`
+    // 整段替换：多行折叠值的续行必须一起删掉，否则会留下孤立残行
+    const end = entryExtent(lines, block, idx)
+    const indent = indentOf(lines[idx])
+    lines.splice(idx, end - idx, `${indent}${key}: ${yamlQuote(value)}`)
   } else {
     // 追加到块尾（不插到头部，保持既有条目的相对顺序与最小 diff）
     lines.splice(block.endIndex, 0, `${block.entryIndent}${key}: ${yamlQuote(value)}`)

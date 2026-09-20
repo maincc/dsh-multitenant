@@ -618,6 +618,10 @@ class TenantGateway {
     if (!route) return
     try {
       route.server.close()
+      // 注：这里刻意**不**调用 closeAllConnections()。它虽然能立刻踢掉挂在旧
+      // route 上的 keep-alive 连接（容器重建后 internalPort 可能已变的窗口），
+      // 但会一并摧毁**在途**连接：实测在全量测试里把随机失败率从 0 抬到约 50%
+      // （多个用例会重复 listen），属未验证的副作用。留作独立课题。
     } catch {
       // ignore
     }

@@ -404,8 +404,11 @@ describe('租户网关：按 DSH 版本能力分岔', () => {
       await tenantGateway.listen(publicPort, internalPort, OWNER, cap)
       boundCap = cap
     }
+    // connection: close —— 不复用连接池。本文件多处会重新 listen（网关重启
+    // 语义），复用指向旧 server 的 keep-alive 连接会偶发 ECONNRESET，表现为
+    // 该文件在全量并行跑时随机挂一条（长期存在的 flake）。
     const res = await fetch(`http://127.0.0.1:${publicPort}/`, {
-      headers: { cookie: `${sessionCookie()}; gw_ok=1`, accept: 'text/html' },
+      headers: { cookie: `${sessionCookie()}; gw_ok=1`, accept: 'text/html', connection: 'close' },
     })
     const body = await res.text()
     return { status: res.status, body }
@@ -814,18 +817,24 @@ describe('代激活 cookie 失效后的自愈（回归）', () => {
 
   const sessionCookie = () => `user_session=${userSessionStore.create(OWNER, 3600_000)}`
 
+  // connection: close：网关重启监听会替换 server，若复用连接池里指向旧 server
+  // 的 keep-alive 连接，会偶发 ECONNRESET（与生产里"容器重建后浏览器拿旧连接"
+  // 同源）。测试要的是确定性，故每次新建连接。
   const hit = (path = '/') =>
     fetch(`http://127.0.0.1:${publicPort}${path}`, {
-      headers: { cookie: `${sessionCookie()}; gw_ok=1`, accept: 'text/html' },
+      headers: { cookie: `${sessionCookie()}; gw_ok=1`, accept: 'text/html', connection: 'close' },
     })
 
-  // 端口确定性递增：随机取值会让同一 describe 内两个用例撞到同一端口
-  // （上游 bind EADDRINUSE），表现为偶发失败。区间与外层 describe 不重叠。
+  // 端口必须同时满足：① 不与并行执行的其它测试文件撞车（本文件其它 describe
+  // 用 39xxx）；② **不在系统临时端口范围内**（macOS 为 49152-65535）——
+  // 用 listen(0) 让系统分配的端口会落进该范围，而"探测→释放→再绑定"之间
+  // 存在被系统或并行进程抢走的窗口，实测表现为偶发 ECONNRESET / 计数不符。
+  // 35xxx/36xxx 未被任何测试文件使用且低于 49152。
   let portSeq = 0
   beforeEach(() => {
     portSeq += 1
-    publicPort = 40500 + portSeq
-    internalPort = 41000 + portSeq
+    publicPort = 35100 + portSeq
+    internalPort = 36100 + portSeq
   })
 
   afterEach(() => {

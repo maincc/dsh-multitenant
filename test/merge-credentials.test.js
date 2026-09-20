@@ -295,3 +295,85 @@ describe('merge-credentials.mjs：不破坏 DSH 自己写入的内容（回归�
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// 回归：多行折叠值不能被"规范化"改坏
+//
+// 实测真实文件（DSH 自己写的）：API Key 的值是**跨行折叠的引号标量**
+//     CUSTOM_xxx_API_KEY: "sk-sp-AAAA
+//       BBBB...ZZZZ"
+// 第二行是同一个值的延续（缩进更深）。旧实现按单行取值再重新加引号，会把
+// 值截断、并留下孤立残行 → YAML 非法 —— 正是"保存 Key 反而写坏文件"的翻版。
+//
+// 约束：只对**完整单行裸标量**补引号；跨行折叠值原样保留；替换/删除条目时
+// 必须连续行一起处理。
+// ---------------------------------------------------------------------------
+describe('merge-credentials.mjs：多行折叠值（回归）', () => {
+  const MULTILINE =
+    'version: 1\n' +
+    'refs:\n' +
+    '  CUSTOM_MULTI_API_KEY: "sk-sp-AAAA\n' +
+    '    BBBBCCCCDDDD"\n' +
+    'records:\n' +
+    '  client-connection/browser-session:\n' +
+    '    kind: grant\n' +
+    '    payload:\n' +
+    '      version: 1\n' +
+    '      secret: s3cr3t\n'
+
+  it('保存新 Key 时，多行折叠值的原值与续行都保持不动', () => {
+    const { dir, file } = tmpFile()
+    try {
+      writeFileSync(file, MULTILINE)
+      const before = YAML.parse(MULTILINE)
+
+      run('set', file, 'NEW_KEY', 'sk-new')
+
+      const text = readFileSync(file, 'utf8')
+      const after = YAML.parse(text) // 非法 YAML 会在这里抛错
+      expect(after.refs.NEW_KEY).toBe('sk-new')
+      expect(after.refs.CUSTOM_MULTI_API_KEY).toBe(before.refs.CUSTOM_MULTI_API_KEY)
+      // 续行必须还在（不能被吞掉，也不能变成孤立残行）
+      expect(text).toContain('BBBBCCCCDDDD"')
+      // DSH 自己的 records 块不受影响
+      expect(after.records['client-connection/browser-session'].payload.secret).toBe('s3cr3t')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('重存同一个多行 Key → 折叠值被替换成单行，且不留续行残骸', () => {
+    const { dir, file } = tmpFile()
+    try {
+      writeFileSync(file, MULTILINE)
+
+      run('set', file, 'CUSTOM_MULTI_API_KEY', 'sk-replaced')
+
+      const text = readFileSync(file, 'utf8')
+      const after = YAML.parse(text)
+      expect(after.refs.CUSTOM_MULTI_API_KEY).toBe('sk-replaced')
+      // 旧值的残骸不能留在文件里
+      expect(text).not.toContain('BBBBCCCCDDDD')
+      expect(after.records['client-connection/browser-session'].payload.secret).toBe('s3cr3t')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('删除多行 Key → 连续行一起删掉，refs 变 {}，records 保留', () => {
+    const { dir, file } = tmpFile()
+    try {
+      writeFileSync(file, MULTILINE)
+
+      run('del', file, 'CUSTOM_MULTI_API_KEY')
+
+      const text = readFileSync(file, 'utf8')
+      const after = YAML.parse(text)
+      expect(after.refs).toEqual({})
+      expect(text).not.toContain('BBBBCCCCDDDD')
+      expect(after.records['client-connection/browser-session']).toBeTruthy()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
