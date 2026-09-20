@@ -390,11 +390,20 @@ describe('租户网关：按 DSH 版本能力分岔', () => {
 
   afterEach(() => {
     tenantGateway.closeAll()
+    boundCap = UNBOUND // 路由已关闭，下次请求必须重新 listen
     vi.restoreAllMocks()
   })
 
+  // listen() 的语义是"容器（重）启动"（内部先 close 再绑），因此它会清掉
+  // 已缓存的代激活 cookie —— 生产里不可能每个请求都 listen。这里只在能力
+  // 变化时重新 listen，以保留"同一容器内 cookie 跨请求复用"这一真实行为。
+  const UNBOUND = Symbol('unbound') // 不能用 null：能力未知本身就是 null
+  let boundCap = UNBOUND
   async function request(cap) {
-    await tenantGateway.listen(publicPort, internalPort, OWNER, cap)
+    if (boundCap !== cap) {
+      await tenantGateway.listen(publicPort, internalPort, OWNER, cap)
+      boundCap = cap
+    }
     const res = await fetch(`http://127.0.0.1:${publicPort}/`, {
       headers: { cookie: `${sessionCookie()}; gw_ok=1`, accept: 'text/html' },
     })
@@ -781,5 +790,152 @@ describe('租户网关：按 DSH 版本能力分岔', () => {
         dshAuth.setTokenReader(null)
       }
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 代激活 cookie 失效后的自愈（线上故障回归）
+//
+// 线上实测：浏览器看到 DSH 自己的英文提示
+//   "dsh web authentication required; reopen the URL printed by dsh web."
+// 成因：DSH 的 cookie 由租户卷 .credentials.yaml 里的签名密钥签发；容器重建、
+// 换镜像、或凭据被自愈隔离（密钥重生成）都会让已签发的 cookie 失效。而旧实现
+// 把 cookie 缓存 29 天且**从不清理**（AuthCookieCache.clear 定义了却无人调用）
+// → 网关持续注入死 cookie → DSH 恒回 401 → 用户永远进不去。
+//
+// 两道防线：
+//   ① listen/close（容器就绪/下线）时清缓存
+//   ② 上游回 401 时丢缓存、重新激活、重试一次（GET/HEAD）
+// ---------------------------------------------------------------------------
+describe('代激活 cookie 失效后的自愈（回归）', () => {
+  const CAP = { requiresToken: true, version: '0.1.5-rc.2', tokenAuthSince: '0.1.2-alpha.2' }
+  let publicPort
+  let internalPort
+
+  const sessionCookie = () => `user_session=${userSessionStore.create(OWNER, 3600_000)}`
+
+  const hit = (path = '/') =>
+    fetch(`http://127.0.0.1:${publicPort}${path}`, {
+      headers: { cookie: `${sessionCookie()}; gw_ok=1`, accept: 'text/html' },
+    })
+
+  // 端口确定性递增：随机取值会让同一 describe 内两个用例撞到同一端口
+  // （上游 bind EADDRINUSE），表现为偶发失败。区间与外层 describe 不重叠。
+  let portSeq = 0
+  beforeEach(() => {
+    portSeq += 1
+    publicPort = 40500 + portSeq
+    internalPort = 41000 + portSeq
+  })
+
+  afterEach(() => {
+    tenantGateway.closeAll()
+    authCookieCache.clear()
+    dshAuth.setTokenReader(null)
+    vi.restoreAllMocks()
+  })
+
+  it('容器重启（再次 listen）→ 丢弃缓存 cookie，重新激活', async () => {
+    let activations = 0
+    const up = createServer((req, res) => {
+      const url = new URL(req.url, 'http://x')
+      if (url.searchParams.has('token')) {
+        activations += 1
+        res.writeHead(303, {
+          location: '/',
+          'set-cookie': `dsh-auth-H=v${activations}; Max-Age=2592000; Path=/`,
+        })
+        res.end()
+        return
+      }
+      res.writeHead(200, { 'content-type': 'text/plain' })
+      res.end('upstream-ok')
+    })
+    await new Promise((r) => up.listen(internalPort, '127.0.0.1', r))
+    dshAuth.setTokenReader(async () => 'T')
+
+    try {
+      await tenantGateway.listen(publicPort, internalPort, OWNER, CAP)
+      await (await hit()).text()
+      expect(activations).toBe(1)
+
+      // 同一容器内的后续请求：命中缓存，不再激活
+      await (await hit()).text()
+      expect(activations).toBe(1)
+
+      // 模拟容器重启（生产里 finalizeTenant / restartContainer 会再次 listen）
+      await tenantGateway.listen(publicPort, internalPort, OWNER, CAP)
+      await (await hit()).text()
+      expect(activations).toBe(2) // 旧 cookie 被丢弃、重新激活，而不是继续注入死 cookie
+    } finally {
+      await new Promise((r) => up.close(r))
+    }
+  })
+
+  it('上游 401（cookie 已失效）→ 清缓存重新激活并重试一次，用户拿到 200', async () => {
+    let activations = 0
+    let bounced = 0
+    const up = createServer((req, res) => {
+      const url = new URL(req.url, 'http://x')
+      if (url.searchParams.has('token')) {
+        activations += 1
+        // 第一次下发的 cookie 立即失效，第二次才有效 —— 模拟"密钥变了"
+        const value = activations === 1 ? 'STALE' : 'FRESH'
+        res.writeHead(303, { location: '/', 'set-cookie': `dsh-auth-H=${value}; Path=/` })
+        res.end()
+        return
+      }
+      if (String(req.headers.cookie || '').includes('dsh-auth-H=STALE')) {
+        bounced += 1
+        res.writeHead(401, { 'content-type': 'text/plain' })
+        res.end('dsh web authentication required; reopen the URL printed by dsh web.')
+        return
+      }
+      res.writeHead(200, { 'content-type': 'text/plain' })
+      res.end('upstream-ok')
+    })
+    await new Promise((r) => up.listen(internalPort, '127.0.0.1', r))
+    dshAuth.setTokenReader(async () => 'T')
+
+    try {
+      await tenantGateway.listen(publicPort, internalPort, OWNER, CAP)
+      const res = await hit()
+      expect(await res.text()).toBe('upstream-ok') // 重试成功，而不是把 401 透给用户
+      expect(res.status).toBe(200)
+      expect(bounced).toBe(1) // 确实先撞了一次 401
+      expect(activations).toBe(2) // 清缓存后重新激活
+    } finally {
+      await new Promise((r) => up.close(r))
+    }
+  })
+
+  it('上游始终 401 → 只重试一次，不无限打转', async () => {
+    let activations = 0
+    let upstreamHits = 0
+    const up = createServer((req, res) => {
+      const url = new URL(req.url, 'http://x')
+      if (url.searchParams.has('token')) {
+        activations += 1
+        res.writeHead(303, { location: '/', 'set-cookie': `dsh-auth-H=v${activations}; Path=/` })
+        res.end()
+        return
+      }
+      upstreamHits += 1
+      res.writeHead(401, { 'content-type': 'text/plain' })
+      res.end('dsh web authentication required; reopen the URL printed by dsh web.')
+    })
+    await new Promise((r) => up.listen(internalPort, '127.0.0.1', r))
+    dshAuth.setTokenReader(async () => 'T')
+
+    try {
+      await tenantGateway.listen(publicPort, internalPort, OWNER, CAP)
+      const res = await hit()
+      // 重试后仍 401 → 原样透传（此时用户看到 DSH 提示，但平台已尽力）
+      expect(res.status).toBe(401)
+      expect(upstreamHits).toBe(2) // 恰好两次：原始 + 一次重试
+      expect(activations).toBe(2)
+    } finally {
+      await new Promise((r) => up.close(r))
+    }
   })
 })

@@ -399,6 +399,31 @@ class TenantGateway {
    *
    * @returns {Promise<string|null>} "name=value"，失败返回 null
    */
+  /**
+   * 上游 401 后的自愈重试：丢掉缓存的 cookie，重新代激活一次再转发。
+   *
+   * 覆盖"缓存里的 cookie 已失效但我们不知道"的所有情况（签名密钥变化、
+   * 容器重启、人工改过卷内文件），不依赖我们把每个生命周期点都记得清缓存。
+   * 只重试一次（opts.retriedAuth），避免与永远 401 的上游打转。
+   */
+  async _retryWithFreshAuthCookie(req, res, publicPort, internalPort, opts = {}) {
+    console.warn(`[gateway] :${publicPort} 上游 401：丢弃缓存 cookie 并重新激活一次`)
+    authCookieCache.clear(publicPort)
+    try {
+      const fresh = await this._ensureDshAuthCookie(publicPort, internalPort, req)
+      if (fresh) {
+        this.forward(req, res, internalPort, fresh, { ...opts, retriedAuth: true })
+        return
+      }
+    } catch (err) {
+      console.error(`[gateway] :${publicPort} 重新激活失败:`, err?.message || err)
+    }
+    // 重新激活仍拿不到 cookie → 给明确原因，而不是让用户看 DSH 的英文提示
+    if (!res.headersSent) {
+      this._rejectTokenAuthRequired(res, this.capabilityOf(publicPort), { activateFailed: true })
+    }
+  }
+
   async _ensureDshAuthCookie(publicPort, internalPort, req) {
     const route = this.routes.get(publicPort)
     if (!route?.address) return null
@@ -569,6 +594,13 @@ class TenantGateway {
         })
         this.routes.set(publicPort, { server, address, internalPort, capability })
         console.log(`[gateway] :${publicPort} -> 127.0.0.1:${internalPort} (${address})`)
+        // listen 只发生在"容器就绪"时（新建/重启/换镜像/启动恢复）—— 这正是
+        // 丢弃旧代激活 cookie 的时机。DSH 的 cookie 由租户卷 .credentials.yaml
+        // 里的签名密钥签发；容器重建、密钥被隔离（凭据自愈）、换镜像都会让它
+        // 失效。而旧实现把 cookie 缓存 29 天且**从不清理**（AuthCookieCache.clear
+        // 定义了却无人调用）→ 网关持续注入死 cookie，
+        // DSH 恒回 "dsh web authentication required"。
+        authCookieCache.clear(publicPort)
         resolvePromise()
       })
       try {
@@ -590,6 +622,8 @@ class TenantGateway {
       // ignore
     }
     this.routes.delete(publicPort)
+    // 容器已下线：缓存 cookie 与这个容器绑定，不能留给下一个容器用
+    authCookieCache.clear(publicPort)
     console.log(`[gateway] :${publicPort} closed`)
   }
 
@@ -748,12 +782,12 @@ class TenantGateway {
       return
     }
 
-    this.forward(req, res, internalPort, authCookie)
+    this.forward(req, res, internalPort, authCookie, { publicPort })
 
     // WebSocket / SSE 升级通道透传（DSH 的会话流、终端等长连接）
   }
 
-  forward(req, res, internalPort, authCookie = null) {
+  forward(req, res, internalPort, authCookie = null, opts = {}) {
     const headers = { ...req.headers }
     for (const h of HOP_BY_HOP) delete headers[h]
     headers['x-forwarded-for'] = req.socket?.remoteAddress ?? ''
@@ -776,6 +810,21 @@ class TenantGateway {
         headers,
       },
       (ures) => {
+        // 上游 401：说明注入的 cookie 被 DSH 拒了（签名密钥变了／容器重启过／
+        // 缓存里那份已失效）。丢掉缓存、重新激活一次再转发，而不是把用户扔进
+        // 一个注定进不去的页面。只对无副作用的 GET/HEAD 重试 —— POST 等请求体
+        // 已经发出去，重放不安全。
+        if (
+          ures.statusCode === 401 &&
+          authCookie &&
+          !opts.retriedAuth &&
+          opts.publicPort &&
+          (req.method === 'GET' || req.method === 'HEAD')
+        ) {
+          ures.resume() // 丢弃本次响应，释放上游连接
+          void this._retryWithFreshAuthCookie(req, res, opts.publicPort, internalPort, opts)
+          return
+        }
         const outHeaders = { ...ures.headers }
         // set-cookie 是数组，直接展开透传
         const finalHeaders = {}
