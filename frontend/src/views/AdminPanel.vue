@@ -170,7 +170,7 @@
             <tbody>
               <tr v-for="user in users" :key="user.address">
                 <td>
-                  <span class="address" :title="user.address"
+                  <span class="address addr-tip" :data-full="user.address"
                     >{{ user.address.slice(0, 10) }}...</span
                   >
                 </td>
@@ -358,7 +358,9 @@
               </thead>
               <tbody>
                 <tr v-for="u in users" :key="u.address">
-                  <td class="cwt-mono" :title="u.address">{{ shortAddr(u.address) }}</td>
+                  <td class="cwt-mono addr-tip" :data-full="u.address">
+                    {{ shortAddr(u.address) }}
+                  </td>
                   <td>
                     <span class="badge" :class="tierBadge(u.tier)">
                       {{ u.tierLabel }}
@@ -534,7 +536,7 @@
               <tbody>
                 <tr v-for="app in cwtApplications" :key="app.id">
                   <td>{{ app.parsed?.usr || '-' }}</td>
-                  <td class="cwt-mono" :title="app.parsed?.address">
+                  <td class="cwt-mono addr-tip" :data-full="app.parsed?.address">
                     {{ shortAddr(app.parsed?.address) }}
                   </td>
                   <td>{{ app.parsed?.alg || '-' }}</td>
@@ -619,7 +621,9 @@
               <tbody>
                 <tr v-for="entry in cwtRegistry" :key="entry.address">
                   <td>{{ entry.usr }}</td>
-                  <td class="cwt-mono" :title="entry.address">{{ shortAddr(entry.address) }}</td>
+                  <td class="cwt-mono addr-tip" :data-full="entry.address">
+                    {{ shortAddr(entry.address) }}
+                  </td>
                   <td>
                     <span
                       class="badge"
@@ -696,9 +700,11 @@
                     <span class="badge" :class="actionBadge(rec.action)">{{ rec.action }}</span>
                   </td>
                   <td>{{ rec.usr || '-' }}</td>
-                  <td class="cwt-mono" :title="rec.address">{{ shortAddr(rec.address) }}</td>
+                  <td class="cwt-mono addr-tip" :data-full="rec.address">
+                    {{ shortAddr(rec.address) }}
+                  </td>
                   <td>{{ fmtTime(rec.at) }}</td>
-                  <td class="cwt-mono" :title="rec.by">{{ shortAddr(rec.by) }}</td>
+                  <td class="cwt-mono addr-tip" :data-full="rec.by">{{ shortAddr(rec.by) }}</td>
                   <td>
                     <button v-if="rec.token" class="btn btn-small" @click="toggleToken(i)">
                       {{ expandedToken === i ? $t('admin.collapse') : $t('admin.view') }}
@@ -983,7 +989,9 @@
               <tbody>
                 <tr v-for="t in dshStatus.tenants" :key="t.address">
                   <td>
-                    <code class="dsh-addr" :title="t.address">{{ shortAddress(t.address) }}</code>
+                    <code class="dsh-addr addr-tip" :data-full="t.address">{{
+                      shortAddress(t.address)
+                    }}</code>
                   </td>
                   <td>
                     <span class="dsh-badge" :class="`dsh-badge-${t.containerStatus}`">
@@ -999,7 +1007,7 @@
                     </span>
                   </td>
                   <td>
-                    <code class="dsh-img" :title="t.containerImageId || ''">{{
+                    <code class="dsh-img addr-tip" :data-full="t.containerImageId || ''">{{
                       shortImageId(t.containerImageId)
                     }}</code>
                     <div v-if="t.pinnedImage" class="dsh-pinned">
@@ -1053,7 +1061,7 @@
 
             <ul v-if="dshApplyResults.length" class="dsh-result-list">
               <li v-for="(r, i) in dshApplyResults" :key="i" :class="r.ok ? 'ok' : 'fail'">
-                <code :title="r.address">{{ shortAddress(r.address) }}</code>
+                <code class="addr-tip" :data-full="r.address">{{ shortAddress(r.address) }}</code>
                 <span v-if="r.ok">
                   <template v-if="r.dryRun">
                     {{ $t('admin.dshPlan') }}: {{ shortImageId(r.fromImageId) }} →
@@ -1107,7 +1115,7 @@
                 />
                 <span v-else class="dsh-hist-check-spacer"></span>
                 <code>{{ h.version || '?' }}</code>
-                <span class="dsh-muted" :title="h.imageId || ''">{{
+                <span class="dsh-muted addr-tip" :data-full="h.imageId || ''">{{
                   shortImageId(h.imageId)
                 }}</span>
                 <!-- 关键：镜像是否还在本地。历史会保留每次构建，tag 只有一个，
@@ -1160,7 +1168,9 @@
                   {{ $t('admin.dshDanglingFrom', { version: im.historyVersion }) }}
                 </code>
                 <code v-else>{{ $t('admin.dshDangling') }}</code>
-                <span class="dsh-muted" :title="im.id || ''">{{ shortImageId(im.id) }}</span>
+                <span class="dsh-muted addr-tip" :data-full="im.id || ''">{{
+                  shortImageId(im.id)
+                }}</span>
                 <span class="dsh-muted">{{ formatBytes(im.sizeBytes) }}</span>
                 <span v-if="im.isCurrent" class="dsh-ver-tag">
                   {{ $t('admin.dshKeepReason_current') }}
@@ -1221,7 +1231,9 @@
           }}
         </h4>
         <p v-if="dshUpdate.address" class="dsh-overlay-addr">
-          <code :title="dshUpdate.address">{{ shortAddress(dshUpdate.address) }}</code>
+          <code class="addr-tip" :data-full="dshUpdate.address">{{
+            shortAddress(dshUpdate.address)
+          }}</code>
         </p>
         <p v-if="dshUpdate.phase" class="dsh-overlay-phase">→ {{ dshUpdate.phase }}</p>
         <p v-if="dshUpdate.kind === 'batch'" class="dsh-overlay-count">
@@ -3677,15 +3689,34 @@ table {
   color: #94a3b8;
 }
 
-/* 缩写地址：悬停用原生 title 显示完整值，光标提示可悬停 */
-.address[title],
-.cwt-mono[title],
-.dsh-addr[title] {
+/* 缩写地址/镜像 ID：悬停立即弹出完整值。
+   用自绘 tooltip 而不是原生 title —— 原生有约 1 秒延迟、样式不可控、不能选中。 */
+.addr-tip {
+  position: relative;
   cursor: help;
 }
-
-.dsh-img[title],
-.dsh-muted[title] {
-  cursor: help;
+.addr-tip[data-full]:hover::after {
+  content: attr(data-full);
+  position: absolute;
+  left: 0;
+  top: 100%;
+  z-index: 40;
+  margin-top: 4px;
+  padding: 6px 10px;
+  width: max-content;
+  max-width: 460px;
+  background: #1e293b;
+  color: #f8fafc;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: normal;
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.28);
+  white-space: normal;
+  word-break: break-all;
+  text-align: left;
+  pointer-events: none;
 }
 </style>

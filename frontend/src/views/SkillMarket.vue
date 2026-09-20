@@ -71,7 +71,9 @@
             </div>
             <p class="skill-description">{{ s.description }}</p>
             <div class="skill-meta">
-              <span class="skill-sharer" :title="s.sharer">{{ shortAddress(s.sharer) }}</span>
+              <span class="skill-sharer addr-tip" :data-full="s.sharer">{{
+                shortAddress(s.sharer)
+              }}</span>
               <span>{{ new Date(s.sharedAt).toLocaleDateString() }}</span>
               <span v-if="s.hasResources" class="badge badge-info">{{
                 $t('skills.hasResources')
@@ -170,7 +172,7 @@
               date: new Date(detail.sharedAt).toLocaleString(),
             })
           }}{{ $t('skills.detailHash') }}
-          <code class="hash" :title="detail.contentHash || ''">{{
+          <code class="hash addr-tip" :data-full="detail.contentHash || ''">{{
             shortHash(detail.contentHash)
           }}</code>
           <span v-if="detail.disableModelInvocation" class="badge badge-warning">{{
@@ -717,12 +719,34 @@ onUnmounted(() => {
   line-height: 1.6;
 }
 
-/* 分享者缩写地址：悬停显示完整地址 */
-.skill-sharer[title] {
+/* 缩写地址/镜像 ID：悬停立即弹出完整值。
+   用自绘 tooltip 而不是原生 title —— 原生有约 1 秒延迟、样式不可控、不能选中。 */
+.addr-tip {
+  position: relative;
   cursor: help;
 }
-
-.hash[title] {
-  cursor: help;
+.addr-tip[data-full]:hover::after {
+  content: attr(data-full);
+  position: absolute;
+  left: 0;
+  top: 100%;
+  z-index: 40;
+  margin-top: 4px;
+  padding: 6px 10px;
+  width: max-content;
+  max-width: 460px;
+  background: #1e293b;
+  color: #f8fafc;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: normal;
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.28);
+  white-space: normal;
+  word-break: break-all;
+  text-align: left;
+  pointer-events: none;
 }
 </style>
