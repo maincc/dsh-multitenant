@@ -347,8 +347,13 @@ export async function handleTenantRoutes(req, res, path, url) {
 
   // POST /api/user/:address/reset - 删除数据卷并重建容器（放弃当前配置重新开始）
   if (path.startsWith('/api/user/') && path.endsWith('/reset') && req.method === 'POST') {
-    const { getSessionAddress, requireAdmin } = await import('../middleware/auth.middleware.js')
-    const session = getSessionAddress(req)
+    // 必须用 getRequestAddress（管理员会话优先，其次普通用户会话）。
+    // 曾经误用 getSessionAddress —— 那个只读**管理员会话**，于是普通用户
+    // （只有 user_session）的 session 恒为 null，重置自己的容器永远 403
+    // 「没有权限重置此容器」。本文件其它"本人或管理员"判定都用的
+    // getRequestAddress，只有这里漏改。
+    const { getRequestAddress } = await import('../middleware/auth.middleware.js')
+    const session = getRequestAddress(req)
     const isAdminUser = session && isAdmin(session)
 
     // 提取地址：/api/user/<address>/reset

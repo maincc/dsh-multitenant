@@ -384,6 +384,57 @@ describe('tenant.routes.js remove / restart 错误码', () => {
     expect(body.url).toMatch(/^http:\/\/[^/]+:31006\/$/)
   })
 
+  it('reset：普通用户（只有 user_session）重置【自己】的容器 → 200（回归：曾恒 403）', async () => {
+    // 曾经这里用 getSessionAddress（只读管理员会话），普通用户的 session 恒为
+    // null → 重置自己的容器永远 403「没有权限重置此容器」。上面两条用例都是
+    // 拿 admin_session 测的，所以一直没暴露。
+    userService.resetContainer.mockResolvedValue({
+      ok: true,
+      address: TARGET_ADDR,
+      port: 31007,
+      rebuilt: true,
+    })
+    const token = userSessionStore.create(TARGET_ADDR, 3600_000)
+    const req = makeReq({
+      method: 'POST',
+      url: `/api/user/${TARGET_ADDR}/reset`,
+      cookie: `user_session=${token}`,
+    })
+    const res = makeRes()
+
+    const handled = await handleTenantRoutes(
+      req,
+      res,
+      `/api/user/${TARGET_ADDR}/reset`,
+      new URL(`http://127.0.0.1:8090/api/user/${TARGET_ADDR}/reset`),
+    )
+    expect(handled).toBe(true)
+    expect(res.statusCode).toBe(200)
+    expect(userService.resetContainer).toHaveBeenCalledWith(TARGET_ADDR)
+  })
+
+  it('reset：普通用户重置【别人】的容器 → 403 且不触碰容器', async () => {
+    const OTHER_ADDR = 'j3xhos5osubqmfaekq3rxufrzbbucghwrv' // 非管理员
+    const token = userSessionStore.create(OTHER_ADDR, 3600_000)
+    const req = makeReq({
+      method: 'POST',
+      url: `/api/user/${TARGET_ADDR}/reset`,
+      cookie: `user_session=${token}`,
+    })
+    const res = makeRes()
+
+    const handled = await handleTenantRoutes(
+      req,
+      res,
+      `/api/user/${TARGET_ADDR}/reset`,
+      new URL(`http://127.0.0.1:8090/api/user/${TARGET_ADDR}/reset`),
+    )
+    expect(handled).toBe(true)
+    expect(res.statusCode).toBe(403)
+    expect(JSON.parse(res.body).code).toBe('FORBIDDEN')
+    expect(userService.resetContainer).not.toHaveBeenCalled()
+  })
+
   it('restart 对不存在容器返回 404（而非 500）', async () => {
     userService.restartContainer.mockRejectedValue(
       new NotFoundError(`Container dsh-swtc-${TARGET_ADDR} not found`),
