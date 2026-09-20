@@ -146,6 +146,27 @@ function entryLinesInBlock(lines, block) {
 }
 
 /**
+ * 顶层行是否算"旧扁平布局的凭据条目"。
+ *
+ * ⚠️ 关键：值必须是非空标量。DSH 在没有 API Key 时写的文件是
+ *     version: 1
+ *     records:
+ *       client-connection/browser-session: …
+ * 这里的 `records:` 是一个**块头**（自身无值、后面跟更深的子级），不是凭据。
+ * 旧实现把它当条目迁移进 refs，子级就成了 refs 下的孤儿 → 文件损坏
+ * （线上实测：保存 Key 反而把文件写坏，容器随后起不来）。
+ */
+function isFlatEntryLine(lines, i) {
+  const line = lines[i]
+  if (line.trim() === '' || line.trim().startsWith('#')) return false
+  if (indentOf(line) !== '') return false
+  if (VERSION_LINE_RE.test(line.trim())) return false
+  const m = line.match(ENTRY_LINE_RE)
+  if (!m) return false
+  return String(m[3] ?? '').trim() !== ''
+}
+
+/**
  * 写入前的结构自检（fail closed）。
  *
  * 为什么需要：本工具是"按行编辑"，对不认识的结构只能尽力而为。若输入文件
@@ -290,12 +311,10 @@ function readEntries(lines) {
     }
     return entries
   }
-  for (const line of lines) {
-    if (line.trim() === '' || line.trim().startsWith('#')) continue
-    if (VERSION_LINE_RE.test(line.trim())) continue
-    if (indentOf(line) !== '') continue // 只认顶层行
-    const m = line.match(ENTRY_LINE_RE)
-    if (m) entries.set(m[2], yamlUnquote(m[3]))
+  for (let i = 0; i < lines.length; i++) {
+    if (!isFlatEntryLine(lines, i)) continue
+    const m = lines[i].match(ENTRY_LINE_RE)
+    entries.set(m[2], yamlUnquote(m[3]))
   }
   return entries
 }
@@ -340,9 +359,9 @@ if (action === 'del') {
     process.exit(0)
   }
   // 兼容扁平布局：删掉顶层同键行
-  const flatIdx = lines.findIndex((l) => {
+  const flatIdx = lines.findIndex((l, i) => {
     const m = l.match(ENTRY_LINE_RE)
-    return m && indentOf(l) === '' && m[2] === key && !VERSION_LINE_RE.test(l.trim())
+    return isFlatEntryLine(lines, i) && m[2] === key
   })
   if (flatIdx === -1) {
     console.log('absent')
@@ -365,11 +384,7 @@ if (action === 'del') {
     // 其余行（注释/version/未知内容）位置一律不动。
     const flatIdx = []
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i]
-      if (line.trim() === '' || line.trim().startsWith('#')) continue
-      if (indentOf(line) !== '') continue
-      if (VERSION_LINE_RE.test(line.trim())) continue
-      if (ENTRY_LINE_RE.test(line)) flatIdx.push(i)
+      if (isFlatEntryLine(lines, i)) flatIdx.push(i)
     }
     if (flatIdx.length > 0) {
       const entries = flatIdx.map((i) => {

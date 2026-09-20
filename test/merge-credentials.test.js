@@ -431,3 +431,63 @@ describe('merge-credentials.mjs：结构异常时拒绝写入', () => {
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// 回归：DSH 在【没有 API Key】时写的文件没有 refs 块，只有 records
+//
+// 实测形状（这就是线上"保存 Key 反而把文件写坏"的真正来源）：
+//     version: 1
+//     records:
+//       client-connection/browser-session: …
+// 旧实现的"旧扁平布局迁移"把 `records:`（无值 + 带更深子级的**块头**）误当成
+// 凭据条目迁进 refs，子级随即变成 refs 下的孤儿 → 文件损坏 → DSH 起不来。
+// ---------------------------------------------------------------------------
+describe('merge-credentials.mjs：无 refs 块（DSH 空凭据文件）', () => {
+  const NO_REFS =
+    'version: 1\n' +
+    'records:\n' +
+    '  client-connection/browser-session:\n' +
+    '    kind: grant\n' +
+    '    payload:\n' +
+    '      version: 1\n' +
+    '      secret: SESSION-SECRET-TEST-ONLY-BBBB\n'
+
+  it('set：追加 refs 块，records 原样保留，文件仍合法', () => {
+    const { dir, file } = tmpFile()
+    try {
+      writeFileSync(file, NO_REFS)
+      const before = YAML.parse(NO_REFS)
+
+      run('set', file, 'DEEPSEEK_API_KEY', 'sk-test')
+
+      const after = YAML.parse(readFileSync(file, 'utf8')) // 非法会抛错
+      expect(after.refs.DEEPSEEK_API_KEY).toBe('sk-test')
+      // DSH 的 records（含会话签名密钥）必须完好 —— 丢了等于强制所有人重登
+      expect(after.records).toEqual(before.records)
+      // 不能把 records 当成凭据条目写进去
+      expect(after.refs.records).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('list：records/records 的子键都不算凭据', () => {
+    const { dir, file } = tmpFile()
+    try {
+      writeFileSync(file, NO_REFS)
+      expect(JSON.parse(run('list', file))).toEqual([])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('get records → absent（块头不是凭据，不能被读出来）', () => {
+    const { dir, file } = tmpFile()
+    try {
+      writeFileSync(file, NO_REFS)
+      expect(run('get', file, 'records')).toBe('absent')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
