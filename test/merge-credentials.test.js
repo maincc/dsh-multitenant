@@ -377,3 +377,57 @@ describe('merge-credentials.mjs：多行折叠值（回归）', () => {
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// 结构自检（fail closed）：看不懂就拒写，绝不二次破坏
+//
+// 实测真实损坏形态：DSH 的 records 块被塞进 refs 内部，出现 `records: ""`
+// 却带着更深的子级 → DSH 完全起不来（容器 120s 不就绪 → 回滚 → 界面"已销毁"）。
+// 本工具是"按行编辑"，遇到这种输入必须拒绝写入，而不是继续加工。
+// ---------------------------------------------------------------------------
+describe('merge-credentials.mjs：结构异常时拒绝写入', () => {
+  const CORRUPT =
+    'version: 1\n' +
+    'refs:\n' +
+    '  records: ""\n' +
+    '  client-connection/browser-session:\n' +
+    '    kind: "grant"\n' +
+    '    payload: ""\n' +
+    '      version: 1\n' +
+    '      secret: SESSION-SECRET-TEST-ONLY-AAAA\n' +
+    '  DEEPSEEK_API_KEY: "sk-TEST-ONLY-NOT-A-REAL-KEY"\n'
+
+  it('set：结构异常 → 非零退出且文件原样不动', () => {
+    const { dir, file } = tmpFile()
+    try {
+      writeFileSync(file, CORRUPT)
+      expect(() => run('set', file, 'NEW_KEY', 'sk-x')).toThrow()
+      expect(readFileSync(file, 'utf8')).toBe(CORRUPT) // 一个字节都没改
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('del：结构异常 → 同样拒绝', () => {
+    const { dir, file } = tmpFile()
+    try {
+      writeFileSync(file, CORRUPT)
+      expect(() => run('del', file, 'DEEPSEEK_API_KEY')).toThrow()
+      expect(readFileSync(file, 'utf8')).toBe(CORRUPT)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('健康文件不受影响（自检不能误伤正常结构）', () => {
+    const { dir, file } = tmpFile()
+    try {
+      writeFileSync(file, 'version: 1\nrefs:\n  A: "1"\n')
+      run('set', file, 'B', 'two')
+      const parsed = YAML.parse(readFileSync(file, 'utf8'))
+      expect(parsed.refs).toEqual({ A: '1', B: 'two' })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})

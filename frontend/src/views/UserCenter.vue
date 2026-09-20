@@ -1633,10 +1633,29 @@ const restartContainer = async () => {
     const address = userInfo.value.address
     showLoading(t('user.loadingStarting'), t('user.loadingPleaseWait'), 40)
 
-    await connectWithOwnership(address, {
+    const res = await connectWithOwnership(address, {
       title: t('user.loadingStarting'),
       progress: 40,
     })
+
+    // 必须检查 /connect 的 HTTP 状态：容器创建/启动失败时后端会回
+    // 502（未就绪/内部错误）、202（额度用尽或排队）、503（队列满），
+    // 旧实现完全不看状态码就弹"启动成功"，于是出现"提示启动了、
+    // 状态却仍是已销毁"（实测：容器未就绪被回滚，用户以为已就绪）。
+    if (!res.ok) {
+      let detail = ''
+      try {
+        const data = await res.json()
+        detail = data?.message || data?.error || ''
+      } catch {
+        try {
+          detail = (await res.text()).slice(0, 300)
+        } catch {
+          /* 响应体不可读则只用状态码 */
+        }
+      }
+      throw new Error(detail || `HTTP ${res.status}`)
+    }
 
     // 等待容器完全就绪
     await new Promise((resolve) => setTimeout(resolve, 5000))

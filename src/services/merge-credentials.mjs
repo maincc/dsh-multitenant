@@ -86,6 +86,13 @@ function readLines() {
 
 /** 原子写回（保持 0600） */
 function writeLines(lines) {
+  // fail closed：结构异常时拒绝写入，绝不在已损坏的文件上继续加工
+  const problems = assertWellFormed(lines)
+  if (problems.length > 0) {
+    console.error('merge-credentials: 拒绝写入（凭据文件结构异常，继续写会损坏它）：')
+    for (const p of problems.slice(0, 5)) console.error('  - ' + p)
+    process.exit(3)
+  }
   const tmp = join(dirname(file), `.${key}.${process.pid}.tmp`)
   writeFileSync(tmp, lines.join('\n'), { mode: 0o600 })
   renameSync(tmp, file)
@@ -136,6 +143,60 @@ function entryLinesInBlock(lines, block) {
     if (ENTRY_LINE_RE.test(lines[i])) out.push(i)
   }
   return out
+}
+
+/**
+ * 写入前的结构自检（fail closed）。
+ *
+ * 为什么需要：本工具是"按行编辑"，对不认识的结构只能尽力而为。若输入文件
+ * 本身已被搅乱（实测形态：records 块被塞进 refs 内部，出现 `records: ""`
+ * 却带着更深的子级），继续写只会让它更糟，而 DSH 会因此完全起不来
+ * （表现为容器 120s 不就绪 → 被回滚 → 界面显示"已销毁"）。
+ * 这里做**廉价但关键**的断言：不通过就拒绝写入并报错，绝不二次破坏。
+ *
+ * @returns {string[]} 问题列表（空 = 通过）
+ */
+function assertWellFormed(lines) {
+  const problems = []
+  const refsIdx = lines.findIndex((l) => indentOf(l) === '' && REFS_HEADER_RE.test(l))
+  if (refsIdx === -1) return ['找不到顶层 refs:']
+
+  const seen = new Set()
+  let entryIndent = null
+  let i = refsIdx + 1
+  while (i < lines.length) {
+    const line = lines[i]
+    if (line.trim() === '') {
+      i++
+      continue
+    }
+    const ind = indentOf(line)
+    if (ind === '') break // 块结束（records: 等顶层结构）
+    const m = line.match(ENTRY_LINE_RE)
+    if (entryIndent === null) entryIndent = ind
+    if (ind === entryIndent && m) {
+      if (seen.has(m[2])) problems.push(`refs 内重复键 ${m[2]}`)
+      seen.add(m[2])
+      // "完整单行标量"的条目后面不应再有更深的子行 —— 那说明结构被搅乱了
+      const multiline = isMultilineScalar(m[3])
+      let j = i + 1
+      while (
+        j < lines.length &&
+        lines[j].trim() !== '' &&
+        indentOf(lines[j]).length > entryIndent.length
+      ) {
+        if (!multiline) {
+          problems.push(`条目 ${m[2]} 的值是单行标量，却跟着更深的子行：${lines[j].trim().slice(0, 30)}`)
+        }
+        j++
+      }
+      i = j
+      continue
+    }
+    problems.push(`refs 内出现无法识别的行：${line.trim().slice(0, 40)}`)
+    i++
+  }
+  return problems
 }
 
 /**
