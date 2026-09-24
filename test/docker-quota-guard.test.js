@@ -19,7 +19,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 vi.mock('node:child_process', () => ({ execFile: vi.fn() }))
 
 import { execFile } from 'node:child_process'
-import { dockerService, setStorageOptSupportedForTest } from '../src/services/docker.service.js'
+import {
+  dockerService,
+  setStorageOptSupportedForTest,
+  setSecurityModeForTest,
+} from '../src/services/docker.service.js'
 
 /** 最近一次 docker 调用的参数数组 */
 const lastArgs = () => execFile.mock.calls.at(-1)?.[1] ?? []
@@ -29,6 +33,10 @@ beforeEach(() => {
   // sh() 约定：execFile(cmd, args, opts, callback)
   execFile.mockImplementation((cmd, args, opts, cb) => cb(null, 'container-id\n', ''))
   vi.spyOn(console, 'warn').mockImplementation(() => {})
+  // 本文件只测配额参数；钉死 compat 档避免 auto 探测多发的
+  // 一次 `docker run --rm` 扰动 execFile 计数断言（探测行为
+  // 由 docker-security-profile.test.js 专门覆盖）
+  setSecurityModeForTest('compat')
 })
 
 afterEach(() => {

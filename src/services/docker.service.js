@@ -4,6 +4,7 @@
  */
 
 import { execFile } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { CONFIG } from '../config/config.js'
 import { requiresToken, DSH_TOKEN_AUTH_SINCE } from './dsh-version.service.js'
 
@@ -101,6 +102,157 @@ function isStorageOptUnsupported(err) {
     /--storage-opt is supported only for/i.test(text) ||
     /storage-opt.*(?:not supported|unsupported)/i.test(text)
   )
+}
+
+// ---------------------------------------------------------------------------
+// 安全参数组（P1-6 降权第一阶段，2026-09）
+//
+// 背景（本机实测矩阵见 docs，此处留结论）：
+//   租户容器里 DSH 的 bash 沙箱（bwrap）依赖三样东西：嵌套命名空间（需要
+//   CAP_SYS_ADMIN 或宿主内核允许无特权 userns）、mount 族系统调用、以及
+//   seccomp 放行 pivot_root（Docker 默认 profile 不放行 → bwrap 当场死）。
+//   旧参数组用 seccomp=unconfined 一次性放行**全部**系统调用，等于把
+//   bpf/io_uring/kexec/模块加载这些内核 CVE 高发入口一起开给租户代码——
+//   危险的不是 SYS_ADMIN 本身，而是 SYS_ADMIN × unconfined 的组合。
+//
+//   新参数组（strict）：SYS_ADMIN 暂留（去它要宿主内核配合，属第二阶段，
+//   见 privilegeProfile 配置注释），no-new-privileges 堵 setuid 升格，
+//   seccomp 换成"默认白名单 + 仅追加 pivot_root"的最小 profile
+//   （deploy/seccomp-bwrap-minimal.json，实测 read-only 与 workspace-write
+//   双方言、node/git/tar/管道全功能无差异）。
+//
+// 探测：参数组能不能用不靠猜——首次供应容器前用 strict 参数实跑一次
+// DSH 同款 bwrap 探测（argv 与 packages/sandbox/sandbox-local 的探测逐字
+// 一致），auto 模式据此选档并缓存；探测不过就回落 compat（= 改动前行为，
+// 功能零风险），daemon 读不到 profile 文件的场景在 run 时被拒也会降级重试
+// 一次（与 --storage-opt 的降级同构，教训来自线上配额事故）。
+// ---------------------------------------------------------------------------
+
+/**
+ * bwrap 探测命令参数（read-only 档）。导出是为了让测试直接断言，
+ * 不靠复制粘贴；若 DSH 侧探测形态变化（packages/sandbox/sandbox-local），
+ * 这里要同步改。
+ */
+export const BWRAP_PROBE_ARGS = [
+  '--ro-bind',
+  '/',
+  '/',
+  '--dev',
+  '/dev',
+  '--unshare-pid',
+  '--proc',
+  '/proc',
+  '--die-with-parent',
+  '--',
+  'true',
+]
+
+/** 探测子进程超时：正常 <3s；给 30s 兜 daemon 慢/镜像首次解包的场景 */
+const SECCOMP_PROBE_TIMEOUT_MS = Number(process.env.DSH_SECCOMP_PROBE_TIMEOUT_MS || 30000)
+
+/**
+ * auto 模式的探测结果缓存：null = 未探测；'strict' | 'compat' = 已定档。
+ * 平台重启重新探测（宿主内核/daemon 可能变了）；镜像重建时由
+ * clearCapabilityCache() 一并清掉（bwrap 随镜像走）。
+ * @type {null|'strict'|'compat'}
+ */
+let securityMode = null
+/** 并发供应时合并探测：同一时刻只跑一次 docker run --rm */
+let securityProbeInflight = null
+
+/** 仅供测试：预设/重置安全档位（null 恢复"未探测"） */
+export function setSecurityModeForTest(v) {
+  securityMode = v
+  securityProbeInflight = null
+}
+
+/** 当前生效的安全参数档位（auto 未探测时为 null）；供管理端展示 */
+export function getSecurityMode() {
+  return securityMode
+}
+
+/** 解析配置档位：环境变量可临时覆盖（排障用），非法值按 auto */
+function configuredPrivilegeProfile() {
+  const v = (process.env.DSH_PRIVILEGE_PROFILE || CONFIG.docker?.privilegeProfile || 'auto').trim()
+  return v === 'strict' || v === 'compat' ? v : 'auto'
+}
+
+/**
+ * 白名单 profile 路径的**使用处兜底**：config.json 的 docker 块会整块顶掉
+ * DEFAULTS（loadConfig 是浅合并——见 config.js cwt 段同款警告），老部署
+ * 不改 config.json 就没有 seccompProfilePath。兜回仓库内文件路径，
+ * 与"未配置"语义一致；显式配置了别人的路径则尊重配置。
+ */
+function seccompProfilePath() {
+  return (
+    CONFIG.docker?.seccompProfilePath ||
+    fileURLToPath(new URL('../../deploy/seccomp-bwrap-minimal.json', import.meta.url))
+  )
+}
+
+/** strict 参数组：SYS_ADMIN 保留 + no-new-privileges + 白名单 seccomp */
+function strictSecurityArgs() {
+  return [
+    '--cap-add',
+    'SYS_ADMIN',
+    '--security-opt',
+    'no-new-privileges',
+    '--security-opt',
+    `seccomp=${seccompProfilePath()}`,
+    '--security-opt',
+    'apparmor=unconfined',
+  ]
+}
+
+/** compat 参数组：2026-09-22 之前的原样行为（应急回退档） */
+function compatSecurityArgs() {
+  return [
+    '--cap-add',
+    'SYS_ADMIN',
+    '--security-opt',
+    'seccomp=unconfined',
+    '--security-opt',
+    'apparmor=unconfined',
+  ]
+}
+
+/** 供测试/诊断：按档位名拿参数组 */
+export function securityArgsFor(mode) {
+  return mode === 'strict' ? strictSecurityArgs() : compatSecurityArgs()
+}
+
+/**
+ * docker run 失败是否**明确**因 seccomp profile 文件引起（daemon 侧读取/解析失败）。
+ * 必须精确匹配——端口占用、名称冲突等其它错误要原样上抛，不能被降级逻辑吞掉。
+ */
+function isSeccompProfileRejected(err) {
+  const text = `${err?.stderr ?? ''}\n${err?.message ?? ''}`
+  return (
+    /opening seccomp profile .*failed/i.test(text) || /error loading seccomp profile/i.test(text)
+  )
+}
+
+/**
+ * 用 strict 参数实跑一次 bwrap 探测。
+ * @returns {Promise<boolean>} true = 该宿主 + 该镜像上 strict 可用
+ */
+async function probeStrictSecurity() {
+  try {
+    await sh(
+      'docker',
+      ['run', '--rm', ...strictSecurityArgs(), '--entrypoint', 'bwrap', IMAGE, ...BWRAP_PROBE_ARGS],
+      { timeout: SECCOMP_PROBE_TIMEOUT_MS },
+    )
+    return true
+  } catch (err) {
+    // 探测不过 ≠ docker 坏了：容器本身用 compat 照样起（= 改动前行为）。
+    // 真坏了的话，供应流程下一步的 docker run 会把原始错误爆出来。
+    console.warn(
+      `[docker] strict 安全参数组探测未通过（${String(err?.stderr || err?.message || 'unknown').split('\n')[0]}），` +
+        'auto 模式将使用 compat（与 2026-09-22 之前行为一致）',
+    )
+    return false
+  }
 }
 
 /**
@@ -269,28 +421,20 @@ export class DockerService {
     // 宿主已确认不支持配额时直接不带该参数（避免每次创建都先失败一次再重试）
     const wantQuota = Boolean(diskQuota) && storageOptSupported !== false
 
-    const args = [
+    // 安全参数组（auto 会在首次调用时探测，见文件头"安全参数组"注释）
+    const { securityArgs, allowSecFallback } = await this._resolveSecurityArgs()
+
+    const buildArgs = (secArgs, withQuota) => [
       'run',
       '-d',
       '--name',
       name,
       '--restart',
       'unless-stopped',
-      // DSH 的 bash 沙箱（bwrap）需要在这三个条件下才能工作：
-      //   - --cap-add SYS_ADMIN：允许创建 mount/用户命名空间、pivot_root
-      //   - --security-opt seccomp=unconfined：Docker 默认 seccomp profile
-      //     会拦截 bwrap 的 namespace 创建与 pivot_root 系统调用
-      //     （bwrap: Creating new namespace failed / pivot_root failed）
-      //   - --security-opt apparmor=unconfined：Linux 主机 docker-default
-      //     AppArmor profile 拦截 bwrap 的 mount 操作
-      //     （bwrap: Failed to make / slave: Permission denied）
+      // 安全参数组说明见"安全参数组"注释块：strict = SYS_ADMIN 保留 +
+      // no-new-privileges + 白名单 seccomp；compat = 旧行为（seccomp=unconfined）。
       // 仅对租户容器内部生效（容器本身就是租户隔离边界），不暴露给宿主。
-      '--cap-add',
-      'SYS_ADMIN',
-      '--security-opt',
-      'seccomp=unconfined',
-      '--security-opt',
-      'apparmor=unconfined',
+      ...secArgs,
       '--memory',
       limits.memory,
       '--cpus',
@@ -302,7 +446,7 @@ export class DockerService {
       // 本次 docker run（exit 125），因此这里只在"已知支持"时才带上，
       // 并在下面捕获该拒绝后降级重试（见 isStorageOptUnsupported）。
       // 配额值缺失/非法时跳过本参数（见上方 diskQuota 防御）。
-      ...(wantQuota ? ['--storage-opt', `size=${diskQuota}`] : []),
+      ...(withQuota ? ['--storage-opt', `size=${diskQuota}`] : []),
       // 回环发布：外部网络物理不可达，只有宿主本机（网关）能连。
       // 用户浏览器访问的是网关的对外端口（0.0.0.0），网关转发到这里。
       '-p',
@@ -314,23 +458,78 @@ export class DockerService {
       // 允许按租户指定镜像（版本选择）；不传则用平台默认（latest）
       opts.image || IMAGE,
     ]
-    try {
-      await sh('docker', args)
-    } catch (err) {
-      // 宿主不支持磁盘配额：去掉该参数重试一次，让容器照常起来。
-      // 只在这一种明确原因下降级 —— 其它错误必须原样上抛。
-      if (wantQuota && isStorageOptUnsupported(err)) {
-        storageOptSupported = false
-        console.warn(
-          `[docker] 宿主存储驱动不支持 --storage-opt size=${diskQuota}（容器 ${name}）：` +
-            '已降级为不限制磁盘后重试。如需硬配额，宿主需 overlay2 + xfs(pquota) 或 btrfs/zfs。',
-        )
-        const i = args.indexOf('--storage-opt')
-        const retryArgs = i === -1 ? args : [...args.slice(0, i), ...args.slice(i + 2)]
-        await sh('docker', retryArgs)
-      } else {
+
+    // 两类降级（seccomp 文件被 daemon 拒 / 存储驱动不支持配额）各自最多
+    // 触发一次、参数翻转后重试；guard 上限 = 初始 1 次 + 降级 2 次。
+    let sec = securityArgs
+    let quota = wantQuota
+    let secFallbackArmed = allowSecFallback
+    for (;;) {
+      try {
+        await sh('docker', buildArgs(sec, quota))
+        return
+      } catch (err) {
+        // 降级 1：白名单 seccomp 文件 daemon 读不到/解析失败（如部署文件缺失）。
+        // 只允许 auto 探出来的 strict 静默降一次；配置显式 strict 不回退——
+        // 管理员点名要的文件没了，必须爆出来而不是悄悄换回 unconfined。
+        if (secFallbackArmed && isSeccompProfileRejected(err)) {
+          secFallbackArmed = false
+          securityMode = 'compat'
+          sec = compatSecurityArgs()
+          console.warn(
+            `[docker] 白名单 seccomp profile 被 daemon 拒绝（容器 ${name}），` +
+              `确认文件存在且 docker 用户可读：${seccompProfilePath()}；` +
+              '本进程后续供应已降级为 compat（seccomp=unconfined）。',
+          )
+          continue
+        }
+        // 降级 2：宿主不支持磁盘配额：去掉该参数重试一次，让容器照常起来。
+        // 只在这一种明确原因下降级 —— 其它错误必须原样上抛。
+        if (quota && isStorageOptUnsupported(err)) {
+          quota = false
+          storageOptSupported = false
+          console.warn(
+            `[docker] 宿主存储驱动不支持 --storage-opt size=${diskQuota}（容器 ${name}）：` +
+              '已降级为不限制磁盘后重试。如需硬配额，宿主需 overlay2 + xfs(pquota) 或 btrfs/zfs。',
+          )
+          continue
+        }
         throw err
       }
+    }
+  }
+
+  /**
+   * 决定本次供应使用的安全参数组。
+   * auto：未定档时跑一次探测（并发调用共享同一次探测），探测过就缓存。
+   * strict/compat：显式配置不探测；strict 同时关闭 run 时降级重试。
+   * @returns {Promise<{securityArgs: string[], allowSecFallback: boolean}>}
+   */
+  async _resolveSecurityArgs() {
+    const mode = configuredPrivilegeProfile()
+    if (mode === 'strict') return { securityArgs: strictSecurityArgs(), allowSecFallback: false }
+    if (mode === 'compat') return { securityArgs: compatSecurityArgs(), allowSecFallback: false }
+    // auto
+    if (!securityMode) {
+      securityProbeInflight ??= probeStrictSecurity()
+        .then((ok) => {
+          securityMode = ok ? 'strict' : 'compat'
+          console.log(
+            `[docker] 安全参数组 auto 探测完成 → ${securityMode}` +
+              (securityMode === 'strict'
+                ? '（SYS_ADMIN+no-new-priv+白名单seccomp）'
+                : '（维持现状：seccomp=unconfined）'),
+          )
+          return securityMode
+        })
+        .finally(() => {
+          securityProbeInflight = null
+        })
+      await securityProbeInflight
+    }
+    return {
+      securityArgs: securityMode === 'strict' ? strictSecurityArgs() : compatSecurityArgs(),
+      allowSecFallback: true,
     }
   }
 
@@ -689,10 +888,15 @@ export class DockerService {
   /**
    * 清空能力缓存。平台成功构建/切换镜像后必须调用，
    * 否则最长 CAPABILITY_CACHE_TTL_MS 内仍按旧镜像的能力判定。
+   * bwrap 随镜像走，所以安全参数组的 auto 探测结果也在这里失效。
    */
   clearCapabilityCache() {
     this._capCache.clear()
     clearDshVersionCache()
+    if (configuredPrivilegeProfile() === 'auto') {
+      securityMode = null
+      securityProbeInflight = null
+    }
   }
 
   /**
