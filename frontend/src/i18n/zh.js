@@ -5,7 +5,7 @@
  *   - common.*   全站通用（导航/品牌/通用按钮）
  *   - home.*     首页（hero / 特性 / 使用说明 / 配额层级）
  *   - user.*     用户中心
- *   - admin.*    管理面板
+ *   - admin.*    系统管理
  *   - skills.*   技能市场
  * 以后启用语言切换时：复制本文件为 <lang>.js 并翻译，
  * 在 src/i18n/index.js 的 messages 里注册即可（已预留 en）。
@@ -15,7 +15,7 @@ export default {
     brand: 'DSH 多租户管理',
     nav: {
       skills: '技能市场',
-      admin: '管理面板',
+      admin: '系统管理',
       user: '用户中心',
     },
   },
@@ -31,7 +31,7 @@ export default {
     },
     actions: {
       start: '🔌 连接钱包开始使用',
-      admin: '📊 管理面板',
+      admin: '📊 系统管理',
     },
     guide: {
       title: '📖 使用说明',
@@ -67,7 +67,7 @@ export default {
         noAutoLabel: '不会被模型自动调用',
       },
       step6: {
-        title: '管理面板（仅管理员）',
+        title: '系统管理（仅管理员）',
         body: '登录须{sign}（管理员地址由平台配置）。可管理容器、审批 CWT 验证、查看审计记录。',
         signLabel: '钱包签名验证',
       },
@@ -429,7 +429,7 @@ export default {
   },
 
   admin: {
-    // ---- 管理面板侧栏（与 React 原型稿一致） ----
+    // ---- 系统管理侧栏（与 React 原型稿一致） ----
     tabOverview: '系统概览',
     tabUsers: '用户管理',
     tabQuota: '配额配置',
@@ -602,7 +602,7 @@ export default {
     minUnit: '分钟',
     hourUnit: '小时',
     dayUnit: '天',
-    walletDisconnected: '钱包已断开连接，已退出管理面板',
+    walletDisconnected: '钱包已断开连接，已退出系统管理',
     switchedAdmin: '已切换到管理员：{addr}',
     noAccounts: '未获取到账户',
     loginFail: '登录失败：{err}',
