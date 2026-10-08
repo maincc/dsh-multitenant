@@ -86,13 +86,40 @@ async function detectDockerDesktop() {
   }
 }
 
-/** 跑一次 fstrim（今日验证过的姿势固化：privileged + nsenter 进 VM mount ns） */
+/** fstrim 容器固定名：兼作"上一轮还活着"的命名锁（见 runFstrim 注释） */
+const FSTRIM_CONTAINER = 'dsh-maintenance-fstrim'
+
+/**
+ * 跑一次 fstrim（姿势：privileged + nsenter 进 VM mount ns，fstrim -av）。
+ *
+ * ⚠️ 真机事故教训（2026-10-08）：execFile 超时只杀得着 docker CLI、杀不着
+ * 容器；卡进 D 状态（不可中断 ioctl）的 fstrim 连 `docker rm -f` 都杀不死，
+ * 多个并发 fstrim 还会在 VM 里互抢 FITRIM 锁一起僵住。所以：
+ *   1. **命名锁**：同名容器只要还存在（哪怕是僵的），本轮直接跳过——
+ *      僵尸至多一个，不会天天叠（叠了反而互相锁死，实测 3 个僵了 30 分钟+）；
+ *   2. 分离启动 + `docker wait` 限时 + `docker logs` 收结果，收尾自删；
+ *   3. wait 超时 → 尽力 `rm -f`；杀不动（D 状态）就留名锁挡后续，
+ *      日志说清"需要重启 Docker Desktop 解僵"——绝不假装成功。
+ */
 async function runFstrim() {
   const image = CONFIG.docker?.image || 'dsh-multitenant:latest'
-  const out = await docker(
+  let existing = ''
+  try {
+    existing = await docker(['ps', '-aq', '--filter', `name=^${FSTRIM_CONTAINER}$`], 15000)
+  } catch {
+    // 问不动 daemon 就跳过本轮：fstrim 是锦上添花，不值得冒叠僵尸的险
+    return { ok: false, skipped: 'cannot-check-fstrim-container' }
+  }
+  if (existing) {
+    console.warn('[maintenance] 上一轮 fstrim 容器仍在（可能卡在 D 状态）— 本轮跳过')
+    return { ok: false, skipped: 'fstrim-container-exists' }
+  }
+  const id = await docker(
     [
       'run',
-      '--rm',
+      '-d',
+      '--name',
+      FSTRIM_CONTAINER,
       '--privileged',
       '--pid=host',
       '--entrypoint',
@@ -104,9 +131,26 @@ async function runFstrim() {
       'fstrim',
       '-av',
     ],
-    120000,
+    30000,
   )
-  return out
+  const trimmedId = String(id || '')
+    .trim()
+    .slice(0, 64)
+  if (!trimmedId) throw new Error('fstrim 容器启动无 ID 返回')
+  try {
+    await docker(['wait', trimmedId], 150000)
+    const out = await docker(['logs', trimmedId], 15000).catch(() => '')
+    await docker(['rm', '-f', trimmedId], 30000).catch(() => {})
+    return { ok: true, output: out }
+  } catch (err) {
+    // wait 超时/中断：尽力清除；D 状态杀不动时由命名锁兜住下一轮
+    await docker(['rm', '-f', trimmedId], 30000).catch(() => {
+      console.warn(
+        `[maintenance] fstrim 容器 ${trimmedId.slice(0, 12)} 僵死杀不动（D 状态）——需重启 Docker Desktop 解僵`,
+      )
+    })
+    throw err
+  }
 }
 
 /**

@@ -53,12 +53,17 @@ function dockerScript({
   psOut = '', // 默认无容器引用
   psFails = false, // true → infoIncomplete 保守分支
   rmiFails = false,
+  fstrimContainerExists = false, // 命名锁场景：ps -aq 查同名容器返回存在
 } = {}) {
   execFile.mockImplementation((cmd, args, opts, cb) => {
     calls.push([...args])
     if (args[0] === 'info') return cb(null, `${os}\n`, '')
     if (args[0] === 'images') return cb(null, `${images}\n`, '')
-    if (args[0] === 'ps') return psFails ? cb(new Error('daemon busy')) : cb(null, `${psOut}\n`, '')
+    if (args[0] === 'ps') {
+      // fstrim 命名锁探测：同名僵死容器"还在"
+      if (args[1] === '-aq' && fstrimContainerExists) return cb(null, 'stalectr123456\n', '')
+      return psFails ? cb(new Error('daemon busy')) : cb(null, `${psOut}\n`, '')
+    }
     if (args[0] === 'inspect') {
       // listUntaggedBySignature 的归属特征：bbb 认领为自家，ccc 是外人
       const env = args[1] === 'bbb222222222' ? '["DSH_HOME=/app"]' : '["PATH=/usr/local/bin"]'
@@ -69,7 +74,14 @@ function dockerScript({
       return cb(null, `Deleted: sha256:${args[1]}\n`, '')
     }
     if (args[0] === 'builder') return cb(null, pruneOut, '')
-    if (args[0] === 'run') return cb(null, '/var/lib/docker: 5.2 GiB trimmed\n', '')
+    // fstrim 新姿势（2026-10-08 事故修正）：run -d → wait → logs → rm -f
+    if (args[0] === 'run') {
+      if (fstrimContainerExists) return cb(null, '', '') // 命名锁由上面的 ps -aq 分支拦
+      return cb(null, 'fstrimctr1234567890abcdef\n', '')
+    }
+    if (args[0] === 'wait') return cb(null, '0\n', '')
+    if (args[0] === 'logs') return cb(null, '/var/lib/docker: 5.2 GiB trimmed\n', '')
+    if (args[0] === 'rm') return cb(null, args[1], '')
     return cb(null, '', '')
   })
 }
@@ -176,14 +188,36 @@ describe('回收动作与周期门控', () => {
 })
 
 describe('fstrim 分平台', () => {
-  it('Docker Desktop 指纹 → privileged nsenter fstrim -av', async () => {
+  it('Docker Desktop 指纹 → run -d --name 命名锁 + wait/logs 收结果 + rm 自删', async () => {
     dockerScript({ os: 'Docker Desktop' })
     const r = await runMaintenance({ force: true })
     expect(r.actions.fstrim.ok).toBe(true)
+    expect(r.actions.fstrim.output).toContain('trimmed')
     const runCall = calls.find((a) => a[0] === 'run')
     expect(runCall).toEqual(
-      expect.arrayContaining(['--rm', '--privileged', '--pid=host', 'fstrim', '-av']),
+      expect.arrayContaining([
+        '-d',
+        '--name',
+        'dsh-maintenance-fstrim',
+        '--privileged',
+        '--pid=host',
+        'fstrim',
+        '-av',
+      ]),
     )
+    // 事故教训：不再用 --rm + 前台 run（CLI 超时会杀不着容器叠僵尸）
+    expect(runCall).not.toContain('--rm')
+    expect(calls).toContainEqual(['wait', 'fstrimctr1234567890abcdef'])
+    expect(calls).toContainEqual(['rm', '-f', 'fstrimctr1234567890abcdef'])
+  })
+
+  it('命名锁：上一轮 fstrim 容器还活着 → 本轮跳过，绝不叠第二个', async () => {
+    dockerScript({ os: 'Docker Desktop', fstrimContainerExists: true })
+    const r = await runMaintenance({ force: true })
+    expect(r.actions.fstrim.skipped).toBe('fstrim-container-exists')
+    expect(r.actions.fstrim.ok).toBe(false)
+    expect(calls.some((a) => a[0] === 'run')).toBe(false)
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('仍在'))
   })
 
   it('Linux 指纹 → 跳过（删即释放，不存在这一步）', async () => {
