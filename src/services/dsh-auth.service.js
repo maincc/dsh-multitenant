@@ -43,38 +43,132 @@ export const AUTH_COOKIE_TTL_MS = 29 * 24 * 60 * 60 * 1000
 /** 从 DSH 启动输出里提取 launch token（全局匹配，取最后一条） */
 const TOKEN_RE = /[?&]token=([A-Za-z0-9_-]+)/g
 
+/** 日志尾部读取行数。轮转后启动行会滚出窗口 → 走 ② 缓存 / ③ 重启自愈（F2 三段式） */
+const TOKEN_TAIL_LINES = Number(process.env.DSH_TOKEN_TAIL_LINES || 2000)
+
+/** ③ 自愈重启的最小间隔（防"读不到 token 的容器被每次激活反复重启"） */
+const RECOVERY_MIN_INTERVAL_MS = 5 * 60 * 1000
+
 /**
- * 从容器日志里读出 DSH 的 launch token。
+ * 启动 token 缓存：containerName → { startedAt, token }。
  *
- * ⚠️ 必须取**最后一条**匹配：容器重启后日志里会累积多条
- * `dsh web: http://...?token=...`（每次启动打一条），只有最后一条属于
- * **当前**进程。取第一条会拿到上一次启动的失效 token，激活必然失败
- * ——实测踩过这个坑（表现为拿到空 cookie、用户 401）。
+ * 为什么必须有：供应容器已带 json-file 轮转（10m×3，disk-fix 缺口 E），
+ * 长跑容器的**启动行迟早滚出 tail 窗口**；没有这层缓存，读不到 token 的
+ * 唯一出路就是重启容器——那会把"面板开着几天后的普通激活"也意外重启。
+ * startedAt 作键防"缓存写入后容器又重启过"：重启后的新进程 token 必然
+ * 落在新日志尾部，① 直接命中，不会用到旧启动代的缓存。
+ */
+const launchTokenCache = new Map()
+
+/** 自愈重启节流：containerName → 上次 ③ 的时间戳 */
+const recoveryThrottle = new Map()
+
+/** 清启动 token 缓存（测试/运维用；不传 name 清全部。生产路径靠 startedAt 键自洽） */
+export function clearLaunchTokenCache(name) {
+  if (name === undefined) {
+    launchTokenCache.clear()
+    recoveryThrottle.clear()
+  } else {
+    launchTokenCache.delete(name)
+    recoveryThrottle.delete(name)
+  }
+}
+
+/** docker CLI → { stdout, stderr, err }，永不 reject（docker logs 进程退出时也输出，两边都要 parse） */
+function dockerCli(args, opts = {}) {
+  return new Promise((resolvePromise) => {
+    execFile(
+      'docker',
+      args,
+      { maxBuffer: 4 * 1024 * 1024, timeout: 10000, ...opts },
+      (err, stdout, stderr) => resolvePromise({ stdout: stdout || '', stderr: stderr || '', err }),
+    )
+  })
+}
+
+/** 取**最后一条** token：容器每次启动打印一条，只有最后一条属于当前进程（实测踩坑，语义不变） */
+function lastTokenIn(text) {
+  let last = null
+  for (const m of text.matchAll(TOKEN_RE)) last = m[1]
+  return last
+}
+
+/** 容器当前进程启动时间（同一"启动代"的标识）；容器不存在/查不到 → null */
+async function readStartedAt(containerName) {
+  const { stdout, err } = await dockerCli(
+    ['inspect', '-f', '{{.State.StartedAt}}', containerName],
+    { timeout: 10000 },
+  )
+  if (err) return null
+  const v = stdout.trim()
+  return v && !v.includes('<no') ? v : null
+}
+
+/** ① 读日志尾部窗口里的最后一条 token */
+async function readTailToken(containerName) {
+  const { stdout, stderr } = await dockerCli(
+    ['logs', '--tail', String(TOKEN_TAIL_LINES), containerName],
+    { timeout: 15000 },
+  )
+  return lastTokenIn(`${stdout}\n${stderr}`)
+}
+
+/**
+ * 从容器日志读出 DSH 的 launch token（F2 三段式，2026-09 磁盘防复发方案）。
  *
- * token 是进程级的，所以不缓存返回值，每次激活时读一次即可。
+ * 改造原因：旧版全量读 `docker logs`（maxBuffer 8MB）。日志一旦超 8MB，
+ * execFile 直接截断——只能读到**开头**的旧启动 token，激活必然失败，
+ * 且随供应侧 json-file 轮转 + 面板轮询访问日志，这枚雷必然被踩到。
+ *
+ * 三段式（①→②→③，全失败才返回 null）：
+ * ① `docker logs --tail 2000` 取尾部最后一条 token（新启动/意外重启/未滚出
+ *    窗口都命中），成功即按当前启动代记入缓存；
+ * ② miss → 若 startedAt 未变且有同代缓存 → 用缓存 token（启动行只是滚出了
+ *    窗口，容器无需动）；
+ * ③ 仍 miss（平台进程重启丢了记忆等）→ 重启一次容器重新打印 token。到这步
+ *    激活本来就是死局（用户 401 进不去），重启是把死局换活局；租户数据在
+ *    卷上不受影响。带 5 分钟节流防重启风暴。
  *
  * @param {string} containerName
  * @returns {Promise<string|null>} 读不到返回 null（不抛）
  */
-export function readToken(containerName) {
-  return new Promise((resolvePromise) => {
-    execFile(
-      'docker',
-      ['logs', containerName],
-      { maxBuffer: 8 * 1024 * 1024, timeout: 10000 },
-      (err, stdout, stderr) => {
-        // docker logs 把容器 stdout 给 stdout、stderr 给 stderr；
-        // 且进程已退出时也可能带 err，所以两边都找
-        const text = `${stdout || ''}\n${stderr || ''}`
-        let last = null
-        // 每次调用重置 lastIndex，避免 /g 正则的状态残留
-        TOKEN_RE.lastIndex = 0
-        for (const m of text.matchAll(TOKEN_RE)) last = m[1]
-        resolvePromise(last)
-        void err
-      },
-    )
-  })
+export async function readToken(containerName) {
+  // ① 先读尾部：命中就用——inspect 偶发失败不能把已到手的 token 丢掉
+  const tail = await readTailToken(containerName)
+  if (tail) {
+    const boot = await readStartedAt(containerName)
+    if (boot) launchTokenCache.set(containerName, { startedAt: boot, token: tail })
+    return tail
+  }
+  const startedAt = await readStartedAt(containerName)
+  if (startedAt === null) return null // 容器都不在：重启无意义，交给供应/重建路径
+
+  // ② 同一启动代的缓存（启动行只是滚出了 tail 窗口）
+  const cached = launchTokenCache.get(containerName)
+  if (cached && cached.startedAt === startedAt) {
+    return cached.token
+  }
+
+  // ③ 最后兜底：重启一次，让容器重新打印 token
+  const now = Date.now()
+  if (now - (recoveryThrottle.get(containerName) || 0) < RECOVERY_MIN_INTERVAL_MS) {
+    return null // 刚自救过还是读不到：别再反复重启，让上层给明确 401
+  }
+  recoveryThrottle.set(containerName, now)
+  console.warn(
+    `[dsh-auth] ${containerName}: 日志尾部读不到 token 且无同代缓存，重启一次自愈（token 缓存与日志轮转的配套兜底）`,
+  )
+  const restarted = await dockerCli(['restart', containerName], { timeout: 60000 })
+  if (restarted.err) return null
+  // 容器内 dsh web 打印 token 需要 1~3s；等待时长可配（测试置 0）
+  await new Promise((r) => setTimeout(r, Number(process.env.DSH_TOKEN_RECOVERY_SLEEP_MS ?? 1500)))
+  const fresh = await readTailToken(containerName)
+  if (fresh) {
+    const newStarted = (await readStartedAt(containerName)) || startedAt
+    launchTokenCache.set(containerName, { startedAt: newStarted, token: fresh })
+    return fresh
+  }
+  return null
 }
 
 /**
