@@ -1506,8 +1506,10 @@ const pruneImages = async () => {
     const headers = await signAdminOperation('dsh/prune-images', { ids })
     const res = await axios.post('/api/admin/dsh/images/prune', { ids }, { headers })
     const { removed = [], skipped = [], freedBytes = 0 } = res.data || {}
-    const parts = [$t('admin.dshPruned', { n: removed.length, size: formatBytes(freedBytes) })]
-    if (skipped.length) parts.push($t('admin.dshPruneSkipped', { n: skipped.length }))
+    // ⚠️ script setup 里没有 $t（那是模板专属）：必须用 useI18n() 的 t——
+    // 此处曾写错，镜像删成功后组装回执时 ReferenceError，用户误以为没删掉
+    const parts = [t('admin.dshPruned', { n: removed.length, size: formatBytes(freedBytes) })]
+    if (skipped.length) parts.push(t('admin.dshPruneSkipped', { n: skipped.length }))
     dshPrune.value = { running: false, message: parts.join('，') }
     selectedImageIds.value = []
     await loadDshStatus()
