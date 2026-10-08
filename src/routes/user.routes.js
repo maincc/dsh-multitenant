@@ -4,6 +4,7 @@
 
 import { CONFIG, isAdmin } from '../config/config.js'
 import { userService } from '../services/user.service.js'
+import { resourceExhaustedPayload } from '../utils/resource-exhausted.js'
 import { tenantConfigService, SIGN_PURPOSE } from '../services/tenant-config.service.js'
 import { cwtAdminService } from '../services/cwt-admin.service.js'
 import { cwtService } from '../services/cwt.service.js'
@@ -126,21 +127,9 @@ export async function handleUserRoutes(req, res, path) {
     } catch (err) {
       if (err.code === 'RESOURCE_EXHAUSTED') {
         // F1：把"缺了什么"透给前端（failedResources）并拼进文案——
-        // 「资源不足」不再是一句无信息的空话。
-        const labels = { ports: '端口', memory: '内存', disk: '磁盘空间', containers: '容器数量' }
-        const reasons = (err.failedResources || []).map((k) => labels[k] || k)
+        // 「资源不足」不再是一句无信息的空话。组装与 /connect 单源共用。
         res.writeHead(202, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(
-          JSON.stringify({
-            error: reasons.length ? `资源不足：${reasons.join('、')}` : '资源不足，请等待',
-            code: 'RESOURCE_EXHAUSTED',
-            queuePosition: err.queuePosition,
-            failedResources: err.failedResources || [],
-            message: reasons.length
-              ? `系统${reasons.join('、')}不足，您已进入等待队列，资源释放后将自动为您创建容器`
-              : '系统资源不足，您已进入等待队列，资源释放后将自动为您创建容器',
-          }),
-        )
+        res.end(JSON.stringify(resourceExhaustedPayload(err)))
         return true
       }
       if (err.code === 'USAGE_LIMIT_REACHED') {

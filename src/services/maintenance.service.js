@@ -4,15 +4,18 @@
  * 目标：F1（预检查对盘）/ F2（日志轮转）把"增长"管住了，本模块把"累积"
  * 管住——悬空镜像与构建缓存的周期回收，防 disk 再走到 0.5GB 那种事故。
  *
- * ⚠️ 红线（本文件的立身之本，单测锁定，任何人不得"顺手加个 -a"）：
+ * ⚠️ 红线（本文件的立身之本，单测锁定，任何人不得"顺手加个 prune"）：
  *   - 永不 `docker volume prune` / 永不动任何卷——租户卷是唯一真数据，
  *     删了没法恢复（与 admin.routes 的"只按 ID 精确删除"红线同源）。
- *   - 永不 `docker image prune -a`——-a 连**有 tag 但没被容器引用**的镜像
- *     一起删，版本回退的弹药（历史 tag）和共存的业务镜像（faucet 等）
- *     会一起没命。只允许 `image prune -f`（悬空 = 无 tag 且无引用）。
+ *   - 永不 `docker image prune`（-f 也不行）——prune 是**全机作用域**，这台
+ *     机器上同时跑着别的项目（faucet 等），它们 untag 掉的旧构建会被连坐。
+ *     悬空回收必须走 image-inventory 的"本项目认领"判定后**按 ID 逐个 rmi**
+ *     （2026-09 查重修正：F3 初版误用 prune -f，与清理面板的作用域原则冲突）。
+ *   - 只删 dangling（无 tag）且非 current 且无容器（含停止态）引用的；
+ *     **带 tag 的一律不碰**——那是版本回退弹药，只归管理员手动处置。
  *   - builder 缓存必须带 --keep-storage（全清会让下次构建从 0 编译，
  *     node-pty 一类依赖白烧几十分钟 CPU）。
- *   - 构建窗口互斥：镜像构建进行中绝不跑任何 prune（防删掉 build 中间态）。
+ *   - 构建窗口互斥：镜像构建进行中绝不跑任何回收（防删掉 build 中间态）。
  *
  * 配置（CONFIG.docker.maintenance，全部有点值兜底——浅合并防御）：
  *   enabled      false 时本服务整体不执行（只留 F1 的告警面）
@@ -25,6 +28,8 @@
 import { execFile } from 'node:child_process'
 import { CONFIG } from '../config/config.js'
 import { isImageBuilding } from './docker.service.js'
+import { collectPrunableImages } from './image-inventory.service.js'
+import { dataService } from './data.service.js'
 
 /** 周期：悬空镜像每天一次；构建缓存每周一次；fstrim 跟每日回收同轮 */
 const IMAGE_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000
@@ -105,6 +110,57 @@ async function runFstrim() {
 }
 
 /**
+ * 悬空镜像回收：作用域 = **本项目**的、非 current、无容器（含停止态）引用的悬空镜像。
+ * 判定与管理面板共用同一真源（collectPrunableImages），随后按 ID 逐个 `docker rmi`。
+ * 绝不用 `docker image prune`——那是全机作用域，会把别的项目（faucet 等）
+ * untag 掉的旧构建连坐删掉（本文件红线，与面板"只按 ID 精确删除"同源）。
+ * 拿不到容器信息（infoIncomplete）时本轮跳过：判定依据不足宁可不删，明天再来。
+ */
+async function reclaimOurDangling() {
+  const inv = await collectPrunableImages(dataService.getDshImage())
+  if (inv.infoIncomplete) {
+    return { ok: true, skipped: 'container-info-unavailable', deleted: 0, reclaimed: '0B' }
+  }
+  const targets = inv.items.filter((im) => im.dangling && im.removable)
+  let deleted = 0
+  let freedBytes = 0
+  const failed = []
+  for (const im of targets) {
+    try {
+      await docker(['rmi', im.id], 120000)
+      deleted += 1
+      freedBytes += im.sizeBytes || 0
+    } catch (err) {
+      // 单个失败（如刚被容器引用、或有依赖子镜像）不拖垮整轮；明晚自愈重试
+      failed.push({ id: im.id, error: String(err?.message || err).slice(0, 160) })
+    }
+  }
+  if (failed.length) {
+    console.warn(`[maintenance] 悬空回收 ${failed.length} 个失败: ${JSON.stringify(failed)}`)
+  }
+  return {
+    ok: true,
+    deleted,
+    reclaimed: formatBytes(freedBytes),
+    candidates: targets.length,
+    failedCount: failed.length,
+  }
+}
+
+/** 字节 → 可读（仅日志/摘要用，无精度要求） */
+function formatBytes(n) {
+  if (!Number.isFinite(n) || n <= 0) return '0B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let v = n
+  let i = 0
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024
+    i += 1
+  }
+  return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)}${units[i]}`
+}
+
+/**
  * 维护主入口。定时器与手动触发共用；force 跳过"周期未到"判断。
  * 每个动作独立 try——一项失败不影响其余（维护路径永不抛到调用方）。
  *
@@ -127,11 +183,10 @@ export async function runMaintenance({ force = false } = {}) {
 
   const now = Date.now()
   if (force || now - state.lastImagePruneAt >= IMAGE_PRUNE_INTERVAL_MS) {
-    result.actions.imagePrune = await guarded('image prune（仅悬空）', async () => {
-      // ⚠️ 红线：只有 -f，永远不加 -a
-      const out = await docker(['image', 'prune', '-f'], 300000)
+    result.actions.imagePrune = await guarded('悬空镜像回收（按 ID·仅本项目）', async () => {
+      const r = await reclaimOurDangling()
       state.lastImagePruneAt = Date.now()
-      return summarizeReclaim(out)
+      return r
     })
   } else {
     result.actions.imagePrune = { skipped: 'interval' }
@@ -147,8 +202,8 @@ export async function runMaintenance({ force = false } = {}) {
     result.actions.builderPrune = { skipped: 'interval' }
   }
 
-  if (cfg.fstrim && (force || result.actions.imagePrune?.reclaimed)) {
-    // 只有真回收了空间（或手动 force）才值得走一次 TRIM；且仅 🍎
+  if (cfg.fstrim && (force || (result.actions.imagePrune?.deleted ?? 0) > 0)) {
+    // 只有真删掉了东西（或手动 force）才值得走一次 TRIM；且仅 🍎
     if (await detectDockerDesktop()) {
       result.actions.fstrim = await guarded('fstrim（Docker Desktop 回吐）', runFstrim)
     } else {
