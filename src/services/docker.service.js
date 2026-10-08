@@ -89,6 +89,18 @@ export function setStorageOptSupportedForTest(v) {
 }
 
 /**
+ * 镜像构建互斥标志（F3 维护定时器用）。
+ * buildImage 期间维护任务必须整体跳过——prune 可能拆掉构建中的中间层；
+ * 构建窗口以"进入计数"记，并发构建/异常退出都能配对还原。
+ */
+let buildDepth = 0
+
+/** 当前是否有 docker build 在进行（maintenance.service 消费） */
+export function isImageBuilding() {
+  return buildDepth > 0
+}
+
+/**
  * 判断一次 `docker run` 失败是否**明确**由"宿主不支持 --storage-opt"引起。
  *
  * 必须精确匹配：其它错误（端口占用、镜像缺失、名称冲突）要原样上抛，
@@ -983,7 +995,13 @@ export class DockerService {
     if (tag) args.push('-t', tag)
     args.push(context)
 
-    await sh('docker', args, { timeout })
+    // 构建窗口对维护任务互斥（见 isImageBuilding / maintenance.service）
+    buildDepth++
+    try {
+      await sh('docker', args, { timeout })
+    } finally {
+      buildDepth--
+    }
 
     return {
       version: await this.imageDshVersion(image),

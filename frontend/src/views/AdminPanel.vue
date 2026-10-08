@@ -434,8 +434,13 @@
                   <span
                     class="monitor-value"
                     :class="usagePctClass(stats.resource.disk.host?.usePercent)"
+                    :title="stats.resource.disk.host?.path || ''"
                   >
                     {{ stats.resource.disk.host?.usePercent || '-' }}
+                    <!-- F3 低盘标记：后端 collectDiskUsage 按 maintenance.lowFreeBytes 判定 -->
+                    <span v-if="stats.resource.disk.host?.lowFree" class="mem-pct-high"
+                      >⚠ {{ $t('admin.diskLowFree') }}</span
+                    >
                   </span>
                 </div>
               </div>

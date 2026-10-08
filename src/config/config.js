@@ -79,6 +79,15 @@ const DEFAULTS = {
     //   enforce=不足时拒绝供应并入等待队列。环境变量 DSH_PREFLIGHT_MODE 可临时覆盖。
     minFreeBytes: 4 * 1024 * 1024 * 1024,
     preflightMode: 'warn',
+    // 磁盘维护定时器（F3，disk-fix）：周期回收悬空镜像/构建缓存，防累积再满盘。
+    // 红线写在 maintenance.service.js 顶部并被单测锁定：永不 volume prune、
+    // 永不 image prune -a、builder 必带 --keep-storage、构建窗口互斥。
+    maintenance: {
+      enabled: true, // false=定时器全停（只留预检与告警面）；env DSH_MAINTENANCE_ENABLED 可应急覆盖
+      keepCache: '4GB', // builder prune --keep-storage
+      lowFreeBytes: 4 * 1024 * 1024 * 1024, // 低盘告警阈值（挂 5min 磁盘采集，红条+日志列可回收 top-N）
+      fstrim: true, // 仅 Docker Desktop 生效的 TRIM 回吐（Linux 删即释放，自动跳过）
+    },
   },
   dsh: {
     // 镜像内 DSH 版本的升级/回退管理

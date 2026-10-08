@@ -959,9 +959,27 @@ export class UserService {
         dockerService.dockerDiskSummary(),
         dockerService.tenantVolumeUsage(),
       ])
+      // F3#4 低盘告警：宿主可用 < docker.maintenance.lowFreeBytes →
+      // host.lowFree=true（面板红条）+ 日志列可回收 top-N（人工判断依据）。
+      // 只加标记，不拦截、不删除——判断与处置留给人。
+      let lowFree = false
+      if (host) {
+        const threshold = CONFIG.docker?.maintenance?.lowFreeBytes ?? 4 * 1024 * 1024 * 1024
+        lowFree = host.availableKB * 1024 < threshold
+        if (lowFree) {
+          const reclaim = (docker || [])
+            .filter((d) => d.reclaimable && !/^0B$/i.test(String(d.reclaimable)))
+            .slice(0, 3)
+            .map((d) => `${d.name}:${d.reclaimable}`)
+            .join(' ')
+          console.warn(
+            `[disk] 低盘告警：可用 ${(host.availableKB / 1048576).toFixed(1)}GB < ${(threshold / 1073741824).toFixed(0)}GB（分区 ${host.path ?? '?'}）。可回收 ${reclaim || '（docker system df 无回收项——检查非 Docker 占用）'}`,
+          )
+        }
+      }
       this.diskUsage = {
         collectedAt: Date.now(),
-        host,
+        host: host ? { ...host, lowFree } : null,
         docker,
         volumes,
       }

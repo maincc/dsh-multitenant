@@ -31,6 +31,7 @@ import { handleUserRoutes } from './routes/user.routes.js'
 import { handleTenantRoutes } from './routes/tenant.routes.js'
 import { handleSkillRoutes } from './routes/skill.routes.js'
 import { handleError } from './utils/errors.js'
+import { startMaintenanceTimer } from './services/maintenance.service.js'
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const FRONTEND_DIST = join(ROOT, 'frontend', 'dist')
@@ -321,9 +322,13 @@ server.listen(PORT, '0.0.0.0', async () => {
   startResourceMonitor()
   startDiskMonitor()
   startQueueProcessor()
+  startMaintenanceTimer()
   console.log(`[dsh-multitenant] entry server on http://127.0.0.1:${PORT}/`)
   console.log(
     `[dsh-multitenant] tenant image: ${CONFIG.docker.image}, host: ${CONFIG.server.publicHost}, ports from ${CONFIG.docker.basePort}`,
+  )
+  console.log(
+    `[dsh-multitenant] preflight=${userService.preflightMode()} minFree=${((CONFIG.docker?.minFreeBytes ?? 4 * 1024 * 1024 * 1024) / 1073741824).toFixed(0)}GB（warn=只记日志不拦截）`,
   )
   console.log(`[dsh-multitenant] Frontend: http://127.0.0.1:${PORT}/`)
   console.log(`[dsh-multitenant] Admin: http://127.0.0.1:${PORT}/admin`)

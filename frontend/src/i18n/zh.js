@@ -535,6 +535,7 @@ export default {
     diskUsed: '已用',
     diskAvailable: '可用',
     diskUsage: '使用率',
+    diskLowFree: '低盘告警',
     diskDockerTitle: 'Docker 存储',
     diskColType: '类型',
     diskColTotal: '数量',
