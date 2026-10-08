@@ -37,7 +37,7 @@
       </div>
     </div>
 
-    <!-- 管理面板：左侧栏 + 右侧内容（与 React 原型稿一致） -->
+    <!-- 系统管理：左侧栏 + 右侧内容（与 React 原型稿一致） -->
     <div v-else class="gate-shell">
       <!-- 左侧栏 -->
       <aside class="gate-sidebar">
@@ -1607,7 +1607,7 @@ const checkCCDAO = () => {
 
 // 账户变化统一处理（事件/轮询共用）：
 // 地址切换 → 先做无痕管理员预检（不弹签名）→ 是管理员才签名换会话；
-// 不是管理员 → 立即显示无权限页（notAdmin），绝不滞留管理面板。
+// 不是管理员 → 立即显示无权限页（notAdmin），绝不滞留系统管理页。
 const handleAccountsChanged = async (accounts, source = 'unknown') => {
   console.log(`[AdminPanel] 检测到账户变化(${source}):`, accounts)
 
@@ -1722,9 +1722,12 @@ const signLogin = async (pluginAddress) => {
   const chalRes = await axios.post('/api/admin/challenge', {
     address: pluginAddress.toLowerCase(),
   })
-  const nonce = chalRes.data.nonce
-  // 2. 插件对 nonce 签名 + 取公钥（都用原始大小写地址）
-  const signature = await signMessage(pluginAddress, nonce)
+  // 服务端下发 message = 用途绑定消息（`dsh-multitenant|login|<地址>|<nonce>` 的 hex）。
+  // 必须签 message 而不是 nonce：否则为其它用途（连容器/网关校验/技能市场）取得的
+  // 签名也能在登录处兑现 —— 那正是本次安全加固要堵的链。
+  const { nonce, message } = chalRes.data
+  // 2. 插件对 **message** 签名 + 取公钥（都用原始大小写地址）
+  const signature = await signMessage(pluginAddress, message)
   const publicKey = await getPublicKey(pluginAddress)
   // 3. 提交登录（签名验明身份 + 地址归属 → 签发服务端会话）
   return axios.post('/api/admin/login', {

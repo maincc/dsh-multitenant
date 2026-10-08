@@ -39,7 +39,10 @@ vi.mock('../src/services/user.service.js', () => ({
 }))
 
 vi.mock('../src/services/cwt-admin.service.js', () => ({ cwtAdminService: {} }))
-vi.mock('../src/services/tenant-config.service.js', () => ({ tenantConfigService: {} }))
+vi.mock('../src/services/tenant-config.service.js', async (importOriginal) => ({
+  ...(await importOriginal()), // 保留 SIGN_PURPOSE 等真实导出
+  tenantConfigService: {},
+}))
 vi.mock('../src/services/tenant-proxy.service.js', () => ({
   tenantGateway: { listen: vi.fn(), close: vi.fn() },
 }))

@@ -356,7 +356,10 @@ describe('加固：绑定串由服务端推导', () => {
     for (const [op, expected] of cases) {
       const { data } = await issueChallenge(op, { address: TENANT })
       expect(data.binding).toBe(expected)
-      expect(data.message).toBe(`${data.nonce}|${expected}`)
+      // 被签内容是"用途(admin-op) + 地址 + nonce + binding"的 hex 编码
+      // （hex 是必须的：@swtc/keypairs 内部按 hex 解码消息，直接喂 ASCII 会碰撞）
+      const canonical = `dsh-multitenant|admin-op|${ADMIN_ADDR.toLowerCase()}|${data.nonce}|${expected}`
+      expect(data.message).toBe(Buffer.from(canonical, 'utf8').toString('hex'))
     }
   })
 

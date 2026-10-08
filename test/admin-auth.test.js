@@ -34,7 +34,7 @@ vi.mock('../src/services/data.service.js', async (importOriginal) => {
 })
 
 import { handleAdminRoutes } from '../src/routes/admin.routes.js'
-import { tenantConfigService } from '../src/services/tenant-config.service.js'
+import { tenantConfigService, SIGN_PURPOSE } from '../src/services/tenant-config.service.js'
 import {
   requireAdmin,
   getAdminSession,
@@ -86,7 +86,10 @@ function sessionTokenFrom(res) {
 
 describe('管理员签名登录（P0-1）', () => {
   beforeEach(() => {
-    vi.spyOn(tenantConfigService, 'issueChallenge').mockReturnValue('nonce-test-001')
+    vi.spyOn(tenantConfigService, 'issueChallenge').mockReturnValue({
+      nonce: 'nonce-test-001',
+      message: 'msg-test-001',
+    })
     vi.spyOn(tenantConfigService, 'verifySignature').mockReturnValue(true)
     vi.spyOn(tenantConfigService, 'consumeChallenge').mockReturnValue(true)
     isAdmin.mockReturnValue(true)
@@ -286,12 +289,13 @@ describe('端到端：真实钱包签名登录（P0-1）', () => {
       '/api/admin/challenge',
     )
     expect(chalRes.statusCode).toBe(200)
-    const nonce = JSON.parse(chalRes.body).nonce
+    const { nonce, message } = JSON.parse(chalRes.body)
     expect(nonce).toBeTruthy()
     expect(nonce).toMatch(/^[0-9a-f]{64}$/)
+    expect(message).toMatch(/^[0-9a-f]+$/) // 用途绑定消息（hex）
 
-    // 2) 真实签名登录
-    const signature = wallet.sign(nonce)
+    // 2) 真实签名登录（签的是 message，不是裸 nonce）
+    const signature = wallet.sign(message)
     const loginRes = makeRes()
     await handleAdminRoutes(
       makeReq({
@@ -321,5 +325,37 @@ describe('端到端：真实钱包签名登录（P0-1）', () => {
       '/api/admin/login',
     )
     expect(replayRes.statusCode).toBe(403)
+  })
+
+  it('核心加固：拿非 LOGIN 用途的挑战/签名登录 → 403（跨端点凭证混淆已堵死）', async () => {
+    const seed = Keypairs.generateSeed({ algorithm: 'ed25519' })
+    const kp = Keypairs.deriveKeypair(seed)
+    const wallet = {
+      publicKey: kp.publicKey,
+      address: Keypairs.deriveAddress(kp.publicKey).toLowerCase(),
+      sign: (msg) => Keypairs.sign(msg, kp.privateKey),
+    }
+
+    // 攻击路径复现：管理员地址在**别的用途**（如连容器）下领一个挑战，
+    // 诱导管理员对这个无 login 语义的串签名，然后拿到 /api/admin/login 兑现。
+    const foreign = tenantConfigService.issueChallenge(wallet.address, SIGN_PURPOSE.CONNECT)
+
+    const res = makeRes()
+    await handleAdminRoutes(
+      makeReq({
+        method: 'POST',
+        url: '/api/admin/login',
+        body: {
+          address: wallet.address,
+          nonce: foreign.nonce,
+          signature: wallet.sign(foreign.message),
+          publicKey: wallet.publicKey,
+        },
+      }),
+      res,
+      '/api/admin/login',
+    )
+    expect(res.statusCode).toBe(403)
+    expect(adminSessionStore.sessions).toEqual({}) // 绝不下发会话
   })
 })

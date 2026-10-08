@@ -7,7 +7,11 @@ import { userService } from '../services/user.service.js'
 import { dataService } from '../services/data.service.js'
 import { dockerService } from '../services/docker.service.js'
 import { cwtAdminService } from '../services/cwt-admin.service.js'
-import { tenantConfigService } from '../services/tenant-config.service.js'
+import {
+  tenantConfigService,
+  SIGN_PURPOSE,
+  buildSignedMessage,
+} from '../services/tenant-config.service.js'
 import { tenantGateway } from '../services/tenant-proxy.service.js'
 import { dshVersionService } from '../services/dsh-version.service.js'
 import { existsSync } from 'node:fs'
@@ -263,15 +267,18 @@ export async function handleAdminRoutes(req, res, path, url) {
         return true
       }
 
-      // 登录挑战（保持原行为）
-      const nonce = tenantConfigService.issueChallenge(normalizeAddress(address))
-      if (!nonce) {
+      // 登录挑战：nonce 按 LOGIN 用途分池，且下发 message（用途绑定后的被签内容）
+      const challenge = tenantConfigService.issueChallenge(
+        normalizeAddress(address),
+        SIGN_PURPOSE.LOGIN,
+      )
+      if (!challenge) {
         res.writeHead(503, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify({ error: '挑战发放过载，请稍后重试', code: 'OVERLOAD' }))
         return true
       }
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ ok: true, nonce }))
+      res.end(JSON.stringify({ ok: true, nonce: challenge.nonce, message: challenge.message }))
     } catch (err) {
       if (!res.headersSent) handleError(err, res)
     }
@@ -288,14 +295,24 @@ export async function handleAdminRoutes(req, res, path, url) {
 
       const addrLower = normalizeAddress(address)
 
-      // ① 验签：nonce 签名有效且公钥推导地址 === 声称地址
-      if (!tenantConfigService.verifySignature(addrLower, nonce, signature, publicKey)) {
+      // ① 验签：**用途绑定消息**的签名有效且公钥推导地址 === 声称地址。
+      //    签的是服务端构造的 `dsh-multitenant|login|<地址>|<nonce>`（hex），
+      //    因此为其它用途（connect / gateway-verify / skills …）取得的签名
+      //    在这里一律验不过 —— 这是本次安全加固要堵的那条链。
+      if (
+        !tenantConfigService.verifySignature(
+          addrLower,
+          buildSignedMessage(SIGN_PURPOSE.LOGIN, addrLower, nonce),
+          signature,
+          publicKey,
+        )
+      ) {
         res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify({ error: '签名验证失败', code: 'FORBIDDEN' }))
         return true
       }
-      // ② 挑战一次性（不可重放）
-      if (!tenantConfigService.consumeChallenge(addrLower, nonce)) {
+      // ② 挑战一次性（不可重放）+ 必须是为 LOGIN 用途发放的
+      if (!tenantConfigService.consumeChallenge(addrLower, nonce, SIGN_PURPOSE.LOGIN)) {
         res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify({ error: '挑战已失效，请重新获取', code: 'FORBIDDEN' }))
         return true

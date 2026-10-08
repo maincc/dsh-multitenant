@@ -30,6 +30,7 @@ vi.mock('../src/services/data.service.js', async (importOriginal) => {
 
 import { tenantGateway } from '../src/services/tenant-proxy.service.js'
 import { userSessionStore } from '../src/middleware/user-auth.middleware.js'
+import { tenantConfigService, SIGN_PURPOSE } from '../src/services/tenant-config.service.js'
 import { Keypairs } from '@swtc/keypairs'
 
 const OWNER = 'jga9j9tkqtbcuohe2zqhvffbguved6o9or'
@@ -198,8 +199,8 @@ describe('租户网关门禁：顶层导航一致性校验（插件地址 vs 会
     expect(await res.json()).toMatchObject({ ok: true, valid: false })
   })
 
-  it('/__gw__/verify 正路径：对 challenge nonce 的真实签名 → valid:true', async () => {
-    // 真实密钥对 → 动态地址 → 会话；challenge 拿 nonce → 签名 → 验证
+  it('/__gw__/verify 正路径：对 challenge message 的真实签名 → valid:true', async () => {
+    // 真实密钥对 → 动态地址 → 会话；challenge 拿 message → 签名 → 验证
     const seed = Keypairs.generateSeed()
     const kp = Keypairs.deriveKeypair(seed)
     const addr = Keypairs.deriveAddress(kp.publicKey).toLowerCase()
@@ -209,11 +210,12 @@ describe('租户网关门禁：顶层导航一致性校验（插件地址 vs 会
     const cRes = await fetch(`http://127.0.0.1:${publicPort}/__gw__/challenge`, {
       headers: { cookie: `user_session=${token}` },
     })
-    const { nonce } = await cRes.json()
+    const { nonce, message } = await cRes.json()
     expect(typeof nonce).toBe('string')
+    expect(typeof message).toBe('string') // 用途绑定消息（GATEWAY 用途）
 
-    // 签名（与平台配置签名同一算法：Keypairs.sign(nonceHex, privateKey)）
-    const signature = Keypairs.sign(nonce, kp.privateKey)
+    // 签名（与平台签名同一算法：Keypairs.sign(messageHex, privateKey)）
+    const signature = Keypairs.sign(message, kp.privateKey)
 
     const vRes = await fetch(`http://127.0.0.1:${publicPort}/__gw__/verify`, {
       method: 'POST',
@@ -227,6 +229,58 @@ describe('租户网关门禁：顶层导航一致性校验（插件地址 vs 会
     })
     const j = await vRes.json()
     expect(j.valid).toBe(true) // body 被正确解析 + 真实签名验证通过
+  })
+
+  it('用途绑定：拿 LOGIN 用途的挑战/签名过网关校验 → valid:false（跨用途加固）', async () => {
+    const seed = Keypairs.generateSeed()
+    const kp = Keypairs.deriveKeypair(seed)
+    const addr = Keypairs.deriveAddress(kp.publicKey).toLowerCase()
+    const token = userSessionStore.create(addr)
+
+    // 攻击者持有的是"登录用途"的挑战与签名（地址/nonce 都对，但用途不对）
+    const foreign = tenantConfigService.issueChallenge(addr, SIGN_PURPOSE.LOGIN)
+    const signature = Keypairs.sign(foreign.message, kp.privateKey)
+
+    const vRes = await fetch(`http://127.0.0.1:${publicPort}/__gw__/verify`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: `user_session=${token}` },
+      body: JSON.stringify({
+        address: addr,
+        nonce: foreign.nonce,
+        signature,
+        publicKey: kp.publicKey,
+      }),
+    })
+    const j = await vRes.json()
+    expect(j.valid).toBe(false)
+  })
+
+  it('H1 加固：平台自身的门禁 cookie 绝不转发进租户容器', async () => {
+    const token = userSessionStore.create(OWNER)
+    let seenCookie = null
+    const upstream = createServer((req, res) => {
+      seenCookie = req.headers.cookie || ''
+      res.writeHead(200, { 'content-type': 'text/plain' })
+      res.end('ok')
+    })
+    await new Promise((r) => upstream.listen(internalPort, '127.0.0.1', r))
+    try {
+      // 非顶层导航（子资源/fetch）→ 过门禁后直接转发到容器
+      const res = await fetch(`http://127.0.0.1:${publicPort}/api/session/list`, {
+        headers: {
+          cookie: `admin_session=stolen-admin-token; user_session=${token}; gw_ok=1; theme=dark`,
+        },
+      })
+      expect(res.status).toBe(200)
+      // 平台自身的门禁 cookie 一律剥离（否则租户可窃取 admin_session 冒充管理员）
+      expect(seenCookie).not.toContain('admin_session')
+      expect(seenCookie).not.toContain('user_session')
+      expect(seenCookie).not.toContain('gw_ok')
+      // 容器自己的 cookie 原样保留
+      expect(seenCookie).toContain('theme=dark')
+    } finally {
+      await new Promise((r) => upstream.close(r))
+    }
   })
 })
 

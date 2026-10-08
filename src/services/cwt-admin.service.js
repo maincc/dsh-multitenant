@@ -9,6 +9,8 @@
  * 数据存储：cwtStore（data/cwt/registry.json + applications.json + records.log），
  * 与 data/ 其他业务数据统一；不再写入根目录 state.json。
  * 记录策略：pending / approved 申请永久保留（授权来源证据），rejected 保留最近 100 条。
+ * 防洪泛：pending 有**总条数上限**（cwt.maxPending，默认 500，超限 503）+
+ *         token 有**字节上限**（cwt.maxTokenBytes，默认 8192）+ 接口按 IP 限流。
  */
 
 import { randomUUID } from 'node:crypto'
@@ -18,9 +20,41 @@ import { dataService } from './data.service.js'
 import { cwtStore } from './cwt.store.js'
 import { cwtService } from './cwt.service.js'
 import { normalizeAddress } from '../utils/address.js'
-import { BadRequestError, NotFoundError, ConflictError, InternalError } from '../utils/errors.js'
+import {
+  AppError,
+  BadRequestError,
+  NotFoundError,
+  ConflictError,
+  InternalError,
+  PayloadTooLargeError,
+} from '../utils/errors.js'
+
+/** 单个 CWT token 的字节上限（正常 CWT 约 1–2KB；防超大 payload 撑爆磁盘/CPU） */
+const DEFAULT_MAX_TOKEN_BYTES = 8192
+/**
+ * 待审批申请总条数上限（未认证洪泛的硬边界）。
+ *
+ * 为什么必须有：`POST /api/user/cwt/apply` 是**未认证**端点，token 由调用方
+ * 自签（零成本）。加固前 pending 无任何总条数上限、且每次入队都全量重写
+ * applications.json —— 可被刷爆磁盘并灌满管理端审批队列。超限直接 503 卸载
+ * （fail-closed），而不是继续入队。
+ */
+const DEFAULT_MAX_PENDING_APPLICATIONS = 500
+
+/** 取正整数配置；非法/缺失回退默认值（防 maxPending:0 之类把功能整个关死） */
+function positiveInt(value, fallback) {
+  const n = Number(value)
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback
+}
 
 class CwtAdminService {
+  constructor() {
+    const cfg = CONFIG.cwt ?? {}
+    // 实例字段（便于测试注入小值），来源：config.json 的 cwt.maxTokenBytes / cwt.maxPending
+    this.maxTokenBytes = positiveInt(cfg.maxTokenBytes, DEFAULT_MAX_TOKEN_BYTES)
+    this.maxPendingApplications = positiveInt(cfg.maxPending, DEFAULT_MAX_PENDING_APPLICATIONS)
+  }
+
   /** CWT 配置（回退 CONFIG） */
   cwtConfig() {
     return CONFIG.cwt ?? {}
@@ -36,6 +70,23 @@ class CwtAdminService {
     if (typeof token !== 'string' || !token.includes('.')) {
       throw new BadRequestError('缺少有效的 cwt token')
     }
+    // 尺寸上限：先于任何解析/验签（防超大 payload 撑爆磁盘与 CPU）
+    if (Buffer.byteLength(token, 'utf8') > this.maxTokenBytes) {
+      throw new PayloadTooLargeError(`token 过大（上限 ${this.maxTokenBytes} 字节）`)
+    }
+    // 队列上限：**刻意放在验签之前** —— 队列满时连密码学开销都不付，直接卸载。
+    // pending 计数口径与 cwtStore 的裁剪策略一致（rejected 会被裁到 100 条）。
+    const pendingCount = cwtStore
+      .getApplications()
+      .reduce((n, a) => (a.status === 'pending' ? n + 1 : n), 0)
+    if (pendingCount >= this.maxPendingApplications) {
+      throw new AppError(
+        'OVERLOAD',
+        `待审批申请已达上限（${this.maxPendingApplications}），请等待管理员处理后再试`,
+        503,
+      )
+    }
+
     const result = await cwtService.verify(token, { ttlMs: cfg.ttlMs })
     if (!result.valid) {
       throw new BadRequestError(`token 无效：${result.error}`)

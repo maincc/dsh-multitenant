@@ -28,8 +28,14 @@ const DEFAULTS = {
   },
   cwt: {
     enabled: true, // CWT 申请-审批-出示体系开关
-    ttlMs: 300000, // 出示 token 全局时效（±5 分钟，双向）
+    ttlMs: 300000, // 出示 token 时效（单向：0 ≤ now−issued ≤ ttl，拒绝未来签发）
     allowCwtEnt: false, // CWT_ENT 组形态预留，本期关闭
+    // 防洪泛（未认证端点 + token 自签，零成本）：待审批申请总条数上限，
+    // 超限直接 503 卸载；单个 token 字节上限。改动需重启服务。
+    // 注意 config.json 是**浅合并**：config.json 里已有 cwt 块时，这里新增的键
+    // 不会自动生效，需在 config.json 的 cwt 块里显式写（服务端对缺失值有兜底）。
+    maxPending: 500,
+    maxTokenBytes: 8192,
   },
   skills: {
     autoInvoke: false, // 市场技能默认禁止模型自动调用（P0-4：安装到用户卷时强制
@@ -51,6 +57,20 @@ const DEFAULTS = {
     basePort: 31000,
     maxPort: 65535,
     startupTimeoutMs: 120000,
+    // 租户容器安全参数档位（P1-6 降权第一阶段，2026-09）：
+    //   auto   默认。首次供应容器前用 strict 参数跑一次 DSH 同款 bwrap 探测：
+    //          通过 → 全租户用 strict；失败 → 回落 compat 并告警（结果缓存，
+    //          镜像重建 clearCapabilityCache 或平台重启会重新判定）。
+    //   strict 强制新参数组：保留 SYS_ADMIN + no-new-privileges + 白名单 seccomp
+    //          （seccompProfilePath）。探测失败**不回退**、报错上抛——管理员
+    //          显式选择，静默降级坏过好。
+    //   compat 强制旧参数组：SYS_ADMIN + seccomp=unconfined + apparmor=unconfined
+    //          （2026-09-22 之前的行为，应急回退开关）。
+    privilegeProfile: 'auto',
+    // 白名单 seccomp profile 的宿主机路径（由 Docker daemon 读取，不是容器内）。
+    // 默认指向仓库内 deploy/ 文件，rsync 部署随代码走；daemon 读不到时
+    // auto 自动降级 compat。
+    seccompProfilePath: join(ROOT, 'deploy', 'seccomp-bwrap-minimal.json'),
   },
   dsh: {
     // 镜像内 DSH 版本的升级/回退管理

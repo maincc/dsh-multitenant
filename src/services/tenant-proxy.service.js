@@ -21,7 +21,7 @@ import { randomBytes } from 'node:crypto'
 import { getUserSession, userSessionStore } from '../middleware/user-auth.middleware.js'
 import { getAdminSession } from '../middleware/auth.middleware.js'
 import { isAdmin } from '../config/config.js'
-import { tenantConfigService } from './tenant-config.service.js'
+import { tenantConfigService, SIGN_PURPOSE, buildSignedMessage } from './tenant-config.service.js'
 // 只取纯函数 requiresToken（dsh-version.service 仅依赖 config，不成环）。
 // 用于区分"容器落后于平台镜像"与"平台镜像本身就需要认证"这两种拒绝原因。
 import { requiresToken } from './dsh-version.service.js'
@@ -47,6 +47,54 @@ const HOP_BY_HOP = new Set([
 ])
 
 /**
+ * 平台自身的门禁 cookie —— **绝不转发进租户容器**。
+ *
+ * ## 为什么（H1 加固）
+ *
+ * 浏览器 cookie 按 host 隔离、**不按端口隔离**（RFC 6265），`SameSite=Strict`
+ * 也不判端口。租户容器的页面与平台入口同 host（只是端口不同），所以管理员
+ * 打开 `http://<host>:<租户端口>/` 时，浏览器会把 `admin_session` 一起带上。
+ * 而租户**完全掌控自己的容器**（有 shell，甚至能替换 3080 上的监听进程），
+ * 于是这串 12 小时有效的 bearer token 就落到了租户手里 —— 拿去重放即可冒充
+ * 管理员（`admin-signature.middleware.js` 开头记录了这条实测链）。
+ *
+ * `user_session` 同理：它是网关门禁凭据，容器内的 DSH 根本不需要它。
+ * `gw_ok` 只对网关自己的校验页有意义。
+ *
+ * 注意：容器内 DSH 自己的认证 cookie（`dsh-auth-*`）由平台从容器 launch
+ * token 现换后**注入**，不在此列（见 `mergeDshAuthCookie`）。
+ */
+const PLATFORM_COOKIE_NAMES = new Set(['admin_session', 'user_session', 'gw_ok'])
+
+/** 取 cookie 条目的名字（`a=b` → `a`），小写 */
+function cookieName(entry) {
+  const eq = entry.indexOf('=')
+  return (eq === -1 ? entry : entry.slice(0, eq)).trim().toLowerCase()
+}
+
+/**
+ * 按谓词过滤 Cookie 头里的条目。
+ * @param {string|undefined} cookieHeader
+ * @param {(name: string) => boolean} shouldDrop 返回 true 的条目被剔除
+ * @returns {string} 过滤后的 Cookie 头（可能为空串）
+ */
+function filterCookies(cookieHeader, shouldDrop) {
+  if (typeof cookieHeader !== 'string' || !cookieHeader) return ''
+  return cookieHeader
+    .split(';')
+    .map((c) => c.trim())
+    .filter((c) => c && !shouldDrop(cookieName(c)))
+    .join('; ')
+}
+
+/**
+ * 剔除平台自身的门禁 cookie（`admin_session` / `user_session` / `gw_ok`）。
+ */
+function stripPlatformCookies(cookieHeader) {
+  return filterCookies(cookieHeader, (name) => PLATFORM_COOKIE_NAMES.has(name))
+}
+
+/**
  * cookie 替换策略。
  *
  * - `'replace'`（生产默认）：剔除浏览器带来的 `dsh-auth-*`，只注入平台现换的那份。
@@ -63,17 +111,26 @@ export function _setDshAuthCookieModeForTest(mode) {
 
 /**
  * 按当前策略合并 Cookie 头。
+ *
+ * 无论 `authCookie` 是否存在，**平台自身的门禁 cookie 一律剥离**
+ * （`admin_session` / `user_session` / `gw_ok`）—— 这是 H1 的纵深防御：
+ * 即使管理员的 `admin_session` 因为同 host 不同端口被浏览器带上，
+ * 也绝不进入租户容器。
+ *
  * @param {string|undefined} original 浏览器带来的 Cookie 头
  * @param {string|null} authCookie 平台代激活得到的那一份（`dsh-auth-<hash>=<值>`）
  * @returns {string} 要转发给容器的 Cookie 头（可能为空串）
  */
 function mergeDshAuthCookie(original, authCookie) {
-  const rest = stripDshAuthCookies(original)
-  if (!authCookie) return rest
-  if (dshAuthCookieMode === 'legacy' && hasAuthCookie(original)) {
-    // 旧行为：浏览器已有 dsh-auth-* 就原样转发（失效 cookie 会害 DSH 回 401）
-    return original
+  // 第一步：平台自身 cookie 永不出境
+  const withoutPlatform = stripPlatformCookies(original)
+  // legacy 模式（仅回归测试复现旧 bug）：保留浏览器带来的 dsh-auth-*
+  if (dshAuthCookieMode === 'legacy' && hasAuthCookie(withoutPlatform)) {
+    return withoutPlatform
   }
+  // 第二步：剔除浏览器带来的 dsh-auth-*，只注入平台现换的那份
+  const rest = stripDshAuthCookies(withoutPlatform)
+  if (!authCookie) return rest
   return rest ? `${rest}; ${authCookie}` : authCookie
 }
 
@@ -241,15 +298,19 @@ const VERIFY_PAGE_TEMPLATE = `<!doctype html>
         '请点击 CCDAO 插件图标切换账户，或在平台重新连接。', false, true)
       return
     }
-    // 签名证明：让插件用"会话地址"的私钥对 nonce 签名（弹窗确认，用户可见签的是谁）。
+    // 签名证明：让插件用"会话地址"的私钥对挑战消息（GATEWAY 用途绑定）签名
+    // （弹窗确认，用户可见签的是谁）。
     // 能签出来 = 当前持有该身份；签不了（已切走/非本人）= 拒绝。
     show('请在 CCDAO 插件中确认签名', '正在请求 ' + cookieAddr.slice(0, 12) + '… 对本次访问签名确认…', false, false)
     var nonce = null
+    var message = null
     try {
       var cr = await fetch('/__gw__/challenge', { credentials: 'same-origin' })
-      nonce = (await cr.json()).nonce
-    } catch (e) { nonce = null }
-    if (!nonce) {
+      var cj = await cr.json()
+      nonce = cj.nonce
+      message = cj.message
+    } catch (e) { nonce = null; message = null }
+    if (!nonce || !message) {
       show('签名挑战获取失败', '请刷新本页重试；若持续失败请联系平台。', false, true)
       return
     }
@@ -257,10 +318,10 @@ const VERIFY_PAGE_TEMPLATE = `<!doctype html>
     var publicKey = null
     try {
       if (window.ccdao && window.ccdao.request) {
-        signature = await withTimeout(window.ccdao.request({ method: 'swtc_signMessage', params: [rawAddr, nonce] }), 8000)
+        signature = await withTimeout(window.ccdao.request({ method: 'swtc_signMessage', params: [rawAddr, message] }), 8000)
         publicKey = await withTimeout(window.ccdao.request({ method: 'swtc_getPublicKey', params: [rawAddr] }), 5000)
       } else if (window.ethereum && window.ethereum.request) {
-        signature = await withTimeout(window.ethereum.request({ method: 'swtc_signMessage', params: [rawAddr, nonce] }), 8000)
+        signature = await withTimeout(window.ethereum.request({ method: 'swtc_signMessage', params: [rawAddr, message] }), 8000)
         publicKey = await withTimeout(window.ethereum.request({ method: 'swtc_getPublicKey', params: [rawAddr] }), 5000)
       }
     } catch (e) { signature = null }
@@ -683,7 +744,8 @@ class TenantGateway {
       return
     }
     if (pathname === '/__gw__/challenge' && (req.method || 'GET') === 'GET') {
-      // 签名校验页用：为"会话地址"发放一次性 nonce（复用平台配置签名挑战）
+      // 签名校验页用：为"会话地址"发放一次性挑战（GATEWAY 用途独立分池，
+      // 与登录/配置/技能市场的挑战互不通用）
       const cookie = req.headers.cookie || ''
       const m = cookie.match(/user_session=([^;]+)/)
       const address = m ? getUserSession(req) : null
@@ -692,13 +754,21 @@ class TenantGateway {
         res.end(JSON.stringify({ ok: true, address: null }))
         return
       }
-      const nonce = tenantConfigService.issueChallenge(address)
+      const challenge = tenantConfigService.issueChallenge(address, SIGN_PURPOSE.GATEWAY)
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ ok: Boolean(nonce), nonce, address }))
+      res.end(
+        JSON.stringify({
+          ok: Boolean(challenge),
+          nonce: challenge?.nonce ?? null,
+          // message 是交给钱包签的用途绑定内容（hex）；要签的是它，不是 nonce
+          message: challenge?.message ?? null,
+          address,
+        }),
+      )
       return
     }
     if (pathname === '/__gw__/verify' && (req.method || 'POST') === 'POST') {
-      // 签名证明：nonce 由插件私钥签名，公钥推导地址必须 === 会话地址 才算本人
+      // 签名证明：**用途绑定消息**由插件私钥签名，公钥推导地址必须 === 会话地址
       ;(async () => {
         let body = {}
         try {
@@ -718,7 +788,14 @@ class TenantGateway {
           Boolean(sessionAddr) &&
           sessionAddr === address &&
           Boolean(nonce) &&
-          tenantConfigService.verifySignature(address, nonce, signature, publicKey)
+          tenantConfigService.verifySignature(
+            address,
+            buildSignedMessage(SIGN_PURPOSE.GATEWAY, address, nonce),
+            signature,
+            publicKey,
+          )
+        // 一次性消费：必须是为 GATEWAY 用途发放的挑战，且不可重放
+        if (valid) tenantConfigService.consumeChallenge(address, nonce, SIGN_PURPOSE.GATEWAY)
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify({ ok: true, valid, address }))
       })()
@@ -796,14 +873,14 @@ class TenantGateway {
     for (const h of HOP_BY_HOP) delete headers[h]
     headers['x-forwarded-for'] = req.socket?.remoteAddress ?? ''
     headers['x-forwarded-host'] = req.headers.host
-    // 代激活得到的 dsh-auth cookie 必须注入，否则容器内 DSH 会回 401。
-    // 关键：**剔除浏览器带来的所有 dsh-auth-*（可能是失效的旧 cookie）**，
-    // 只保留平台现换的那一份 —— 否则旧 cookie 会被原样转发，DSH 回
-    // "dsh web authentication required"（实测踩过）。
-    // 其它 cookie（平台自己的 user_session 等）保留不动。
-    if (authCookie) {
-      headers.cookie = mergeDshAuthCookie(headers.cookie, authCookie)
-    }
+    // Cookie 处理（**无条件执行**，不能只在 authCookie 存在时才做）：
+    //   ① 平台自身的门禁 cookie（admin_session / user_session / gw_ok）
+    //      一律剥离 —— 绝不转发进租户容器（H1 加固）。
+    //   ② 剔除浏览器带来的所有 dsh-auth-*（可能是失效的旧 cookie），
+    //      只保留平台现换的那一份 —— 否则旧 cookie 会被原样转发，DSH 回
+    //      "dsh web authentication required"（实测踩过）。
+    headers.cookie = mergeDshAuthCookie(headers.cookie, authCookie)
+    if (!headers.cookie) delete headers.cookie
 
     const upstream = httpRequest(
       {

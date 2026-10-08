@@ -467,9 +467,13 @@ describe('租户网关：按 DSH 版本能力分岔', () => {
 
       expect(status).toBe(200)
       expect(body).toBe('upstream-ok-authenticated')
-      // 注入的 cookie 与浏览器原有 cookie 并存
+      // 平台注入的 dsh-auth cookie 生效
       expect(sawCookie).toMatch(/dsh-auth-FAKEHASH=/)
-      expect(sawCookie).toMatch(/gw_ok=1/)
+      // H1 加固：平台自身的门禁 cookie（user_session / gw_ok）绝不转发进容器
+      // （同 host 不同端口，浏览器会把 admin_session/user_session 一起带来，
+      //   而租户完全掌控容器 → 转发即等于把会话令牌交给租户）
+      expect(sawCookie).not.toMatch(/user_session=/)
+      expect(sawCookie).not.toMatch(/gw_ok/)
     } finally {
       up.close()
       authCookieCache.clear()
@@ -773,7 +777,7 @@ describe('租户网关：按 DSH 版本能力分岔', () => {
       }
     })
 
-    it('新行为：失效 cookie 被剔除，平台那份生效 → 200，且平台 cookie 保留', async () => {
+    it('新行为：失效 cookie 被剔除，平台那份生效 → 200；平台门禁 cookie 不外泄', async () => {
       try {
         await tenantGateway.listen(publicPort, internalPort, OWNER, NEW_CAP)
         _setDshAuthCookieModeForTest('replace')
@@ -791,9 +795,9 @@ describe('租户网关：按 DSH 版本能力分岔', () => {
         expect(forwarded).toContain('PLATFORM_COOKIE')
         // 失效的那份必须消失（不能与新的并存）
         expect(forwarded).not.toContain('v1.broken.sig')
-        // 平台自己的 cookie 不能被一起清掉
-        expect(forwarded).toContain('user_session=')
-        expect(forwarded).toContain('gw_ok=1')
+        // H1 加固：平台自身的门禁 cookie 不再转发进租户容器
+        expect(forwarded).not.toContain('user_session=')
+        expect(forwarded).not.toContain('gw_ok')
       } finally {
         authCookieCache.clear()
         dshAuth.setTokenReader(null)

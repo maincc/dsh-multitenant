@@ -4,7 +4,11 @@
 
 import { CONFIG, isAdmin } from '../config/config.js'
 import { userService } from '../services/user.service.js'
-import { tenantConfigService } from '../services/tenant-config.service.js'
+import {
+  tenantConfigService,
+  SIGN_PURPOSE,
+  buildSignedMessage,
+} from '../services/tenant-config.service.js'
 import { validateSwtcAddress } from '../middleware/validate.middleware.js'
 import { rateLimit } from '../middleware/rate-limit.middleware.js'
 import { userSessionStore } from '../middleware/user-auth.middleware.js'
@@ -42,7 +46,7 @@ export async function handleTenantRoutes(req, res, path, url) {
 
       if (!hasAuth) {
         // 未携带签名材料 → 401 + 下发一次性挑战（签名后带参重试）
-        const challenge = tenantConfigService.issueChallenge(address)
+        const challenge = tenantConfigService.issueChallenge(address, SIGN_PURPOSE.CONNECT)
         if (!challenge) {
           res.writeHead(503, { 'content-type': 'application/json; charset=utf-8' })
           res.end(JSON.stringify({ error: '挑战发放过载，请稍后重试', code: 'OVERLOAD' }))
@@ -53,20 +57,29 @@ export async function handleTenantRoutes(req, res, path, url) {
           JSON.stringify({
             error: '需要签名验证容器所有权',
             code: 'SIGNATURE_REQUIRED',
-            nonce: challenge,
+            nonce: challenge.nonce,
+            // message 是交给钱包签的用途绑定内容（hex）；要签的是它，不是 nonce
+            message: challenge.message,
             address,
           }),
         )
         return true
       }
-      // 验签（公钥推导地址 === 声称地址）
-      if (!tenantConfigService.verifySignature(address, nonce, signature, publicKey)) {
+      // 验签（公钥推导地址 === 声称地址）：签的是 CONNECT 用途绑定消息
+      if (
+        !tenantConfigService.verifySignature(
+          address,
+          buildSignedMessage(SIGN_PURPOSE.CONNECT, address, nonce),
+          signature,
+          publicKey,
+        )
+      ) {
         res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify({ error: '签名验证失败', code: 'FORBIDDEN' }))
         return true
       }
-      // 挑战一次性（防重放）
-      if (!tenantConfigService.consumeChallenge(address, nonce)) {
+      // 挑战一次性（防重放）+ 必须是为 CONNECT 用途发放的
+      if (!tenantConfigService.consumeChallenge(address, nonce, SIGN_PURPOSE.CONNECT)) {
         res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify({ error: '挑战已失效，请重新获取', code: 'FORBIDDEN' }))
         return true

@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Keypairs } from '@swtc/keypairs'
-import { tenantConfigService } from '../src/services/tenant-config.service.js'
+import { tenantConfigService, SIGN_PURPOSE } from '../src/services/tenant-config.service.js'
+
+/** 本文件测的用途：租户模型配置 */
+const P = SIGN_PURPOSE.TENANT_CONFIG
+/** 领一个 TENANT_CONFIG 用途的真挑战（返回 { nonce, message }） */
+const issue = (address) => tenantConfigService.issueChallenge(address, P)
 
 /** 生成一个模拟"用户钱包"的密钥对（与 CCDAO 插件同库） */
 function makeWallet() {
@@ -20,57 +25,83 @@ afterEach(() => {
 describe('租户密钥配置（钱包签名验证）', () => {
   it('挑战是一次性的（用后即焚）', () => {
     const { address } = makeWallet()
-    const nonce = tenantConfigService.issueChallenge(address)
+    const { nonce } = issue(address)
     expect(typeof nonce).toBe('string')
     expect(nonce.length).toBe(64) // 32 字节 hex
-    expect(tenantConfigService.consumeChallenge(address, nonce)).toBe(true)
-    expect(tenantConfigService.consumeChallenge(address, nonce)).toBe(false) // 重放被拒
+    expect(tenantConfigService.consumeChallenge(address, nonce, P)).toBe(true)
+    expect(tenantConfigService.consumeChallenge(address, nonce, P)).toBe(false) // 重放被拒
+  })
+
+  it('挑战按用途分池：为其它用途发的 nonce 在这里消费不了', () => {
+    const { address } = makeWallet()
+    const other = tenantConfigService.issueChallenge(address, SIGN_PURPOSE.LOGIN)
+    expect(tenantConfigService.consumeChallenge(address, other.nonce, P)).toBe(false)
+    // 但它在本用途处仍然有效（未被误消费）
+    expect(tenantConfigService.consumeChallenge(address, other.nonce, SIGN_PURPOSE.LOGIN)).toBe(
+      true,
+    )
   })
 
   it('挑战 5 分钟后过期', () => {
     vi.useFakeTimers()
     const { address } = makeWallet()
-    const nonce = tenantConfigService.issueChallenge(address)
+    const { nonce } = issue(address)
     vi.setSystemTime(Date.now() + 6 * 60 * 1000) // 拨快 6 分钟
-    expect(tenantConfigService.consumeChallenge(address, nonce)).toBe(false)
+    expect(tenantConfigService.consumeChallenge(address, nonce, P)).toBe(false)
   })
 
   it('验签：合法签名 + 公钥推导地址匹配则通过', () => {
     const wallet = makeWallet()
-    const nonce = tenantConfigService.issueChallenge(wallet.address)
-    const signature = wallet.sign(nonce)
+    const { message } = issue(wallet.address)
+    const signature = wallet.sign(message)
     expect(
-      tenantConfigService.verifySignature(wallet.address, nonce, signature, wallet.publicKey),
+      tenantConfigService.verifySignature(wallet.address, message, signature, wallet.publicKey),
     ).toBe(true)
   })
 
   it('验签：地址不匹配则拒绝', () => {
     const wallet = makeWallet()
     const other = makeWallet()
-    const nonce = tenantConfigService.issueChallenge(wallet.address)
-    const signature = wallet.sign(nonce)
+    const { message } = issue(wallet.address)
+    const signature = wallet.sign(message)
     expect(
-      tenantConfigService.verifySignature(other.address, nonce, signature, wallet.publicKey),
+      tenantConfigService.verifySignature(other.address, message, signature, wallet.publicKey),
     ).toBe(false)
   })
 
   it('验签：签名被篡改则拒绝', () => {
     const wallet = makeWallet()
-    const nonce = tenantConfigService.issueChallenge(wallet.address)
-    const signature = wallet.sign(nonce)
+    const { message } = issue(wallet.address)
+    const signature = wallet.sign(message)
     const tampered = signature.slice(0, -2) + (signature.endsWith('00') ? '01' : '00')
     expect(
-      tenantConfigService.verifySignature(wallet.address, nonce, tampered, wallet.publicKey),
+      tenantConfigService.verifySignature(wallet.address, message, tampered, wallet.publicKey),
     ).toBe(false)
   })
 
   it('验签：公钥非法格式则拒绝（不抛异常）', () => {
     const wallet = makeWallet()
-    const nonce = tenantConfigService.issueChallenge(wallet.address)
-    const signature = wallet.sign(nonce)
-    expect(tenantConfigService.verifySignature(wallet.address, nonce, signature, 'not-a-key')).toBe(
-      false,
-    )
+    const { message } = issue(wallet.address)
+    const signature = wallet.sign(message)
+    expect(
+      tenantConfigService.verifySignature(wallet.address, message, signature, 'not-a-key'),
+    ).toBe(false)
+  })
+
+  it('用途绑定：签的是 LOGIN 用途的消息，在 TENANT_CONFIG 处验不过（核心加固）', () => {
+    const wallet = makeWallet()
+    const loginCh = tenantConfigService.issueChallenge(wallet.address, SIGN_PURPOSE.LOGIN)
+    const configCh = issue(wallet.address)
+    // 攻击者拿到的登录用途签名
+    const loginSig = wallet.sign(loginCh.message)
+    expect(
+      tenantConfigService.verifySignature(
+        wallet.address,
+        configCh.message,
+        loginSig,
+        wallet.publicKey,
+      ),
+    ).toBe(false)
   })
 
   it('configure 拒绝未领取/已消费的挑战', async () => {
@@ -145,7 +176,7 @@ describe('模型配置（settings.yaml）', () => {
   describe('configure 扩展', () => {
     it('无任何字段时拒绝（不触发 docker）', async () => {
       vi.spyOn(tenantConfigService, 'verifySignature').mockReturnValue(true)
-      const nonce = tenantConfigService.issueChallenge(ADDR) // 真挑战
+      const { nonce } = issue(ADDR) // 真挑战
       await expect(
         tenantConfigService.configure(ADDR, { nonce, signature: 'x', publicKey: 'x' }),
       ).rejects.toThrow(/没有可配置/)
@@ -154,7 +185,7 @@ describe('模型配置（settings.yaml）', () => {
     it('apiKey 空串但提供 baseURL 时跳过 key 写入（mock docker）', async () => {
       const spy = vi.spyOn(tenantConfigService, 'runScript').mockResolvedValue('written')
       vi.spyOn(tenantConfigService, 'verifySignature').mockReturnValue(true)
-      const nonce = tenantConfigService.issueChallenge(ADDR) // 真挑战
+      const { nonce } = issue(ADDR) // 真挑战
       await tenantConfigService.configure(ADDR, {
         nonce,
         signature: 'dummy',
@@ -311,7 +342,7 @@ describe('模型配置（settings.yaml）', () => {
     it('clear：scope=official-key 只删官方 key（不删 settings 段）', async () => {
       const spy = vi.spyOn(tenantConfigService, 'runScript').mockResolvedValue('deleted')
       vi.spyOn(tenantConfigService, 'verifySignature').mockReturnValue(true)
-      const nonce = tenantConfigService.issueChallenge(ADDR)
+      const { nonce } = issue(ADDR)
       await tenantConfigService.clear(ADDR, {
         nonce,
         signature: 'x',
@@ -333,7 +364,7 @@ describe('模型配置（settings.yaml）', () => {
       })
       const spy = vi.spyOn(tenantConfigService, 'runScript').mockResolvedValue('deleted')
       vi.spyOn(tenantConfigService, 'verifySignature').mockReturnValue(true)
-      const nonce = tenantConfigService.issueChallenge(ADDR)
+      const { nonce } = issue(ADDR)
       await tenantConfigService.clear(ADDR, { nonce, signature: 'x', publicKey: 'x' })
       const settingsCalls = spy.mock.calls.filter(([, script]) => script === 'merge-settings.mjs')
       expect(settingsCalls).toHaveLength(1)

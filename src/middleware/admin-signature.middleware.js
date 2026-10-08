@@ -30,7 +30,11 @@
  * 推导出的 binding B ≠ A → 直接拒绝；而且 nonce 已被消费，没有第二次机会。
  */
 
-import { tenantConfigService } from '../services/tenant-config.service.js'
+import {
+  tenantConfigService,
+  SIGN_PURPOSE,
+  buildSignedMessage,
+} from '../services/tenant-config.service.js'
 
 /** 允许签名的操作名（白名单；未知操作一律拒绝，不做兜底） */
 export const ADMIN_SIGNED_OPERATIONS = Object.freeze([
@@ -111,18 +115,29 @@ export function buildBinding(operation, payload = {}) {
 /**
  * 钱包里实际签的字符串。
  *
- * 把操作语义拼进被签内容，而不是只签一个与操作无关的随机 nonce —— 这样钱包
- * 弹窗展示的内容本身就能让管理员看出"正在授权什么"。
+ * 把**用途（admin-op）+ 操作语义（binding）**一起拼进被签内容，而不是只签
+ * 一个与操作/用途无关的随机 nonce —— 这样：
+ *   ① 为其它用途（login / connect / gateway-verify …）取得的签名在这里
+ *      验签必然失败；
+ *   ② 钱包弹窗展示的内容本身就能让管理员看出"正在授权什么"。
+ *
+ * 实现复用 `buildSignedMessage`：它会把规范化串 **hex 编码**（因为
+ * @swtc/keypairs 内部按 hex 解码消息，直接喂 ASCII 会碰撞）。
+ *
+ * @param {string} address 管理员地址
+ * @param {string} nonce 一次性挑战
+ * @param {string} binding 服务端从 (operation, payload) 推导的操作绑定
  */
-export function signedMessage(nonce, binding) {
-  return `${nonce}|${binding}`
+export function signedMessage(address, nonce, binding) {
+  return buildSignedMessage(SIGN_PURPOSE.ADMIN_OP, address, nonce, binding)
 }
 
 /**
  * 为一次破坏性操作发放一次性挑战。
  *
- * 复用 `tenantConfigService.issueChallenge`（与登录/钱包侧同一套挑战池），
- * 因此天然一次性 + 5 分钟过期；这里额外记下"这次 nonce 绑定的是哪个操作"。
+ * 复用 `tenantConfigService.issueChallenge`（按 `admin-op` 用途**独立分池**——
+ * 为登录/连容器/技能市场发放的 nonce 在这里取不到），因此天然一次性 + 5 分钟
+ * 过期；这里额外记下"这次 nonce 绑定的是哪个操作"。
  *
  * @param {string} address 管理员地址（会话地址；挑战池也按它索引）
  * @param {string} operation
@@ -132,15 +147,17 @@ export function signedMessage(nonce, binding) {
 export function issueAdminSignatureChallenge(address, operation, payload = {}) {
   const binding = buildBinding(operation, payload)
   if (!binding) return null
-  const nonce = tenantConfigService.issueChallenge(address)
-  if (!nonce) return null // 挑战池满
+  // 挑战按 ADMIN_OP 用途分池：为登录/连容器/技能市场发的 nonce 在这里取不到
+  const challenge = tenantConfigService.issueChallenge(address, SIGN_PURPOSE.ADMIN_OP)
+  if (!challenge) return null // 挑战池满
+  const message = signedMessage(address, challenge.nonce, binding)
   prunePending()
   pending.set(String(address).toLowerCase(), {
-    nonce,
+    nonce: challenge.nonce,
     binding,
     expiresAt: Date.now() + TTL_MS,
   })
-  return { nonce, binding, message: signedMessage(nonce, binding) }
+  return { nonce: challenge.nonce, binding, message }
 }
 
 /**
@@ -193,14 +210,14 @@ export function requireAdminSignature(req, res, operation, payload = {}, session
     return deny('签名内容与本次操作不一致，已拒绝执行', 'SIGNATURE_MISMATCH')
   }
 
-  // ④ 一次性消费（先作废再验签）
+  // ④ 一次性消费（先作废再验签）：必须是 ADMIN_OP 用途发放的挑战
   pending.delete(String(sessionAddress).toLowerCase())
-  if (!tenantConfigService.consumeChallenge(sessionAddress, sig.nonce)) {
+  if (!tenantConfigService.consumeChallenge(sessionAddress, sig.nonce, SIGN_PURPOSE.ADMIN_OP)) {
     return deny('签名挑战无效或已过期，请重新签名', 'CHALLENGE_INVALID')
   }
 
-  // ⑤ 验签 + 地址归属
-  const message = signedMessage(sig.nonce, binding)
+  // ⑤ 验签 + 地址归属：验的是**用途 + 操作绑定**后的消息
+  const message = signedMessage(sessionAddress, sig.nonce, binding)
   if (!tenantConfigService.verifySignature(sessionAddress, message, sig.signature, sig.publicKey)) {
     return deny('签名验证失败：无法确认该操作由您本人授权', 'SIGNATURE_INVALID')
   }

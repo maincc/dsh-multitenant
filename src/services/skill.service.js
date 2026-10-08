@@ -19,7 +19,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
 
-import { tenantConfigService } from './tenant-config.service.js'
+import { tenantConfigService, SIGN_PURPOSE, buildSignedMessage } from './tenant-config.service.js'
 import { dataService } from './data.service.js'
 import { CONFIG } from '../config/config.js'
 import {
@@ -72,10 +72,17 @@ export class SkillService {
    * @param {{ nonce: string, signature: string, publicKey: string }} auth
    */
   authenticate(address, { nonce, signature, publicKey }) {
-    if (!tenantConfigService.consumeChallenge(address, nonce)) {
+    if (!tenantConfigService.consumeChallenge(address, nonce, SIGN_PURPOSE.SKILLS)) {
       throw new ForbiddenError('挑战无效或已过期，请重新获取')
     }
-    if (!tenantConfigService.verifySignature(address, nonce, signature, publicKey)) {
+    if (
+      !tenantConfigService.verifySignature(
+        address,
+        buildSignedMessage(SIGN_PURPOSE.SKILLS, address, nonce),
+        signature,
+        publicKey,
+      )
+    ) {
       throw new ForbiddenError('签名验证失败：无法确认该地址归您所有')
     }
     return normalizeAddress(address)

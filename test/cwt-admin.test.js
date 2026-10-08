@@ -185,6 +185,60 @@ describe('CWT 申请-审批-出示（M0）', () => {
     expect(cwtAdminService.listApplications()).toHaveLength(1)
   })
 
+  // ---------- 防洪泛（P1-7）：未认证端点 + token 自签，需要硬边界 ----------
+
+  it('防洪泛：token 超过字节上限 → 413 且不入队', async () => {
+    const orig = cwtAdminService.maxTokenBytes
+    cwtAdminService.maxTokenBytes = 64
+    try {
+      const huge = `${'a'.repeat(100)}.${'b'.repeat(100)}` // 有 "." 但远超上限
+      await expect(cwtAdminService.submitApplication(huge)).rejects.toMatchObject({
+        code: 'PAYLOAD_TOO_LARGE',
+        statusCode: 413,
+      })
+      expect(cwtAdminService.listApplications()).toHaveLength(0)
+    } finally {
+      cwtAdminService.maxTokenBytes = orig
+    }
+  })
+
+  it('防洪泛：待审批队列达上限 → 503 OVERLOAD 且不入队（先于验签卸载）', async () => {
+    const orig = cwtAdminService.maxPendingApplications
+    cwtAdminService.maxPendingApplications = 2
+    try {
+      // 直接摆放 2 条 pending（等价于攻击者已灌满队列）
+      cwtStore.applications = [
+        { id: 'p1', status: 'pending', parsed: { address: 'jaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' } },
+        { id: 'p2', status: 'pending', parsed: { address: 'jbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' } },
+      ]
+      const wallet = makeSecpWallet()
+      await expect(cwtAdminService.submitApplication(buildToken(wallet))).rejects.toMatchObject({
+        code: 'OVERLOAD',
+        statusCode: 503,
+      })
+      // 队列未被继续灌入
+      expect(cwtStore.applications).toHaveLength(2)
+    } finally {
+      cwtAdminService.maxPendingApplications = orig
+    }
+  })
+
+  it('防洪泛：队列未满时正常入队（边界不被误伤）', async () => {
+    const orig = cwtAdminService.maxPendingApplications
+    cwtAdminService.maxPendingApplications = 2
+    try {
+      cwtStore.applications = [
+        { id: 'p1', status: 'pending', parsed: { address: 'jaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' } },
+      ]
+      const wallet = makeSecpWallet()
+      const r = await cwtAdminService.submitApplication(buildToken(wallet))
+      expect(r.ok).toBe(true)
+      expect(cwtStore.applications.filter((a) => a.status === 'pending').length).toBe(2)
+    } finally {
+      cwtAdminService.maxPendingApplications = orig
+    }
+  })
+
   it('批准：不存在的申请 → 404', async () => {
     await expect(cwtAdminService.approveApplication('nope', ADMIN)).rejects.toThrow(/申请不存在/)
   })

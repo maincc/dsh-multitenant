@@ -299,10 +299,14 @@ DSH 的模型选择器，**官方 DeepSeek 与自定义端点并列可选**，�
 # 1. 领取一次性签名挑战（5 分钟有效）
 POST /api/user/config-challenge
 Body: { "address": "j..." }
-Response: { "ok": true, "nonce": "<hex>" }
+Response: { "ok": true, "nonce": "<hex>", "message": "<hex>" }
+#    ⚠ 要签的是 message，不是 nonce。message 是服务端构造的**用途绑定**内容：
+#    hex( `dsh-multitenant|tenant-config|<address>|<nonce>` )
+#    用途前缀把"这次签名是授权什么"钉进被签字节，因此为其它用途
+#    （登录 / 连容器 / 网关校验 / 技能市场）取得的签名在这里一律验不过。
 
-# 2. 前端让 CCDAO 插件对 nonce 签名 + 取公钥（插件弹签名确认）
-window.ccdao.request({ method: 'swtc_signMessage',  params: [address, nonce] })
+# 2. 前端让 CCDAO 插件对 message 签名 + 取公钥（插件弹签名确认）
+window.ccdao.request({ method: 'swtc_signMessage',  params: [address, message] })
 window.ccdao.request({ method: 'swtc_getPublicKey', params: [address] })
 
 # 3. 提交（服务端验签 + 公钥推导地址比对后写入该租户卷）
@@ -352,6 +356,14 @@ Response: { "ok": true, "configured": false }
 4. **原子写入**：数据更新使用临时文件 + 重命名，防止损坏
 5. **输入清理**：地址统一转小写，防止大小写绕过
 6. **破坏性操作当场签名**：见下方"管理端破坏性操作签名"
+7. **签名用途绑定 + 挑战分池**：所有钱包签名签的都是服务端构造的
+   `hex(dsh-multitenant|<purpose>|<address>|<nonce>[|<binding>])`，且挑战池按
+   `用途|地址` 隔离。为 A 用途取得的签名/挑战在 B 用途处一律无效 —— 跨端点凭证
+   混淆（尤其"诱导管理员对一个没有 login 语义的 nonce 签名 → 兑换 12 小时管理
+   会话"）不再可行。purpose 是服务端常量，客户端无法影响。
+8. **平台 cookie 不出境**：网关转发进租户容器前，剥离 `admin_session` /
+   `user_session` / `gw_ok`。租户容器即使用户有 shell、完全可控，也拿不到平台
+   会话令牌（同 host 不同端口，浏览器本来会把它们一起带上）。
 
 ### 管理端破坏性操作签名
 
@@ -384,9 +396,10 @@ Response: { "ok": true, "configured": false }
 ```js
 // 挑战：服务端从 (operation, payload) 推导 binding
 binding = `promote:address=<目标地址>`
-message = `${nonce}|${binding}` // 钱包里签的就是这个串
+canonical = `dsh-multitenant|admin-op|<address>|<nonce>|<binding>`
+message = hex(canonical) // 钱包里签的就是这个串
 
-// 执行：服务端重新推导，与发放时记录的一致才验签
+// 执行：服务端重新推导 binding，与发放时记录的一致才验签
 ```
 
 因此"签了 A 却执行 B"不可能成功 —— 绑定串含操作名与目标（`remove` 还含
@@ -438,6 +451,10 @@ cookie 转发进容器，纵深防御尚未收口。
 32. **「保存 Key」写坏凭据文件的真正根因** - DSH 在没有 API Key 时写的文件是 `version: 1` + `records:`（**没有 `refs:` 块**）。而「旧扁平布局迁移」把 `records:` —— 一个**块头**（自身无值、后面跟更深子级）—— 误当成凭据条目迁进 refs，其子级随即成为 refs 下的孤儿 → 文件损坏 → DSH 起不来（容器 120s 不就绪 → 回滚 → 界面「已销毁」；保存 Key 的接口则因第 31 条的 fail-closed 自检而报「拒绝写入」）。已修：只有**值非空的顶层标量行**才算旧扁平凭据条目，块头及其子级一律原样保留。这条才是「填 Key 反而坏文件」的根因
 33. **容器里所有 bash 命令报 `Error: spawn bwrap ENOENT`（本地/线上都有）** - 报错文案是**误导**：bwrap 一直好好的，真因是 **DSH 会话的默认工作目录 `/root/workspace`（= `$HOME/workspace`）在镜像里不存在**。bash 工具的沙箱以该目录作为 `spawn` 的 cwd，而 **Node 在 cwd 不存在时同样抛 ENOENT**，报错文案却是 `spawn bwrap ENOENT` —— 于是被误判成「bwrap 没装」（连 DSH 自己的提示都这么说）。本地精确复现：`spawn('bwrap', …, {cwd:'/root/workspace'})` → `ENOENT syscall=spawn bwrap`；换成存在的 `/srv` → 正常；`mkdir -p /root/workspace` 后 → 沙箱正常运行且可写。已修：镜像内置该目录（Dockerfile），平台在容器就绪后（finalizeTenant / restartContainer）再 `mkdir -p` 兜一层，老镜像建的容器也能自愈
 34. **管理端刷新频率可调 + 分层轮询** - 原来前端硬编码 `setInterval(fetchData, 10000)`：切 tab 不刷新（最多滞后 10 秒）、切到后台仍空转、多管理员/多标签页各自重复打 docker（每轮约 2 秒）。已改：① 间隔改由后端下发（`config.json` 的 `admin.refreshIntervalMs`，**默认 15000**，可填 300000=5 分钟，改完只需重启服务、不必重建前端）；② 只在前台可见时轮询（后台跳过、回到前台立即补一次、切 tab 立即刷新，1 秒节流）；③ 顶栏新增全局「🔄 刷新」按钮（手动刷新带 `?force=1` 绕过服务端短缓存）；④ 服务端 `getAllUsers` 加 3 秒短 TTL 缓存（`admin.usersCacheTtlMs`）并在**任何状态写入时立即失效**，多个管理员共享一次采样；⑤ `docker stats` 改**批量一次**（N 进程 → 1）。另修一处既有测试隔离缺陷：`finalize-tenant.test.js` 用的是真实 `state.json` 且未清 `usages`，平台自己把该地址跑到当日上限后会让用例无故失败
+
+35. **管理员会话可被"盲签"夺取（跨端点凭证混淆）** - 加固前所有入口只签一个**与用途无关的裸 nonce**，且共用同一个挑战池。于是存在一条完整攻击链：攻击者自行调用**公开无鉴权**的 `POST /api/admin/challenge {address: 管理员地址}` 领到属于管理员的 nonce（服务器主动回给他），再诱导管理员对这个没有任何语义的十六进制串签名（钱包弹窗里看不出在授权什么；平台自己的网关校验页 `tenant-proxy` 就常驻在**租户容器域**上要求签 nonce，租户完全可控 → 这条链对"管理员点开会话中的租户容器"是内建的），最后把签名交到 `POST /api/admin/login` 即得 12 小时管理员会话——**私钥全程安全，签名是管理员本人真签的**。已修：① 被签内容改为服务端构造的**用途绑定**消息 `hex(dsh-multitenant|<purpose>|<address>|<nonce>[|<binding>])`，用途是服务端常量、客户端无法影响；② 挑战池按 `用途|地址` **分池**，为 A 用途发的 nonce 在 B 用途处消费不了；③ 网关转发进租户容器前剥离 `admin_session`/`user_session`/`gw_ok`（纵深防御，租户再也偷不到那串 cookie）。hex 编码不是装饰：`@swtc/keypairs` 内部按 hex 解码消息，直接喂含 `|` 的 ASCII 会被**有损解码**（非法字符对 → NaN → 0）而产生碰撞。覆盖 login / connect / tenant-config / skills / gateway-verify / admin-op 全部签名入口。
+
+36. **CWT 申请可被未认证洪泛刷爆磁盘/灌满审批队列** - `POST /api/user/cwt/apply` 是**未认证**端点，token 由调用方自签（零成本），而加固前 pending 申请**无任何总条数上限**、且每次入队都**全量重写** `data/cwt/applications.json`（刷 n 条是 O(n²) 写放大）——可被刷爆磁盘并灌满管理端审批队列。已加三道边界：① **token 字节上限**（`cwt.maxTokenBytes`，默认 8192，超限 413）；② **待审批队列总条数上限**（`cwt.maxPending`，默认 500，超限 503 `OVERLOAD`）——这道检查**刻意放在验签之前**，队列满时连密码学开销都不付；③ 该接口**按 IP 限流**（10 次/分钟，10 之外的请求 429）。上限用实例字段实现（便于测试注入小值，与 `data.service.recordsMaxBytes` 同一做法）。**未做**：approved 申请仍明文存 token（改存 SHA-256 摘要属存储格式迁移，需单独一轮）。
 
 ## 🧹 空闲清理机制（不会误停正在干活的容器）
 

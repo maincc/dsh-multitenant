@@ -35,10 +35,11 @@ beforeEach(() => {
 const issuedChallenges = new Set()
 function mockChallengeFlow() {
   issuedChallenges.clear()
-  tenantConfigService.issueChallenge.mockImplementation((addr) => {
+  tenantConfigService.issueChallenge.mockImplementation((addr, purpose) => {
     const nonce = `nonce-${addr}-${issuedChallenges.size}`
     issuedChallenges.add(nonce)
-    return nonce
+    // 与真实实现一致：返回 { nonce, message }；message 为用途绑定内容
+    return { nonce, message: `dsh-multitenant|${purpose}|${addr}|${nonce}` }
   })
   tenantConfigService.consumeChallenge.mockImplementation((addr, nonce) => {
     if (!issuedChallenges.has(nonce)) return false
@@ -62,18 +63,22 @@ vi.mock('../src/services/user.service.js', () => ({
   },
 }))
 
-vi.mock('../src/services/tenant-config.service.js', () => ({
-  tenantConfigService: {
-    issueChallenge: vi.fn(),
-    consumeChallenge: vi.fn(),
-    verifySignature: vi.fn(),
-    configure: vi.fn(),
-    clear: vi.fn(),
-    getStatus: vi.fn(),
-    discoverWithAuth: vi.fn(),
-    normalizeModelConfig: vi.fn(),
-  },
-}))
+vi.mock('../src/services/tenant-config.service.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual, // 保留 SIGN_PURPOSE / buildSignedMessage 真实导出
+    tenantConfigService: {
+      issueChallenge: vi.fn(),
+      consumeChallenge: vi.fn(),
+      verifySignature: vi.fn(),
+      configure: vi.fn(),
+      clear: vi.fn(),
+      getStatus: vi.fn(),
+      discoverWithAuth: vi.fn(),
+      normalizeModelConfig: vi.fn(),
+    },
+  }
+})
 
 // 数据层默认走真实实现，但把「会话/状态 load/save」全部替换为内存空 + 落空：
 // 避免测试写入真实 data/（state.json、user-sessions.json、admin sessions），
@@ -711,5 +716,22 @@ describe('网关门禁会话（TTL 分权 + logout 吊销）', () => {
     )
     expect(handled).toBe(true)
     expect(JSON.parse(res.body).address).toBeNull()
+  })
+
+  // ---------- CWT 申请防洪泛（P1-7） ----------
+
+  it('POST /api/user/cwt/apply 未认证端点按 IP 限流 → 第 11 次 429', async () => {
+    // 前 10 次：缺 token → 400（限流放行到业务层）；第 11 次：限流拦截
+    let last = null
+    for (let i = 0; i < 11; i++) {
+      last = makeRes()
+      await handleUserRoutes(
+        makeReq({ method: 'POST', url: '/api/user/cwt/apply', body: {} }),
+        last,
+        '/api/user/cwt/apply',
+      )
+    }
+    expect(last.statusCode).toBe(429)
+    expect(JSON.parse(last.body).code).toBe('RATE_LIMITED')
   })
 })

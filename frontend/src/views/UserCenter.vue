@@ -903,11 +903,12 @@ const signChallenge = async () => {
   //    jndwret... 再传回去会被判"未授权"(4100)。只有 requestAccounts 原样
   //    返回的字符串才能通过。后端 normalizeAddress 会自己转小写，无需担心。
   const pluginAddress = await requestAccounts()
-  // 2. 领一次性挑战
+  // 2. 领一次性挑战（响应含 message：服务端构造的用途绑定被签内容）
   const challengeRes = await axios.post('/api/user/config-challenge', { address: pluginAddress })
-  const nonce = challengeRes.data.nonce
-  // 3. 插件对 nonce 签名 + 取公钥（都用原始大小写地址）
-  const signature = await signMessage(pluginAddress, nonce)
+  const { nonce, message } = challengeRes.data
+  // 3. 插件对 **message** 签名 + 取公钥（都用原始大小写地址）。
+  //    签的是用途绑定消息（hex），不是裸 nonce —— 跨端点凭证混淆加固。
+  const signature = await signMessage(pluginAddress, message)
   const publicKey = await getPublicKey(pluginAddress)
   return { address: pluginAddress, nonce, signature, publicKey }
 }
@@ -1182,6 +1183,28 @@ const setupAccountChangeListener = () => {
   unbindAccounts = watchAccountsChanged(handleAccountsChanged)
 }
 
+/**
+ * 确立「已连接」身份：**只要拿到钱包地址就算连上**，与容器是否可用、是否被限时无关。
+ *
+ * 背景（用户实测死循环）：模板里「连接钱包」卡片是 `v-else-if="!connected"`，
+ * 而额度用完 / 排队时 `handleAddressChange` 会提前 return。若这些分支不把
+ * `connected` 置真，页面就一直停在「连接钱包」卡片 —— 用户点一次弹一次
+ * 「今日时长已用完」，弹完还停在连接钱包；而**解除限时的 CWT 验证 tab 恰恰在
+ * `connected === true` 之后的主界面里**，于是永远进不去 → 永远无法自助解锁。
+ *
+ * `fetchUserInfo` 失败也不阻断：无会话时 `/api/user/:address` 会回脱敏壳
+ * （只有 address/exists/status），有 address 就足够把界面（含 CWT tab）渲染出来。
+ */
+const establishConnected = async (address) => {
+  try {
+    await fetchUserInfo(address)
+  } catch (err) {
+    console.warn('[UserCenter] 建立已连接态时拉取用户信息失败（不阻断）:', err?.message)
+  }
+  if (!userInfo.value?.address) userInfo.value = { ...(userInfo.value || {}), address }
+  connected.value = true
+}
+
 // 处理地址变化的通用函数
 const handleAddressChange = async (newAddress, isInitialLoad = false) => {
   const oldAddress = localStorage.getItem('swtc_address')
@@ -1222,6 +1245,9 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
       hideLoading()
       // 保存地址
       localStorage.setItem('swtc_address', newAddress)
+      // 身份已确立（地址已拿到）→ 必须进入已连接态，否则模板会停在
+      // 「连接钱包」卡片上（!connected 分支在 waiting 分支之前），排队页根本看不到
+      await establishConnected(newAddress)
       return
     }
 
@@ -1229,6 +1255,11 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
     if (containerStatus === 'usage-limit') {
       hideLoading()
       localStorage.setItem('swtc_address', newAddress)
+      // 关键修复：额度用完 ≠ 没连上钱包。这里必须进入「已连接」态并直接切到
+      // CWT 验证页 —— 否则页面停在「连接钱包」卡片，而解除限时的 CWT 入口又在
+      // 已连接界面里，点了弹限时、弹完还是连接钱包，形成死循环（用户实测反馈）
+      await establishConnected(newAddress)
+      activeTab.value = 'cwt'
       if (!isInitialLoad) {
         alert(lastConnect202Message || t('user.usageLimitReached'))
       }
@@ -1334,16 +1365,22 @@ const connectWithOwnership = async (address, opts = {}) => {
     showLoading(title, t('user.loadingVerify'), progress0)
 
     const pluginAddress = await requestAccounts()
-    // 1) 领取一次性挑战（按插件账户下发，5 分钟有效）
+    // 1) 领取一次性挑战：**必须向 /connect 领**（CONNECT 用途分池）。
+    //    不能借用 config-challenge —— 挑战池按用途隔离，借来的 nonce 在 /connect
+    //    处取不到（这正是防"跨端点凭证混淆"的设计）。无签名调用 /connect 会
+    //    返回 401 + { nonce, message }，这就是本流程要签的材料。
     showLoading(title, t('user.loadingWalletConnect'), Math.max(progress0, 25))
-    const challengeRes = await axios.post('/api/user/config-challenge', {
-      address: pluginAddress,
-    })
-    const nonce = challengeRes.data.nonce
+    const chalRes = await fetch(`/connect?address=${encodeURIComponent(pluginAddress)}`)
+    const challenge = await chalRes.json()
+    const nonce = challenge.nonce
+    const message = challenge.message
+    if (!nonce || !message) {
+      throw new Error(challenge.error || '领取连接挑战失败，请重试')
+    }
     console.log('[flow] F7 挑战获取完成 nonce.length=' + (nonce ? String(nonce).length : 0))
-    // 2) 插件签名（用户确认弹窗，可能等待较久）
+    // 2) 插件签名（用户确认弹窗，可能等待较久）：签的是用途绑定消息（hex）
     showLoading(title, t('user.loadingSign'), Math.max(progress0, 45))
-    const signature = await signMessage(pluginAddress, nonce)
+    const signature = await signMessage(pluginAddress, message)
     const publicKey = await getPublicKey(pluginAddress)
     console.log('[flow] F8 钱包签名+公钥完成')
     // 3) 带签名访问 /connect（已存在容器同样验签并发 cookie）
