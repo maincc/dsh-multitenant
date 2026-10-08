@@ -441,6 +441,16 @@ export class DockerService {
       limits.cpus,
       '--pids-limit',
       String(limits.pids),
+      // 日志轮转（disk-fix 缺口 E，2026-09）：租户 DSH web 访问日志 + 管理面板
+      // 15s 轮询过网关 = 不轮转时 json-file 无限增长，Linux 生产最无声的磁盘
+      // 杀手。每租户封顶 ~40MB（10m × 3 份）。docker update 不支持改日志驱动，
+      // 存量容器随重建（空闲销毁/版本应用）渐进带上。
+      // ⚠️ 与代激活配套：token 读取已改「tail→启动缓存→重启自愈」三段式
+      //（dsh-auth.service.js），启动行滚出 tail 窗口也不会 401 死局——两边同车。
+      '--log-opt',
+      'max-size=10m',
+      '--log-opt',
+      'max-file=3',
       // 磁盘配额（尽力而为）：--storage-opt size= 只在支持配额的后端可用
       // （overlay2 需 xfs+pquota；btrfs/zfs 原生）。不支持的宿主会**整个拒绝**
       // 本次 docker run（exit 125），因此这里只在"已知支持"时才带上，
@@ -1292,20 +1302,96 @@ export class DockerService {
   }
 
   /**
-   * 宿主磁盘使用情况（df -k /）
-   * 返回 { totalKB, usedKB, availableKB, usePercent }，失败返回 null
+   * Docker 数据根目录（daemon 侧路径，如 /var/lib/docker），带 10min 记忆。
+   * 取不到返回 null（预检/监控自动回落 `/`——语义等于改造前的旧行为）。
+   *
+   * 为什么要它：`df -k /` 在 Linux 服务器上可能查的不是 Docker 数据所在
+   * 分区（/var/lib/docker 独立挂载是常态），盘真满了预检反而全绿。
+   * macOS Docker Desktop 上 DockerRootDir 是 VM 内路径、宿主不可达，
+   * df 会失败 → 逐候选回落到 `/`（APFS 容器级，与宿主可用同源）。
+   */
+  async dockerDataRootDir() {
+    const now = Date.now()
+    if (this._dockerRootMemo && now - this._dockerRootMemo.at < 600000) {
+      return this._dockerRootMemo.path
+    }
+    let path = null
+    try {
+      const out = await sh('docker', ['info', '--format', '{{.DockerRootDir}}'], { timeout: 10000 })
+      const t = String(out ?? '').trim()
+      if (t.startsWith('/')) path = t
+    } catch {
+      path = null
+    }
+    this._dockerRootMemo = { path, at: now }
+    return path
+  }
+
+  /**
+   * 对候选路径逐个 `df -k`，返回第一个解析成功的结果。
+   * 候选：DockerRootDir（Linux 生产命中）→ `/`（macOS/异常回落）。
+   * @returns {Promise<{totalKB:number,usedKB:number,availableKB:number,usePercent:string,checkedPath:string}|null>}
+   */
+  async _dfOnDockerTarget() {
+    const targets = []
+    const root = await this.dockerDataRootDir()
+    if (root) targets.push(root)
+    targets.push('/')
+    for (const target of targets) {
+      try {
+        // -P（POSIX 输出）：设备名再长（如 /dev/mapper/ubuntu--vg-lv--0）也
+        // 保证每分区一行，纯空白拆列——Linux 生产专用坑，BSD/macOS df 同样支持
+        const out = await sh('df', ['-k', '-P', target])
+        const lines = out.trim().split('\n')
+        if (lines.length < 2) continue
+        const parts = lines[lines.length - 1].split(/\s+/)
+        const totalKB = parseInt(parts[1], 10)
+        const availableKB = parseInt(parts[3], 10)
+        if (!Number.isFinite(totalKB) || !Number.isFinite(availableKB)) continue
+        return {
+          totalKB,
+          usedKB: parseInt(parts[2], 10) || 0,
+          availableKB,
+          usePercent: parts[4] || '0%',
+          checkedPath: target,
+        }
+      } catch {
+        // 该候选不可达（如 macOS 上的 VM 内路径），试下一个
+      }
+    }
+    return null
+  }
+
+  /**
+   * Docker 数据分区可用字节数（资源预检用，F1）。读不到返回 null——
+   * 由调用方决定放行还是 fail-closed，探针只报事实。
+   */
+  async hostFreeBytes() {
+    const raw = await this._dfOnDockerTarget()
+    if (!raw) return null
+    return {
+      freeBytes: raw.availableKB * 1024,
+      totalBytes: raw.totalKB * 1024,
+      usePercent: raw.usePercent,
+      checkedPath: raw.checkedPath,
+    }
+  }
+
+  /**
+   * 宿主磁盘使用情况（管理面板/磁盘监控用）。
+   * F1 改造：查 Docker 数据分区而非写死 `/`；返回结构与旧版一致，
+   * 多一个 checkedPath（面板可显示"查的是哪块盘"，失败语义不变：null）。
    */
   async hostDiskUsage() {
     try {
-      const out = await sh('df', ['-k', '/'])
-      const lines = out.split('\n')
-      if (lines.length < 2) return null
-      const parts = lines[1].split(/\s+/)
+      const raw = await this._dfOnDockerTarget()
+      if (!raw) return null
       return {
-        totalKB: parseInt(parts[1], 10) || 0,
-        usedKB: parseInt(parts[2], 10) || 0,
-        availableKB: parseInt(parts[3], 10) || 0,
-        usePercent: parts[4] || '0%',
+        totalKB: raw.totalKB,
+        usedKB: raw.usedKB,
+        availableKB: raw.availableKB,
+        usePercent: raw.usePercent,
+        path: raw.checkedPath,
       }
     } catch {
       return null

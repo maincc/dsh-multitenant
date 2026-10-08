@@ -125,14 +125,18 @@ export async function handleTenantRoutes(req, res, path, url) {
     } catch (err) {
       // 资源不足，进入等待队列
       if (err.code === 'RESOURCE_EXHAUSTED') {
+        const labels = { ports: '端口', memory: '内存', disk: '磁盘空间', containers: '容器数量' }
+        const reasons = (err.failedResources || []).map((k) => labels[k] || k)
         res.writeHead(202, { 'content-type': 'application/json; charset=utf-8' })
         res.end(
           JSON.stringify({
-            error: '资源不足，请等待',
+            error: reasons.length ? `资源不足：${reasons.join('、')}` : '资源不足，请等待',
             code: 'RESOURCE_EXHAUSTED',
             queuePosition: err.queuePosition,
             failedResources: err.failedResources,
-            message: '系统资源不足，您已进入等待队列，资源释放后将自动为您创建容器',
+            message: reasons.length
+              ? `系统${reasons.join('、')}不足，您已进入等待队列，资源释放后将自动为您创建容器`
+              : '系统资源不足，您已进入等待队列，资源释放后将自动为您创建容器',
           }),
         )
       } else if (err.code === 'USAGE_LIMIT_REACHED') {

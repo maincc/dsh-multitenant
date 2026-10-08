@@ -71,6 +71,14 @@ const DEFAULTS = {
     // 默认指向仓库内 deploy/ 文件，rsync 部署随代码走；daemon 读不到时
     // auto 自动降级 compat。
     seccompProfilePath: join(ROOT, 'deploy', 'seccomp-bwrap-minimal.json'),
+    // 资源预检（F1，2026-09 磁盘防复发方案）：
+    // minFreeBytes：Docker 数据分区的可用空间阈值。旧值写死 2GB 且查的是
+    //   `df -k /`——Linux 上 /var/lib/docker 独立挂载时查错分区（disk-fix
+    //   缺口 C）。现改查 DockerRootDir 所在分区，阈值默认提到 4GB 留缓冲。
+    // preflightMode：warn=预检不拦截只记日志（上线观察期默认，行为=历史）；
+    //   enforce=不足时拒绝供应并入等待队列。环境变量 DSH_PREFLIGHT_MODE 可临时覆盖。
+    minFreeBytes: 4 * 1024 * 1024 * 1024,
+    preflightMode: 'warn',
   },
   dsh: {
     // 镜像内 DSH 版本的升级/回退管理

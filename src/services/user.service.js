@@ -24,6 +24,11 @@ import { tenantGateway } from './tenant-proxy.service.js'
 // 代激活 cookie 缓存（check-rpc 的 /api 调用也要带上，否则新版会 401）
 import { authCookieCache } from './dsh-auth.service.js'
 import { swtcContainerName, swtcVolumeName, normalizeAddress } from '../utils/address.js'
+import {
+  readMemAvailableKB,
+  parseMemorySpecToBytes,
+  MEM_HEADROOM_BYTES,
+} from '../utils/host-resources.js'
 import { NotFoundError, BadRequestError, ConflictError } from '../utils/errors.js'
 
 const execFileAsync = promisify(execFile)
@@ -215,10 +220,28 @@ export class UserService {
   }
 
   /**
-   * 资源预检
-   * 检查是否有足够资源创建新容器
+   * 资源预检（F1 改造，2026-09 磁盘防复发方案）
+   * 检查是否有足够资源创建新容器。
+   *
+   * 改造前这里是"形同虚设"的重灾区（三个缺口各自修掉）：
+   * - 缺口 C 磁盘：旧版查 `df -k /`，Linux 上 /var/lib/docker 独立挂载时
+   *   查错分区（盘真满了预检全绿）。现查 docker info 的 DockerRootDir
+   *   所在分区（docker.service.hostFreeBytes 内实现；macOS 上该路径是
+   *   VM 内地址、宿主不可达，自动回落 `/`，语义不变）。阈值走
+   *   CONFIG.docker.minFreeBytes（默认 4GiB，旧值写死 2GiB 偏紧）。
+   * - 缺口 D 内存：旧版 `sysctl hw.memsize` 是 macOS 专有命令，Linux 上
+   *   抛错被 catch 成 true —— 生产（Linux）内存保护恒真（roadmap P1-4）。
+   *   现 Linux 读 /proc/meminfo 的 MemAvailable 实测真检，水位 =
+   *   即将供应 tier 的 memory 限额 + 512MB 余量；读不到按 fail-closed
+   *   记不足（warn 模式下只记日志不拦，见 preflightMode）。
+   *   macOS 保留旧行为（开发机形态不变，避免制造新误杀）。
+   * - 拦截强度：preflightMode=warn（上线默认）时"不足"只记日志、照常
+   *   放行——行为=历史；观察无误后运维改 enforce，才真正入等待队列。
+   *   ports/containers 两项是本来就可靠的硬检查，不受 mode 影响。
+   *
+   * @param {number} [tier] 即将供应的资源档（内存水位按它的限额算），缺省 1
    */
-  async preflightCheck() {
+  async preflightCheck(tier = 1) {
     const checks = {
       ports: false,
       memory: false,
@@ -232,30 +255,40 @@ export class UserService {
     checks.ports =
       availablePorts > 0 || nextPort < CONFIG.docker.maxPort || this.hasReclaimablePorts()
 
-    // 2. 检查主机内存（需要至少 512MB 可用）
-    try {
-      const { stdout } = await execFileAsync('sysctl', ['-n', 'hw.memsize'])
-      const totalMemory = parseInt(stdout.trim(), 10)
-      const { stdout: vmStats } = await execFileAsync('sysctl', ['-n', 'vm.vm_stats'])
-      // 简化检查：如果总内存 > 8GB，认为足够
-      checks.memory = totalMemory > 8 * 1024 * 1024 * 1024
-    } catch {
-      checks.memory = true // 无法检查时假设足够
+    // 2. 主机内存：Linux 实测 MemAvailable 真检；非 Linux（macOS 开发机）保留旧逻辑
+    if (process.platform === 'linux') {
+      const availKB = await readMemAvailableKB()
+      if (availKB === null) {
+        // fail-closed：读不到按"不足"计（warn 模式兜底放行，enforce 由运维确认环境后才开）
+        checks.memory = false
+        console.warn('[preflight] 无法读取 /proc/meminfo 的 MemAvailable：按内存不足处理')
+      } else {
+        const limit = parseMemorySpecToBytes(getTierLimits(tier).memory) ?? 512 * 1024 * 1024
+        checks.memory = availKB * 1024 >= limit + MEM_HEADROOM_BYTES
+      }
+    } else {
+      try {
+        const { stdout } = await execFileAsync('sysctl', ['-n', 'hw.memsize'])
+        const totalMemory = parseInt(stdout.trim(), 10)
+        // 简化检查：如果总内存 > 8GB，认为足够
+        checks.memory = totalMemory > 8 * 1024 * 1024 * 1024
+      } catch {
+        checks.memory = true // 无法检查时假设足够
+      }
     }
 
-    // 3. 检查磁盘空间（需要至少 2GB 可用）
+    // 3. 磁盘：查 Docker 数据分区（缺口 C 修复），阈值可配置（默认 4GiB）
     try {
-      const { stdout } = await execFileAsync('df', ['-k', '/'])
-      const lines = stdout.trim().split('\n')
-      if (lines.length >= 2) {
-        const parts = lines[1].split(/\s+/)
-        const availableKB = parseInt(parts[3], 10)
-        checks.disk = availableKB > 2 * 1024 * 1024 // 2GB
+      const free = await dockerService.hostFreeBytes()
+      if (!free) {
+        checks.disk = false
+        console.warn('[preflight] df 读取失败：按磁盘不足处理（fail-closed）')
       } else {
-        checks.disk = true
+        const minFreeBytes = CONFIG.docker?.minFreeBytes ?? 4 * 1024 * 1024 * 1024
+        checks.disk = free.freeBytes >= minFreeBytes
       }
     } catch {
-      checks.disk = true
+      checks.disk = false
     }
 
     // 4. 检查容器数量（最多 50 个）
@@ -275,6 +308,17 @@ export class UserService {
       checks,
       failed,
     }
+  }
+
+  /**
+   * 预检拦截强度：warn（默认）=不足只记日志不拦，enforce=拒绝供应入队。
+   * 环境变量 DSH_PREFLIGHT_MODE 可临时覆盖（应急/验证用）。
+   */
+  preflightMode() {
+    const v = String(process.env.DSH_PREFLIGHT_MODE || CONFIG.docker?.preflightMode || 'warn')
+      .trim()
+      .toLowerCase()
+    return v === 'enforce' ? 'enforce' : 'warn'
   }
 
   /**
@@ -349,11 +393,17 @@ export class UserService {
     if (this.waitQueue.length === 0) return []
 
     const processed = []
-    const check = await this.preflightCheck()
+    const check = await this.preflightCheck(this.waitQueue[0]?.tier ?? 1)
 
-    if (!check.ok) {
+    if (!check.ok && this.preflightMode() === 'enforce') {
       console.log(`[queue] Resources still insufficient: ${check.failed.join(', ')}`)
       return processed
+    }
+    if (!check.ok) {
+      // warn 模式：预检报不足也照常处理队列头（行为=历史放行，只是多一条日志）
+      console.log(
+        `[queue] Resources insufficient (${check.failed.join(', ')}) — warn mode, still processing`,
+      )
     }
 
     // 处理队列中的第一个用户
@@ -1285,10 +1335,10 @@ export class UserService {
 
     // 2) 资源预检（队列处理时跳过）
     if (!skipQueueCheck) {
-      const check = await this.preflightCheck()
-      if (!check.ok) {
+      const tier = this.state.swtcUsers?.[address]?.tier ?? 1
+      const check = await this.preflightCheck(tier)
+      if (!check.ok && this.preflightMode() === 'enforce') {
         // 资源不足，添加到等待队列
-        const tier = this.state.swtcUsers?.[address]?.tier ?? 1
         const queueResult = this.addToWaitQueue(address, tier)
         if (queueResult.full) {
           const error = new Error('等待队列已满，请稍后再试')
@@ -1300,6 +1350,11 @@ export class UserService {
         error.queuePosition = queueResult.position
         error.failedResources = check.failed
         throw error
+      }
+      if (!check.ok) {
+        console.warn(
+          `[preflight] 资源不足: ${check.failed.join(', ')} —— preflightMode=warn，照常放行（上线观察期行为）`,
+        )
       }
     }
 
