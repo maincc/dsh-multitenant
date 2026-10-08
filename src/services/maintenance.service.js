@@ -265,6 +265,6 @@ export function startMaintenanceTimer() {
   }, IMAGE_PRUNE_INTERVAL_MS)
   timer.unref()
   console.log(
-    `[maintenance] started: image prune daily, builder prune weekly (--keep-storage ${cfg.keepCache}), fstrim ${cfg.fstrim ? 'on (Docker Desktop only)' : 'off'}`,
+    `[maintenance] started: dangling rmi daily（仅本项目）, builder prune weekly (--keep-storage ${cfg.keepCache}), fstrim ${cfg.fstrim ? 'on (Docker Desktop only)' : 'off'}`,
   )
 }

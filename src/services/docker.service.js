@@ -556,11 +556,14 @@ export class DockerService {
   }
 
   /**
-   * 启动容器（使用 restart 以确保端口映射恢复）
+   * 启动容器（实际执行 restart 以确保端口映射恢复）。
+   *
+   * 与 restartContainer 的实现从建立之日起就一字不差（2026-09 查重确认）；
+   * 保留两个名字只为调用方语义——"把停着的捞起来" vs "把跑着的重启"，
+   * 实现单源于此，行为零变化（`docker start` 不恢复端口映射的老坑仍在注释里）。
    */
   async startContainer(name) {
-    // 使用 restart 而不是 start，因为 start 可能不会恢复端口映射
-    await sh('docker', ['restart', name])
+    await this.restartContainer(name)
   }
 
   /**
