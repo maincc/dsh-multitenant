@@ -1511,10 +1511,18 @@ const pruneImages = async () => {
     const parts = [t('admin.dshPruned', { n: removed.length, size: formatBytes(freedBytes) })]
     if (skipped.length) parts.push(t('admin.dshPruneSkipped', { n: skipped.length }))
     dshPrune.value = { running: false, message: parts.join('，') }
-    selectedImageIds.value = []
-    await loadDshStatus()
   } catch (err) {
     dshPrune.value = { running: false, message: friendlyPluginError(err) }
+  } finally {
+    // 刷新放 finally 且两路都拉——不管这次是全删成、被服务端部分拒、还是中途抛错，
+    // 页面都必须回到守护进程的真实状态：
+    //   · /status 现算清理面板列表（prunable.items 与可回收字节）
+    //   · /versions 现算版本行"✓ 本地"标记：不重拉的话刚删掉的 0.1.1-rc.2
+    //     会长期谎称"本地存在"（2026-10 实测用户所见即此）
+    // 两个都 catch：守护瞬时不答也不该把已执行完的清理反报成失败
+    selectedImageIds.value = []
+    await loadDshStatus().catch(() => {})
+    await loadDshVersions().catch(() => {})
   }
 }
 
@@ -2364,8 +2372,11 @@ const startDshPolling = () => {
         const res = await axios.get('/api/admin/dsh/image')
         dshBuild.value = res.data
         if (!res.data.running) {
-          // 构建结束：刷新镜像状态（新版本要显示出来）
+          // 构建结束：刷新镜像状态（新版本要显示出来）。
+          // 版本清单也要重拉：新构建的 "✓ 本地" 标记来自 /versions 的现算结果，
+          // 不刷的话刚建好的版本要等用户手动点"更新"才亮勾（与清理面板同源同步）。
           await loadDshStatus()
+          await loadDshVersions().catch(() => {})
           // 注意：批量可能同时在跑，不能无条件停表
           if (!anyDshTaskRunning()) stopDshPolling()
         }
