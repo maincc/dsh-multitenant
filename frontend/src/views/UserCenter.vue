@@ -112,7 +112,6 @@
               }}</code>
             </div>
           </div>
-          <p class="account-foot">{{ $t('user.accountMovedHint') }}</p>
         </div>
 
         <!-- ════════ 模型配置 ════════ -->
@@ -451,7 +450,6 @@
             <!-- 已授权 -->
             <div v-if="cwtStatus.authorized" class="info-row">
               <span class="badge badge-success">{{ $t('user.cwtAuthorized') }}</span>
-              <span class="cwt-meta">usr: {{ cwtStatus.registry?.usr }}</span>
             </div>
 
             <!-- 待审批 -->
@@ -2362,13 +2360,6 @@ onUnmounted(() => {
 .tab-divider {
   border-top: 1px solid #f1f5f9;
   margin: 1.25rem 0;
-}
-
-/* 账户信息页脚：字段迁走后的去向提示 */
-.account-foot {
-  margin-top: 1rem;
-  font-size: 11px;
-  color: #94a3b8;
 }
 
 /* ─── 账户信息 ─── */

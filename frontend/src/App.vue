@@ -7,9 +7,13 @@
           <span class="brand-title">{{ $t('common.brand') }}</span>
         </router-link>
       </div>
+      <!-- 左组：面向所有访问者的入口，紧跟品牌 -->
       <div class="nav-links">
         <router-link to="/skills" class="nav-tab">{{ $t('common.nav.skills') }}</router-link>
         <router-link to="/admin" class="nav-tab">{{ $t('common.nav.admin') }}</router-link>
+      </div>
+      <!-- 右组：账户性入口靠右 -->
+      <div class="nav-links nav-links-right">
         <router-link to="/user" class="nav-tab">{{ $t('common.nav.user') }}</router-link>
       </div>
     </nav>
@@ -43,7 +47,6 @@ import dshLogo from './assets/dsh-logo-white.svg'
 }
 
 .nav-brand {
-  margin-right: auto;
   display: flex;
   align-items: center;
 }
@@ -75,6 +78,12 @@ import dshLogo from './assets/dsh-logo-white.svg'
   display: flex;
   gap: 0.125rem;
   align-items: center;
+}
+
+/* 右组（用户中心）：margin-left:auto 把它单独推到导航条最右端，
+   左组（技能市场 / 系统管理）自然紧跟品牌靠左 */
+.nav-links-right {
+  margin-left: auto;
 }
 
 .nav-tab {
