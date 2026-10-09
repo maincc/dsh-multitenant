@@ -105,10 +105,20 @@ ENV NODE_ENV=production
 #
 # 运行期读取还有第二级回退：读不到该文件时回退读包内 package.json，
 # 以兼容本次改动之前构建的旧镜像（见 docker.service.js 的 VERSION_PROBE_CMD）。
+# 构建尾部的"真启动"自检（2026-10 事故复盘）：
+#   上游曾把 0.1.5-rc.2 同名重发成"插件树引用 dsh-sandbox-local、但该包只
+#   在 devDependencies"的半成品。`npm i -g` 不装已安装包的 devDeps，产出的
+#   镜像版本号核对能过（ACTUAL==EXPECTED）、npm 退出码是 0，但每次启动必崩
+#   ——面板把坏产物判成"构建成功"并移动了 latest，全平台租户随之倒下一片。
+#   版本号防不住"依赖树内部缺件"，唯一可靠的判定是让 web profile 真起一次：
+#   插件树解析发生在启动最早期，token 行出现 = 树完整；起不来 = 构建判失败。
+#   （补装 devDeps 的"自修复"分支已被同一场事故的实验证伪：Cordis 按声明方
+#   插件的嵌套目录解析，全局装不上、手动解包也放不对位置——不再保留假希望。）
 ARG DSH_VERSION=0.1.1-rc.2
 RUN EXPECTED="${DSH_VERSION}" \
   && echo ">> 安装 @deepseek-ai/dsh@${EXPECTED}" \
-  && npm install -g "@deepseek-ai/dsh@${EXPECTED}" \
+  && npm install -g "@deepseek-ai/dsh@${EXPECTED}" --no-audit --no-fund \
+       --fetch-retries=5 --fetch-retry-mintimeout=2000 --fetch-retry-maxtimeout=30000 \
   && npm cache clean --force \
   && PKG="$(npm root -g)/@deepseek-ai/dsh/package.json" \
   && test -f "$PKG" \
@@ -116,6 +126,19 @@ RUN EXPECTED="${DSH_VERSION}" \
   && test -n "$ACTUAL" \
   && if [ "$EXPECTED" != "latest" ] && [ "$ACTUAL" != "$EXPECTED" ]; then \
        echo "!! DSH 版本不符：期望 $EXPECTED，实际 $ACTUAL" >&2; exit 1; \
+     fi \
+  && probe() { rm -f /tmp/pl; mkdir -p /tmp/probe-home; HOME=/tmp/probe-home dsh --profile web --port 39999 >/tmp/pl 2>&1 & p=$!; i=0; \
+       while [ $i -lt 50 ]; do \
+         grep -q "dsh web: http" /tmp/pl && { kill $p 2>/dev/null; wait $p 2>/dev/null; return 0; }; \
+         kill -0 $p 2>/dev/null || { sleep 1; return 1; }; \
+         i=$((i+1)); sleep 2; \
+       done; kill $p 2>/dev/null; return 1; } \
+  && if probe; then \
+       echo ">> 启动自检通过（插件树完整，web profile 可服务）"; \
+     else \
+       echo '!! 启动自检失败：web profile 起不来，绝不产出「看似成功」的坏镜像。' >&2; \
+       echo '!! 若上游同名重发导致插件树缺件（历史事故：0.1.5-rc.2 变体），请联系上游重新出版本。' >&2; \
+       grep -vE '^\s+at |^\s+\}' /tmp/pl | head -20 >&2; exit 1; \
      fi \
   && echo "$ACTUAL" > /usr/local/share/dsh-version \
   && echo ">> DSH 实际版本：$ACTUAL"
