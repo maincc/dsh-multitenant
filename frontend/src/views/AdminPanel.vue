@@ -244,7 +244,6 @@
                       {{ $t('admin.forceStop') }}
                     </button>
                     <button
-                      v-if="user.status === 'stopped' || user.status === 'destroyed'"
                       class="btn btn-danger"
                       @click="deleteVolume(user.address)"
                       :title="$t('admin.deleteDataTitle')"
@@ -252,7 +251,6 @@
                       {{ $t('admin.deleteData') }}
                     </button>
                     <button
-                      v-if="user.status === 'destroyed' || user.status === 'unknown'"
                       class="btn btn-danger"
                       @click="removeUser(user.address)"
                       :title="$t('admin.removeTitle')"
@@ -819,35 +817,80 @@
 
             <p class="dsh-hint-small">{{ $t('admin.dshVersionsHint') }}</p>
 
-            <!-- 本地已构建版本清单：这是"我手上有哪些版本"的权威答案 -->
+            <!-- 本地镜像钦定：机器上现存的任意租户镜像可直接选为平台默认
+                 （不必先"构建"——覆盖 docker load 传入、历史遗留 tag 等场景）。
+                 原先的"本地已构建的版本"表与它同源同形，已并入这里统一呈现。 -->
             <h6 class="dsh-subhead">
-              {{ $t('admin.dshLocalVersions') }}
-              <span class="dsh-muted">（{{ localVersionRows.length }}）</span>
+              {{ $t('admin.dshLocalImages') }}
+              <span class="dsh-muted">（{{ dshImages.images.length }}）</span>
+              <button class="btn btn-small" :disabled="dshImagesLoading" @click="loadDshImages">
+                {{ dshImagesLoading ? $t('admin.loading') : $t('admin.refresh') }}
+              </button>
             </h6>
-            <table v-if="localVersionRows.length" class="dsh-table">
+            <!-- 先把"现在的总体镜像是谁"说明白（含"没有/读不出"两种状态）：
+                 看不到现状却要对现状签名，是没有道理的交互 -->
+            <p class="dsh-note">
+              {{ $t('admin.dshCurrentDefault') }}：
+              <template v-if="dshImages.defaultId">
+                <code class="dsh-ver">{{ dshImages.defaultRef || dshImages.defaultId }}</code>
+                <span class="dsh-muted">
+                  {{
+                    dshImages.defaultVersion
+                      ? `（${dshImages.defaultVersion}）`
+                      : `（${$t('admin.dshDefaultVersionUnknown')}）`
+                  }}
+                </span>
+              </template>
+              <span v-else>{{ $t('admin.dshNoDefaultYet') }}</span>
+            </p>
+            <p v-if="dshImagesError" class="dsh-error">{{ dshImagesError }}</p>
+            <table v-if="dshImages.images.length" class="dsh-table">
               <thead>
                 <tr>
                   <th>{{ $t('admin.dshColVersion') }}</th>
-                  <th>{{ $t('admin.dshImageName') }}</th>
+                  <th>{{ $t('admin.dshImageRef') }}</th>
                   <th>{{ $t('admin.dshBuiltAt') }}</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="lv in localVersionRows" :key="lv.imageId">
+                <tr v-for="im in dshImages.images" :key="im.ref">
                   <td>
-                    <code class="dsh-ver">{{ lv.version }}</code>
-                    <span v-if="lv.isCurrent" class="dsh-ver-tag">
-                      {{ $t('admin.dshCurrentTag') }}
+                    <code class="dsh-ver">{{ im.version }}</code>
+                    <span v-if="im.isDefault" class="dsh-ver-tag">
+                      {{ $t('admin.dshDefaultTag') }}
                     </span>
                   </td>
                   <td>
-                    <code>{{ lv.imageId }}</code>
+                    <code>{{ im.ref }}</code>
+                    <span class="dsh-muted"> {{ im.imageId }}</span>
                   </td>
-                  <td class="dsh-muted">{{ lv.createdAt || '—' }}</td>
+                  <td class="dsh-muted">{{ im.createdAt || '—' }}</td>
+                  <td>
+                    <!-- 默认行没有动作：挂[默认]徽标的行"已经是"总体镜像，再给
+                         一个"确认它是默认"的按钮属于自我重复。
+                         未知态（latest 不存在）时没有任何一行有徽标，
+                         于是每一行都是"设为平台默认"的出路——"不知道"与
+                         "不能设置"在逻辑上互斥，不需要额外按钮来兜底。 -->
+                    <button
+                      v-if="!im.isDefault"
+                      class="btn btn-small"
+                      :disabled="!!dshSelecting"
+                      @click="selectPlatformImage(im)"
+                    >
+                      {{
+                        dshSelecting === im.ref
+                          ? $t('admin.dshSelecting')
+                          : $t('admin.dshSelectAsDefault')
+                      }}
+                    </button>
+                    <span v-else class="dsh-muted">—</span>
+                  </td>
                 </tr>
               </tbody>
             </table>
-            <p v-else class="dsh-note">{{ $t('admin.dshNoLocalVersions') }}</p>
+            <p v-else-if="!dshImagesLoading" class="dsh-note">{{ $t('admin.dshNoLocalImages') }}</p>
+            <p class="dsh-hint-small">{{ $t('admin.dshLocalImagesHint') }}</p>
           </div>
 
           <!-- ② 构建版本镜像 -->
@@ -1458,9 +1501,12 @@ const versionIsLocal = (v) =>
  * 注意：latest 是移动标签、不指向某个具体版本，界面里单独由「总体镜像」呈现，
  * 这里只列具体版本，避免同一镜像因为两个 tag 出现两行造成误解。
  */
-const localVersionRows = computed(() =>
-  (dshVersions.value.localTags || []).filter((t) => t.version && t.version !== 'latest'),
-)
+/** 本地镜像清单（"钦定平台默认镜像"用：含 load 进来的、非本平台构建的） */
+const dshImages = ref({ images: [], defaultId: '', defaultRef: '', defaultVersion: null })
+const dshImagesLoading = ref(false)
+const dshImagesError = ref('')
+/** 正在钦定的 ref（禁重复点击） */
+const dshSelecting = ref('')
 
 /** 本地镜像清单（含不在历史里的，如更早遗留的 tag） */
 const pruneItems = computed(() => dshStatus.value.prunable?.items || [])
@@ -1523,6 +1569,8 @@ const pruneImages = async () => {
     selectedImageIds.value = []
     await loadDshStatus().catch(() => {})
     await loadDshVersions().catch(() => {})
+    // 镜像刚被删掉 → 钦定清单必须同步，否则按钮还对着一个已不存在的 tag
+    await loadDshImages().catch(() => {})
   }
 }
 
@@ -1775,6 +1823,14 @@ const signAdminOperation = async (operation, payload) => {
   }
   // 插件原始大小写地址（签名用）；挑战必须绑在**当前登录会话**的地址上
   const pluginAddress = await requestAccounts()
+  // 预检：钱包已切走而登录会话还是旧地址（账户监听有竞态/漏检窗口）——
+  // 立刻说人话指引，不必等后端 403 再猜"是不是只能操作自己的数据"（不是）
+  if (currentAddress.value && pluginAddress.toLowerCase() !== currentAddress.value) {
+    throw new Error(
+      `钱包当前账户与登录管理面板的账户不一致（${currentAddress.value.slice(0, 10)}…）。` +
+        '请在 CCDAO 插件切回登录时的账户，或退出重新登录。',
+    )
+  }
   try {
     const chalRes = await axios.post('/api/admin/challenge', {
       address: pluginAddress.toLowerCase(),
@@ -1873,12 +1929,19 @@ const cleanupOrphanVolumes = async () => {
   if (!orphanVolumes.value.length) return
   if (!confirm(t('admin.orphanConfirm', { n: orphanVolumes.value.length }))) return
   try {
-    const res = await axios.post('/api/admin/cleanup-orphan-volumes')
-    const { removed, failed } = res.data
-    orphanNotice.value = t('admin.orphanCleaned', {
-      ok: removed.length,
-      fail: failed.length,
+    // 批量删卷是不可逆操作 → 签名绑"删哪几个卷"（服务端只删 签署清单∩仍是孤儿 的交集）
+    const headers = await signAdminOperation('cleanup-orphan-volumes', {
+      volumes: [...orphanVolumes.value],
     })
+    const res = await axios.post(
+      '/api/admin/cleanup-orphan-volumes',
+      { volumes: [...orphanVolumes.value] },
+      { headers },
+    )
+    const { removed = [], failed = [], skipped = [] } = res.data || {}
+    const parts = [t('admin.orphanCleaned', { ok: removed.length, fail: failed.length })]
+    if (skipped.length) parts.push(t('admin.orphanSkipped', { n: skipped.length }))
+    orphanNotice.value = parts.join('，')
     // 刷新列表：剩下的就是删除失败的
     orphanVolumes.value = (failed || []).map((f) => f.name)
   } catch (err) {
@@ -2043,7 +2106,9 @@ const approveCwt = async (id) => {
   if (!confirm(t('admin.confirmApprove'))) return
   cwtBusy.value = true
   try {
-    await axios.post(`/api/admin/cwt/applications/${id}/approve`)
+    // 发放豁免＝提权级操作 → 当场签名，绑申请 id
+    const headers = await signAdminOperation('cwt/approve', { id })
+    await axios.post(`/api/admin/cwt/applications/${id}/approve`, null, { headers })
     alert(t('admin.approvedOk'))
     await fetchData()
   } catch (err) {
@@ -2057,7 +2122,8 @@ const rejectCwt = async (id) => {
   if (!confirm(t('admin.confirmReject'))) return
   cwtBusy.value = true
   try {
-    await axios.post(`/api/admin/cwt/applications/${id}/reject`)
+    const headers = await signAdminOperation('cwt/reject', { id })
+    await axios.post(`/api/admin/cwt/applications/${id}/reject`, null, { headers })
     alert(t('admin.rejectedOk'))
     await fetchData()
   } catch (err) {
@@ -2071,7 +2137,9 @@ const revokeCwt = async (address) => {
   if (!confirm(t('admin.confirmRevoke', { addr: `${address.slice(0, 8)}…` }))) return
   cwtBusy.value = true
   try {
-    await axios.post(`/api/admin/cwt/registry/${address}/revoke`)
+    // 撤销授权会让用户跌回每日时限 → 当场签名，绑目标地址
+    const headers = await signAdminOperation('cwt/revoke', { address })
+    await axios.post(`/api/admin/cwt/registry/${address}/revoke`, null, { headers })
     alert(t('admin.revokedOk'))
     await fetchData()
   } catch (err) {
@@ -2312,6 +2380,50 @@ const loadDshStatus = async () => {
   }
 }
 
+/** 拉本地镜像清单（含当前默认镜像的 ID 用于打标） */
+const loadDshImages = async () => {
+  dshImagesLoading.value = true
+  dshImagesError.value = ''
+  try {
+    const res = await axios.get('/api/admin/dsh/local-images')
+    // 形状归一：任何字段缺失都塌成安全默认值，绝不让模板对 undefined 取值
+    // （曾经清单形状一变整张表就人间蒸发，"想设也没得设"）
+    dshImages.value = {
+      images: Array.isArray(res.data.images) ? res.data.images : [],
+      defaultId: res.data.defaultId || '',
+      defaultRef: res.data.defaultRef || '',
+      defaultVersion: res.data.defaultVersion || null,
+    }
+  } catch (err) {
+    // 错误必须上屏：静默 console 会让空表看起来像"本机真没镜像"（误导决策）
+    dshImages.value = { images: [], defaultId: '', defaultRef: '', defaultVersion: null }
+    dshImagesError.value = `${t('admin.dshImagesLoadFail')}：${err.response?.data?.error || err.message}`
+  } finally {
+    dshImagesLoading.value = false
+  }
+}
+
+/** 把选中的本地镜像钦定为平台默认（签名绑 ref；只影响以后的新建/重建） */
+const selectPlatformImage = async (img) => {
+  if (!confirm(t('admin.dshSelectConfirm', { ref: img.ref }))) return
+  dshSelecting.value = img.ref
+  try {
+    const headers = await signAdminOperation('dsh/select', { ref: img.ref })
+    await axios.post('/api/admin/dsh/select', { ref: img.ref }, { headers })
+    alert(t('admin.dshSelectDone', { ref: img.ref }))
+  } catch (err) {
+    alert(t('admin.dshSelectFail', { err: err.response?.data?.error || err.message }))
+  } finally {
+    // 无论成败都刷新：latest tag 可能已挪、清单与状态必须回到事实态
+    dshSelecting.value = ''
+    await Promise.all([
+      loadDshImages().catch(() => {}),
+      loadDshStatus().catch(() => {}),
+      loadDshVersions().catch(() => {}),
+    ])
+  }
+}
+
 /** 拉 npm 可用版本（force=true 时让后端清缓存重拉） */
 const loadDshVersions = async (force = false) => {
   dshVersionsLoading.value = true
@@ -2375,8 +2487,10 @@ const startDshPolling = () => {
           // 构建结束：刷新镜像状态（新版本要显示出来）。
           // 版本清单也要重拉：新构建的 "✓ 本地" 标记来自 /versions 的现算结果，
           // 不刷的话刚建好的版本要等用户手动点"更新"才亮勾（与清理面板同源同步）。
+          // 钦定清单同样要重拉：刚构建的 tag 就是它的候选行。
           await loadDshStatus()
           await loadDshVersions().catch(() => {})
+          await loadDshImages().catch(() => {})
           // 注意：批量可能同时在跑，不能无条件停表
           if (!anyDshTaskRunning()) stopDshPolling()
         }
@@ -2587,6 +2701,12 @@ onMounted(async () => {
 // 轮询间隔若被调长（例如 5 分钟），这一步保证「切过去看到的就是新的」。
 watch(activeTab, () => {
   if (Date.now() - lastFetchAt > 1000) refreshNow()
+  // DSH tab 的数据不在 fetchData 里：进来就拉一次，否则"当前镜像/本地镜像
+  // 钦定清单"要用户手动点刷新才出现（新功能表第一眼是空的，不可接受）
+  if (activeTab.value === 'dsh') {
+    loadDshStatus().catch(() => {})
+    loadDshImages().catch(() => {})
+  }
 })
 
 // 回到前台 → 立即补一次；后台由 startPolling 的定时器判断跳过

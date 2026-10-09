@@ -829,6 +829,22 @@ export class DockerService {
   }
 
   /**
+   * 把任意本地镜像**钦定为平台默认**。
+   *
+   * 语义 = `docker tag <ref> <IMAGE>`（IMAGE 即创建容器时 opts.image 缺位的
+   * 兜底，通常是 dsh-multitenant:latest）。纯元数据操作：不动任何容器与卷；
+   * 新连接/重建的租户从此用这个镜像，已在跑的租户不受影响（切换它们在面板
+   * 点"应用"）。调用方（路由层）负责：管理员会话 + 当场签名 + 镜像存在性
+   * + 内嵌版本可读（"是不是本项目的镜像"的权威判定），这里只执行改 tag。
+   *
+   * @param {string} ref 形如 repo:tag 或镜像 ID 的本地镜像引用
+   */
+  async setDefaultImage(ref) {
+    await sh('docker', ['tag', ref, IMAGE])
+    return { defaultRef: IMAGE, imageId: await this.imageId(IMAGE) }
+  }
+
+  /**
    * 读取镜像内【实际烘焙】的 DSH 版本（权威值）。
    *
    * 镜像内 /usr/local/share/dsh-version 由 Dockerfile 在装完 npm 包后写入，

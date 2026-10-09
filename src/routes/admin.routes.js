@@ -113,9 +113,18 @@ export async function handleAdminRoutes(req, res, path, url) {
           return true
         }
         if (normalizeAddress(session) !== normalizeAddress(address)) {
-          // 挑战要绑在会话身份上，否则可以骗管理员为别的地址签一次
+          // 挑战要绑在会话身份上，否则可以骗管理员为别的地址签一次。
+          // 文案必须把"本人"讲清楚：绑的是【登录会话 ↔ 签名钱包】同一性，
+          // 不是"只能操作自己的数据"——目标地址在 payload 里，本就可以是别人。
           res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
-          res.end(JSON.stringify({ error: '只能为本人的操作签名', code: 'FORBIDDEN' }))
+          res.end(
+            JSON.stringify({
+              error:
+                '签名钱包与管理员登录会话不是同一账户（防会话劫持，与操作对象是谁无关）。' +
+                '请在 CCDAO 插件切回登录管理面板时的账户，或退出后重新登录再试。',
+              code: 'FORBIDDEN',
+            }),
+          )
           return true
         }
         const issued = issueAdminSignatureChallenge(address, operation, payload)
@@ -311,13 +320,50 @@ export async function handleAdminRoutes(req, res, path, url) {
   }
 
   // POST /api/admin/cleanup-orphan-volumes - 删除孤儿数据卷
+  // 批量删数据是不可逆操作 → 与 delete-volume 同规格：除会话外还要求**当场签名**，
+  // 且签的内容绑定"删哪几个卷"（规范化去重+排序）。执行时只删
+  // 【签名清单 ∩ 当前仍是孤儿的卷】——清单里已被认领/回收的进 skipped，绝不扩大。
   if (path === '/api/admin/cleanup-orphan-volumes' && req.method === 'POST') {
     if (!requireAdmin(req, res)) return true
+
+    let signed
+    try {
+      const body = JSON.parse((await parseBody(req)) || '{}')
+      signed = Array.isArray(body.volumes) ? body.volumes : null
+    } catch {
+      signed = null
+    }
+    if (!signed) {
+      res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(
+        JSON.stringify({
+          error: '缺少 volumes 列表：清理必须显式携带要删除的卷名（并为其签名）',
+          code: 'BAD_REQUEST',
+        }),
+      )
+      return true
+    }
+
+    if (
+      !requireAdminSignature(
+        req,
+        res,
+        'cleanup-orphan-volumes',
+        { volumes: signed },
+        getAdminSession(req),
+      )
+    ) {
+      return true
+    }
+
     try {
       const orphans = await collectOrphanVolumes()
+      const norm = [...new Set(signed.map((s) => String(s).trim()).filter(Boolean))]
+      const targets = orphans.filter((v) => norm.includes(v))
+      const skipped = norm.filter((v) => !orphans.includes(v))
       const removed = []
       const failed = []
-      for (const volume of orphans) {
+      for (const volume of targets) {
         try {
           await dockerService.removeVolume(volume)
           removed.push(volume)
@@ -326,7 +372,15 @@ export async function handleAdminRoutes(req, res, path, url) {
         }
       }
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ ok: true, removed, failed, total: orphans.length }))
+      res.end(
+        JSON.stringify({
+          ok: true,
+          removed,
+          failed,
+          skipped,
+          total: targets.length,
+        }),
+      )
     } catch (err) {
       handleError(err, res)
     }
@@ -465,8 +519,12 @@ export async function handleAdminRoutes(req, res, path, url) {
   ) {
     if (!requireAdmin(req, res)) return
     const id = path.slice('/api/admin/cwt/applications/'.length, -'/approve'.length)
+    // 批准＝发放"无限时长豁免"，与被签名的 promote 同级 → 当场签名，绑申请 id
+    const adminAddr = getAdminSession(req)
+    if (!requireAdminSignature(req, res, 'cwt/approve', { id }, adminAddr)) {
+      return true
+    }
     try {
-      const adminAddr = getAdminSession(req)
       const result = await cwtAdminService.approveApplication(id, adminAddr)
       if (!res.headersSent) {
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
@@ -490,8 +548,12 @@ export async function handleAdminRoutes(req, res, path, url) {
   ) {
     if (!requireAdmin(req, res)) return
     const id = path.slice('/api/admin/cwt/applications/'.length, -'/reject'.length)
+    // 拒绝同样改变审批状态机 → 当场签名，绑申请 id（防"签这张拒那张"）
+    const adminAddr = getAdminSession(req)
+    if (!requireAdminSignature(req, res, 'cwt/reject', { id }, adminAddr)) {
+      return true
+    }
     try {
-      const adminAddr = getAdminSession(req)
       const result = await cwtAdminService.rejectApplication(id, adminAddr)
       if (!res.headersSent) {
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
@@ -547,8 +609,12 @@ export async function handleAdminRoutes(req, res, path, url) {
     let address = path.slice('/api/admin/cwt/registry/'.length, -'/revoke'.length)
     if (!validateSwtcAddress(address, res)) return
     address = normalizeAddress(address)
+    // 撤销授权会让用户从"CWT 豁免"跌回每日时限，是权限状态改变 → 当场签名，绑地址
+    const adminAddr = getAdminSession(req)
+    if (!requireAdminSignature(req, res, 'cwt/revoke', { address }, adminAddr)) {
+      return true
+    }
     try {
-      const adminAddr = getAdminSession(req)
       const result = await cwtAdminService.revokeRegistry(address, adminAddr)
       if (!res.headersSent) {
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
@@ -1056,6 +1122,106 @@ export async function handleAdminRoutes(req, res, path, url) {
           message: '镜像构建已开始，请轮询 GET /api/admin/dsh/image 查看进度',
         }),
       )
+    } catch (err) {
+      handleError(err, res)
+    }
+    return true
+  }
+
+  // GET /api/admin/dsh/local-images - 本机所有可用镜像 + 当前平台默认是哪一张
+  // （"从当前镜像中选一个当平台镜像"功能的数据源；含不在构建历史里的，
+  // 比如从别的机器 docker load 进来的）。
+  // 命名注意：`/dsh/images` 已被镜像清理面板占用（可删清单），此端点是可选清单。
+  if (path === '/api/admin/dsh/local-images' && req.method === 'GET') {
+    if (!requireAdmin(req, res)) return
+    try {
+      const [images, defaultId, defaultVersion] = await Promise.all([
+        dockerService.listAvailableImages(),
+        dockerService.imageId(),
+        dockerService.imageDshVersion(),
+      ])
+      // 必须后端归一化比对：docker 清单给的是短 ID（12 位），inspect 给
+      // sha256 全量——前端直接 === 永远不相等，"当前默认"标记会整体消失
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(
+        JSON.stringify({
+          ok: true,
+          images: (images || []).map((im) => ({
+            ...im,
+            isDefault: matchImageId(im.imageId, defaultId),
+          })),
+          defaultId,
+          // "现在的总体镜像到底是谁"的答案随清单一起下发：
+          // defaultRef = 平台配置引用的名字（如 dsh-multitenant:latest）；
+          // defaultId 为 null = 该 tag 根本不存在（"不知道"态），前端据此
+          // 明示"无平台默认镜像"，而不是让人猜；defaultVersion 为 null =
+          // tag 在但读不出内嵌版本（外来/损坏镜像），同样明示"未知"。
+          defaultRef: CONFIG.docker.image,
+          defaultVersion: defaultVersion || null,
+        }),
+      )
+    } catch (err) {
+      handleError(err, res)
+    }
+    return true
+  }
+
+  // POST /api/admin/dsh/select - 把一个本地镜像钦定为平台默认镜像
+  // body: { ref: string }  （形如 dsh-multitenant:0.1.5-rc.3 或镜像 ID）
+  //
+  // 与"构建"的区别：构建 = 从 registry 现拉现装并自动夺 latest；钦定 = 直接
+  // 拿机器上已有的镜像当默认（load 来的、历史遗留的都行），**不重建任何容器**。
+  // 与"应用"的区别：应用 = 把默认镜像推到租户容器上；钦定只改"以后用谁"。
+  //
+  // 防护：当场签名绑 ref（签 A 指 B 是越权通道）+ 存在性 + 内嵌版本可读
+  // （读不到 /usr/local/share/dsh-version 也不是旧 package.json = 不是本项目
+  // 镜像，拒）+ 启动自检做不起（构建侧探活兜住健康产物，这里不重复付费）。
+  if (path === '/api/admin/dsh/select' && req.method === 'POST') {
+    const adminAddr = getAdminSession(req)
+    if (!requireAdmin(req, res)) return true
+    try {
+      const raw = await parseBody(req)
+      let body = {}
+      try {
+        body = raw ? JSON.parse(raw) : {}
+      } catch {
+        throw new BadRequestError('请求体不是合法 JSON')
+      }
+      const ref = String(body.ref ?? '').trim()
+      if (!ref) throw new BadRequestError('缺少 ref：要钦定为平台默认的镜像引用')
+      if (!requireAdminSignature(req, res, 'dsh/select', { ref }, adminAddr)) return true
+
+      const imageId = await dockerService.imageId(ref)
+      if (!imageId) {
+        res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: `本机不存在镜像 ${ref}`, code: 'IMAGE_NOT_FOUND' }))
+        return true
+      }
+      const version = await dockerService.imageDshVersion(ref)
+      if (!version) {
+        res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(
+          JSON.stringify({
+            error: `${ref} 读不出 DSH 内嵌版本——不是本项目的租户镜像，拒绝钦定`,
+            code: 'NOT_A_TENANT_IMAGE',
+          }),
+        )
+        return true
+      }
+
+      const applied = await dockerService.setDefaultImage(ref)
+      const record = dataService.saveDshImage({
+        version,
+        imageId: applied.imageId,
+        tag: ref,
+        by: adminAddr,
+      })
+      // 与构建同款的收尾：默认镜像变了 → 能力缓存必须立即失效，否则网关
+      // 在 TTL 内仍按旧镜像的 requiresToken 判定（见 dsh/image 构建处注释）
+      dockerService.clearCapabilityCache()
+
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ ok: true, version, imageId: applied.imageId, current: record }))
     } catch (err) {
       handleError(err, res)
     }

@@ -42,8 +42,14 @@ export const ADMIN_SIGNED_OPERATIONS = Object.freeze([
   'force-stop',
   'remove',
   'delete-volume',
+  'reset',
+  'cleanup-orphan-volumes',
+  'cwt/approve',
+  'cwt/reject',
+  'cwt/revoke',
   'dsh/apply',
   'dsh/prune-images',
+  'dsh/select',
 ])
 
 /** 待执行的管理操作挑战（地址 → 记录）。与 tenantConfigService 的挑战池同样是一次性 */
@@ -75,10 +81,27 @@ export function buildBinding(operation, payload = {}) {
     case 'promote':
     case 'force-stop':
     case 'delete-volume':
+    case 'reset':
       return addr ? `${operation}:address=${addr}` : null
     case 'remove':
       // keepVolume 会改变"数据卷是否保留"这一破坏性语义，必须签进去
       return addr ? `remove:address=${addr}:keepVolume=${p.keepVolume === true ? '1' : '0'}` : null
+    case 'cleanup-orphan-volumes': {
+      // 批量删卷：删哪几个必须签进去（同 prune-images 的规范化：去重+排序，
+      // 稳定可比对）。与 prune 不同，**空列表一律拒**——"不签任何东西"不该
+      // 演化成一次可被误放的批量删除入口。
+      const names = Array.isArray(p.volumes) ? p.volumes : []
+      const norm = [...new Set(names.map((s) => String(s).trim()).filter(Boolean))].sort()
+      return norm.length ? `cleanup-orphan-volumes:names=${norm.join(',')}` : null
+    }
+    case 'cwt/approve':
+    case 'cwt/reject': {
+      // 审批绑申请 id，不绑地址：同一地址可以有多张申请，语义要精确到"哪一张"
+      const id = p.id ? String(p.id).trim() : ''
+      return id ? `${operation}:id=${id}` : null
+    }
+    case 'cwt/revoke':
+      return addr ? `cwt/revoke:address=${addr}` : null
     case 'dsh/apply': {
       // 必须把"钉到哪个镜像"也签进去：否则一个针对 latest 的签名可以被改成
       // 装任意本地镜像（越权通道）。image 为空 = 平台默认，binding 保持不变，
@@ -106,6 +129,14 @@ export function buildBinding(operation, payload = {}) {
         ),
       ].sort()
       return `dsh/prune-images:ids=${norm.join(',')}`
+    }
+    case 'dsh/select': {
+      // 钦定平台默认镜像：必须把"哪一个镜像"签进去（签 A 指 B 是越权通道）。
+      // docker 的 tag 区分大小写（仓库名段才强制小写），所以这里**不**做
+      // lower-case 规范化——一规范化就会把合法的大小写差异误判成偷换。
+      // 空 ref 与含非法字符的 ref 一律拒发挑战（路由层还会查存在性）。
+      const ref = p.ref ? String(p.ref).trim() : ''
+      return ref && /^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/.test(ref) ? `dsh/select:ref=${ref}` : null
     }
     default:
       return null

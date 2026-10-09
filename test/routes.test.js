@@ -344,11 +344,16 @@ describe('tenant.routes.js remove / restart 错误码', () => {
       port: 31005,
       rebuilt: true,
     })
-    const req = makeReq({
-      method: 'POST',
-      url: `/api/user/${TARGET_ADDR}/reset`,
-      cookie: `admin_session=${ADMIN_TOKEN}`,
-    })
+    // 管理员代他人 reset＝删数据卷的破坏性操作 → 必须当场签名（2026-10 红线收口）
+    const req = await makeSignedReq(
+      {
+        method: 'POST',
+        url: `/api/user/${TARGET_ADDR}/reset`,
+        cookie: `admin_session=${ADMIN_TOKEN}`,
+      },
+      'reset',
+      { address: TARGET_ADDR },
+    )
     const res = makeRes()
 
     const handled = await handleTenantRoutes(
@@ -367,13 +372,56 @@ describe('tenant.routes.js remove / restart 错误码', () => {
     expect(userService.resetContainer).toHaveBeenCalledWith(TARGET_ADDR)
   })
 
+  it('reset：管理员代他人、只有会话没有签名 → 403，业务层零触达（红线收口）', async () => {
+    const res = makeRes()
+    const handled = await handleTenantRoutes(
+      makeReq({
+        method: 'POST',
+        url: `/api/user/${TARGET_ADDR}/reset`,
+        cookie: `admin_session=${ADMIN_TOKEN}`,
+      }),
+      res,
+      `/api/user/${TARGET_ADDR}/reset`,
+      new URL(`http://127.0.0.1:8090/api/user/${TARGET_ADDR}/reset`),
+    )
+    expect(handled).toBe(true)
+    expect(res.statusCode).toBe(403)
+    expect(JSON.parse(res.body).code).toBe('SIGNATURE_REQUIRED')
+    expect(userService.resetContainer).not.toHaveBeenCalled()
+  })
+
+  it('reset：管理员重置【自己的】容器 → 免签直通（本人路径不受加固影响）', async () => {
+    // 会话地址 === 目标地址：本人清空自己的数据不是越权，双重确认在前端。
+    // 这条锁死"加固不能误伤本人"的边界（历史教训：getSessionAddress 曾让
+    // 普通用户重置自己恒 403，见文件下方回归用例）。
+    userService.resetContainer.mockResolvedValue({ ok: true, address: ADMIN_ADDR, port: 31008 })
+    const res = makeRes()
+    const handled = await handleTenantRoutes(
+      makeReq({
+        method: 'POST',
+        url: `/api/user/${ADMIN_ADDR}/reset`,
+        cookie: `admin_session=${ADMIN_TOKEN}`,
+      }),
+      res,
+      `/api/user/${ADMIN_ADDR}/reset`,
+      new URL(`http://127.0.0.1:8090/api/user/${ADMIN_ADDR}/reset`),
+    )
+    expect(handled).toBe(true)
+    expect(res.statusCode).toBe(200)
+    expect(userService.resetContainer).toHaveBeenCalledWith(ADMIN_ADDR)
+  })
+
   it('reset 且无 Home 头回退 PUBLIC_HOST 构造 url 不报错', async () => {
     userService.resetContainer.mockResolvedValue({ ok: true, address: TARGET_ADDR, port: 31006 })
-    const req = makeReq({
-      method: 'POST',
-      url: `/api/user/${TARGET_ADDR}/reset`,
-      cookie: `admin_session=${ADMIN_TOKEN}`,
-    })
+    const req = await makeSignedReq(
+      {
+        method: 'POST',
+        url: `/api/user/${TARGET_ADDR}/reset`,
+        cookie: `admin_session=${ADMIN_TOKEN}`,
+      },
+      'reset',
+      { address: TARGET_ADDR },
+    )
     delete req.headers.host
     const res = makeRes()
 

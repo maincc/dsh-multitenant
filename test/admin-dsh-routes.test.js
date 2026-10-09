@@ -27,6 +27,12 @@ vi.mock('../src/services/docker.service.js', () => ({
     listUntaggedBySignature: vi.fn().mockResolvedValue(new Set()),
     listAvailableImages: vi.fn().mockResolvedValue([]),
     removeImages: vi.fn().mockResolvedValue({ removed: [], failed: [] }),
+    // 钦定平台默认镜像用（dsh/select 路由）
+    setDefaultImage: vi.fn().mockResolvedValue({
+      defaultRef: 'dsh-multitenant:latest',
+      imageId: 'sha256:default',
+    }),
+    clearCapabilityCache: vi.fn(),
   },
 }))
 
@@ -1266,5 +1272,196 @@ describe('镜像选择：apply 路由的 image 参数', () => {
     )
     expect(res.statusCode).toBe(403)
     expect(json(res).code).toBe('SIGNATURE_MISMATCH')
+  })
+})
+
+describe('钦定平台默认镜像：/dsh/local-images 与 /dsh/select', () => {
+  const getReq = (over = {}) =>
+    makeReq({ method: 'GET', url: '/api/admin/dsh/local-images', cookie: adminCookie(), ...over })
+
+  it('local-images 返回可选清单与当前默认镜像 ID', async () => {
+    dockerService.listAvailableImages.mockResolvedValueOnce([
+      {
+        ref: 'dsh-multitenant:latest',
+        version: 'latest',
+        imageId: 'aaa111222333',
+        createdAt: 't1',
+      },
+      // 清单是 docker images 的**短 ID**，而 defaultId 来自 inspect 的**长 ID**：
+      // 归一化若不生效，[默认] 标记会整体消失（真实 bug 回归锁）
+      {
+        ref: 'dsh-multitenant:0.1.5-rc.3',
+        version: '0.1.5-rc.3',
+        imageId: 'rc3444555666',
+        createdAt: 't2',
+      },
+    ])
+    dockerService.imageId.mockResolvedValueOnce(
+      'sha256:rc3444555666777888999000111222333444555666777888999000111222333',
+    )
+    dockerService.imageDshVersion.mockResolvedValueOnce('0.1.5-rc.3')
+    const res = makeRes()
+    await handleAdminRoutes(getReq(), res, '/api/admin/dsh/local-images')
+    expect(res.statusCode).toBe(200)
+    const body = json(res)
+    expect(body.ok).toBe(true)
+    expect(body.images).toHaveLength(2)
+    expect(body.defaultId).toBe(
+      'sha256:rc3444555666777888999000111222333444555666777888999000111222333',
+    )
+    // "现在的总体镜像是谁"随清单直答：配置引用名 + 内嵌版本（读不出时为 null）
+    expect(body.defaultRef).toBe(CONFIG.docker.image)
+    expect(body.defaultVersion).toBe('0.1.5-rc.3')
+    // 后端把比对结果直接算成 isDefault：rc.3 是默认，latest 行不是
+    const byRef = Object.fromEntries(body.images.map((im) => [im.ref, im.isDefault]))
+    expect(byRef['dsh-multitenant:0.1.5-rc.3']).toBe(true)
+    expect(byRef['dsh-multitenant:latest']).toBe(false)
+  })
+
+  it('总体镜像未知态（latest 不存在）：清单照发、各行可选——"不知道"绝不能演化成"不能设置"', async () => {
+    dockerService.listAvailableImages.mockResolvedValueOnce([
+      {
+        ref: 'dsh-multitenant:0.1.5-rc.3',
+        version: '0.1.5-rc.3',
+        imageId: 'd464eb85dd5d',
+        createdAt: 't',
+      },
+      {
+        ref: 'dsh-multitenant:0.2.0-rc.2',
+        version: '0.2.0-rc.2',
+        imageId: 'c19fb9069358',
+        createdAt: 't',
+      },
+    ])
+    dockerService.imageId.mockResolvedValueOnce(null) // 默认 tag 不存在
+    dockerService.imageDshVersion.mockResolvedValueOnce(null)
+    const res = makeRes()
+    await handleAdminRoutes(getReq(), res, '/api/admin/dsh/local-images')
+    expect(res.statusCode).toBe(200)
+    const body = json(res)
+    expect(body.defaultId).toBeNull() // 前端据此走"无总体镜像"提示分支，绝不空白
+    expect(body.defaultVersion).toBeNull()
+    // 没有一行被标成默认 → 每一行都是可点击的出路
+    expect(body.images.every((im) => im.isDefault === false)).toBe(true)
+  })
+
+  it('未签名钦定 → 403 SIGNATURE_REQUIRED，不碰 docker', async () => {
+    const res = makeRes()
+    await handleAdminRoutes(
+      makeReq({
+        method: 'POST',
+        url: '/api/admin/dsh/select',
+        cookie: adminCookie(),
+        body: { ref: 'dsh-multitenant:0.1.5-rc.3' },
+      }),
+      res,
+      '/api/admin/dsh/select',
+    )
+    expect(res.statusCode).toBe(403)
+    expect(json(res).code).toBe('SIGNATURE_REQUIRED')
+    expect(dockerService.setDefaultImage).not.toHaveBeenCalled()
+    expect(dockerService.imageId).not.toHaveBeenCalled()
+  })
+
+  it('签了 A 指 B → SIGNATURE_MISMATCH（钦定目标是签名语义的一部分）', async () => {
+    const headers = await adminSignatureHeaders('dsh/select', { ref: 'dsh-multitenant:0.1.5-rc.3' })
+    const res = makeRes()
+    await handleAdminRoutes(
+      makeReq({
+        method: 'POST',
+        url: '/api/admin/dsh/select',
+        cookie: adminCookie(),
+        body: { ref: 'dsh-multitenant:0.9.9-evil' },
+        headers,
+      }),
+      res,
+      '/api/admin/dsh/select',
+    )
+    expect(res.statusCode).toBe(403)
+    expect(json(res).code).toBe('SIGNATURE_MISMATCH')
+    expect(dockerService.setDefaultImage).not.toHaveBeenCalled()
+  })
+
+  it('成功钦定：存在性+内嵌版本双重验证后才移动 tag，并写记录清缓存', async () => {
+    dockerService.imageId.mockResolvedValueOnce('sha256:rc3') // ref 存在
+    dockerService.imageDshVersion.mockResolvedValueOnce('0.1.5-rc.3')
+    dockerService.setDefaultImage.mockResolvedValueOnce({
+      defaultRef: 'dsh-multitenant:latest',
+      imageId: 'sha256:rc3',
+    })
+    const headers = await adminSignatureHeaders('dsh/select', { ref: 'dsh-multitenant:0.1.5-rc.3' })
+    const res = makeRes()
+    await handleAdminRoutes(
+      makeReq({
+        method: 'POST',
+        url: '/api/admin/dsh/select',
+        cookie: adminCookie(),
+        body: { ref: 'dsh-multitenant:0.1.5-rc.3' },
+        headers,
+      }),
+      res,
+      '/api/admin/dsh/select',
+    )
+    expect(res.statusCode).toBe(200)
+    const body = json(res)
+    expect(body.ok).toBe(true)
+    // 记录用**内嵌版本**（权威值），tag 字段保留用户选的 ref
+    expect(dataService.saveDshImage).toHaveBeenCalledWith(
+      expect.objectContaining({ version: '0.1.5-rc.3', tag: 'dsh-multitenant:0.1.5-rc.3' }),
+    )
+    // 与构建同款的收尾：能力缓存必须立即失效
+    expect(dockerService.clearCapabilityCache).toHaveBeenCalled()
+  })
+
+  it('本机不存在的镜像 → 404 IMAGE_NOT_FOUND，不移动 tag', async () => {
+    dockerService.imageId.mockResolvedValueOnce(null)
+    const headers = await adminSignatureHeaders('dsh/select', { ref: 'dsh-multitenant:ghost' })
+    const res = makeRes()
+    await handleAdminRoutes(
+      makeReq({
+        method: 'POST',
+        url: '/api/admin/dsh/select',
+        cookie: adminCookie(),
+        body: { ref: 'dsh-multitenant:ghost' },
+        headers,
+      }),
+      res,
+      '/api/admin/dsh/select',
+    )
+    expect(res.statusCode).toBe(404)
+    expect(json(res).code).toBe('IMAGE_NOT_FOUND')
+    expect(dockerService.setDefaultImage).not.toHaveBeenCalled()
+  })
+
+  it('读不出内嵌版本（不是本项目镜像）→ 400 NOT_A_TENANT_IMAGE，不移动 tag', async () => {
+    dockerService.imageId.mockResolvedValueOnce('sha256:other')
+    dockerService.imageDshVersion.mockResolvedValueOnce(null)
+    const headers = await adminSignatureHeaders('dsh/select', { ref: 'nginx:latest' })
+    const res = makeRes()
+    await handleAdminRoutes(
+      makeReq({
+        method: 'POST',
+        url: '/api/admin/dsh/select',
+        cookie: adminCookie(),
+        body: { ref: 'nginx:latest' },
+        headers,
+      }),
+      res,
+      '/api/admin/dsh/select',
+    )
+    expect(res.statusCode).toBe(400)
+    expect(json(res).code).toBe('NOT_A_TENANT_IMAGE')
+    expect(dockerService.setDefaultImage).not.toHaveBeenCalled()
+  })
+
+  it('缺 ref → 400（在签名校验之前就把空目标挡掉）', async () => {
+    const res = makeRes()
+    await handleAdminRoutes(
+      makeReq({ method: 'POST', url: '/api/admin/dsh/select', cookie: adminCookie(), body: {} }),
+      res,
+      '/api/admin/dsh/select',
+    )
+    expect(res.statusCode).toBe(400)
+    expect(dockerService.setDefaultImage).not.toHaveBeenCalled()
   })
 })

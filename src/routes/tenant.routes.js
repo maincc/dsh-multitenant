@@ -383,6 +383,19 @@ export async function handleTenantRoutes(req, res, path, url) {
       return true
     }
 
+    // reset 会**删除数据卷**（user.service.resetContainer 第 2 步），破坏性等同
+    // delete-volume → 管理员代他人重置时，除会话外还要求当场钱包签名，绑目标地址。
+    // 本人重置自己免签：普通用户没有"操作挑战"通道，且前端已强制双重确认。
+    if (session !== address) {
+      const { requireAdminSignature, attachAdminSignature } =
+        await import('../middleware/admin-signature.middleware.js')
+      const { getAdminSession } = await import('../middleware/auth.middleware.js')
+      attachAdminSignature(req)
+      if (!requireAdminSignature(req, res, 'reset', { address }, getAdminSession(req))) {
+        return true
+      }
+    }
+
     try {
       const result = await userService.resetContainer(address)
       // 重置 = 清空后立即重建：构造新容器 url（跟随请求 Host，同 /connect），

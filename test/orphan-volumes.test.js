@@ -7,6 +7,7 @@
 
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { createHash } from 'node:crypto'
+import { EventEmitter } from 'node:events'
 import { adminSessionStore } from '../src/middleware/auth.middleware.js'
 
 const ADMIN_TOKEN = '11'.repeat(32) // 64 位 hex
@@ -40,8 +41,13 @@ vi.mock('../src/services/user.service.js', () => ({
 
 vi.mock('../src/services/cwt-admin.service.js', () => ({ cwtAdminService: {} }))
 vi.mock('../src/services/tenant-config.service.js', async (importOriginal) => ({
-  ...(await importOriginal()), // 保留 SIGN_PURPOSE 等真实导出
-  tenantConfigService: {},
+  ...(await importOriginal()), // 保留 SIGN_PURPOSE / buildSignedMessage 真实导出
+  // 加固后 cleanup 要求"当场签名"：密码学部分 mock 掉，一次性挑战池走真实语义
+  tenantConfigService: {
+    issueChallenge: vi.fn(),
+    consumeChallenge: vi.fn(),
+    verifySignature: vi.fn(),
+  },
 }))
 vi.mock('../src/services/tenant-proxy.service.js', () => ({
   tenantGateway: { listen: vi.fn(), close: vi.fn() },
@@ -67,17 +73,35 @@ vi.mock('../src/services/data.service.js', async (importOriginal) => {
 
 import { handleAdminRoutes } from '../src/routes/admin.routes.js'
 import { dockerService } from '../src/services/docker.service.js'
+import { tenantConfigService } from '../src/services/tenant-config.service.js'
 import { normalizeAddress } from '../src/utils/address.js'
 
-function makeReq({ method = 'GET', url = '/', cookie = '' } = {}) {
-  return {
-    method,
-    url: url + (url.includes('?') ? '' : ''),
-    headers: { host: '127.0.0.1:8090', cookie },
-    on() {
-      return this
-    },
+/**
+ * 真流式 mock：cleanup 端点现在要 parseBody（data/end 事件），
+ * 老版 makeReq 的 on() 空转会让 Promise 永远悬挂。
+ */
+class MockReq extends EventEmitter {
+  constructor({ method = 'GET', url = '/', cookie = '', body, ...extraHeaders } = {}) {
+    super()
+    this.method = method
+    this.url = url
+    this.headers = { host: '127.0.0.1:8090', cookie, ...extraHeaders }
+    this._payload = body === undefined ? '' : JSON.stringify(body)
   }
+  on(event, listener) {
+    super.on(event, listener)
+    if (event === 'end') {
+      setImmediate(() => {
+        if (this._payload) super.emit('data', this._payload)
+        super.emit('end')
+      })
+    }
+    return this
+  }
+}
+
+function makeReq(opts) {
+  return new MockReq(opts)
 }
 
 function makeRes() {
@@ -123,7 +147,68 @@ beforeEach(() => {
     new Set(['dsh-data-swtc-referencedvol']),
   )
   dockerServiceMock.removeVolume.mockResolvedValue(undefined)
+  mockChallengeFlow()
 })
+
+/** 一次性挑战池（密码学 mock 掉，语义走真实：只有发放过的 nonce 能消费一次） */
+const issuedChallenges = new Set()
+function mockChallengeFlow() {
+  issuedChallenges.clear()
+  tenantConfigService.issueChallenge.mockImplementation((addr, purpose) => {
+    const nonce = `nonce-${addr}-${issuedChallenges.size}`
+    issuedChallenges.add(nonce)
+    return { nonce, message: `dsh-multitenant|${purpose}|${addr}|${nonce}` }
+  })
+  tenantConfigService.consumeChallenge.mockImplementation((addr, nonce) => {
+    if (!issuedChallenges.has(nonce)) return false
+    issuedChallenges.delete(nonce)
+    return true
+  })
+  tenantConfigService.verifySignature.mockImplementation(
+    (addr, message, signature) => signature === `sig:${message}`,
+  )
+}
+
+/** 领一个绑定 (operation,payload) 的挑战，返回签名请求头 */
+async function signedHeaders(operation, payload) {
+  const res = makeRes()
+  await handleAdminRoutes(
+    makeReq({
+      method: 'POST',
+      url: '/api/admin/challenge',
+      cookie: `admin_session=${ADMIN_TOKEN}`,
+      body: { address: STATE_ADDR, operation, payload },
+    }),
+    res,
+    '/api/admin/challenge',
+    new URL('http://x/api/admin/challenge'),
+  )
+  if (res.status !== 200) throw new Error(`挑战发放失败: ${res.status} ${res.body}`)
+  const { nonce, message } = res.json
+  return {
+    'x-admin-nonce': nonce,
+    'x-admin-signature': `sig:${message}`,
+    'x-admin-pubkey': 'PUBKEY',
+  }
+}
+
+/** 发起一次 cleanup POST（可带签名头与 body） */
+async function callCleanup({ headers = {}, body } = {}) {
+  const res = makeRes()
+  await handleAdminRoutes(
+    makeReq({
+      method: 'POST',
+      url: ROUTES.orphanCleanup,
+      cookie: `admin_session=${ADMIN_TOKEN}`,
+      body,
+      ...headers,
+    }),
+    res,
+    ROUTES.orphanCleanup,
+    new URL(`http://x${ROUTES.orphanCleanup}`),
+  )
+  return res
+}
 
 describe('管理端孤儿卷管理', () => {
   it('无管理员会话 → 拒绝（非 200）', async () => {
@@ -169,21 +254,14 @@ describe('管理端孤儿卷管理', () => {
     expect(res.json.orphanVolumes).toEqual(['dsh-data-swtc-orphan9'])
   })
 
-  it('POST 清理：只删除孤儿卷，state 用户卷与被引用卷不受影响', async () => {
-    const res = makeRes()
-    await handleAdminRoutes(
-      makeReq({
-        url: ROUTES.orphanCleanup,
-        method: 'POST',
-        cookie: `admin_session=${ADMIN_TOKEN}`,
-      }),
-      res,
-      ROUTES.orphanCleanup,
-      new URL(`http://x${ROUTES.orphanCleanup}`),
-    )
+  it('POST 清理：只删除【签署清单 ∩ 仍是孤儿】，state 用户卷与被引用卷不受影响', async () => {
+    const volumes = ['dsh-data-swtc-orphan1', 'dsh-data-swtc-orphan2']
+    const headers = await signedHeaders('cleanup-orphan-volumes', { volumes })
+    const res = await callCleanup({ headers, body: { volumes } })
     expect(res.status).toBe(200)
     expect(res.json.removed).toEqual(['dsh-data-swtc-orphan1', 'dsh-data-swtc-orphan2'])
     expect(res.json.failed).toEqual([])
+    expect(res.json.skipped).toEqual([])
     // removeVolume 只对孤儿调用
     const removedCalls = dockerServiceMock.removeVolume.mock.calls.map((c) => c[0])
     expect(removedCalls).toEqual(['dsh-data-swtc-orphan1', 'dsh-data-swtc-orphan2'])
@@ -196,18 +274,59 @@ describe('管理端孤儿卷管理', () => {
       if (v.includes('orphan2')) return Promise.reject(new Error('volume in use'))
       return Promise.resolve()
     })
-    const res = makeRes()
-    await handleAdminRoutes(
-      makeReq({
-        url: ROUTES.orphanCleanup,
-        method: 'POST',
-        cookie: `admin_session=${ADMIN_TOKEN}`,
-      }),
-      res,
-      ROUTES.orphanCleanup,
-      new URL(`http://x${ROUTES.orphanCleanup}`),
-    )
+    const volumes = ['dsh-data-swtc-orphan1', 'dsh-data-swtc-orphan2']
+    const headers = await signedHeaders('cleanup-orphan-volumes', { volumes })
+    const res = await callCleanup({ headers, body: { volumes } })
     expect(res.json.removed).toEqual(['dsh-data-swtc-orphan1'])
     expect(res.json.failed).toEqual([{ name: 'dsh-data-swtc-orphan2', error: 'volume in use' }])
+  })
+
+  it('POST 清理：只有会话没有签名 → 403 SIGNATURE_REQUIRED，一个卷都不删（红线收口）', async () => {
+    const res = await callCleanup({
+      body: { volumes: ['dsh-data-swtc-orphan1', 'dsh-data-swtc-orphan2'] },
+    })
+    expect(res.status).toBe(403)
+    expect(res.json.code).toBe('SIGNATURE_REQUIRED')
+    expect(dockerServiceMock.removeVolume).not.toHaveBeenCalled()
+  })
+
+  it('POST 清理：不携带 volumes 清单 → 400（批量删除必须显式列出目标）', async () => {
+    const res = await callCleanup({ body: {} })
+    expect(res.status).toBe(400)
+    expect(res.json.code).toBe('BAD_REQUEST')
+    expect(dockerServiceMock.removeVolume).not.toHaveBeenCalled()
+  })
+
+  it('POST 清理：签了 1 个卷却执行 2 个 → SIGNATURE_MISMATCH（清单绑进签名，不可偷换）', async () => {
+    const headers = await signedHeaders('cleanup-orphan-volumes', {
+      volumes: ['dsh-data-swtc-orphan1'],
+    })
+    // 执行时把"被引用的卷"偷塞进清单——它在孤儿集里根本不存在，即便清单被改写
+    // 也进不了删除循环；但更根本的是：签名内容与执行内容不一致，先被 binding 拒掉
+    const res = await callCleanup({
+      headers,
+      body: { volumes: ['dsh-data-swtc-orphan1', 'dsh-data-swtc-referencedvol'] },
+    })
+    expect(res.status).toBe(403)
+    expect(res.json.code).toBe('SIGNATURE_MISMATCH')
+    expect(dockerServiceMock.removeVolume).not.toHaveBeenCalled()
+  })
+
+  it('POST 清理：签署清单里已不再是孤儿的卷 → skipped，绝不越界删除', async () => {
+    // orphan2 被新容器重新挂上（用户回来了）：本轮 collect 它不再是孤儿
+    dockerServiceMock.listVolumes.mockResolvedValue([
+      STATE_VOLUME,
+      'dsh-data-swtc-orphan1',
+      'dsh-data-swtc-orphan2',
+    ])
+    dockerServiceMock.listReferencedVolumes.mockResolvedValue(new Set(['dsh-data-swtc-orphan2']))
+    const volumes = ['dsh-data-swtc-orphan1', 'dsh-data-swtc-orphan2']
+    const headers = await signedHeaders('cleanup-orphan-volumes', { volumes })
+    const res = await callCleanup({ headers, body: { volumes } })
+    expect(res.status).toBe(200)
+    expect(res.json.removed).toEqual(['dsh-data-swtc-orphan1'])
+    expect(res.json.skipped).toEqual(['dsh-data-swtc-orphan2'])
+    const removedCalls = dockerServiceMock.removeVolume.mock.calls.map((c) => c[0])
+    expect(removedCalls).not.toContain('dsh-data-swtc-orphan2')
   })
 })

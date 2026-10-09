@@ -25,9 +25,12 @@ import { EventEmitter } from 'node:events'
 import { createHash } from 'node:crypto'
 import { tenantConfigService } from '../src/services/tenant-config.service.js'
 import { adminSessionStore } from '../src/middleware/auth.middleware.js'
+import { buildBinding } from '../src/middleware/admin-signature.middleware.js'
 import { handleAdminRoutes } from '../src/routes/admin.routes.js'
 import { handleTenantRoutes } from '../src/routes/tenant.routes.js'
 import { userService } from '../src/services/user.service.js'
+import { dockerService } from '../src/services/docker.service.js'
+import { cwtAdminService } from '../src/services/cwt-admin.service.js'
 
 const ADMIN_ADDR = 'jndwretndumoqbt2uauclmfmx7xbqjykva'
 const OTHER_ADDR = 'jga9j9tkqtbcuohe2zqhvffbguved6o9or'
@@ -42,6 +45,7 @@ vi.mock('../src/services/user.service.js', () => ({
     forceStopContainer: vi.fn(),
     destroyContainer: vi.fn(),
     deleteUserVolume: vi.fn(),
+    resetContainer: vi.fn(),
     state: { swtcUsers: {} },
   },
 }))
@@ -69,8 +73,20 @@ vi.mock('../src/services/data.service.js', async (importOriginal) => {
     },
   }
 })
-vi.mock('../src/services/docker.service.js', () => ({ dockerService: {} }))
-vi.mock('../src/services/cwt-admin.service.js', () => ({ cwtAdminService: {} }))
+vi.mock('../src/services/docker.service.js', () => ({
+  dockerService: {
+    listVolumes: vi.fn().mockResolvedValue([]),
+    listReferencedVolumes: vi.fn().mockResolvedValue(new Set()),
+    removeVolume: vi.fn().mockResolvedValue(undefined),
+  },
+}))
+vi.mock('../src/services/cwt-admin.service.js', () => ({
+  cwtAdminService: {
+    approveApplication: vi.fn().mockResolvedValue({ ok: true }),
+    rejectApplication: vi.fn().mockResolvedValue({ ok: true }),
+    revokeRegistry: vi.fn().mockResolvedValue({ ok: true }),
+  },
+}))
 vi.mock('../src/services/tenant-proxy.service.js', () => ({ tenantGateway: {} }))
 vi.mock('../src/services/dsh-version.service.js', () => ({ dshVersionService: {} }))
 vi.mock('../src/config/config.js', async (importOriginal) => ({
@@ -370,6 +386,18 @@ describe('加固：绑定串由服务端推导', () => {
     expect(all.data.binding).toBe('dsh/apply:all=1')
   })
 
+  it('dsh/select 绑定 ref 原文：docker tag 大小写敏感，不做小写规范化', async () => {
+    const ok = await issueChallenge('dsh/select', { ref: 'dsh-multitenant:0.1.5-RC.3' })
+    expect(ok.data.binding).toBe('dsh/select:ref=dsh-multitenant:0.1.5-RC.3')
+    // 大小写不同 = 偷换（签 rc.2 指 RC.2 也不允许互相复用）
+    const diff = buildBinding('dsh/select', { ref: 'dsh-multitenant:0.1.5-rc.3' })
+    expect(diff).not.toBe(ok.data.binding)
+    // 空 ref / 含非法字符（空格、shell 元字符）一律拒发挑战
+    expect(buildBinding('dsh/select', { ref: '  ' })).toBeNull()
+    expect(buildBinding('dsh/select', { ref: 'a b;rm -rf' })).toBeNull()
+    expect(buildBinding('dsh/select', {})).toBeNull()
+  })
+
   it('remove 绑定 keepVolume 语义', async () => {
     const keep = await issueChallenge('remove', { address: TENANT, keepVolume: true })
     expect(keep.data.binding).toBe(`remove:address=${TENANT}:keepVolume=1`)
@@ -381,5 +409,122 @@ describe('加固：绑定串由服务端推导', () => {
     const lower = await issueChallenge('promote', { address: TENANT.toLowerCase() })
     const upper = await issueChallenge('promote', { address: TENANT.toUpperCase() })
     expect(lower.data.binding).toBe(upper.data.binding)
+  })
+
+  it('cleanup-orphan-volumes 绑定含规范化后的卷名列表（排序去重）', async () => {
+    const { data } = await issueChallenge('cleanup-orphan-volumes', {
+      volumes: ['vol-b', 'vol-a', 'vol-b'],
+    })
+    expect(data.binding).toBe('cleanup-orphan-volumes:names=vol-a,vol-b')
+  })
+
+  it('cleanup-orphan-volumes 空列表 → 拒发挑战（不演化成误删入口）', async () => {
+    const { res } = await issueChallenge('cleanup-orphan-volumes', { volumes: [] })
+    expect(res.statusCode).toBe(400)
+    expect(json(res).code).toBe('SIGNATURE_NOT_APPLICABLE')
+  })
+
+  it('cwt/approve 绑定申请 id（非地址）', async () => {
+    const { data } = await issueChallenge('cwt/approve', { id: 'app-77' })
+    expect(data.binding).toBe('cwt/approve:id=app-77')
+  })
+
+  it('cwt/revoke 绑定地址', async () => {
+    const { data } = await issueChallenge('cwt/revoke', { address: TENANT.toUpperCase() })
+    expect(data.binding).toBe(`cwt/revoke:address=${TENANT}`)
+  })
+
+  it('reset 绑定地址', async () => {
+    const { data } = await issueChallenge('reset', { address: TENANT })
+    expect(data.binding).toBe(`reset:address=${TENANT}`)
+  })
+})
+
+describe('收口：CWT 审批 + 孤儿卷清理也要求当场签名', () => {
+  async function callCwtApprove(id, headers = {}) {
+    const res = makeRes()
+    await handleAdminRoutes(
+      makeReq({
+        method: 'POST',
+        url: `/api/admin/cwt/applications/${id}/approve`,
+        cookie: adminCookie(),
+        ...headers,
+      }),
+      res,
+      `/api/admin/cwt/applications/${id}/approve`,
+    )
+    return res
+  }
+
+  async function callCleanupOrphans(body, headers = {}) {
+    const res = makeRes()
+    await handleAdminRoutes(
+      makeReq({
+        method: 'POST',
+        url: '/api/admin/cleanup-orphan-volumes',
+        cookie: adminCookie(),
+        body,
+        ...headers,
+      }),
+      res,
+      '/api/admin/cleanup-orphan-volumes',
+    )
+    return res
+  }
+
+  it('孤儿卷清理：只删【签署清单 ∩ 仍是孤儿】的交集', async () => {
+    // 卷名必须落在租户前缀 dsh-data-swtc-* 内才会进孤儿判定（真实守护进程规则）
+    const targets = ['dsh-data-swtc-orphan1', 'dsh-data-swtc-orphan2']
+    // orphan1 仍是孤儿；orphan2 已被新容器认领（不再是孤儿）→ 应进 skipped；keep 不在签署清单，绝不碰
+    dockerService.listVolumes.mockResolvedValue([...targets, 'dsh-data-swtc-keep'])
+    dockerService.listReferencedVolumes.mockResolvedValue(
+      new Set(['dsh-data-swtc-orphan2', 'dsh-data-swtc-keep']),
+    )
+    const { data } = await issueChallenge('cleanup-orphan-volumes', { volumes: targets })
+    const res = await callCleanupOrphans({ volumes: targets }, headersFor(data))
+    expect(res.statusCode).toBe(200)
+    const out = json(res)
+    expect(out.removed).toEqual(['dsh-data-swtc-orphan1'])
+    expect(out.skipped).toEqual(['dsh-data-swtc-orphan2'])
+    const called = dockerService.removeVolume.mock.calls.map((c) => c[0])
+    expect(called).toEqual(['dsh-data-swtc-orphan1'])
+    expect(called).not.toContain('dsh-data-swtc-keep')
+  })
+
+  it('孤儿卷清理：签了 A 却传 B（多出未签的卷）→ MISMATCH，一个不删', async () => {
+    dockerService.listVolumes.mockResolvedValue(['dsh-data-swtc-a', 'dsh-data-swtc-b'])
+    dockerService.listReferencedVolumes.mockResolvedValue(new Set())
+    const { data } = await issueChallenge('cleanup-orphan-volumes', {
+      volumes: ['dsh-data-swtc-a'],
+    })
+    const res = await callCleanupOrphans(
+      { volumes: ['dsh-data-swtc-a', 'dsh-data-swtc-b'] },
+      headersFor(data),
+    )
+    expect(res.statusCode).toBe(403)
+    expect(json(res).code).toBe('SIGNATURE_MISMATCH')
+    expect(dockerService.removeVolume).not.toHaveBeenCalled()
+  })
+
+  it('CWT approve：只有会话无签名 → SIGNATURE_REQUIRED，业务层零触达', async () => {
+    const res = await callCwtApprove('app-1')
+    expect(res.statusCode).toBe(403)
+    expect(json(res).code).toBe('SIGNATURE_REQUIRED')
+    expect(cwtAdminService.approveApplication).not.toHaveBeenCalled()
+  })
+
+  it('CWT approve：签名正确 → 落到业务层且传入会话地址为审批人', async () => {
+    const { data } = await issueChallenge('cwt/approve', { id: 'app-2' })
+    const res = await callCwtApprove('app-2', headersFor(data))
+    expect(res.statusCode).toBe(200)
+    expect(cwtAdminService.approveApplication).toHaveBeenCalledWith('app-2', ADMIN_ADDR)
+  })
+
+  it('CWT approve：签 app-2 却执行 app-3 → MISMATCH（不能偷换审批对象）', async () => {
+    const { data } = await issueChallenge('cwt/approve', { id: 'app-2' })
+    const res = await callCwtApprove('app-3', headersFor(data))
+    expect(res.statusCode).toBe(403)
+    expect(json(res).code).toBe('SIGNATURE_MISMATCH')
+    expect(cwtAdminService.approveApplication).not.toHaveBeenCalled()
   })
 })
