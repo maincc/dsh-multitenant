@@ -1153,7 +1153,12 @@ export class UserService {
       await dockerService.removeVolume(volume)
       console.log(`[delete-volume] Volume ${volume} deleted for ${address}`)
     } catch (err) {
-      throw new Error(`Failed to delete volume: ${err.message}`)
+      // 卷已被"移除用户"流程删过 → 重复点清除数据应静默成功，不该弹 500
+      if (/no such volume/i.test(err.message)) {
+        console.log(`[delete-volume] Volume ${volume} already absent for ${address}`)
+      } else {
+        throw new Error(`Failed to delete volume: ${err.message}`)
+      }
     }
 
     // 更新状态：关闭网关监听 + 容器销毁
