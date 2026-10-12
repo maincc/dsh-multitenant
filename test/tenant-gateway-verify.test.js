@@ -41,6 +41,8 @@ describe('租户网关门禁：顶层导航一致性校验（插件地址 vs 会
   const declaredCapability = { requiresToken: false, version: '0.1.1-rc.2' }
   beforeEach(async () => {
     publicPort = 39100 + Math.floor(Math.random() * 500)
+    // ⚠️ upstream 监听段 39700-39899：下方 listen 用例的占位 internalPort 必须避开
+    // 此段（历史 flaky 根因：占位值曾用 39700/39701/39702，随机 upstream 撞上即自锁）
     internalPort = 39700 + Math.floor(Math.random() * 200)
     // listen 现在是 Promise（bind 成功才 resolve）；必须 await，否则 bind 失败
     // 会变成 unhandled rejection 而不是测试失败
@@ -309,7 +311,7 @@ describe('tenantGateway.listen：绑定结果可见性', () => {
     })
 
     try {
-      await expect(tenantGateway.listen(port, 39701, OWNER)).rejects.toThrow()
+      await expect(tenantGateway.listen(port, 39951, OWNER)).rejects.toThrow()
       // 失败时不得把路由写进去，否则端口归属会被指错
       expect(tenantGateway.ownerOf(port)).toBeNull()
     } finally {
@@ -322,18 +324,18 @@ describe('tenantGateway.listen：绑定结果可见性', () => {
     const port = 39600 + Math.floor(Math.random() * 300)
     const other = 'jga9j9tkqtbcuohe2zqhvffbguved6o9or'
 
-    await tenantGateway.listen(port, 39700, OWNER)
+    await tenantGateway.listen(port, 39950, OWNER)
     expect(tenantGateway.ownerOf(port)).toBe(OWNER)
 
     // listen 内部会 close(port) 再重绑，因此同端口应成功并换主
-    await expect(tenantGateway.listen(port, 39701, other)).resolves.toBeUndefined()
+    await expect(tenantGateway.listen(port, 39951, other)).resolves.toBeUndefined()
     expect(tenantGateway.ownerOf(port)).toBe(other)
   })
 
   it('成功时 resolve，并把路由写入 routes', async () => {
     const port = 39600 + Math.floor(Math.random() * 300)
 
-    await expect(tenantGateway.listen(port, 39702, OWNER)).resolves.toBeUndefined()
+    await expect(tenantGateway.listen(port, 39952, OWNER)).resolves.toBeUndefined()
     expect(tenantGateway.ownerOf(port)).toBe(OWNER)
   })
 })
