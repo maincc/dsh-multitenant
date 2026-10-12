@@ -64,6 +64,19 @@ describe('mongo.store 地基', () => {
     expect(() => cold.col('users')).toThrow(/未连接/)
   })
 
+  it('dbName 优先级：opts > URI 路径库名 > config.dbName（演练隔离回归锁）', () => {
+    // 踩过的坑：MONGODB_URI=.../dsh_m1_drill 但 config.dbName='dsh' 把演练数据写进了 dsh
+    const a = new MongoStore({ mongodbUri: 'mongodb://127.0.0.1:27018/drill_x?replicaSet=dsh-rs' })
+    expect(a.dbName).toBe('drill_x')
+    const b = new MongoStore({
+      dbName: 'explicit',
+      mongodbUri: 'mongodb://127.0.0.1:27018/drill_x',
+    })
+    expect(b.dbName).toBe('explicit')
+    const c = new MongoStore({ mongodbUri: 'mongodb://127.0.0.1:27018/?replicaSet=dsh-rs' })
+    expect(c.dbName).toBe(CONFIG.storage.dbName) // 无路径库名才回退 config
+  })
+
   it('health() 报告拓扑与库名', async (ctx) => {
     if (!skip(ctx)) return
     const h = await store.health()
@@ -133,8 +146,5 @@ describe('mongo.store 地基', () => {
     expect(await store.count('meta', { _id: 'txprobe' })).toBe(0) // 原子撤销
   })
 
-  it('runMigration() 在 M0 明确未实现（防误当已完成）', async (ctx) => {
-    if (!skip(ctx)) return
-    await expect(store.runMigration()).rejects.toThrow(/M1 实现/)
-  })
+  // runMigration 的三态/校验/回滚合同见 test/migration.test.js（M1）
 })

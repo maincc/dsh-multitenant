@@ -296,6 +296,20 @@ const server = createServer(async (req, res) => {
 // 启动服务器
 const PORT = Number(process.env.PORT || CONFIG.server.port)
 server.listen(PORT, '0.0.0.0', async () => {
+  // MongoDB 迁移钩子（storage-design §6，M1）：仅 provider='mongodb' 生效，
+  // 默认 json 下本块零执行（连 mongodb 驱动都不加载，动态 import 门控）。
+  // 与 restoreFromDocker 的"失败不拦"刻意相反：迁移失败必须【拒绝启动】——
+  // 带着半迁移/未校验的库上活，比停机严重一个量级。
+  if (CONFIG.storage?.provider === 'mongodb') {
+    try {
+      const { getStore } = await import('./services/mongo.store.js')
+      const r = await getStore().runMigration()
+      console.log(`[startup] storage 迁移：${r.status}`, JSON.stringify(r.stats ?? {}))
+    } catch (err) {
+      console.error('[startup] MongoDB 迁移失败，拒绝启动：', err.message)
+      process.exit(1)
+    }
+  }
   try {
     await userService.restoreFromDocker()
   } catch (err) {

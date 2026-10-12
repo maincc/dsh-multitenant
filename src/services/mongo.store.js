@@ -20,6 +20,7 @@ if (!globalThis.crypto) {
 import { MongoClient } from 'mongodb'
 import { CONFIG } from '../config/config.js'
 import { InternalError } from '../utils/errors.js'
+import { readSources, buildCollections, expectedCounts } from './migration.js'
 
 /** 设计 §4.1 定稿的 9 集合；访问器与索引初始化都以此为准，越界即拒 */
 const COLLECTIONS = Object.freeze([
@@ -58,7 +59,9 @@ export class MongoStore {
   constructor(opts = {}) {
     const s = CONFIG.storage
     this.uri = opts.mongodbUri || s.mongodbUri
-    this.dbName = opts.dbName || s.dbName
+    // dbName 优先级：显式 opts（测试）> URI 路径里的库名（演练/部署注入）> config.dbName。
+    // 否则 mongodb://host:port/drill?… 会被默认 dbName 悄悄改写（M1 演练实测踩中）。
+    this.dbName = opts.dbName || dbNameFromUri(this.uri) || s.dbName
     this.txnRetries = opts.txnRetries ?? s.txnRetries ?? 3
     this.connectTimeoutMs = opts.connectTimeoutMs ?? s.connectTimeoutMs ?? 5000
     this._client = null
@@ -185,10 +188,80 @@ export class MongoStore {
     return this.col(collName).countDocuments(filter)
   }
 
-  /** M1 接缝：JSON→Mongo 三态幂等迁移。M0 仅占位，不实现导入。 */
-  async runMigration(_opts = {}) {
-    if (!this._db) await this.connect()
-    throw new InternalError('迁移器在 M1 实现（storage-design §6）；M0 仅建地基')
+  /**
+   * JSON→Mongo 迁移（storage-design §6 三态幂等 + §5.2 事务原子）。
+   * 全有或全无：九集合导入 + 逐域计数校验 + meta.schema 写在【同一个事务】——
+   * 不存在"标了版本但数据缺一角"的半迁移态；失败=库内零残留，修好重跑即可。
+   * 幂等标志：meta.schema 存在即已迁移（emptyInit 的空库初始化也算）。
+   *
+   * @param {{ sources?: object }} [opts] sources=注入源快照（测试/演练用；
+   *                 缺省 readSources() 读真实仓库文件——只读）
+   * @returns {Promise<{status:'migrated'|'skipped'|'empty', stats?:object,
+   *                    version?:number|null, migratedAt?:number|null}>}
+   */
+  async runMigration({ sources } = {}) {
+    await this.connect()
+    const existing = await this.col('meta').findOne({ _id: 'schema' })
+    if (existing) {
+      return {
+        status: 'skipped',
+        version: existing.version ?? null,
+        migratedAt: existing.migratedAt ?? null,
+      }
+    }
+    const s = sources ?? readSources()
+    const collections = buildCollections(s)
+    const counts = expectedCounts(collections)
+    // meta 恒生成 4 个单例文档（空盘上线也要有它们可读）——"空盘"判定只看非 meta 域
+    const dataTotal = Object.entries(counts).reduce(
+      (a, [name, n]) => (name === 'meta' ? a : a + n),
+      0,
+    )
+    if (dataTotal === 0) {
+      // 空盘初始化（拍板 Q1）：meta 单例 + schema 一并写好，重启不再扫描
+      await this.withTransaction(async (session) => {
+        await this.col('meta').insertMany(collections.meta, { session })
+        await this.col('meta').insertOne(
+          {
+            _id: 'schema',
+            version: 1,
+            emptyInit: true,
+            migratedAt: Date.now(),
+            migratedBy: 'src/services/migration.js',
+          },
+          { session },
+        )
+      })
+      return { status: 'empty', stats: { meta: collections.meta.length } }
+    }
+    // 索引是 DDL，不可入事务；放事务前——ensureIndexes 本身幂等（同名同键 no-op）
+    await this.ensureIndexes()
+    const stats = await this.withTransaction(async (session) => {
+      for (const [name, docs] of Object.entries(collections)) {
+        if (docs.length) await this.col(name).insertMany(docs, { session })
+      }
+      // 事务内 read-your-writes：逐域计数 == 源快照应有行数，缺一即整体回滚
+      const checked = {}
+      for (const [name, expected] of Object.entries(counts)) {
+        const n = await this.col(name).countDocuments({}, { session })
+        if (n !== expected) {
+          throw new InternalError(`迁移校验失败 ${name}：期望 ${expected}，实得 ${n}`)
+        }
+        checked[name] = n
+      }
+      await this.col('meta').insertOne(
+        {
+          _id: 'schema',
+          version: 1,
+          migratedAt: Date.now(),
+          migratedBy: 'src/services/migration.js',
+          sourceStats: checked,
+        },
+        { session },
+      )
+      return checked
+    })
+    return { status: 'migrated', stats }
   }
 
   async close() {
@@ -201,8 +274,18 @@ export class MongoStore {
   }
 }
 
-/** 事务瞬时错误判定（可安全重试），参照 MongoDB TransientTransactionError 约定 */
-function isTransient(err) {
+/**
+ * 从 mongodb:// 连接串取路径库名：mongodb://host:27018/mydb?opts → 'mydb'。
+ * 无路径或仅 '/' 返回 null（由调用方回退 config.dbName）。
+ */
+function dbNameFromUri(uri) {
+  const m = /^mongodb(?:\+srv)?:\/\/[^/?#]+\/([^?#]+)/i.exec(String(uri || ''))
+  return m && m[1] ? m[1] : null
+}
+
+/** 事务瞬时错误判定（可安全重试），参照 MongoDB TransientTransactionError 约定 */ function isTransient(
+  err,
+) {
   const code = err.code
   const label = err.hasErrorLabels?.('TransientTransactionError')
   return (
