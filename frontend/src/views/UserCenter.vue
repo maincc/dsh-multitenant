@@ -887,12 +887,17 @@ const removeModel = (idx, mi) => {
 /**
  * 钱包签名挑战-响应：先取插件当前账户 → 领 nonce → 插件签名 + 取公钥。
  *
+ * 【挑战池按用途隔离】后端只在发放时的 purpose 池里消费，借错池必报
+ * "挑战无效或已过期"——
+ *   - 租户配置操作（保存/清除/重置/模型发现）→ 默认 '/api/user/config-challenge'
+ *   - 技能操作（mine/import/unpublish/uninstall/publish）→ '/api/skills/challenge'
+ *
  * 关键：签名对象必须用插件【当前选中的账户】，否则插件会以
  * "The requested account and/or method has not been authorized" 拒绝
  * （源码：swtc_signMessage 检查 accounts.includes(from)）。
  * 返回的 address 即插件当前账户，后续提交/清除都用它（写的是该账户自己的卷）。
  */
-const signChallenge = async () => {
+const signChallenge = async (challengeUrl = '/api/user/config-challenge') => {
   if (!window.ccdao || !window.ccdao.request) {
     throw new Error(t('user.errNoCcdao'))
   }
@@ -902,7 +907,7 @@ const signChallenge = async () => {
   //    返回的字符串才能通过。后端 normalizeAddress 会自己转小写，无需担心。
   const pluginAddress = await requestAccounts()
   // 2. 领一次性挑战（响应含 message：服务端构造的用途绑定被签内容）
-  const challengeRes = await axios.post('/api/user/config-challenge', { address: pluginAddress })
+  const challengeRes = await axios.post(challengeUrl, { address: pluginAddress })
   const { nonce, message } = challengeRes.data
   // 3. 插件对 **message** 签名 + 取公钥（都用原始大小写地址）。
   //    签的是用途绑定消息（hex），不是裸 nonce —— 跨端点凭证混淆加固。
@@ -1846,7 +1851,7 @@ const importBusy = ref(false)
 
 /** 拉取 mine 数据（含签名） */
 const fetchMine = async () => {
-  const sig = await signChallenge()
+  const sig = await signChallenge('/api/skills/challenge')
   const res = await skillsApi.mine(sig)
   return {
     published: res.published || [],
@@ -1948,7 +1953,7 @@ const doImport = async () => {
   }
   importBusy.value = true
   try {
-    const sig = await signChallenge()
+    const sig = await signChallenge('/api/skills/challenge')
     await skillsApi.importSkill(sig, name, importText.value)
     alert(t('user.importedOk', { name }))
     closeImportDialog()
@@ -1963,7 +1968,7 @@ const doImport = async () => {
 const unpublishSkill = async (name) => {
   if (!confirm(t('user.confirmUnpublish', { name }))) return
   try {
-    const sig = await signChallenge()
+    const sig = await signChallenge('/api/skills/challenge')
     await skillsApi.unpublish(sig, name)
     await loadMine()
   } catch (err) {
@@ -1974,7 +1979,7 @@ const unpublishSkill = async (name) => {
 const uninstallSkill = async (name) => {
   if (!confirm(t('user.confirmUninstall', { name }))) return
   try {
-    const sig = await signChallenge()
+    const sig = await signChallenge('/api/skills/challenge')
     await skillsApi.uninstall(sig, name)
     await loadMine()
   } catch (err) {
@@ -2023,7 +2028,7 @@ const doShare = async () => {
   }
   shareBusy.value = true
   try {
-    const sig = await signChallenge()
+    const sig = await signChallenge('/api/skills/challenge')
     await skillsApi.publish(sig, source, renameTo || undefined)
     alert(
       renameTo
