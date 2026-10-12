@@ -16,7 +16,6 @@
 import { randomUUID } from 'node:crypto'
 import { CONFIG } from '../config/config.js'
 import { userService } from './user.service.js'
-import { dataService } from './data.service.js'
 import { cwtStore } from './cwt.store.js'
 import { cwtService } from './cwt.service.js'
 import { normalizeAddress } from '../utils/address.js'
@@ -193,7 +192,7 @@ class CwtAdminService {
     // 授权标记（运行时豁免展示；豁免判定以注册表为准，此字段为冗余）
     if (userService.state.swtcUsers?.[address]) {
       userService.state.swtcUsers[address].cwtAuthorizedAt = now
-      dataService.saveState(userService.state)
+      await userService._saveState() // 经用户域唯一出口（还顺带修了旧代码绕过缓存失效的暗病）
     }
 
     cwtStore.appendRecord({
@@ -246,7 +245,7 @@ class CwtAdminService {
     if (userService.state.swtcUsers?.[address]) {
       delete userService.state.swtcUsers[address].cwtAuthorizedAt
       delete userService.state.swtcUsers[address].cwtVerifiedAt
-      dataService.saveState(userService.state)
+      await userService._saveState()
     }
     cwtStore.appendRecord({
       address,

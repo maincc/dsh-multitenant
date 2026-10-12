@@ -109,6 +109,8 @@ export function buildCollections(s) {
       versionChangedAt: u.versionChangedAt ?? null,
       usageStartedAt: u.usageStartedAt ?? null,
       pinnedImage: u.pinnedImage ?? null,
+      // 豁免运行标记：M2 水合合同 USER_OWNED_FIELDS 含它（漏迁=重启后静默 $unset）
+      cwtAuthorizedAt: u.cwtAuthorizedAt ?? null,
       // 反范式冗余（P：审批事务内同步维护；豁免判定热读免跨集合）：
       // 迁移初值 = registry 现行 approved 记录的 approvedAt
       cwtVerifiedAt: reg && reg.status === 'approved' ? (reg.approvedAt ?? null) : null,

@@ -310,6 +310,14 @@ server.listen(PORT, '0.0.0.0', async () => {
       process.exit(1)
     }
   }
+  // M2-1：provider='mongodb' 时用户域状态以库为准，在这里原地水合缓存（json=no-op）。
+  // 失败拦启动：带着文件旧数的缓存上活，下一次存盘会把库里真数抹成旧镜像。
+  try {
+    await userService.init()
+  } catch (err) {
+    console.error('[startup] 用户域状态水合失败，拒绝启动：', err.message)
+    process.exit(1)
+  }
   try {
     await userService.restoreFromDocker()
   } catch (err) {
