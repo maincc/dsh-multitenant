@@ -51,6 +51,20 @@ import { userSessionStore } from '../src/middleware/user-auth.middleware.js'
 import * as dshAuth from '../src/services/dsh-auth.service.js'
 import { authCookieCache } from '../src/services/dsh-auth.service.js'
 
+// 测试卫生（17:38 实锤）：json 形态下 userSessionStore.create 会经 dataService
+// 把会话【写到真实 data/config/user-sessions.json】——本文件的用例每次 create
+// 都落一次盘（210 行测试会话就是这么积出来的）。写侧改 no-op，读侧保持真实。
+// mongodb 形态不受影响（镜像队列不走 dataService）。
+vi.mock('../src/services/data.service.js', async (importOriginal) => {
+  const mod = await importOriginal()
+  // 委托壳：原型链保留 dataService 全部真实方法（类实例 spread 会丢原型——
+  // 首版踩坑实证），只把两个写方法改 no-op。
+  const stub = Object.create(mod.dataService)
+  stub.saveUserSessions = () => {}
+  stub.saveSessions = () => {}
+  return { dataService: stub }
+})
+
 const OWNER = 'jndwretndumoqbt2uauclmfmx7xbqjykva'
 
 // ---------------------------------------------------------------------------
