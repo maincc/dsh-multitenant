@@ -5,6 +5,7 @@
  * 关键：mongod 不可达时【优雅跳过】而非失败——本机 27018 是 fork 起的临时实例，
  * 重启不自起；pre-commit 跑全量不能被它拖红。连得上则真测事务/回滚/索引/白名单。
  */
+import { mongoTestUri } from './mongo-test-env.js'
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { MongoStore, COLLECTIONS } from '../src/services/mongo.store.js'
 import { CONFIG } from '../src/config/config.js'
@@ -66,7 +67,7 @@ describe('mongo.store 地基', () => {
 
   it('dbName 优先级：opts > URI 路径库名 > config.dbName（演练隔离回归锁）', () => {
     // 踩过的坑：MONGODB_URI=.../dsh_m1_drill 但 config.dbName='dsh' 把演练数据写进了 dsh
-    const a = new MongoStore({ mongodbUri: 'mongodb://127.0.0.1:27018/drill_x?replicaSet=dsh-rs' })
+    const a = new MongoStore({ mongodbUri: mongoTestUri('drill_x') })
     expect(a.dbName).toBe('drill_x')
     const b = new MongoStore({
       dbName: 'explicit',

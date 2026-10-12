@@ -5,6 +5,7 @@
  * B 组：三态幂等 + 事务回滚 + 校验拦截——需 27018 专用副本集；
  *        不可达优雅跳过（同 mongo-store.test.js 模式），库隔离 dsh_m1_test。
  */
+import { mongoTestUri } from './mongo-test-env.js'
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
@@ -157,7 +158,7 @@ const resetDb = async () => {
 }
 
 beforeAll(async () => {
-  store = new MongoStore({ dbName: 'dsh_m1_test', mongodbUri: CONFIG.storage.mongodbUri })
+  store = new MongoStore({ dbName: 'dsh_m1_test', mongodbUri: mongoTestUri('dsh_m1_test') })
   try {
     await store.connect()
     if ((await store.health()).topology !== 'replset') {

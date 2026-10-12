@@ -4,6 +4,7 @@
  * B 组：mongodb 扇出（round-trip / 字段所有权 / 删除传播 / usage 历史保全 / 原子性）
  *       ——需 27018 副本集，不可达优雅跳过；隔离库 dsh_m2_test
  */
+import { mongoTestUri } from './mongo-test-env.js'
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest'
 import { StateStore, USER_OWNED_FIELDS } from '../src/services/state.store.js'
 import { MongoStore } from '../src/services/mongo.store.js'
@@ -61,7 +62,7 @@ let available = false
 const skip = (ctx) => (available ? true : (ctx.skip(), false))
 
 beforeAll(async () => {
-  store = new MongoStore({ dbName: 'dsh_m2_test', mongodbUri: CONFIG.storage.mongodbUri })
+  store = new MongoStore({ dbName: 'dsh_m2_test', mongodbUri: mongoTestUri('dsh_m2_test') })
   try {
     await store.connect()
     available = (await store.health()).topology === 'replset'

@@ -7,6 +7,7 @@
  * json 形态的签发/解析/吊销行为由存量 auth 系列测试覆盖（零改动路径）。
  * 需 27018 副本集；不可达优雅跳过。隔离库 dsh_m23_test。
  */
+import { mongoTestUri } from './mongo-test-env.js'
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { CONFIG } from '../src/config/config.js'
 import { getStore } from '../src/services/mongo.store.js'
@@ -26,7 +27,7 @@ beforeAll(async () => {
   savedProvider = CONFIG.storage.provider
   savedUri = CONFIG.storage.mongodbUri
   CONFIG.storage.provider = 'mongodb'
-  CONFIG.storage.mongodbUri = 'mongodb://127.0.0.1:27018/dsh_m23_test?replicaSet=dsh-rs'
+  CONFIG.storage.mongodbUri = mongoTestUri('dsh_m23_test')
   store = getStore() // 首个 getStore 固化 uri → 隔离到测试库
   try {
     await store.connect()

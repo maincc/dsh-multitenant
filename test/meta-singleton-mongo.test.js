@@ -6,6 +6,7 @@
  * json 形态行为由存量 data.test.js/config.test.js 覆盖（分流默认走原逻辑）。
  * 需 27018 副本集；不可达优雅跳过。隔离库 dsh_m25_test。
  */
+import { mongoTestUri } from './mongo-test-env.js'
 import { readFileSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -27,7 +28,7 @@ beforeAll(async () => {
   savedProvider = CONFIG.storage.provider
   savedUri = CONFIG.storage.mongodbUri
   CONFIG.storage.provider = 'mongodb'
-  CONFIG.storage.mongodbUri = 'mongodb://127.0.0.1:27018/dsh_m25_test?replicaSet=dsh-rs'
+  CONFIG.storage.mongodbUri = mongoTestUri('dsh_m25_test')
   store = getStore() // 首个 getStore 固化 uri → 隔离到测试库
   try {
     await store.connect()

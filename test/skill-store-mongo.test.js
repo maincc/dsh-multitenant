@@ -7,6 +7,7 @@
  * ⚠️ SKILL.md 正文按合同边界仍走磁盘，这里不测（storeDir 用临时目录）。
  * 需 27018 副本集；不可达优雅跳过。隔离库 dsh_m24_test。
  */
+import { mongoTestUri } from './mongo-test-env.js'
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -29,7 +30,7 @@ beforeAll(async () => {
   savedProvider = CONFIG.storage.provider
   savedUri = CONFIG.storage.mongodbUri
   CONFIG.storage.provider = 'mongodb'
-  CONFIG.storage.mongodbUri = 'mongodb://127.0.0.1:27018/dsh_m24_test?replicaSet=dsh-rs'
+  CONFIG.storage.mongodbUri = mongoTestUri('dsh_m24_test')
   store = getStore() // 首个 getStore 固化 uri → 隔离到测试库
   try {
     await store.connect()
