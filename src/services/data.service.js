@@ -20,6 +20,8 @@ import {
   statSync,
 } from 'node:fs'
 import { join } from 'node:path'
+import { CONFIG, setAdminAddressesOverride } from '../config/config.js'
+import { getStore } from './mongo.store.js'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(fileURLToPath(new URL('../..', import.meta.url)))
@@ -39,6 +41,8 @@ export class DataService {
     this.recordsMaxBytes = RECORDS_MAX_BYTES
     this.initDataDir()
     this.hardenDataPermissions()
+    this._adminCache = null
+    this._dshImageCache = null
   }
 
   /**
@@ -360,6 +364,8 @@ export class DataService {
    * 获取管理员配置
    */
   getAdminConfig() {
+    if (this.provider !== 'json')
+      return this._adminCache ?? { addresses: [], history: [], updatedAt: null }
     const filePath = join(this.dataDir, 'config', 'admin.json')
     return this.readJson(filePath) || { addresses: [], history: [], updatedAt: null }
   }
@@ -367,9 +373,74 @@ export class DataService {
   /**
    * 保存管理员配置
    */
-  saveAdminConfig(config) {
-    const filePath = join(this.dataDir, 'config', 'admin.json')
+  /** provider 分流（M2-5）：json 默认=逐调用不变；mongodb=meta 单例入库 */
+  get provider() {
+    return CONFIG.storage?.provider || 'json'
+  }
+
+  /**
+   * provider='mongodb' 启动水合（server 启动链调；json=空操作）。
+   * meta#admin / meta#dsh_image 两个单例文档 → 进程内缓存；admin 地址同步
+   * 注入 config.js 的提权热路径（getAdminAddresses 不再碰磁盘）。
+   */
+  async init() {
+    if (this.provider === 'json') return
+    const store = getStore()
+    await store.connect()
+    const [adminDoc, imgDoc] = await Promise.all([
+      store.col('meta').findOne({ _id: 'admin' }),
+      store.col('meta').findOne({ _id: 'dsh_image' }),
+    ])
+    this._adminCache = adminDoc
+      ? {
+          addresses: adminDoc.addresses ?? [],
+          history: adminDoc.history ?? [],
+          updatedAt: adminDoc.updatedAt ?? null,
+        }
+      : { addresses: [], history: [], updatedAt: null }
+    this._dshImageCache = imgDoc
+      ? {
+          current: imgDoc.current ?? null,
+          history: Array.isArray(imgDoc.history) ? imgDoc.history : [],
+        }
+      : { current: null, history: [] }
+    this._applyAdminOverride()
+    console.log(
+      `[meta] 已从 MongoDB 水合管理员/镜像版本域：管理员 ${this._adminCache.addresses.length} 个，镜像历史 ${this._dshImageCache.history.length} 条`,
+    )
+  }
+
+  _applyAdminOverride() {
+    setAdminAddressesOverride(this._adminCache?.addresses ?? [])
+  }
+
+  /**
+   * 保存管理员配置。mongodb：await 返回=库里已确认（单文档 updateOne 天然
+   * 原子，无需事务包裹）；json：同步文件写，行为零变化。
+   */
+  async saveAdminConfig(config) {
     config.updatedAt = Date.now()
+    if (this.provider !== 'json') {
+      this._adminCache = config
+      this._applyAdminOverride()
+      const store = getStore()
+      await store.connect()
+      await store
+        .col('meta')
+        .updateOne(
+          { _id: 'admin' },
+          {
+            $set: {
+              addresses: config.addresses ?? [],
+              history: config.history ?? [],
+              updatedAt: config.updatedAt,
+            },
+          },
+          { upsert: true },
+        )
+      return
+    }
+    const filePath = join(this.dataDir, 'config', 'admin.json')
     this.writeWithLock(filePath, config)
   }
 
@@ -385,6 +456,7 @@ export class DataService {
    * @returns {{current: object|null, history: Array<object>}}
    */
   getDshImage() {
+    if (this.provider !== 'json') return this._dshImageCache ?? { current: null, history: [] }
     const data = this.readJson(this.dshImageFile())
     return {
       current: data?.current ?? null,
@@ -396,7 +468,7 @@ export class DataService {
    * 记录一次镜像升级（追加历史，保留最近 50 条）
    * @param {{version:string|null, imageId:string|null, tag?:string|null, by?:string}} info
    */
-  saveDshImage(info) {
+  async saveDshImage(info) {
     const prev = this.getDshImage()
     const record = {
       version: info.version ?? null,
@@ -405,15 +477,22 @@ export class DataService {
       at: Date.now(),
       by: info.by ?? 'system',
     }
-    const history = [...prev.history, record].slice(-50)
-    this.writeWithLock(this.dshImageFile(), { current: record, history })
+    const next = { current: record, history: [...prev.history, record].slice(-50) }
+    if (this.provider !== 'json') {
+      this._dshImageCache = next
+      const store = getStore()
+      await store.connect()
+      await store.col('meta').updateOne({ _id: 'dsh_image' }, { $set: next }, { upsert: true })
+      return record
+    }
+    this.writeWithLock(this.dshImageFile(), next)
     return record
   }
 
   /**
    * 添加管理员
    */
-  addAdmin(address, operator = 'system') {
+  async addAdmin(address, operator = 'system') {
     const config = this.getAdminConfig()
     if (!config.addresses.includes(address)) {
       config.addresses.push(address)
@@ -424,7 +503,7 @@ export class DataService {
         timestamp: Date.now(),
         operator,
       })
-      this.saveAdminConfig(config)
+      await this.saveAdminConfig(config)
       return true
     }
     return false

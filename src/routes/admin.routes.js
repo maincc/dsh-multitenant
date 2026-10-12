@@ -402,7 +402,7 @@ export async function handleAdminRoutes(req, res, path, url) {
     }
 
     // 添加到管理员列表（运行时 + 持久化）
-    const added = dataService.addAdmin(address, getAdminSession(req) || 'system')
+    const added = await dataService.addAdmin(address, getAdminSession(req) || 'system')
 
     if (added) {
       console.log(`[admin] promoted ${address} to admin`)
@@ -1093,8 +1093,8 @@ export async function handleAdminRoutes(req, res, path, url) {
       const by = getAdminSession(req) || 'admin'
       dockerService
         .buildImage(version, { context })
-        .then((result) => {
-          dataService.saveDshImage({ ...result, by })
+        .then(async (result) => {
+          await dataService.saveDshImage({ ...result, by })
           // 镜像换了 → 能力缓存必须立即失效。
           // 否则最长 CAPABILITY_CACHE_TTL_MS 内，网关仍按旧镜像的
           // requiresToken 判定：比如刚从"需要认证的新版"退回"可直通的
@@ -1210,7 +1210,7 @@ export async function handleAdminRoutes(req, res, path, url) {
       }
 
       const applied = await dockerService.setDefaultImage(ref)
-      const record = dataService.saveDshImage({
+      const record = await dataService.saveDshImage({
         version,
         imageId: applied.imageId,
         tag: ref,

@@ -27,6 +27,7 @@ import { fileURLToPath } from 'node:url'
 import { CONFIG } from './config/config.js'
 import { userService } from './services/user.service.js'
 import { cwtStore } from './services/cwt.store.js'
+import { dataService } from './services/data.service.js'
 import { adminSessionStore } from './middleware/auth.middleware.js'
 import { userSessionStore } from './middleware/user-auth.middleware.js'
 import { skillService } from './services/skill.service.js'
@@ -317,6 +318,7 @@ server.listen(PORT, '0.0.0.0', async () => {
   // M2-1：provider='mongodb' 时用户域状态以库为准，在这里原地水合缓存（json=no-op）。
   // 失败拦启动：带着文件旧数的缓存上活，下一次存盘会把库里真数抹成旧镜像。
   try {
+    await dataService.init() // M2-5：meta 单例域（admin/镜像版本）水合；admin 地址注入提权热路径
     await userService.init()
     await cwtStore.init() // M2-2：CWT 缓存同理由库水合（json=空操作）
     await adminSessionStore.init() // M2-3：双会话并入 sessions 集合（scope 区分，TTL 兜底）

@@ -70,9 +70,9 @@ describe('DataService', () => {
   })
 
   describe('addAdmin', () => {
-    it('应该添加管理员', () => {
+    it('应该添加管理员', async () => {
       const address = 'testadmin123'
-      const added = service.addAdmin(address, 'test')
+      const added = await service.addAdmin(address, 'test')
 
       expect(added).toBe(true)
 
@@ -80,10 +80,10 @@ describe('DataService', () => {
       expect(config.addresses).toContain(address)
     })
 
-    it('不应该重复添加管理员', () => {
+    it('不应该重复添加管理员', async () => {
       const address = 'testadmin123'
-      service.addAdmin(address, 'test')
-      const added = service.addAdmin(address, 'test')
+      await service.addAdmin(address, 'test')
+      const added = await service.addAdmin(address, 'test')
 
       expect(added).toBe(false)
     })

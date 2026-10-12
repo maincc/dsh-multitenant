@@ -165,20 +165,34 @@ export function getConfig() {
   return loadConfig()
 }
 
+/** mongodb 形态注入的 admin.json 地址权威（小写 Set）；null=json 文件直读 */
+let ADMIN_JSON_OVERRIDE = null
+export function setAdminAddressesOverride(addresses) {
+  ADMIN_JSON_OVERRIDE = addresses
+    ? new Set([...addresses].map((a) => String(a).toLowerCase()))
+    : null
+}
+
 export function getAdminAddresses() {
   const config = loadConfig()
   const addresses = new Set((config.admin?.addresses || []).map((addr) => addr.toLowerCase()))
 
-  // 同时从 data/config/admin.json 读取（提权操作写入的位置）
-  try {
-    if (existsSync(ADMIN_FILE)) {
-      const adminConfig = JSON.parse(readFileSync(ADMIN_FILE, 'utf8'))
-      if (adminConfig.addresses) {
-        adminConfig.addresses.forEach((addr) => addresses.add(addr.toLowerCase()))
+  // admin.json 部分（提权操作写入的位置）：mongodb 形态下由 dataService
+  // 注入【进程内权威缓存】（水合/保存时更新，热路径提权判定零磁盘 I/O；
+  // override 已小写化）；json 形态逐调用原样读文件，行为零变化。
+  if (ADMIN_JSON_OVERRIDE) {
+    ADMIN_JSON_OVERRIDE.forEach((addr) => addresses.add(addr))
+  } else {
+    try {
+      if (existsSync(ADMIN_FILE)) {
+        const adminConfig = JSON.parse(readFileSync(ADMIN_FILE, 'utf8'))
+        if (adminConfig.addresses) {
+          adminConfig.addresses.forEach((addr) => addresses.add(addr.toLowerCase()))
+        }
       }
+    } catch {
+      // 忽略读取错误
     }
-  } catch {
-    // 忽略读取错误
   }
 
   return addresses
