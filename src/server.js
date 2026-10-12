@@ -29,6 +29,7 @@ import { userService } from './services/user.service.js'
 import { cwtStore } from './services/cwt.store.js'
 import { adminSessionStore } from './middleware/auth.middleware.js'
 import { userSessionStore } from './middleware/user-auth.middleware.js'
+import { skillService } from './services/skill.service.js'
 import { handleAdminRoutes } from './routes/admin.routes.js'
 import { handleUserRoutes } from './routes/user.routes.js'
 import { handleTenantRoutes } from './routes/tenant.routes.js'
@@ -320,6 +321,7 @@ server.listen(PORT, '0.0.0.0', async () => {
     await cwtStore.init() // M2-2：CWT 缓存同理由库水合（json=空操作）
     await adminSessionStore.init() // M2-3：双会话并入 sessions 集合（scope 区分，TTL 兜底）
     await userSessionStore.init()
+    await skillService.init() // M2-4：技能元数据（目录+安装记录）水合；正文文件按合同留磁盘
   } catch (err) {
     console.error('[startup] 存储态水合失败，拒绝启动：', err.message)
     process.exit(1)

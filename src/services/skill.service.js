@@ -22,6 +22,7 @@ import { createHash } from 'node:crypto'
 import { tenantConfigService, SIGN_PURPOSE, buildSignedMessage } from './tenant-config.service.js'
 import { dataService } from './data.service.js'
 import { CONFIG } from '../config/config.js'
+import { getStore } from './mongo.store.js'
 import {
   assertSkillName,
   rewriteSkillName,
@@ -58,6 +59,8 @@ export class SkillService {
   constructor({ storeDir, installsFile } = {}) {
     this.storeDir = storeDir ?? join(dataService.dataDir, 'skills')
     this.installsFile = installsFile ?? join(dataService.dataDir, 'installs.json')
+    this._indexCache = null
+    this._installsCache = null
     this.installRate = new Map() // address -> { count, windowStart }
     mkdirSync(this.storeDir, { recursive: true })
   }
@@ -92,23 +95,85 @@ export class SkillService {
   // 存储基础
   // ---------------------------------------------------------------------------
 
+  /** provider 分流（与 user.service/cwtStore 同型：json 默认=逐调用不变） */
+  get provider() {
+    return CONFIG.storage?.provider || 'json'
+  }
+
+  /**
+   * provider='mongodb' 启动水合（server 启动链调；json=空操作）。
+   * ⚠️ 只有【元数据】入库（skills/skill_installs 集合）——SKILL.md 正文文件
+   * 不在 9 集合合同内，两种 provider 下都继续留在磁盘 storeDir（合同边界）。
+   */
+  async init() {
+    if (this.provider === 'json') return
+    const store = getStore()
+    await store.connect()
+    const skillDocs = await store.col('skills').find({}).toArray()
+    const installDocs = await store.col('skill_installs').find({}).toArray()
+    this._indexCache = skillDocs.map(({ _id, ...e }) => e)
+    this._installsCache = Object.fromEntries(installDocs.map((d) => [d._id, d.skills ?? []]))
+    console.log(
+      `[skill] 已从 MongoDB 水合技能域：市场目录 ${this._indexCache.length} 条，安装记录 ${installDocs.length} 行`,
+    )
+  }
+
+  // 读=同步缓存（mongodb）/读文件（json，逐调用原样）；写=await 落库确认。
+  // 缓存权威：写点传入整量、先更缓存再扇出——事务失败时缓存瞬时超前，
+  // 下次保存自愈（与 M2-2 记录的口径一致，本地灰度期可接受）。
+
   readIndex() {
+    if (this.provider !== 'json') return this._indexCache ?? []
     const file = join(this.storeDir, INDEX_FILE)
     const data = dataService.readJson(file)
     return Array.isArray(data?.entries) ? data.entries : []
   }
 
-  writeIndex(entries) {
-    dataService.writeWithLock(join(this.storeDir, INDEX_FILE), { entries })
+  /** 市场目录整量替换（单事务）：条目小、写点本就传整数组，粒度匹配 */
+  async writeIndex(entries) {
+    if (this.provider === 'json') {
+      dataService.writeWithLock(join(this.storeDir, INDEX_FILE), { entries })
+      return
+    }
+    this._indexCache = entries
+    const store = getStore()
+    await store.connect()
+    await store.withTransaction(async (session) => {
+      const c = store.col('skills')
+      await c.deleteMany({}, { session })
+      const docs = entries.map((e) => ({ _id: e.name ?? null, ...e }))
+      if (docs.length) await c.insertMany(docs, { session })
+    })
   }
 
   readInstalls() {
+    if (this.provider !== 'json') return this._installsCache ?? {}
     const data = dataService.readJson(this.installsFile)
     return data && typeof data === 'object' && !Array.isArray(data) ? data : {}
   }
 
-  writeInstalls(all) {
-    dataService.writeWithLock(this.installsFile, all)
+  /** 安装记录 per-address upsert + $nin 删行（与 users fanout 同型，单事务） */
+  async writeInstalls(all) {
+    if (this.provider === 'json') {
+      dataService.writeWithLock(this.installsFile, all)
+      return
+    }
+    this._installsCache = all
+    const store = getStore()
+    await store.connect()
+    const addrs = Object.keys(all)
+    await store.withTransaction(async (session) => {
+      const c = store.col('skill_installs')
+      await c.deleteMany({ _id: { $nin: addrs } }, { session })
+      if (addrs.length) {
+        await c.bulkWrite(
+          addrs.map((a) => ({
+            updateOne: { filter: { _id: a }, update: { $set: { skills: all[a] } }, upsert: true },
+          })),
+          { session },
+        )
+      }
+    })
   }
 
   entryBodyPath(name) {
@@ -323,7 +388,7 @@ export class SkillService {
     const idx = entries.findIndex((e) => e.name === shareName)
     if (idx === -1) entries.push(entry)
     else entries[idx] = entry
-    this.writeIndex(entries)
+    await this.writeIndex(entries)
     return this.toPublic(entry)
   }
 
@@ -341,7 +406,7 @@ export class SkillService {
     // 已安装用户持有的副本在自己卷里，不受影响；同名可重新发布（全新条目）。
     const removed = this.toPublic(entry)
     entries.splice(idx, 1)
-    this.writeIndex(entries)
+    await this.writeIndex(entries)
     rmSync(join(this.storeDir, name), { recursive: true, force: true })
     return removed
   }
@@ -371,7 +436,7 @@ export class SkillService {
     // 另存 installedHash（改写后落盘内容的哈希，供展示/核对）
     const recordBytes = Buffer.byteLength(installText, 'utf8')
     const extra = installText === text ? {} : { installedHash: createHashForText(installText) }
-    this.recordInstall(address, name, entry.contentHash, recordBytes, 'market', extra)
+    await this.recordInstall(address, name, entry.contentHash, recordBytes, 'market', extra)
     return this.toPublic(entry, true)
   }
 
@@ -390,7 +455,7 @@ export class SkillService {
     }
     const b64 = Buffer.from(content, 'utf8').toString('base64')
     await tenantConfigService.runScript(address, 'install-skill.mjs', [name, b64])
-    this.recordInstall(address, name, valid.sha256, valid.bodyBytes, 'import')
+    await this.recordInstall(address, name, valid.sha256, valid.bodyBytes, 'import')
     return {
       ok: true,
       name,
@@ -406,7 +471,7 @@ export class SkillService {
     address = normalizeAddress(address)
     const name = assertSkillName(skillName)
     await tenantConfigService.runScript(address, 'remove-skill.mjs', [name])
-    this.removeInstallRecord(address, name)
+    await this.removeInstallRecord(address, name)
     return { ok: true, name, removed: true }
   }
 
@@ -439,7 +504,7 @@ export class SkillService {
     return entry
   }
 
-  recordInstall(address, name, contentHash, size, source, extra = {}) {
+  async recordInstall(address, name, contentHash, size, source, extra = {}) {
     const all = this.readInstalls()
     const list = all[address] || (all[address] = [])
     const rec = {
@@ -453,10 +518,10 @@ export class SkillService {
     const idx = list.findIndex((r) => r.name === name)
     if (idx === -1) list.push(rec)
     else list[idx] = rec
-    this.writeInstalls(all)
+    await this.writeInstalls(all)
   }
 
-  removeInstallRecord(address, name) {
+  async removeInstallRecord(address, name) {
     const all = this.readInstalls()
     const list = all[address]
     if (Array.isArray(list)) {
@@ -464,7 +529,7 @@ export class SkillService {
       if (filtered.length !== list.length) {
         if (filtered.length === 0) delete all[address]
         else all[address] = filtered
-        this.writeInstalls(all)
+        await this.writeInstalls(all)
       }
     }
   }
