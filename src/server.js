@@ -26,6 +26,7 @@ import { fileURLToPath } from 'node:url'
 
 import { CONFIG } from './config/config.js'
 import { userService } from './services/user.service.js'
+import { cwtStore } from './services/cwt.store.js'
 import { handleAdminRoutes } from './routes/admin.routes.js'
 import { handleUserRoutes } from './routes/user.routes.js'
 import { handleTenantRoutes } from './routes/tenant.routes.js'
@@ -314,8 +315,9 @@ server.listen(PORT, '0.0.0.0', async () => {
   // 失败拦启动：带着文件旧数的缓存上活，下一次存盘会把库里真数抹成旧镜像。
   try {
     await userService.init()
+    await cwtStore.init() // M2-2：CWT 缓存同理由库水合（json=空操作）
   } catch (err) {
-    console.error('[startup] 用户域状态水合失败，拒绝启动：', err.message)
+    console.error('[startup] 存储态水合失败，拒绝启动：', err.message)
     process.exit(1)
   }
   try {

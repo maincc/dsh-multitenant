@@ -642,7 +642,7 @@ export async function handleAdminRoutes(req, res, path, url) {
       const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 200) : 10
       const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? rawOffset : 0
 
-      const { records, hasMore } = cwtAdminService.listRecords(limit, offset)
+      const { records, hasMore } = await cwtAdminService.listRecords(limit, offset) // mongodb 形态为异步读
       if (!res.headersSent) {
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify({ ok: true, records, limit, offset, hasMore }))

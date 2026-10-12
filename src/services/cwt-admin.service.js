@@ -120,7 +120,7 @@ class CwtAdminService {
       submittedAt: Date.now(),
       status: 'pending',
     }
-    cwtStore.addApplication(app)
+    await cwtStore.addApplication(app)
     console.log(`[cwt] new application from ${address} (usr=${result.usr}, alg=${result.alg})`)
     return { ok: true, applicationId: app.id, parsed: app.parsed }
   }
@@ -179,30 +179,39 @@ class CwtAdminService {
     const address = normalizeAddress(result.address)
     const now = Date.now()
 
-    cwtStore.setRegistryEntry(address, {
-      usr: result.usr,
-      wallet: address,
-      approvedAt: now,
-      approvedBy: adminAddress,
-      status: 'approved',
-    })
-    app.status = 'approved'
-    cwtStore.saveApplications()
-
-    // 授权标记（运行时豁免展示；豁免判定以注册表为准，此字段为冗余）
-    if (userService.state.swtcUsers?.[address]) {
-      userService.state.swtcUsers[address].cwtAuthorizedAt = now
-      await userService._saveState() // 经用户域唯一出口（还顺带修了旧代码绕过缓存失效的暗病）
-    }
-
-    cwtStore.appendRecord({
-      address,
-      usr: result.usr,
-      token: app.token,
-      alg: result.alg,
-      action: 'approve',
-      at: now,
-      by: adminAddress,
+    // §5.2 边界①：批准 = registry/applications/用户冗余标记/审计【四方单事务】——
+    // 文件时代三次独立落盘留有的"半审批态"窗口，mongodb 形态在这里收口。
+    await cwtStore.runTxn(async (session) => {
+      await cwtStore.setRegistryEntry(
+        address,
+        {
+          usr: result.usr,
+          wallet: address,
+          approvedAt: now,
+          approvedBy: adminAddress,
+          status: 'approved',
+        },
+        { session },
+      )
+      app.status = 'approved'
+      await cwtStore.saveApplications({ session })
+      // 授权标记（运行时豁免展示；豁免判定以注册表为准，此字段为冗余）
+      if (userService.state.swtcUsers?.[address]) {
+        userService.state.swtcUsers[address].cwtAuthorizedAt = now
+        await userService._saveState({ session })
+      }
+      await cwtStore.appendRecord(
+        {
+          address,
+          usr: result.usr,
+          token: app.token,
+          alg: result.alg,
+          action: 'approve',
+          at: now,
+          by: adminAddress,
+        },
+        { session },
+      )
     })
     console.log(`[cwt] approved ${address} (usr=${result.usr}) by ${adminAddress}`)
     return { ok: true, address, applicationId: id }
@@ -216,16 +225,21 @@ class CwtAdminService {
     if (!app) throw new NotFoundError(`申请不存在：${id}`)
     if (app.status !== 'pending') throw new ConflictError(`申请状态为 ${app.status}，不能拒绝`)
 
-    app.status = 'rejected'
-    cwtStore.saveApplications()
-    cwtStore.appendRecord({
-      address: app.parsed?.address ?? null,
-      usr: app.parsed?.usr ?? null,
-      token: app.token,
-      alg: app.parsed?.alg ?? null,
-      action: 'reject',
-      at: Date.now(),
-      by: adminAddress,
+    await cwtStore.runTxn(async (session) => {
+      app.status = 'rejected'
+      await cwtStore.saveApplications({ session })
+      await cwtStore.appendRecord(
+        {
+          address: app.parsed?.address ?? null,
+          usr: app.parsed?.usr ?? null,
+          token: app.token,
+          alg: app.parsed?.alg ?? null,
+          action: 'reject',
+          at: Date.now(),
+          by: adminAddress,
+        },
+        { session },
+      )
     })
     console.log(`[cwt] rejected application ${id} by ${adminAddress}`)
     return { ok: true, applicationId: id }
@@ -239,22 +253,28 @@ class CwtAdminService {
     const reg = cwtStore.getRegistry()[address]
     if (!reg) throw new NotFoundError(`注册表无此地址：${address}`)
 
-    reg.status = 'revoked'
-    reg.revokedAt = Date.now()
-    cwtStore.setRegistryEntry(address, reg)
-    if (userService.state.swtcUsers?.[address]) {
-      delete userService.state.swtcUsers[address].cwtAuthorizedAt
-      delete userService.state.swtcUsers[address].cwtVerifiedAt
-      await userService._saveState()
-    }
-    cwtStore.appendRecord({
-      address,
-      usr: reg.usr,
-      token: null,
-      alg: null,
-      action: 'revoke',
-      at: Date.now(),
-      by: adminAddress,
+    const revokedAt = Date.now()
+    await cwtStore.runTxn(async (session) => {
+      reg.status = 'revoked'
+      reg.revokedAt = revokedAt
+      await cwtStore.setRegistryEntry(address, reg, { session })
+      if (userService.state.swtcUsers?.[address]) {
+        delete userService.state.swtcUsers[address].cwtAuthorizedAt
+        delete userService.state.swtcUsers[address].cwtVerifiedAt
+        await userService._saveState({ session })
+      }
+      await cwtStore.appendRecord(
+        {
+          address,
+          usr: reg.usr,
+          token: null,
+          alg: null,
+          action: 'revoke',
+          at: revokedAt,
+          by: adminAddress,
+        },
+        { session },
+      )
     })
     console.log(`[cwt] revoked ${address} by ${adminAddress}`)
     return { ok: true, address, status: 'revoked' }
@@ -309,7 +329,7 @@ class CwtAdminService {
    * @returns {{ records: object[], hasMore: boolean }}
    */
   listRecords(limit = 10, offset = 0) {
-    return cwtStore.listRecords(limit, offset)
+    return cwtStore.listRecords(limit, offset) // json=同步值 mongo=Promise，消费方 await 兼容两态
   }
 }
 

@@ -1252,10 +1252,11 @@ export class UserService {
   /**
    * 状态落盘 + 列表缓存失效。所有 saveState 统一走这里 ——
    * 少挂一处就会让管理员点完按钮看到旧状态。
+   * {session}：加入外部事务（CWT 审批四方写，§5.2 边界①）；缺省自开单事务。
    */
-  async _saveState() {
+  async _saveState(opts = {}) {
     this.invalidateUsersCache()
-    await stateStore.save(this.state)
+    await stateStore.save(this.state, opts)
   }
 
   /**

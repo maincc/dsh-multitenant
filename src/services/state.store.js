@@ -66,12 +66,16 @@ export class StateStore {
     return loadFromMongo(store)
   }
 
-  /** 整存（user.service._saveState 的唯一下游） */
-  async save(state) {
+  /**
+   * 整存（user.service._saveState 的唯一下游）。
+   * {session}=加入【外部事务】（§5.2 CWT 审批四方写共用一个事务）；缺省自开单事务。
+   */
+  async save(state, { session } = {}) {
     if (this.provider === 'json') return dataService.saveState(state)
     const store = this._mongoStore()
     await store.connect()
-    return fanout(store, state)
+    if (session) return fanoutOps(store, state, session)
+    return store.withTransaction((s) => fanoutOps(store, state, s))
   }
 }
 
@@ -111,50 +115,50 @@ async function loadFromMongo(store) {
   return state
 }
 
-async function fanout(store, state) {
-  await store.withTransaction(async (session) => {
-    const users = store.col('users')
-    const addrs = Object.keys(state.swtcUsers || {})
-    for (const addr of addrs) {
-      const u = state.swtcUsers[addr] || {}
-      const set = {}
-      const unset = {}
-      for (const f of USER_OWNED_FIELDS) {
-        if (u[f] !== undefined && u[f] !== null) set[f] = u[f]
-        else unset[f] = ''
-      }
-      await users.updateOne(
-        { _id: addr },
-        { $set: set, ...(Object.keys(unset).length ? { $unset: unset } : {}) },
-        { upsert: true, session },
-      )
+// 扇出操作序列，跑在【传入的 session】上——是否包事务由调用方决定（save 自开 /
+// CWT 审批注入外部事务）。绝不在这里 withTransaction，否则与外部事务嵌套会炸。
+async function fanoutOps(store, state, session) {
+  const users = store.col('users')
+  const addrs = Object.keys(state.swtcUsers || {})
+  for (const addr of addrs) {
+    const u = state.swtcUsers[addr] || {}
+    const set = {}
+    const unset = {}
+    for (const f of USER_OWNED_FIELDS) {
+      if (u[f] !== undefined && u[f] !== null) set[f] = u[f]
+      else unset[f] = ''
     }
-    // 缓存是权威：不在缓存里的用户文档删除（对齐文件模式整写覆盖语义）
-    await users.deleteMany(addrs.length ? { _id: { $nin: addrs } } : {}, { session })
-
-    const meta = store.col('meta')
-    await meta.updateOne(
-      { _id: 'ports' },
-      { $set: { nextPort: state.nextPort ?? 31000, availablePorts: state.availablePorts ?? [] } },
+    await users.updateOne(
+      { _id: addr },
+      { $set: set, ...(Object.keys(unset).length ? { $unset: unset } : {}) },
       { upsert: true, session },
     )
-    await meta.updateOne(
-      { _id: 'cleanup' },
-      { $set: { ...(state.cleanupPolicy || {}) } },
+  }
+  // 缓存是权威：不在缓存里的用户文档删除（对齐文件模式整写覆盖语义）
+  await users.deleteMany(addrs.length ? { _id: { $nin: addrs } } : {}, { session })
+
+  const meta = store.col('meta')
+  await meta.updateOne(
+    { _id: 'ports' },
+    { $set: { nextPort: state.nextPort ?? 31000, availablePorts: state.availablePorts ?? [] } },
+    { upsert: true, session },
+  )
+  await meta.updateOne(
+    { _id: 'cleanup' },
+    { $set: { ...(state.cleanupPolicy || {}) } },
+    { upsert: true, session },
+  )
+
+  // usage：只 upsert 现行行，历史日期不动（文件模式做不到的保真，这里白拿）
+  const usage = store.col('usage')
+  for (const [addr, rec] of Object.entries(state.usages || {})) {
+    if (!rec || !rec.date) continue
+    await usage.updateOne(
+      { _id: { address: addr, date: rec.date } },
+      { $set: { minutes: rec.minutes ?? 0 } },
       { upsert: true, session },
     )
-
-    // usage：只 upsert 现行行，历史日期不动（文件模式做不到的保真，这里白拿）
-    const usage = store.col('usage')
-    for (const [addr, rec] of Object.entries(state.usages || {})) {
-      if (!rec || !rec.date) continue
-      await usage.updateOne(
-        { _id: { address: addr, date: rec.date } },
-        { $set: { minutes: rec.minutes ?? 0 } },
-        { upsert: true, session },
-      )
-    }
-  })
+  }
 }
 
 export const stateStore = new StateStore()
