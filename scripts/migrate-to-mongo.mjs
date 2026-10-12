@@ -114,18 +114,21 @@ const meta = [
 ] // schema 文档在写入阶段最后生成（含本次迁移统计）
 
 // 【9 集合方案】admin_sessions 与 user_sessions 同构合并（scope 区分）
+// ⚠️ expiresAt/at 一律转 BSON Date：TTL 监控器只认 Date（number 静默不回收，
+// 本机 70s 探针实证）；与 src/services/migration.js 的真迁移器保持一致。
+const toDate = (ms) => new Date(Number(ms) || 0)
 const sessDocs = [
-  ...Object.entries(sessions).map(([hash, v]) => ({ _id: hash, scope: 'admin', ...v })),
-  ...Object.entries(userSessions).map(([hash, v]) => ({ _id: hash, scope: 'user', ...v })),
+  ...Object.entries(sessions).map(([hash, v]) => ({ ...v, _id: hash, scope: 'admin', expiresAt: toDate(v.expiresAt) })),
+  ...Object.entries(userSessions).map(([hash, v]) => ({ ...v, _id: hash, scope: 'user', expiresAt: toDate(v.expiresAt) })),
 ]
-// 审计两流合一：时间统一 at，kind 区分（字段原样保留）
+// 审计两流合一：时间统一 at（Date，ttl_90d 生效前提），kind 区分（字段原样保留）
 const auditDocs = [
-  ...cwtRecords.map((r) => ({ kind: 'cwt', at: r.at ?? null, ...r })),
+  ...cwtRecords.map((r) => ({ ...r, kind: 'cwt', at: toDate(r.at) })),
   ...opsLog.map((r) => ({
-    kind: 'ops',
-    at: r.timestamp ?? null,
-    action: r.operation ?? null,
     ...r,
+    kind: 'ops',
+    at: toDate(r.timestamp),
+    action: r.operation ?? null,
   })),
 ]
 

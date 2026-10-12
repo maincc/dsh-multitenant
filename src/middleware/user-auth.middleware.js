@@ -12,6 +12,7 @@
  */
 import { createHash, randomBytes } from 'node:crypto'
 import { dataService } from '../services/data.service.js'
+import { SessionMirror } from '../services/session.store.js'
 
 const COOKIE_NAME = 'user_session'
 /** 会话有效期：12 小时（与管理员会话一致） */
@@ -23,6 +24,13 @@ class UserSessionStore {
   constructor() {
     /** sha256(token) -> { address, expiresAt } */
     this.sessions = dataService.loadUserSessions() || {}
+    this._mirror = new SessionMirror('user')
+  }
+
+  /** provider='mongodb' 时从 sessions 集合水合（server 启动链调；json=no-op） */
+  async init() {
+    const m = await this._mirror.hydrate()
+    if (m) this.sessions = m
   }
 
   _prune() {
@@ -34,6 +42,12 @@ class UserSessionStore {
 
   _persist() {
     this._prune()
+    if (this._mirror.provider !== 'json') {
+      // mongodb：串行队列全量镜像（TTL 索引兜底删除方向）；create/惰性清理
+      // 不等落库——丢了最坏是重新登录，无安全面。revoke 另走 await。
+      this._mirror.enqueue(this.sessions)
+      return
+    }
     dataService.saveUserSessions(this.sessions)
   }
 
@@ -63,11 +77,14 @@ class UserSessionStore {
     return rec.address
   }
 
-  /** 吊销会话 */
-  revoke(token) {
+  /** 吊销会话。mongodb 形态【await 返回=库里已删】——吊销不确认就返回，
+   *  崩溃重启会复活已登出的会话，属安全回退，必须写确认。json 分支体仍是
+   *  同步文件写（await 只等一个微任务，语义不变）。 */
+  async revoke(token) {
     if (!token) return
     delete this.sessions[sha256(token)]
     this._persist()
+    await this._mirror.flush()
   }
 }
 

@@ -78,7 +78,7 @@ export async function handleUserRoutes(req, res, path) {
   if (path === '/api/user/logout' && req.method === 'POST') {
     const cookie = req.headers.cookie || ''
     const m = cookie.match(/user_session=([^;]+)/)
-    if (m) userSessionStore.revoke(decodeURIComponent(m[1]))
+    if (m) await userSessionStore.revoke(decodeURIComponent(m[1]))
     res.writeHead(200, {
       'content-type': 'application/json; charset=utf-8',
       'set-cookie': 'user_session=; path=/; max-age=0; httponly; samesite=strict',

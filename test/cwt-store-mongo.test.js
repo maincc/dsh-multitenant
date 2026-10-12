@@ -137,7 +137,10 @@ describe('mongodb 形态·四方写单事务（§5.2 边界①的事务机制）
     expect((await store.col('cwt_applications').findOne({ _id: 'p1' })).status).toBe('approved')
     const u = await store.col('users').findOne({ _id: ADDR })
     expect(u.cwtAuthorizedAt).toBe(900)
-    expect((await store.col('audit').findOne({ action: 'approve', at: 900 })).kind).toBe('cwt')
+    // at 存 Date（TTL 只认 Date），查询同型
+    expect((await store.col('audit').findOne({ action: 'approve', at: new Date(900) })).kind).toBe(
+      'cwt',
+    )
   })
 
   it('失败全回滚：applications 整表替换里藏重复 _id（dup key 必炸）→ 三方零改动', async (ctx) => {

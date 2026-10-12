@@ -70,22 +70,26 @@ describe('A 组·迁移形状合同（无 DB 恒跑）', () => {
     expect(b.tier).toBe(null) // 源缺字段 → null，不留 undefined
   })
 
-  it('sessions：双文件合并带 scope，_id 原样', () => {
+  it('sessions：双文件合并带 scope，_id 原样，expiresAt 转 Date（TTL 只认 Date）', () => {
     const { sessions } = buildCollections(fx())
     expect(sessions).toHaveLength(3)
     expect(sessions.filter((s) => s.scope === 'admin')).toHaveLength(1)
     expect(sessions.filter((s) => s.scope === 'user')).toHaveLength(2)
+    const h1 = sessions.find((s) => s._id === 'h1')
+    expect(h1.expiresAt).toBeInstanceOf(Date)
+    expect(Number(h1.expiresAt)).toBe(111)
   })
 
-  it('audit：双日志合一，时间归 at，ops 拉平 actor（P6）', () => {
+  it('audit：双日志合一，时间归 at（Date，ttl_90d 生效前提），ops 拉平 actor（P6）', () => {
     const { audit } = buildCollections(fx())
     expect(audit).toHaveLength(2)
     const ops = audit.find((a) => a.kind === 'ops')
-    expect(ops.at).toBe(666)
+    expect(Number(ops.at)).toBe(666)
+    expect(ops.at).toBeInstanceOf(Date)
     expect(ops.action).toBe('admin_login')
     expect(ops.actor).toBe('jaaa')
     const cwt = audit.find((a) => a.kind === 'cwt')
-    expect(cwt.at).toBe(555)
+    expect(Number(cwt.at)).toBe(555)
   })
 
   it('usage：复合主键 {address,date}（P5）', () => {

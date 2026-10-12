@@ -226,7 +226,7 @@ export async function handleAdminRoutes(req, res, path, url) {
     const match = cookie.match(/admin_session=([^;]+)/)
     if (match) {
       try {
-        adminSessionStore.revoke(decodeURIComponent(match[1]))
+        await adminSessionStore.revoke(decodeURIComponent(match[1]))
       } catch {
         // 忽略损坏的 token
       }

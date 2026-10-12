@@ -135,9 +135,22 @@ export function buildCollections(s) {
   ]
 
   // 双会话文件合并（scope 区分；_id 为现成 sha256(token) hex，不迁明文凭据）
+  // ⚠️ expiresAt 转 BSON Date：TTL 监控器【只认 Date】（毫秒 number 会被静默
+  // 无视、过期行永久堆积——本机 70s 探针实证），水合侧统一 Number() 归一。
+  const toDate = (ms) => new Date(Number(ms) || 0)
   const sessions = [
-    ...Object.entries(s.sessions).map(([hash, v]) => ({ _id: hash, scope: 'admin', ...v })),
-    ...Object.entries(s.userSessions).map(([hash, v]) => ({ _id: hash, scope: 'user', ...v })),
+    ...Object.entries(s.sessions).map(([hash, v]) => ({
+      ...v,
+      _id: hash,
+      scope: 'admin',
+      expiresAt: toDate(v.expiresAt),
+    })),
+    ...Object.entries(s.userSessions).map(([hash, v]) => ({
+      ...v,
+      _id: hash,
+      scope: 'user',
+      expiresAt: toDate(v.expiresAt),
+    })),
   ]
 
   const cwt_registry = Object.entries(s.cwtRegistry).map(([addr, v]) => ({ _id: addr, ...v }))
@@ -146,15 +159,16 @@ export function buildCollections(s) {
     ...rest,
   }))
 
-  // 双日志合并：时间统一 at；ops 的 details.address 拉平为 actor（P6）
+  // 双日志合并：时间统一 at（同为 TTL 字段——ttl_90d 索引只认 Date，P4 的
+  // "90 天自动清"要求它必须是 Date）；ops 的 details.address 拉平为 actor（P6）
   const audit = [
-    ...(s.cwtRecords ?? []).map((r) => ({ kind: 'cwt', at: r.at ?? null, ...r })),
+    ...(s.cwtRecords ?? []).map((r) => ({ ...r, kind: 'cwt', at: toDate(r.at) })),
     ...(s.opsLog ?? []).map((r) => ({
+      ...r,
       kind: 'ops',
-      at: r.timestamp ?? null,
+      at: toDate(r.timestamp),
       action: r.operation ?? null,
       actor: r.details?.address ?? null,
-      ...r,
     })),
   ]
 

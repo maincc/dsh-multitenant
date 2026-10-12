@@ -16,6 +16,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { isAdmin } from '../config/config.js'
 import { dataService } from '../services/data.service.js'
 import { getUserSession } from './user-auth.middleware.js'
+import { SessionMirror } from '../services/session.store.js'
 
 const COOKIE_NAME = 'admin_session'
 /** 会话有效期：12 小时 */
@@ -27,6 +28,7 @@ class AdminSessionStore {
   constructor() {
     /** sha256(token) -> { address, expiresAt } */
     this.sessions = dataService.loadSessions() || {}
+    this._mirror = new SessionMirror('admin')
   }
 
   _prune() {
@@ -38,7 +40,17 @@ class AdminSessionStore {
 
   _persist() {
     this._prune()
+    if (this._mirror.provider !== 'json') {
+      this._mirror.enqueue(this.sessions) // 串行镜像 + TTL 兜底（同 user 侧）
+      return
+    }
     dataService.saveSessions(this.sessions)
+  }
+
+  /** provider='mongodb' 时从 sessions 集合水合（server 启动链调；json=no-op） */
+  async init() {
+    const map = await this._mirror.hydrate()
+    if (map) this.sessions = map
   }
 
   /** 签发会话，返回明文 token（只把 sha256 存入存储） */
@@ -63,10 +75,11 @@ class AdminSessionStore {
   }
 
   /** 吊销会话（logout） */
-  revoke(token) {
+  async revoke(token) {
     if (!token) return
     delete this.sessions[sha256(token)]
     this._persist()
+    await this._mirror.flush() // 吊销写确认（不确认=崩溃重启复活会话）
   }
 }
 

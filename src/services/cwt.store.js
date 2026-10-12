@@ -158,10 +158,12 @@ class CwtStore {
 
   appendRecord(record, opts = {}) {
     if (this.provider === 'json') return dataService.appendCwtRecord(record)
-    return this._withOrJoin(opts.session, (session) =>
-      this._store()
-        .col('audit')
-        .insertOne({ kind: 'cwt', at: record.at ?? null, ...record }, { session }),
+    return this._withOrJoin(
+      opts.session,
+      (session) =>
+        this._store()
+          .col('audit')
+          .insertOne({ ...record, kind: 'cwt', at: new Date(Number(record.at) || 0) }, { session }), // TTL 只认 Date,
     )
   }
 
@@ -181,7 +183,15 @@ class CwtStore {
       .toArray()
       .then((docs) => {
         const hasMore = docs.length > limit
-        return { records: docs.slice(0, limit).map(({ kind, _id, ...r }) => r), hasMore }
+        return {
+          records: docs
+            .slice(0, limit)
+            .map(({ kind, _id, ...r }) => ({
+              ...r,
+              at: r.at instanceof Date ? Number(r.at) : r.at,
+            })), // 回读归一 number，与文件版形状一致
+          hasMore,
+        }
       })
   }
 
