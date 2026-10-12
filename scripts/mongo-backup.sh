@@ -30,6 +30,8 @@ latest_snapshot() { ls -1d "$BACKUP_DIR"/2*/ 2>/dev/null | sort | tail -1; }
 do_backup() {
   local snap="$BACKUP_DIR/$(date +%Y%m%d-%H%M%S)"
   mkdir -p "$snap"
+  # 备份含会话/审计/用户全量——目录收权（文档承诺 0700，这里做实）
+  chmod 700 "$BACKUP_DIR" 2>/dev/null || true
   mongodump --uri="$URI" --out="$snap" >/dev/null
   echo "✓ 快照落盘：${snap}（$(du -sh "$snap" | awk '{print $1}')）"
   # 保留策略：按时间序留最近 KEEP 份
