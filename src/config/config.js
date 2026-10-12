@@ -122,18 +122,43 @@ const DEFAULTS = {
     // 任何状态写入都会立即失效它（见 user.service 的 _saveState）。
     usersCacheTtlMs: 3000,
   },
+  storage: {
+    // 业务数据存储介质。见 docs/storage-design.md（MongoDB 集中存储，9 集合合同）。
+    // provider：'json'=维持现状（文件，默认）；'mongodb'=迁入 Mongo。
+    // D5 灰度：本地验证通过后手动切 'mongodb'，服务器本期不部署。
+    provider: 'json',
+    // 连接串。环境变量 MONGODB_URI 优先于此（部署侧注入凭据，不入仓库）。
+    // 本地专用单成员副本集（27018，独立 dbpath，与 brew 服务隔离）。
+    mongodbUri: 'mongodb://127.0.0.1:27018/?replicaSet=dsh-rs',
+    dbName: 'dsh', // 测试库由 globalSetup 覆盖为 dsh_test
+    // 事务必须副本集；裸 standalone 下 withTransaction 直接报错（见设计 §5.2 R1）。
+    txnRetries: 3, // withTransaction 冲突重试上限
+    connectTimeoutMs: 5000,
+    archiveAfterMigration: true, // 迁移后 data/+state.json 保留归档（D3，不自动删）
+  },
 }
 
 export function loadConfig() {
+  let merged = DEFAULTS
   try {
     if (existsSync(CONFIG_FILE)) {
       const config = JSON.parse(readFileSync(CONFIG_FILE, 'utf8'))
-      return { ...DEFAULTS, ...config }
+      merged = { ...DEFAULTS, ...config }
     }
   } catch (err) {
     console.error(`[config] Failed to load config.json: ${err.message}, using defaults`)
+    merged = DEFAULTS
   }
-  return DEFAULTS
+  // storage.mongodbUri：env MONGODB_URI 覆盖 config.json（部署侧注入凭据，不入仓库）。
+  // env DSH_STORAGE_PROVIDER 可临时切介质（灰度/回退应急开关）。
+  const uri = process.env.MONGODB_URI
+  const prov = process.env.DSH_STORAGE_PROVIDER
+  if (uri || prov) {
+    merged = { ...merged, storage: { ...merged.storage } }
+    if (uri) merged.storage.mongodbUri = uri
+    if (prov === 'json' || prov === 'mongodb') merged.storage.provider = prov
+  }
+  return merged
 }
 
 export function getConfig() {

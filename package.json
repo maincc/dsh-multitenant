@@ -19,7 +19,8 @@
     "hooks:uninstall": "rm -f .git/hooks/pre-commit .git/hooks/pre-push"
   },
   "dependencies": {
-    "@swtc/keypairs": "^1.2.0"
+    "@swtc/keypairs": "^1.2.0",
+    "mongodb": "^7.7.0"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^1.6.0",
