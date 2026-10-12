@@ -368,6 +368,17 @@ server.listen(PORT, '0.0.0.0', async () => {
 })
 
 // 全局错误处理
+// 优雅关停：SIGTERM/SIGINT 退出前【排空会话镜像队列】——create 走的是尽力
+// 镜像轨（M2-3 设计），不留最后一次登录未落库就退场的窗口。
+// （revoke 本就 await 写确认；state/cwt/skill/meta 域全部 await 落库，无需 drain）
+for (const sig of ['SIGTERM', 'SIGINT']) {
+  process.once(sig, () => {
+    Promise.all([adminSessionStore.flush(), userSessionStore.flush()])
+      .catch(() => {})
+      .finally(() => process.exit(0))
+  })
+}
+
 process.on('unhandledRejection', (reason, promise) => {
   console.error('[fatal] Unhandled Rejection at:', promise, 'reason:', reason)
 })

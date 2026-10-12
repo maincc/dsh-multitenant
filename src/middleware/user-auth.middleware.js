@@ -80,6 +80,11 @@ class UserSessionStore {
   /** 吊销会话。mongodb 形态【await 返回=库里已删】——吊销不确认就返回，
    *  崩溃重启会复活已登出的会话，属安全回退，必须写确认。json 分支体仍是
    *  同步文件写（await 只等一个微任务，语义不变）。 */
+  /** 排空镜像队列（优雅关停/测试用；json 形态 resolve 即刻） */
+  flush() {
+    return this._mirror.flush()
+  }
+
   async revoke(token) {
     if (!token) return
     delete this.sessions[sha256(token)]

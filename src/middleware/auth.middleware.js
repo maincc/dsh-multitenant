@@ -75,6 +75,11 @@ class AdminSessionStore {
   }
 
   /** 吊销会话（logout） */
+  /** 排空镜像队列（优雅关停/测试用；json 形态 resolve 即刻） */
+  flush() {
+    return this._mirror.flush()
+  }
+
   async revoke(token) {
     if (!token) return
     delete this.sessions[sha256(token)]
