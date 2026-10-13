@@ -24,6 +24,14 @@ PUBLIC_HOST=1.2.3.4 \
 - `ADMIN_ADDRESS`：你的管理员 SWTC 地址（小写，决定谁能进管理面板）
 - `PUBLIC_HOST`：用户浏览器可达的公网 IP 或域名（302 跳转目标 + trustedHosts）
 - 有 HTTPS 域名时建议同时设置 `PUBLIC_TRUST=你的域名`
+- **存储形态（2026-10 新增）**：默认 `STORAGE=mongodb` 连本机
+  `mongodb://127.0.0.1:27018/dsh_prod?replicaSet=dsh-rs`（库名以 URI path 为准）。
+  **前置要求**：mongod 7.0+ 且为副本集（单成员即可，安装与 `rs.initiate`
+  见 `docs/deploy-test-server.md` 三.1）——install.sh 有预检，连不上/非副本集
+  会直接失败。应急回退文件形态 `STORAGE=json`；mongod 在远端加 `SKIP_MONGO_CHECK=1`。
+- 老 json 服务器升级进库：先 `INCLUDE_DATA=1 ./deploy/rsync-upload.sh` 专送一次
+  迁移原料（仅此一次合法！日常上传绝不带 data/——会砸掉服务器镜像轨），
+  首启自动完成 M1 搬家（日志 `[startup] storage 迁移：{...}`）。
 
 ### 3. 验证
 

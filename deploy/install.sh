@@ -21,6 +21,11 @@
 #                             传 latest 会装上当时最新版（可用；已支持代激活）。
 #    SKIP_IMAGE=1     跳过 docker build；SKIP_FRONTEND=1 跳过前端构建
 #    FORCE=1          已存在 config.json 时也重新生成
+#    STORAGE          存储形态：mongodb(默认)=权威在库；json=回退文件轨
+#                     （对应 docs/storage-design.md 的集中存储；应急回退用 json）
+#    MONGODB_URI      存储连接串（默认 mongodb://127.0.0.1:27018/dsh_prod?replicaSet=dsh-rs）
+#                     库名必须写在 URI path——dbName 默认值 'dsh' 是历史诱饵，勿依赖
+#    SKIP_MONGO_CHECK=1  跳过 Mongo 预检（mongod 在远端且本机无 mongosh 时用）
 # ============================================================================
 set -euo pipefail
 
@@ -40,6 +45,9 @@ if [ "$(id -u)" -ne 0 ]; then
     DSH_VERSION="${DSH_VERSION:-0.1.1-rc.2}" \
     SKIP_IMAGE="${SKIP_IMAGE:-0}" \
     SKIP_FRONTEND="${SKIP_FRONTEND:-0}" \
+    SKIP_MONGO_CHECK="${SKIP_MONGO_CHECK:-0}" \
+    STORAGE="${STORAGE:-mongodb}" \
+    MONGODB_URI="${MONGODB_URI:-}" \
     FORCE="${FORCE:-0}" \
     "$0" "$@"
 fi
@@ -51,15 +59,41 @@ PORT="${PORT:-8090}"
 RUN_USER="${RUN_USER:-root}"
 IMAGE="${DSH_TENANT_IMAGE:-dsh-multitenant:latest}"
 DSH_VERSION="${DSH_VERSION:-0.1.1-rc.2}"
+STORAGE="${STORAGE:-mongodb}"
+# 库名写死在默认 URI path（dsh_prod）——config.js 的 dbName 默认 'dsh' 是历史诱饵
+MONGODB_URI="${MONGODB_URI:-mongodb://127.0.0.1:27018/dsh_prod?replicaSet=dsh-rs}"
 
 echo ">> 项目目录: $ROOT"
 echo ">> PUBLIC_HOST=$PUBLIC_HOST  PORT=$PORT  RUN_USER=$RUN_USER  IMAGE=$IMAGE  DSH_VERSION=$DSH_VERSION"
+echo ">> STORAGE=$STORAGE  MONGODB_URI=$MONGODB_URI"
 
 # ---- 依赖检查 ----
 command -v docker >/dev/null || { echo "[错误] 未安装 docker"; exit 1; }
-if [ "${SKIP_FRONTEND:-0}" != "1" ]; then
-  command -v node >/dev/null || { echo "[错误] 未安装 node（>=18），或设置 SKIP_FRONTEND=1 跳过前端构建"; exit 1; }
-  node -e "if (+process.versions.node.split('.')[0] < 18) { console.error('[错误] node 版本过低: ' + process.version); process.exit(1) }"
+# node 版本硬线：mongodb driver engines 要求 >=20.19（前端构建也够），装低了 npm ci 会炸
+command -v node >/dev/null || { echo "[错误] 未安装 node（平台要求 >=20.19）"; exit 1; }
+node -e "
+const [a, b] = process.versions.node.split('.').map(Number)
+if (a < 20 || (a === 20 && b < 19)) {
+  console.error('[错误] node 版本过低: ' + process.version + '（平台要求 >=20.19，mongodb driver 硬线）')
+  process.exit(1)
+}"
+
+# ---- Mongo 预检（mongodb 形态必需）----
+# 平台是 fail-closed 的：库连不上/非副本集 → 拒绝启动。预检把这一点在部署
+# 时就摊开，免得 systemd 反复重启看起来像"平台坏了"。事务要求副本集，
+# 单成员 rs 即可（安装与 rs.initiate 见 docs/deploy-test-server.md 三.1）。
+if [ "$STORAGE" = "mongodb" ] && [ "${SKIP_MONGO_CHECK:-0}" != "1" ]; then
+  command -v mongosh >/dev/null || {
+    echo "[错误] 需要 mongosh 做预检（或 SKIP_MONGO_CHECK=1 跳过自担风险）"; exit 1
+  }
+  if ! mongosh --quiet "$MONGODB_URI" --eval 'rs.status().ok' >/dev/null 2>&1; then
+    echo "[错误] MongoDB 不可达或不是副本集：$MONGODB_URI"
+    echo "       请先按 docs/deploy-test-server.md 安装 mongod（replSetName=dsh-rs）"
+    echo "       并执行 rs.initiate（判据：mongosh 里 rs.status().ok == 1）"
+    echo "       应急回退文件形态：STORAGE=json 重跑本脚本"
+    exit 1
+  fi
+  echo ">> mongod 预检通过（副本集可事务）"
 fi
 
 # ---- 运行用户（非 root 时创建并加入 docker 组）----
@@ -75,6 +109,8 @@ mkdir -p patches data/config data/users data/stats data/logs
 # ---- 生成 config.json ----
 if [ -f config.json ] && [ "${FORCE:-0}" != "1" ]; then
   echo ">> config.json 已存在，跳过生成（FORCE=1 可覆盖）"
+  echo "   注：存储形态由 systemd unit 注入的 env（DSH_STORAGE_PROVIDER/MONGODB_URI）"
+  echo "       优先生效，老 config.json 无 storage 段不影响切换"
 else
   cat > config.json <<EOF
 {
@@ -129,10 +165,15 @@ else
     "maxPort": 65535,
     "startupTimeoutMs": 120000,
     "comment": "image: Docker 镜像名称；basePort: 起始端口；maxPort: 最大端口；startupTimeoutMs: 容器启动超时（毫秒）"
+  },
+  "storage": {
+    "provider": "${STORAGE}",
+    "mongodbUri": "${MONGODB_URI}",
+    "comment": "存储形态（docs/storage-design.md 9 集合合同）：mongodb=权威在库（事务+TTL），json=文件轨。库名以 URI path（dsh_prod）为准，勿依赖 config.dbName 默认值。运行时 env DSH_STORAGE_PROVIDER/MONGODB_URI 可覆盖本段（灰度/应急切换）"
   }
 }
 EOF
-  echo ">> 已生成 config.json（管理员: $ADMIN_ADDRESS, publicHost: $PUBLIC_HOST）"
+  echo ">> 已生成 config.json（管理员: $ADMIN_ADDRESS, publicHost: $PUBLIC_HOST, storage: $STORAGE）"
 fi
 
 # ---- 构建租户镜像 ----
@@ -165,12 +206,16 @@ fi
 # ---- 安装 systemd 服务 ----
 NODE_BIN="$(command -v node)"
 UNIT=/etc/systemd/system/dsh-multitenant.service
+# URI 里的 & 在 sed 替换侧有 specials 含义，先行转义（将来带凭据的 URI 同样安全）
+ESC_MONGODB_URI="${MONGODB_URI//&/\\&}"
 sed -e "s|__NODE_BIN__|${NODE_BIN}|g" \
     -e "s|__REMOTE_DIR__|${ROOT}|g" \
     -e "s|__PORT__|${PORT}|g" \
     -e "s|__PUBLIC_HOST__|${PUBLIC_HOST}|g" \
     -e "s|__PUBLIC_TRUST__|${PUBLIC_TRUST}|g" \
     -e "s|__RUN_USER__|${RUN_USER}|g" \
+    -e "s|__STORAGE_PROVIDER__|${STORAGE}|g" \
+    -e "s|__MONGODB_URI__|${ESC_MONGODB_URI}|g" \
     deploy/dsh-multitenant.service > "$UNIT"
 systemctl daemon-reload
 systemctl enable --now dsh-multitenant
@@ -183,4 +228,9 @@ echo "   curl -s http://127.0.0.1:${PORT}/health"
 echo "   curl -s \"http://127.0.0.1:${PORT}/connect-status?address=${ADMIN_ADDRESS}\""
 echo "   浏览器（装 CCDAO 插件）访问: http://${PUBLIC_HOST}:${PORT}/"
 echo "   查看日志:   journalctl -u dsh-multitenant -f"
+if [ "$STORAGE" = "mongodb" ]; then
+  echo "   存储对账（真操作后库里应有行）:"
+  echo "   mongosh '$MONGODB_URI' --eval 'const d=db;print(\"users=\"+d.users.countDocuments({})+\" sessions=\"+d.sessions.countDocuments({})+\" audit=\"+d.audit.countDocuments({}))'"
+  echo "   登录一次后 audit 应新增 kind:'ops' admin_login 行（留痕链路）"
+fi
 echo ">> ============================================================"
