@@ -19,9 +19,10 @@ LOCAL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 # 日常更新一律【不带 data/】：mongodb 形态权威在库里，上传本地 data/ 只会
 # 把服务器镜像轨砸成本机的旧数据（真实事故预案里排第一的坑）。
-# 唯一例外：老服务器从 json 形态升级进库的那【一次】——INCLUDE_DATA=1 专送
-# 一次 data/ 作 M1 迁移原料，服务器首启（STORAGE=mongodb）自动搬家，日志
-# [startup] storage 迁移：{...}；搬完立刻回到日常 exclude 形态。
+# 唯一合法场景是"往服务器注入外部数据"（如空测试服务器拿开发机数据当种子，
+# 仅此一次）。注意：老 json 服务器升级进库【不需要】这个开关——迁移原料就是
+# 服务器自己的 data/（--exclude 历来的保护让它一直在场），普通上传+install
+# 首启即自动搬家（日志 [startup] storage 迁移：{...}）。
 EXCLUDES=(
   --exclude='node_modules/'
   --exclude='frontend/node_modules/'
@@ -34,7 +35,7 @@ EXCLUDES=(
   --exclude='.DS_Store'
 )
 if [ "${INCLUDE_DATA:-0}" = "1" ]; then
-  echo "!! INCLUDE_DATA=1：本次将【携带本地 data/】——仅老数据进库迁移那一次合法！"
+  echo "!! INCLUDE_DATA=1：本次将【携带本地 data/】覆盖服务器同名文件——仅"注入外部数据"合法（老服务器升级不需要它，原料在服务器本地）！"
 else
   EXCLUDES+=(--exclude='data/')
 fi

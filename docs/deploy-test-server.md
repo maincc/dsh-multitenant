@@ -203,9 +203,12 @@ mongorestore --uri='mongodb://127.0.0.1:27018/dsh_prod?replicaSet=dsh-rs' \
 
 1. **rsync-upload.sh**：日常上传继续 `--exclude data/`（原有行为；新形态下含义
    升级为"防砸服务器镜像轨"——mongodb 形态权威在库，本地 data/ 上去了只会
-   把服务器的镜像文件轨覆盖成旧数据）。新增**一次性通道**：老 json 服务器
-   升级进库时 `INCLUDE_DATA=1 ./deploy/rsync-upload.sh` 专送迁移原料，首启
-   自带 M1 迁移吃掉（日志 `[startup] storage 迁移：{...}`），之后回到日常形态。
+   把服务器的镜像文件轨覆盖成旧数据）。新增 `INCLUDE_DATA=1` 通道仅用于
+   **外部注料**（空测试服务器拿开发机数据当种子）。**老 json 服务器升级进库
+   不需要它**：M1 迁移原料=服务器自己的 data/（exclude 保护历次上传完好在场），
+   普通上传 + install 首启自动搬家（日志 `[startup] storage 迁移：{...}`）。
+   （2026-10-13 勘误：本节初版把 INCLUDE_DATA 标成"老服务器升级那一次"必用，
+   系误——原料在服务器本地，专送反会把服务器文件覆盖成本机的。）
 2. **install.sh 新变量**（默认即新形态，老用法基本不变）：
    - `STORAGE`（默认 **mongodb**；`json`=应急回退文件轨）
    - `MONGODB_URI`（默认 `mongodb://127.0.0.1:27018/dsh_prod?replicaSet=dsh-rs`

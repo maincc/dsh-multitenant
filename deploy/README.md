@@ -32,9 +32,11 @@ PUBLIC_HOST=1.2.3.4 \
 - mongod 装不了二进制、跑在 Docker 容器里时（配方见 `docs/deploy-test-server.md`
   三.1b，已实弹验证）：预检借道容器——`MONGO_CONTAINER=dsh-mongo` 即可，
   平台连接 URI 无需任何改动。
-- 老 json 服务器升级进库：先 `INCLUDE_DATA=1 ./deploy/rsync-upload.sh` 专送一次
-  迁移原料（仅此一次合法！日常上传绝不带 data/——会砸掉服务器镜像轨），
-  首启自动完成 M1 搬家（日志 `[startup] storage 迁移：{...}`）。
+- 老 json 服务器升级进库：**普通上传即可，别加 INCLUDE_DATA**——M1 迁移原料
+  是服务器自己的 `data/`（rsync 的 exclude 保护让它一直在场），install 后首启
+  自动搬家（日志 `[startup] storage 迁移：{...}`）。`INCLUDE_DATA=1` 只用于
+  "往空服务器注入本地数据当测试种子"这种外部注料场景，且会把本地文件覆盖
+  服务器同名文件，日常上传绝不可带。
 
 ### 3. 验证
 
