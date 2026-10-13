@@ -62,6 +62,9 @@ vi.mock('../src/services/data.service.js', async (importOriginal) => {
   const stub = Object.create(mod.dataService)
   stub.saveUserSessions = () => {}
   stub.saveSessions = () => {}
+  // 留痕加固后 logout/reset 等端点会调 logOperation——stub 掉防写真实
+  // operations.log；测试体内用 vi.mocked(dataService.logOperation) 断言留痕调用
+  stub.logOperation = vi.fn(async () => {})
   return { dataService: stub }
 })
 

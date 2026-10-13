@@ -224,9 +224,12 @@ export async function handleAdminRoutes(req, res, path, url) {
   if (path === '/api/admin/logout' && req.method === 'POST') {
     const cookie = req.headers.cookie || ''
     const match = cookie.match(/admin_session=([^;]+)/)
+    const who = getAdminSession(req) // 先取操作人：吊销之后就查不到了
     if (match) {
       try {
         await adminSessionStore.revoke(decodeURIComponent(match[1]))
+        // 会话吊销也是"改变世界的动作"——进录像
+        dataService.logOperation('admin_logout', { address: who })
       } catch {
         // 忽略损坏的 token
       }
@@ -371,6 +374,15 @@ export async function handleAdminRoutes(req, res, path, url) {
           failed.push({ name: volume, error: err.message })
         }
       }
+      // 批量不可逆删除必须留痕（真删了或有失败才记——全空说明没动世界）
+      if (removed.length || failed.length) {
+        dataService.logOperation('admin_cleanup_orphan_volumes', {
+          operator: getAdminSession(req),
+          removed,
+          failedNames: failed.map((f) => f.name),
+          skipped,
+        })
+      }
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(
         JSON.stringify({
@@ -463,6 +475,7 @@ export async function handleAdminRoutes(req, res, path, url) {
 
     try {
       const result = await userService.forceStopContainer(address)
+      dataService.logOperation('admin_force_stop', { address, operator: getAdminSession(req) })
       if (!res.headersSent) {
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify(result))
@@ -669,6 +682,13 @@ export async function handleAdminRoutes(req, res, path, url) {
 
     try {
       const result = await userService.deleteUserVolume(address)
+      // 不可逆删除必须留痕（volumeDeleted=真实删除的卷名；status:stopped=仅停容器）
+      dataService.logOperation('admin_delete_volume', {
+        address,
+        operator: getAdminSession(req),
+        volume: result?.volumeDeleted ?? null,
+        resultStatus: result?.status ?? null,
+      })
       if (!res.headersSent) {
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify(result))
@@ -1019,6 +1039,16 @@ export async function handleAdminRoutes(req, res, path, url) {
         .filter((i) => removed.includes(i.id))
         .reduce((s, i) => s + i.sizeBytes, 0)
 
+      // 破坏性删除留痕（真删了或有失败才记；全 skipped=没动世界）
+      if (removed.length || failed.length) {
+        dataService.logOperation('admin_image_prune', {
+          operator: getAdminSession(req),
+          removed,
+          failed,
+          skippedIds: skipped.map((s) => s.id),
+          freedBytes,
+        })
+      }
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(
         JSON.stringify({

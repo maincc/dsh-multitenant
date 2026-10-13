@@ -96,6 +96,7 @@ vi.mock('../src/services/data.service.js', async (importOriginal) => {
     saveSessions: vi.fn(() => {}),
     saveCwtRegistry: vi.fn(() => {}),
     saveCwtApplications: vi.fn(() => {}),
+    logOperation: vi.fn(() => Promise.resolve()), // 留痕加固后 reset/remove/logout 会调它——防写真实 operations.log
   }
   return { dataService: { ...mod.dataService, ...empty } }
 })
@@ -103,6 +104,7 @@ vi.mock('../src/services/data.service.js', async (importOriginal) => {
 import { handleUserRoutes } from '../src/routes/user.routes.js'
 import { handleTenantRoutes } from '../src/routes/tenant.routes.js'
 import { handleAdminRoutes } from '../src/routes/admin.routes.js'
+import { dataService } from '../src/services/data.service.js' // mock 壳——断言留痕调用
 import { userSessionStore } from '../src/middleware/user-auth.middleware.js'
 import { userService } from '../src/services/user.service.js'
 import { tenantConfigService } from '../src/services/tenant-config.service.js'
@@ -308,6 +310,11 @@ describe('tenant.routes.js remove / restart 错误码', () => {
     expect(userService.destroyContainer).toHaveBeenCalledWith(TARGET_ADDR, true, {
       keepVolume: false,
     })
+    // 留痕加固：删租户（不可逆）必须写 ops 审计——stub 不真写，断言"被调用"
+    expect(dataService.logOperation).toHaveBeenCalledWith(
+      'admin_remove_user',
+      expect.objectContaining({ address: TARGET_ADDR, keepVolume: false }),
+    )
   })
 
   it('remove?keepVolume=1 → 保留数据卷（keepVolume=true）', async () => {

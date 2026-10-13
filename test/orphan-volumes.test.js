@@ -67,6 +67,7 @@ vi.mock('../src/services/data.service.js', async (importOriginal) => {
     loadCwtApplications: vi.fn(() => []),
     readStateFile: vi.fn(() => null),
     saveState: vi.fn(() => {}),
+    logOperation: vi.fn(() => Promise.resolve()), // 留痕加固后 cleanup 端点会调——防写真实 operations.log
   }
   return { dataService: { ...mod.dataService, ...empty } }
 })

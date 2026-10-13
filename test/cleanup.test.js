@@ -29,6 +29,8 @@ describe('空闲清理活动检测', () => {
     // 双保险：即使出现 stopped 用户，销毁调用也打不到真实 Docker
     vi.spyOn(dockerService, 'removeContainer').mockResolvedValue(undefined)
     vi.spyOn(dockerService, 'removeVolume').mockResolvedValue(undefined)
+    // 留痕加固后 stop/destroy 会写 ops 审计——stub 掉，防污染真实 operations.log
+    vi.spyOn(dataService, 'logOperation').mockResolvedValue(undefined)
   })
 
   afterEach(() => {

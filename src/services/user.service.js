@@ -869,6 +869,11 @@ export class UserService {
         console.log(
           `[usage-limit] ${address} reached ${limit}min daily limit, container stopped (grace ${grace}s)`,
         )
+        dataService.logOperation('system_usage_limit_stop', {
+          address,
+          operator: 'system',
+          dailyLimitMinutes: limit,
+        })
       }
       if (changed) await this._saveState()
     } finally {
@@ -2610,6 +2615,12 @@ export class UserService {
           console.log(
             `[cleanup] stopped idle container: ${address} (idle ${idleMin}min, grace ${grace}s)`,
           )
+          // 系统动作也进录像：机器改变世界同样要可追溯（actor 拉平成 system）
+          dataService.logOperation('system_idle_stop', {
+            address,
+            operator: 'system',
+            idleMinutes: Number(idleMin),
+          })
           changed = true
         } catch (err) {
           if (String(err.stderr).includes('No such container')) {
@@ -2640,6 +2651,12 @@ export class UserService {
             console.log(
               `[cleanup] destroyed stopped container: ${address} (stopped ${stoppedMin}min, data preserved)`,
             )
+            dataService.logOperation('system_idle_destroy', {
+              address,
+              operator: 'system',
+              stoppedMinutes: Number(stoppedMin),
+              note: '容器已销毁，数据卷保留',
+            })
             changed = true
           } catch (err) {
             if (String(err.stderr).includes('No such container')) {
