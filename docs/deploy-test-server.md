@@ -157,7 +157,38 @@ mongorestore --uri='mongodb://127.0.0.1:27018/dsh_prod?replicaSet=dsh-rs' \
 - [ ] `systemctl restart dsh-platform` 后六链水合日志齐全，登录态仍在（sessions 未丢）
 - [ ] NTP：`timedatectl` 显示 System clock synchronized: yes
 
-## 五、上线前待还的账（提醒，不做进本手册）
+## 五、既有部署流程（deploy.sh / rsync-upload.sh / install.sh）的适配要点
+
+> 历史流程：`SERVER_HOST=... SERVER_USER=... REMOTE_DIR=/home/.../dsh-multitenant
+./deploy/rsync-upload.sh` 上传 + `ADMIN_ADDRESS=... PUBLIC_HOST=... ./deploy/install.sh`
+> 部署。脚本在部署副本侧、未入库——以下按新存储形态列必须核对的适配点，
+> 拿到脚本原文后逐条改（建议顺手收进仓库 deploy/ 目录，与代码同仓演进）。
+
+1. **rsync-upload.sh 的 data/ 策略要分叉**：json 时代整包 `data/` 上服务器=
+   带状态搬家，成立；mongodb 形态下**权威在库里**，`data/config/*.json` 只是
+   镜像轨。服务器已有用户时**别再覆盖服务器 data/**（会把镜像轨砸旧）：
+   加 `--exclude data/`。
+2. **两种场景分开**：
+   - 全新部署：`--exclude data/`，首启空库自建（schema 戳自动打）；
+   - 老服务器带 json 数据升级：反其道**专送一次 data/**（旧文件=迁移原料），
+     平台首启自带 M1 迁移（检测未迁数据+provider=mongodb 自动搬家，日志
+     `[startup] storage 迁移：{...}`），搬完后日常更新又回到 exclude 状态。
+3. **install.sh 注入两个新环境变量**（systemd unit / .env 均可）：
+   `DSH_STORAGE_PROVIDER=mongodb`、
+   `MONGODB_URI=mongodb://127.0.0.1:27018/dsh_prod?replicaSet=dsh-rs`
+   （库名写在 URI path，勿依赖 dbName 默认——27017 诱饵库教训）。
+   `ADMIN_ADDRESS`/`PUBLIC_HOST` 照旧。
+4. **install.sh 新增 mongod 段**：安装 7.0+、`replSetName=dsh-rs`、
+   `bindIp 127.0.0.1`、端口 27018、systemd 托管；空库幂等首跑
+   `rs.initiate`（判据：`mongosh --port 27018 --eval 'rs.status().ok'` 非 1 才初始化）。
+5. **Node 版本断言**：install.sh 开头加 `[ "$(node -p 'process.versions.node.split(".")[0]")" -ge 20 ]`
+   级别的显式检查（driver engines 硬线 ≥20.19；npm ci 会拦但报错不直观）。
+6. **失败语义提示**：平台 fail-closed——mongod 没起来平台拒绝启动（不会拿
+   陈旧文件顶上）。install.sh 的健康检查别把"平台没起"误报成平台坏了：
+   先探 mongod（`mongosh --port 27018 --eval db.runCommand({ping:1})`）再探平台。
+7. **镜像 tag**：老脚本若无 docker build/pull 段，补上（第三节步骤 2 的钉版对齐）。
+
+## 六、上线前待还的账（提醒，不做进本手册）
 
 1. HTTPS 反代 + cookie `Secure`（现在只 HttpOnly+SameSite=Strict，http 下发安全）
 2. Mongo 认证（最小权限账号：仅 dsh_prod readWrite）+ 跨机时 TLS
