@@ -1872,6 +1872,15 @@ export class UserService {
         if (!dryRun) {
           this.state.swtcUsers[address] = { ...user, pinnedImage: targetImage }
           await this._saveState()
+          // ops 留痕：钉版是"改变世界的动作"，进审计（尽力轨：写失败内部
+          // 已 catch 记日志，不反炸调用方；dryRun 预览不改世界所以不留痕）
+          dataService.logOperation('dsh_version_pin', {
+            address,
+            from: user.pinnedImage ?? null,
+            to: targetImage,
+            dshVersion: ver,
+            note: '容器不存在，仅记下钉版（下次创建生效）',
+          })
         }
         return {
           skipped: true,
@@ -2023,6 +2032,15 @@ export class UserService {
       versionChangedAt: Date.now(),
     }
     await this._saveState()
+    // ops 留痕：钉版并实际重建完成——旧→新版本进审计（rec 是赋值前快照，
+    // from 取旧值安全；尽力轨写失败内部记日志，不影响已完成的升级）
+    dataService.logOperation('dsh_version_pin', {
+      address,
+      from: rec.baseImageVersion ?? null,
+      to: targetVersion ?? null,
+      image: targetImage,
+      port: newPort,
+    })
 
     console.log(
       `[apply] ${address} rebuilt on image ${imageId} (dsh ${targetVersion ?? 'unknown'}), port ${newPort}`,

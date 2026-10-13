@@ -96,6 +96,20 @@ describe('mongodb 形态·meta 单例域（admin/dsh_image）', () => {
     expect(after.addresses).toHaveLength(2) // 幂等：没重复入列
   })
 
+  it('logOperation：ops 审计入库（kind=ops，at 是 BSON Date，行形状与迁移器兼容）', async (ctx) => {
+    if (!skip(ctx)) return
+    await dataService.logOperation('admin_login', { address: ADMIN_A })
+    const row = await store.col('audit').findOne({ kind: 'ops', action: 'admin_login' })
+    expect(row).toBeTruthy()
+    expect(row.at).toBeInstanceOf(Date) // TTL 只认 Date——90 天留存的前提（实测过 number 永不回收）
+    expect(row.actor).toBe(ADMIN_A) // P6：details.address 拉平成 actor，与迁移行同形
+    expect(row.operation).toBe('admin_login')
+    expect(row.details.address).toBe(ADMIN_A)
+    expect(typeof row.timestamp).toBe('number') // 原字段保留，读侧兼容
+    // CWT 审计面板按 kind:'cwt' 过滤 → ops 记录不会混进凭据录像
+    expect(await store.col('audit').countDocuments({ kind: 'cwt' })).toBe(0)
+  })
+
   it('init 水合往返：迁移合同的行形状直接可用', async (ctx) => {
     if (!skip(ctx)) return
     // 用迁移合同的原始形状重写两行（模拟 M1 从文件搬进来的数据）
@@ -146,6 +160,20 @@ describe('mongodb 形态·meta 单例域（admin/dsh_image）', () => {
       const raw = JSON.parse(readFileSync(dataService.dshImageFile(), 'utf8'))
       expect(raw.current.version).toBe('0.5.0-filemode')
       await p
+
+      // logOperation 同款分流：json 形态进临时 dataDir 的 operations.log，不进库
+      const auditBefore = await store.col('audit').countDocuments({ action: 'admin_promote' })
+      const q = dataService.logOperation('admin_promote', { address: ADMIN_B, operator: ADMIN_A })
+      const lines = readFileSync(join(dataService.dataDir, 'logs', 'operations.log'), 'utf8')
+        .trim()
+        .split('\n')
+      expect(JSON.parse(lines[lines.length - 1])).toEqual({
+        timestamp: expect.any(Number),
+        operation: 'admin_promote',
+        details: { address: ADMIN_B, operator: ADMIN_A },
+      })
+      await q
+      expect(await store.col('audit').countDocuments({ action: 'admin_promote' })).toBe(auditBefore)
     } finally {
       dataService.dataDir = realDir
       CONFIG.storage.provider = 'mongodb'

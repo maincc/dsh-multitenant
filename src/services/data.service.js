@@ -425,19 +425,17 @@ export class DataService {
       this._applyAdminOverride()
       const store = getStore()
       await store.connect()
-      await store
-        .col('meta')
-        .updateOne(
-          { _id: 'admin' },
-          {
-            $set: {
-              addresses: config.addresses ?? [],
-              history: config.history ?? [],
-              updatedAt: config.updatedAt,
-            },
+      await store.col('meta').updateOne(
+        { _id: 'admin' },
+        {
+          $set: {
+            addresses: config.addresses ?? [],
+            history: config.history ?? [],
+            updatedAt: config.updatedAt,
           },
-          { upsert: true },
-        )
+        },
+        { upsert: true },
+      )
       return
     }
     const filePath = join(this.dataDir, 'config', 'admin.json')
@@ -510,21 +508,47 @@ export class DataService {
   }
 
   /**
-   * 记录操作日志
+   * 记录操作日志（ops 审计：admin_login / admin_promote / 钉版 等）。
+   *
+   * provider 分流——mongodb 落 audit 集合（与 cwt 审计同表，靠 kind 区分），
+   * 这是 M2 漏掉的分流点：mongodb 形态下 ops 审计曾【只进文件、不进库】，
+   * 等于管理动作在库里没录像。行形状对齐迁移器（migration.js）的 ops 记录：
+   *   {kind:'ops', action, actor, at:Date(BSON)} + 保留原 {timestamp,operation,details}
+   * 供读侧兼容。关键语义：
+   *   - at 必须是【BSON Date】——audit 的 ttl_90d 索引只认 Date（90 天合规
+   *     留存要求，实测：number 类型 TTL 永不回收 = 静默泄露）。
+   *   - 写失败【不阻塞调用方】：审计是尽力轨（丢了是合规缺口，不是正确性/
+   *     安全漏洞；登录本身已成功不应因审计回滚）。返回 Promise 便于需要确认
+   *     的调用方 await；失败已被内部 catch，不会炸调用方。
+   * json 形态维持原样：operations.log 追加，行为零变化。
    */
   logOperation(operation, details) {
+    const timestamp = Date.now()
+    const logEntry = { timestamp, operation, details }
+    if (this.provider !== 'json') {
+      // async 闭包不可省：getStore()/col() 在"库未连接"时是【同步 throw】，
+      // 挂在 promise 链上接不住（e2e 实测炸过一次）——包进 try 转成 rejection，
+      // 才兑现"审计失败不反噬调用方"的承诺。
+      return (async () => {
+        await getStore()
+          .col('audit')
+          .insertOne({
+            ...logEntry,
+            kind: 'ops',
+            action: operation,
+            actor: details?.address ?? details?.operator ?? null,
+            at: new Date(timestamp),
+          })
+      })().catch((err) => {
+        console.error(`[audit:ops] 操作审计写库失败（不阻塞业务）：${operation} → ${err.message}`)
+      })
+    }
     const logDir = join(this.dataDir, 'logs')
     mkdirSync(logDir, { recursive: true })
     const logFile = join(logDir, 'operations.log')
-
-    const logEntry = {
-      timestamp: Date.now(),
-      operation,
-      details,
-    }
-
     appendFileSync(logFile, JSON.stringify(logEntry) + '\n', { mode: 0o600 })
     chmodSync(logFile, 0o600)
+    return Promise.resolve()
   }
 }
 
