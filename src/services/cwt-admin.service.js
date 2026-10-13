@@ -17,6 +17,7 @@ import { randomUUID } from 'node:crypto'
 import { CONFIG } from '../config/config.js'
 import { userService } from './user.service.js'
 import { cwtStore } from './cwt.store.js'
+import { dataService } from './data.service.js'
 import { cwtService } from './cwt.service.js'
 import { normalizeAddress } from '../utils/address.js'
 import {
@@ -121,6 +122,12 @@ class CwtAdminService {
       status: 'pending',
     }
     await cwtStore.addApplication(app)
+    // P2 留痕：申请入队也进时间线（此前 cwt 轨只有 approve/reject/revoke）
+    dataService.logOperation('cwt_apply', {
+      address,
+      usr: result.usr,
+      applicationId: app.id,
+    })
     console.log(`[cwt] new application from ${address} (usr=${result.usr}, alg=${result.alg})`)
     return { ok: true, applicationId: app.id, parsed: app.parsed }
   }

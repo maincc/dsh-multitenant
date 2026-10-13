@@ -26,6 +26,9 @@ import {
   ForbiddenError,
   NotFoundError,
 } from '../src/utils/errors.js'
+import { dataService } from '../src/services/data.service.js'
+import { isolateOpsLog } from './ops-log-isolation.js'
+isolateOpsLog(dataService) // 留痕 json 轨进临时目录，防写真实 operations.log
 
 /** 生成一个合法的 skill 文件文本 */
 function skillText(name = 'my-skill', extra = '') {

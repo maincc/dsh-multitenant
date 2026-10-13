@@ -162,6 +162,11 @@ describe('mongodb 形态·meta 单例域（admin/dsh_image）', () => {
       await p
 
       // logOperation 同款分流：json 形态进临时 dataDir 的 operations.log，不进库
+      // （若被全局守卫 stub 过则还原真实实现——本用例断言的就是真实文件轨）
+      const impl = Object.getPrototypeOf(dataService).logOperation
+      if (dataService.logOperation !== impl) {
+        vi.spyOn(dataService, 'logOperation').mockRestore()
+      }
       const auditBefore = await store.col('audit').countDocuments({ action: 'admin_promote' })
       const q = dataService.logOperation('admin_promote', { address: ADMIN_B, operator: ADMIN_A })
       const lines = readFileSync(join(dataService.dataDir, 'logs', 'operations.log'), 'utf8')

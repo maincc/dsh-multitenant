@@ -1125,6 +1125,12 @@ export async function handleAdminRoutes(req, res, path, url) {
         .buildImage(version, { context })
         .then(async (result) => {
           await dataService.saveDshImage({ ...result, by })
+          // P2 留痕：构建完成（新镜像进历史+默认）记一条
+          dataService.logOperation('dsh_image_build', {
+            address: by,
+            version: result.version,
+            imageId: result.imageId,
+          })
           // 镜像换了 → 能力缓存必须立即失效。
           // 否则最长 CAPABILITY_CACHE_TTL_MS 内，网关仍按旧镜像的
           // requiresToken 判定：比如刚从"需要认证的新版"退回"可直通的
@@ -1250,6 +1256,12 @@ export async function handleAdminRoutes(req, res, path, url) {
       // 在 TTL 内仍按旧镜像的 requiresToken 判定（见 dsh/image 构建处注释）
       dockerService.clearCapabilityCache()
 
+      // P2 留痕：钦定平台默认镜像（影响所有新建租户）记一条
+      dataService.logOperation('dsh_image_select', {
+        address: getAdminSession(req),
+        version,
+        imageId: applied.imageId,
+      })
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify({ ok: true, version, imageId: applied.imageId, current: record }))
     } catch (err) {

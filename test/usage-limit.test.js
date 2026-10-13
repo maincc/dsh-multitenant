@@ -17,6 +17,8 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { userService } from '../src/services/user.service.js'
 import { dockerService } from '../src/services/docker.service.js'
 import { dataService } from '../src/services/data.service.js'
+import { isolateOpsLog } from './ops-log-isolation.js'
+isolateOpsLog(dataService) // 留痕 json 轨进临时目录，防写真实 operations.log
 
 const ADDR = 'jndwretndumoqbt2uauclmfmx7xbqjykva'
 const NAME = `dsh-swtc-${ADDR}`
@@ -44,7 +46,6 @@ describe('每日使用时限', () => {
     userService.state.usageLimit = { enabled: true, dailyMinutes: 30, checkIntervalMs: 60000 }
     // 防真实落盘与真实 Docker 操作
     vi.spyOn(dataService, 'saveState').mockImplementation(() => {})
-    vi.spyOn(dataService, 'logOperation').mockResolvedValue(undefined) // 留痕加固 stub——防写真实 operations.log
     vi.spyOn(dockerService, 'stopContainer').mockResolvedValue(undefined)
     vi.spyOn(dockerService, 'containerInfo').mockResolvedValue({ exists: true, status: 'running' })
     vi.spyOn(dockerService, 'removeContainer').mockResolvedValue(undefined)
@@ -233,7 +234,6 @@ describe('并发安全：限时检查 × 空闲清理 / 用户停止同时命中
     userService._cleanupRunning = false
     userService.state.usageLimit = { enabled: true, dailyMinutes: 30, checkIntervalMs: 60000 }
     vi.spyOn(dataService, 'saveState').mockImplementation(() => {})
-    vi.spyOn(dataService, 'logOperation').mockResolvedValue(undefined) // 留痕加固 stub——防写真实 operations.log
     vi.spyOn(dockerService, 'removeContainer').mockResolvedValue(undefined)
     vi.spyOn(dockerService, 'removeVolume').mockResolvedValue(undefined)
     vi.spyOn(dockerService, 'containerInfo').mockResolvedValue({ exists: true, status: 'running' })

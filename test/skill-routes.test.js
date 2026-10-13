@@ -23,6 +23,9 @@ vi.mock('../src/services/tenant-config.service.js', async (importOriginal) => {
 
 import { handleSkillRoutes } from '../src/routes/skill.routes.js'
 import { tenantConfigService } from '../src/services/tenant-config.service.js'
+import { dataService } from '../src/services/data.service.js'
+import { isolateOpsLog } from './ops-log-isolation.js'
+isolateOpsLog(dataService) // 留痕 json 轨进临时目录，防写真实 operations.log
 
 const VALID_ADDR = 'jga9j9tkqtbcuohe2zqhvffbguved6o9or'
 

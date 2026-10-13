@@ -389,6 +389,12 @@ export class SkillService {
     if (idx === -1) entries.push(entry)
     else entries[idx] = entry
     await this.writeIndex(entries)
+    // P2 留痕：上架是内容治理动作，进 ops 审计
+    dataService.logOperation('skill_publish', {
+      address,
+      skill: shareName,
+      sha256: valid.sha256,
+    })
     return this.toPublic(entry)
   }
 
@@ -408,6 +414,12 @@ export class SkillService {
     entries.splice(idx, 1)
     await this.writeIndex(entries)
     rmSync(join(this.storeDir, name), { recursive: true, force: true })
+    dataService.logOperation('skill_unpublish', {
+      address: normalizeAddress(operator),
+      skill: name,
+      byAdmin: admin,
+      sharer: entry.sharer,
+    })
     return removed
   }
 
@@ -437,6 +449,7 @@ export class SkillService {
     const recordBytes = Buffer.byteLength(installText, 'utf8')
     const extra = installText === text ? {} : { installedHash: createHashForText(installText) }
     await this.recordInstall(address, name, entry.contentHash, recordBytes, 'market', extra)
+    dataService.logOperation('skill_install', { address, skill: name, source: 'market' })
     return this.toPublic(entry, true)
   }
 
@@ -456,6 +469,7 @@ export class SkillService {
     const b64 = Buffer.from(content, 'utf8').toString('base64')
     await tenantConfigService.runScript(address, 'install-skill.mjs', [name, b64])
     await this.recordInstall(address, name, valid.sha256, valid.bodyBytes, 'import')
+    dataService.logOperation('skill_import', { address, skill: name, sha256: valid.sha256 })
     return {
       ok: true,
       name,
@@ -472,6 +486,7 @@ export class SkillService {
     const name = assertSkillName(skillName)
     await tenantConfigService.runScript(address, 'remove-skill.mjs', [name])
     await this.removeInstallRecord(address, name)
+    dataService.logOperation('skill_uninstall', { address, skill: name })
     return { ok: true, name, removed: true }
   }
 
