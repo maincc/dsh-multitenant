@@ -26,6 +26,8 @@
 #    MONGODB_URI      存储连接串（默认 mongodb://127.0.0.1:27018/dsh_prod?replicaSet=dsh-rs）
 #                     库名必须写在 URI path——dbName 默认值 'dsh' 是历史诱饵，勿依赖
 #    SKIP_MONGO_CHECK=1  跳过 Mongo 预检（mongod 在远端且本机无 mongosh 时用）
+#    MONGO_CONTAINER    mongod 跑在 Docker 容器里（服务器装不了 mongodb 的形态）时
+#                       指定容器名，预检借道容器内 mongosh；配方见手册 1b 节
 # ============================================================================
 set -euo pipefail
 
@@ -48,6 +50,7 @@ if [ "$(id -u)" -ne 0 ]; then
     SKIP_MONGO_CHECK="${SKIP_MONGO_CHECK:-0}" \
     STORAGE="${STORAGE:-mongodb}" \
     MONGODB_URI="${MONGODB_URI:-}" \
+    MONGO_CONTAINER="${MONGO_CONTAINER:-}" \
     FORCE="${FORCE:-0}" \
     "$0" "$@"
 fi
@@ -83,17 +86,31 @@ if (a < 20 || (a === 20 && b < 19)) {
 # 时就摊开，免得 systemd 反复重启看起来像"平台坏了"。事务要求副本集，
 # 单成员 rs 即可（安装与 rs.initiate 见 docs/deploy-test-server.md 三.1）。
 if [ "$STORAGE" = "mongodb" ] && [ "${SKIP_MONGO_CHECK:-0}" != "1" ]; then
-  command -v mongosh >/dev/null || {
-    echo "[错误] 需要 mongosh 做预检（或 SKIP_MONGO_CHECK=1 跳过自担风险）"; exit 1
+  # mongod 跑在容器里（服务器装不了 mongodb 的常态）时，预检借道容器内的 mongosh：
+  # URI 里的 127.0.0.1 在容器网络命名空间内即本机 mongod，同一条 URI 照样成立
+  mongo_rs_check() {
+    if [ -n "${MONGO_CONTAINER:-}" ]; then
+      docker exec "$MONGO_CONTAINER" mongosh --quiet "$MONGODB_URI" --eval 'rs.status().ok' >/dev/null 2>&1
+    else
+      command -v mongosh >/dev/null || return 127
+      mongosh --quiet "$MONGODB_URI" --eval 'rs.status().ok' >/dev/null 2>&1
+    fi
   }
-  if ! mongosh --quiet "$MONGODB_URI" --eval 'rs.status().ok' >/dev/null 2>&1; then
-    echo "[错误] MongoDB 不可达或不是副本集：$MONGODB_URI"
-    echo "       请先按 docs/deploy-test-server.md 安装 mongod（replSetName=dsh-rs）"
-    echo "       并执行 rs.initiate（判据：mongosh 里 rs.status().ok == 1）"
-    echo "       应急回退文件形态：STORAGE=json 重跑本脚本"
+  if ! mongo_rs_check; then
+    if [ -z "${MONGO_CONTAINER:-}" ] && ! command -v mongosh >/dev/null 2>&1; then
+      echo "[错误] 宿主机没有 mongosh 且未指定 MONGO_CONTAINER，无法预检"
+      echo "       mongod 在容器里跑的场景：MONGO_CONTAINER=<容器名> 重跑本脚本"
+      echo "       （Docker 部署配方见 docs/deploy-test-server.md 三.1 替代）"
+      echo "       或 SKIP_MONGO_CHECK=1 跳过自担风险"
+    else
+      echo "[错误] MongoDB 不可达或不是副本集：$MONGODB_URI$([ -n "${MONGO_CONTAINER:-}" ] && echo "（经容器 $MONGO_CONTAINER 探测）")"
+      echo "       请先按 docs/deploy-test-server.md 装 mongod（副本集 dsh-rs）"
+      echo "       并执行 rs.initiate（判据：mongosh 里 rs.status().ok == 1）"
+      echo "       应急回退文件形态：STORAGE=json 重跑本脚本"
+    fi
     exit 1
   fi
-  echo ">> mongod 预检通过（副本集可事务）"
+  echo ">> mongod 预检通过（副本集可事务）$([ -n "${MONGO_CONTAINER:-}" ] && echo " · 经容器 $MONGO_CONTAINER")"
 fi
 
 # ---- 运行用户（非 root 时创建并加入 docker 组）----

@@ -65,6 +65,45 @@ net:
 mongosh --port 27018 --eval 'rs.initiate({_id:"dsh-rs",members:[{_id:0,host:"127.0.0.1:27018"}]})'
 ```
 
+### 1b. 替代方案：mongod 跑在 Docker 容器里（服务器装不了 mongodb 时用，✅ 已实弹验证）
+
+前提同样成立（driver 事务/TTL 全链路本机容器演练通过）。三条军规，都是踩过坑的：
+
+1. **端口三层一致**：mongod 监听端口 = 容器映射端口 = `rs.initiate` 声明的
+   成员地址端口。不一致时 initiate 直接报
+   `No host described in new configuration ... maps to this node`（演练实录）。
+2. **映射必须带 127.0.0.1 前缀**：`-p 127.0.0.1:27018:27018`。裸 `-p 27018:27018`
+   会绑到 0.0.0.0 所有网卡——docker 的 iptables 直通**绕过 ufw/firewalld 规则**，
+   无认证 mongo 秒泄露，测试环境也不行。
+3. **数据在卷里不在容器里**：`-v` 挂数据卷，容器可随手重建，数据不动。
+
+```bash
+docker run -d --name dsh-mongo --restart unless-stopped \
+  -p 127.0.0.1:27018:27018 \
+  -v dsh-mongo-data:/data/db \
+  mongo:7.0 --replSet dsh-rs --bind_ip_all --port 27018
+
+# 首启一次性初始化（幂等判据：rs.status().ok 已是 1 就别再跑）
+docker exec dsh-mongo mongosh --quiet --port 27018 --eval \
+  'rs.initiate({_id:"dsh-rs",members:[{_id:0,host:"127.0.0.1:27018"}]})'
+
+# 对账
+docker exec dsh-mongo mongosh --quiet --port 27018 --eval 'rs.status().ok'   # 应为 1
+```
+
+对既有链路的影响：
+
+- **平台 URI 零改动**：还是默认 `mongodb://127.0.0.1:27018/dsh_prod?replicaSet=dsh-rs`
+  （宿主机走 loopback 映射进容器，与原生 mongod 无差别）；
+- **install.sh 预检**：宿主机没有 mongosh 二进制时加 `MONGO_CONTAINER=dsh-mongo`，
+  预检借道容器内 mongosh（四条路径演练：真容器通过/假容器拦截/无mongosh提示/
+  宿主直连通过）；
+- **备份**：宿主机没有 mongodump 时借道容器——
+  `docker exec dsh-mongo mongodump --uri="$MONGODB_URI" --archive=/tmp/b.gz --gzip`
+  再 `docker cp dsh-mongo:/tmp/b.gz ./`；还原同理（docker cp 进去再 exec mongorestore）；
+- **systemd**：平台 unit 已有 `Requires=docker.service`，容器 `--restart
+unless-stopped` 与宿主机重启自拉起等效。
+
 ### 2. 租户镜像
 
 服务器 build（仓库内有 Dockerfile），**tag 要与钉版兼容**（本地已用
