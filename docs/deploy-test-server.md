@@ -203,12 +203,12 @@ mongorestore --uri='mongodb://127.0.0.1:27018/dsh_prod?replicaSet=dsh-rs' \
 
 1. **rsync-upload.sh**：日常上传继续 `--exclude data/`（原有行为；新形态下含义
    升级为"防砸服务器镜像轨"——mongodb 形态权威在库，本地 data/ 上去了只会
-   把服务器的镜像文件轨覆盖成旧数据）。新增 `INCLUDE_DATA=1` 通道仅用于
+   把服务器的镜像文件轨覆盖成旧数据）。新增 原 `INCLUDE_DATA=1`（现更名 `UPLOAD_DATA=1`，名实相符：只管上传装船，不管迁移）通道仅用于
    **外部注料**（空测试服务器拿开发机数据当种子）。**老 json 服务器升级进库
    不需要它**：M1 迁移原料=服务器自己的 data/（exclude 保护历次上传完好在场），
    普通上传 + install 首启自动搬家（日志 `[startup] storage 迁移：{...}`）。
    （2026-10-13 勘误：本节初版把 INCLUDE_DATA 标成"老服务器升级那一次"必用，
-   系误——原料在服务器本地，专送反会把服务器文件覆盖成本机的。）
+   系误——原料在服务器本地，专送反会把服务器文件覆盖成本机的。开关随后更名 UPLOAD_DATA=1。开关随后更名 UPLOAD_DATA=1。）
 2. **install.sh 新变量**（默认即新形态，老用法基本不变）：
    - `STORAGE`（默认 **mongodb**；`json`=应急回退文件轨）
    - `MONGODB_URI`（默认 `mongodb://127.0.0.1:27018/dsh_prod?replicaSet=dsh-rs`
@@ -224,6 +224,10 @@ mongorestore --uri='mongodb://127.0.0.1:27018/dsh_prod?replicaSet=dsh-rs' \
      （storage 以 systemd env 注入为准，优先级更高）；
    - systemd unit 注入 `DSH_STORAGE_PROVIDER`/`MONGODB_URI`（模板新增两行
      占位符；URI 的 `&` 已做 sed 转义，将来带凭据的 URI 同样安全）；
+   - **迁移预览**：npm ci 后若发现服务器本地有 `data/`（或 state.json），自动跑
+     `scripts/migrate-to-mongo.mjs --dry-run` 在屏幕上摊出搬家清单（9 集合各多少行；
+     该 dry-run 连库都不连，纯本地盘点）——迁移本体仍由首启自动完成，此段只让
+     部署人 install 时亲眼对账，失败不阻塞；
    - 部署完成输出附**存储对账命令**（数 users/sessions/audit + 登录后应有
      `admin_login` 录像的判据，对应第四节验收清单）。
 4. **update.sh 无需改**：npm ci + 重启天然沿用 unit 里的 env。注意：代码在

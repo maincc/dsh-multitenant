@@ -214,6 +214,20 @@ fi
 echo ">> 安装入口服务依赖 ..."
 npm ci --omit=dev
 
+# ---- 迁移预览（dry-run，只读）：把"首启会暗地里搬哪些家"摊在 install 屏幕上 ----
+# 迁移本体由平台首启自动完成（读服务器本地 data/ → 写入 MongoDB → 打"已迁移"
+# 戳，幂等）；这里仅用演练脚本先出一份账，让部署人亲眼确认料在、量对。
+# 失败不阻塞部署（无料/库不可达都只提示，首启逻辑不依赖本段）。
+if [ "$STORAGE" = "mongodb" ] && { [ -d data/config ] || [ -f state.json ]; }; then
+  echo ">> 发现服务器本地数据文件，出迁移预览（dry-run 只读，一行不写）..."
+  URI_NO_QUERY="${MONGODB_URI%%\?*}"
+  DB_NAME="${URI_NO_QUERY##*/}"
+  [ -z "$DB_NAME" ] && DB_NAME='dsh_prod'
+  node scripts/migrate-to-mongo.mjs --uri "$MONGODB_URI" --db "$DB_NAME" --dry-run \
+    || echo "   （预览未成功：不影响部署，首启按服务器 data/ 自动处理）"
+  echo "   ↑ 若数字符合预期，服务启动后首启将自动完成同样的搬家（只做一次）"
+fi
+
 # ---- 构建前端 ----
 if [ "${SKIP_FRONTEND:-0}" != "1" ]; then
   echo ">> 构建前端 ..."
