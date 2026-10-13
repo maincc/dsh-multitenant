@@ -120,6 +120,11 @@
 - **本地形态 ≠ 服务器形态**：mongod 仅监听 127.0.0.1 且未启鉴权（本机信任域）。
   上服务器是**部署门禁**：必须开 SCRAM 鉴权 + TLS + 最小权限独立账号（仅限 dsh 库
   CRUD 与会话事务权）+ 网络 ACL——已列入服务器化待办，不属于本地测试范围。
+  - 2026-10-13 拍板：先上**测试服务器**，暂不启用 HTTPS/Mongo 鉴权（沿用
+    127.0.0.1 信任域 + bindIp 不外听这条底线）；上述门禁在"给真实用户"前偿还。
+    cookie 现仅 HttpOnly+SameSite=Strict、无 Secure，平台自身无 TLS 终结，
+    届时 https 反代 + Secure cookie 一并处理。部署环境要求与上传步骤见
+    [docs/deploy-test-server.md](./deploy-test-server.md)。
 - 顺带：P2-4 的 `writeWithLock` 竞态在 mongodb 形态由多文档事务根治（写路径整体
   进事务）；json 形态维持原有锁语义。
 
