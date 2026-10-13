@@ -67,6 +67,15 @@ mongosh --port 27018 --eval 'rs.initiate({_id:"dsh-rs",members:[{_id:0,host:"127
 
 ### 1b. 替代方案：mongod 跑在 Docker 容器里（服务器装不了 mongodb 时用，✅ 已实弹验证）
 
+> ⚠️ **镜像选择先看 CPU**：MongoDB 5.0+ 官方二进制/镜像硬性要求 AVX 指令集，
+> 老款/精简服务器 CPU 没有它就 illegal instruction 崩溃（某部署机"装不了
+> mongodb"的病根即此）——这类机器须用自编译去 AVX 镜像（如 rnsc/mongo-wo-avx
+> 系列；Server 8.0 与平台 driver/事务/TTL 语义兼容），下述配方把镜像名替换
+> 即可，其余不变。另两点实战注记：①副本集是**出生就要对的形态**——不要先用
+> standalone 建容器再想接平台（事务在 standalone 上根本没有，实测预检报
+> "not running with --replSet" 拦截），空库直接按本节重建无损；②rs 配置住在
+> 数据卷里，容器可随意删重建（挂同一 `-v` 即可），`rs.initiate` 只做一次。
+
 前提同样成立（driver 事务/TTL 全链路本机容器演练通过）。三条军规，都是踩过坑的：
 
 1. **端口三层一致**：mongod 监听端口 = 容器映射端口 = `rs.initiate` 声明的
