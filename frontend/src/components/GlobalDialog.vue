@@ -185,6 +185,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   padding: 0.55rem 0.9rem;
   border-radius: 10px;
   font-size: 13px;
+  text-align: center;
   color: white;
   background: #334155;
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.25);
