@@ -59,21 +59,21 @@
 
       <!-- 右侧内容 -->
       <section class="gate-content">
-        <!-- 全局刷新条：所有 tab 通用。轮询间隔调长（如 5 分钟）时靠它手动取最新 -->
-        <div class="refresh-bar">
-          <span class="refresh-hint">{{
-            $t('admin.refreshAuto', { n: Math.round(refreshIntervalMs / 1000) })
-          }}</span>
-          <button class="btn btn-small" :disabled="loading" @click="refreshNow(true)">
-            {{ loading ? $t('admin.loading') : $t('admin.refresh') }}
-          </button>
-        </div>
-
         <!-- ════════ 系统概览 ════════ -->
         <div v-if="activeTab === 'overview'" class="tab-content">
           <div class="tab-head">
-            <h4>{{ $t('admin.tabOverview') }}</h4>
-            <p class="tab-hint">{{ $t('admin.overviewHint') }}</p>
+            <div class="tab-head-text">
+              <h4>{{ $t('admin.tabOverview') }}</h4>
+              <p class="tab-hint">{{ $t('admin.overviewHint') }}</p>
+            </div>
+            <div class="tab-head-actions">
+              <span class="refresh-hint">{{
+                $t('admin.refreshAuto', { n: Math.round(refreshIntervalMs / 1000) })
+              }}</span>
+              <button class="btn btn-small" :disabled="loading" @click="refreshNow(true)">
+                {{ loading ? $t('admin.loading') : $t('admin.refresh') }}
+              </button>
+            </div>
           </div>
 
           <!-- 当前管理员信息 -->
@@ -149,8 +149,18 @@
         <!-- ════════ 用户管理 ════════ -->
         <div v-else-if="activeTab === 'users'" class="tab-content">
           <div class="tab-head">
-            <h4>{{ $t('admin.tabUsers') }}</h4>
-            <p class="tab-hint">{{ $t('admin.userListHint') }}</p>
+            <div class="tab-head-text">
+              <h4>{{ $t('admin.tabUsers') }}</h4>
+              <p class="tab-hint">{{ $t('admin.userListHint') }}</p>
+            </div>
+            <div class="tab-head-actions">
+              <span class="refresh-hint">{{
+                $t('admin.refreshAuto', { n: Math.round(refreshIntervalMs / 1000) })
+              }}</span>
+              <button class="btn btn-small" :disabled="loading" @click="refreshNow(true)">
+                {{ loading ? $t('admin.loading') : $t('admin.refresh') }}
+              </button>
+            </div>
           </div>
           <div v-if="loading" class="loading">{{ $t('admin.loading') }}</div>
           <div v-else-if="error" class="error">{{ error }}</div>
@@ -267,9 +277,19 @@
         <!-- ════════ 配额配置（只读） ════════ -->
         <div v-else-if="activeTab === 'quota'" class="tab-content">
           <div class="tab-head">
-            <h4>{{ $t('admin.tabQuota') }}</h4>
-            <p class="tab-hint">{{ $t('admin.tierConfigHint') }}</p>
-            <p class="tab-hint tab-hint-warn">{{ $t('admin.diskQuotaHint') }}</p>
+            <div class="tab-head-text">
+              <h4>{{ $t('admin.tabQuota') }}</h4>
+              <p class="tab-hint">{{ $t('admin.tierConfigHint') }}</p>
+              <p class="tab-hint tab-hint-warn">{{ $t('admin.diskQuotaHint') }}</p>
+            </div>
+            <div class="tab-head-actions">
+              <span class="refresh-hint">{{
+                $t('admin.refreshAuto', { n: Math.round(refreshIntervalMs / 1000) })
+              }}</span>
+              <button class="btn btn-small" :disabled="loading" @click="refreshNow(true)">
+                {{ loading ? $t('admin.loading') : $t('admin.refresh') }}
+              </button>
+            </div>
           </div>
           <table>
             <thead>
@@ -300,8 +320,18 @@
         <!-- ════════ 资源监控 ════════ -->
         <div v-else-if="activeTab === 'monitor'" class="tab-content">
           <div class="tab-head">
-            <h4>{{ $t('admin.tabMonitor') }}</h4>
-            <p class="tab-hint">{{ $t('admin.monitorHint') }}</p>
+            <div class="tab-head-text">
+              <h4>{{ $t('admin.tabMonitor') }}</h4>
+              <p class="tab-hint">{{ $t('admin.monitorHint') }}</p>
+            </div>
+            <div class="tab-head-actions">
+              <span class="refresh-hint">{{
+                $t('admin.refreshAuto', { n: Math.round(refreshIntervalMs / 1000) })
+              }}</span>
+              <button class="btn btn-small" :disabled="loading" @click="refreshNow(true)">
+                {{ loading ? $t('admin.loading') : $t('admin.refresh') }}
+              </button>
+            </div>
           </div>
 
           <!-- 资源监控（M2：自动升级） -->
@@ -504,8 +534,18 @@
         <!-- ════════ CWT 授权 ════════ -->
         <div v-else-if="activeTab === 'cwt'" class="tab-content">
           <div class="tab-head">
-            <h4>{{ $t('admin.tabCwt') }}</h4>
-            <p class="tab-hint">{{ $t('admin.cwtManageHint') }}</p>
+            <div class="tab-head-text">
+              <h4>{{ $t('admin.tabCwt') }}</h4>
+              <p class="tab-hint">{{ $t('admin.cwtManageHint') }}</p>
+            </div>
+            <div class="tab-head-actions">
+              <span class="refresh-hint">{{
+                $t('admin.refreshAuto', { n: Math.round(refreshIntervalMs / 1000) })
+              }}</span>
+              <button class="btn btn-small" :disabled="loading" @click="refreshNow(true)">
+                {{ loading ? $t('admin.loading') : $t('admin.refresh') }}
+              </button>
+            </div>
           </div>
 
           <div v-if="cwtLoading" class="config-loading">
@@ -757,8 +797,18 @@
         <!-- ════════ DSH 版本管理 ════════ -->
         <div v-else-if="activeTab === 'dsh'" class="tab-content">
           <div class="tab-head">
-            <h4>{{ $t('admin.tabDsh') }}</h4>
-            <p class="tab-hint">{{ $t('admin.dshHint') }}</p>
+            <div class="tab-head-text">
+              <h4>{{ $t('admin.tabDsh') }}</h4>
+              <p class="tab-hint">{{ $t('admin.dshHint') }}</p>
+            </div>
+            <div class="tab-head-actions">
+              <span class="refresh-hint">{{
+                $t('admin.refreshAuto', { n: Math.round(refreshIntervalMs / 1000) })
+              }}</span>
+              <button class="btn btn-small" :disabled="loading" @click="refreshNow(true)">
+                {{ loading ? $t('admin.loading') : $t('admin.refresh') }}
+              </button>
+            </div>
           </div>
 
           <!-- 两层模型说明：镜像层 vs 租户层 -->
@@ -1301,6 +1351,7 @@
 </template>
 
 <script setup>
+import { askConfirm, toast } from '../composables/useDialog'
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import axios from 'axios'
 import { useI18n } from 'vue-i18n'
@@ -1657,10 +1708,10 @@ const openTenant = async (address) => {
       window.open(res.data.url, '_blank', 'noopener')
       return
     }
-    alert(t('admin.openFail', { err: res.data.error || res.status }))
+    toast(t('admin.openFail', { err: res.data.error || res.status }))
   } catch (err) {
     const msg = err.response?.data?.error || err.message
-    alert(t('admin.openFail', { err: msg }))
+    toast(t('admin.openFail', { err: msg }))
   }
 }
 
@@ -1676,7 +1727,7 @@ const handleAccountsChanged = async (accounts, source = 'unknown') => {
 
   if (!accounts || accounts.length === 0) {
     // 用户断开连接
-    alert(t('admin.walletDisconnected'))
+    toast(t('admin.walletDisconnected'))
     isAdmin.value = false
     notAdmin.value = false
     currentAdminAddress.value = null
@@ -1722,7 +1773,7 @@ const handleAccountsChanged = async (accounts, source = 'unknown') => {
         isAdmin.value = true
         notAdmin.value = false
         await fetchData()
-        alert(t('admin.switchedAdmin', { addr: `${address.slice(0, 10)}...` }))
+        toast(t('admin.switchedAdmin', { addr: `${address.slice(0, 10)}...` }))
       } else {
         // 签名通过但后端判定无权限
         notAdmin.value = true
@@ -1742,7 +1793,7 @@ const handleAccountsChanged = async (accounts, source = 'unknown') => {
         console.error('[AdminPanel] 验证新地址失败:', err)
         const msg = err.response?.data?.error || err.message
         loginError.value = t('admin.loginFail', { err: msg })
-        alert(t('admin.loginFail', { err: msg }))
+        toast(t('admin.loginFail', { err: msg }))
       }
     }
   }
@@ -1889,7 +1940,7 @@ const adminLogin = async () => {
 
 const switchWallet = () => {
   // 提示用户切换钱包
-  alert(t('admin.switchWalletHint'))
+  toast(t('admin.switchWalletHint'))
 }
 
 const logout = async () => {
@@ -1919,7 +1970,7 @@ const scanOrphanVolumes = async () => {
       ? t('admin.orphanFound', { n: orphanVolumes.value.length })
       : t('admin.orphanNone')
   } catch (err) {
-    alert(t('admin.orphanScanFail', { err: err.response?.data?.error || err.message }))
+    toast(t('admin.orphanScanFail', { err: err.response?.data?.error || err.message }))
   } finally {
     orphanScanning.value = false
   }
@@ -1927,26 +1978,33 @@ const scanOrphanVolumes = async () => {
 
 const cleanupOrphanVolumes = async () => {
   if (!orphanVolumes.value.length) return
-  if (!confirm(t('admin.orphanConfirm', { n: orphanVolumes.value.length }))) return
-  try {
-    // 批量删卷是不可逆操作 → 签名绑"删哪几个卷"（服务端只删 签署清单∩仍是孤儿 的交集）
-    const headers = await signAdminOperation('cleanup-orphan-volumes', {
-      volumes: [...orphanVolumes.value],
-    })
-    const res = await axios.post(
-      '/api/admin/cleanup-orphan-volumes',
-      { volumes: [...orphanVolumes.value] },
-      { headers },
-    )
-    const { removed = [], failed = [], skipped = [] } = res.data || {}
-    const parts = [t('admin.orphanCleaned', { ok: removed.length, fail: failed.length })]
-    if (skipped.length) parts.push(t('admin.orphanSkipped', { n: skipped.length }))
-    orphanNotice.value = parts.join('，')
-    // 刷新列表：剩下的就是删除失败的
-    orphanVolumes.value = (failed || []).map((f) => f.name)
-  } catch (err) {
-    alert(t('admin.orphanCleanFail', { err: err.response?.data?.error || err.message }))
-  }
+  await askConfirm({
+    message: t('admin.orphanConfirm', { n: orphanVolumes.value.length }),
+    details: [...orphanVolumes.value],
+    danger: true,
+    confirmLabel: t('admin.orphanCleanBtn', { n: orphanVolumes.value.length }),
+    run: async () => {
+      try {
+        // 批量删卷是不可逆操作 → 签名绑"删哪几个卷"（服务端只删 签署清单∩仍是孤儿 的交集）
+        const headers = await signAdminOperation('cleanup-orphan-volumes', {
+          volumes: [...orphanVolumes.value],
+        })
+        const res = await axios.post(
+          '/api/admin/cleanup-orphan-volumes',
+          { volumes: [...orphanVolumes.value] },
+          { headers },
+        )
+        const { removed = [], failed = [], skipped = [] } = res.data || {}
+        const parts = [t('admin.orphanCleaned', { ok: removed.length, fail: failed.length })]
+        if (skipped.length) parts.push(t('admin.orphanSkipped', { n: skipped.length }))
+        orphanNotice.value = parts.join('，')
+        // 刷新列表：剩下的就是删除失败的
+        orphanVolumes.value = (failed || []).map((f) => f.name)
+      } catch (err) {
+        toast(t('admin.orphanCleanFail', { err: err.response?.data?.error || err.message }))
+      }
+    },
+  })
 }
 
 const fetchData = async (force = false) => {
@@ -1988,9 +2046,9 @@ const runDiskScan = async () => {
       stats.value.resource.disk.volumes = volumes
       stats.value.resource.disk.preciseScannedAt = res.data.preciseScannedAt
     }
-    alert(t('admin.diskScanDone', { n: volumes?.length ?? 0 }))
+    toast(t('admin.diskScanDone', { n: volumes?.length ?? 0 }))
   } catch (err) {
-    alert(t('admin.diskScanFail', { err: err.response?.data?.error || err.message }))
+    toast(t('admin.diskScanFail', { err: err.response?.data?.error || err.message }))
   } finally {
     diskScanning.value = false
   }
@@ -2103,50 +2161,62 @@ const cwtRecordsNextPage = () => {
 }
 
 const approveCwt = async (id) => {
-  if (!confirm(t('admin.confirmApprove'))) return
-  cwtBusy.value = true
-  try {
-    // 发放豁免＝提权级操作 → 当场签名，绑申请 id
-    const headers = await signAdminOperation('cwt/approve', { id })
-    await axios.post(`/api/admin/cwt/applications/${id}/approve`, null, { headers })
-    alert(t('admin.approvedOk'))
-    await fetchData()
-  } catch (err) {
-    alert(t('admin.approveFail', { err: err.response?.data?.error || err.message }))
-  } finally {
-    cwtBusy.value = false
-  }
+  await askConfirm({
+    message: t('admin.confirmApprove'),
+    run: async () => {
+      cwtBusy.value = true
+      try {
+        // 发放豁免＝提权级操作 → 当场签名，绑申请 id
+        const headers = await signAdminOperation('cwt/approve', { id })
+        await axios.post(`/api/admin/cwt/applications/${id}/approve`, null, { headers })
+        toast(t('admin.approvedOk'))
+        await fetchData()
+      } catch (err) {
+        toast(t('admin.approveFail', { err: err.response?.data?.error || err.message }))
+      } finally {
+        cwtBusy.value = false
+      }
+    },
+  })
 }
 
 const rejectCwt = async (id) => {
-  if (!confirm(t('admin.confirmReject'))) return
-  cwtBusy.value = true
-  try {
-    const headers = await signAdminOperation('cwt/reject', { id })
-    await axios.post(`/api/admin/cwt/applications/${id}/reject`, null, { headers })
-    alert(t('admin.rejectedOk'))
-    await fetchData()
-  } catch (err) {
-    alert(t('admin.rejectFail', { err: err.response?.data?.error || err.message }))
-  } finally {
-    cwtBusy.value = false
-  }
+  await askConfirm({
+    message: t('admin.confirmReject'),
+    run: async () => {
+      cwtBusy.value = true
+      try {
+        const headers = await signAdminOperation('cwt/reject', { id })
+        await axios.post(`/api/admin/cwt/applications/${id}/reject`, null, { headers })
+        toast(t('admin.rejectedOk'))
+        await fetchData()
+      } catch (err) {
+        toast(t('admin.rejectFail', { err: err.response?.data?.error || err.message }))
+      } finally {
+        cwtBusy.value = false
+      }
+    },
+  })
 }
 
 const revokeCwt = async (address) => {
-  if (!confirm(t('admin.confirmRevoke', { addr: `${address.slice(0, 8)}…` }))) return
-  cwtBusy.value = true
-  try {
-    // 撤销授权会让用户跌回每日时限 → 当场签名，绑目标地址
-    const headers = await signAdminOperation('cwt/revoke', { address })
-    await axios.post(`/api/admin/cwt/registry/${address}/revoke`, null, { headers })
-    alert(t('admin.revokedOk'))
-    await fetchData()
-  } catch (err) {
-    alert(t('admin.revokeFail', { err: err.response?.data?.error || err.message }))
-  } finally {
-    cwtBusy.value = false
-  }
+  await askConfirm({
+    message: t('admin.confirmRevoke', { addr: `${address.slice(0, 8)}…` }),
+    run: async () => {
+      cwtBusy.value = true
+      try {
+        // 撤销授权会让用户跌回每日时限 → 当场签名，绑目标地址
+        const headers = await signAdminOperation('cwt/revoke', { address })
+        await axios.post(`/api/admin/cwt/registry/${address}/revoke`, null, { headers })
+        toast(t('admin.revokedOk'))
+        await fetchData()
+      } catch (err) {
+        toast(t('admin.revokeFail', { err: err.response?.data?.error || err.message }))
+      } finally {
+        cwtBusy.value = false
+      }
+    },
+  })
 }
 
 const upgradeUser = async (address, tier) => {
@@ -2154,9 +2224,9 @@ const upgradeUser = async (address, tier) => {
   try {
     await axios.post(`/api/upgrade/${address}`, { tier })
     await fetchData()
-    alert(t('admin.upgradeOk'))
+    toast(t('admin.upgradeOk'))
   } catch (err) {
-    alert(t('admin.upgradeFail', { err: err.response?.data?.error || err.message }))
+    toast(t('admin.upgradeFail', { err: err.response?.data?.error || err.message }))
   }
 }
 
@@ -2165,18 +2235,26 @@ const downgradeUser = async (address, tier) => {
   try {
     await axios.post(`/api/upgrade/${address}`, { tier })
     await fetchData()
-    alert(t('admin.downgradeOk'))
+    toast(t('admin.downgradeOk'))
   } catch (err) {
-    alert(t('admin.downgradeFail', { err: err.response?.data?.error || err.message }))
+    toast(t('admin.downgradeFail', { err: err.response?.data?.error || err.message }))
   }
 }
 
 const removeUser = async (address) => {
   const port = users.value.find((u) => u.address === address)?.port
-  if (!confirm(t('admin.confirmRemove', { addr: `${address.slice(0, 10)}...`, port }))) return
+  if (!(await askConfirm(t('admin.confirmRemove', { addr: `${address.slice(0, 10)}...`, port }))))
+    return
 
-  // 是否保留数据卷：确定=保留（留档/审计），取消=连同数据一起删除（彻底清除）
-  const keepVolume = confirm(t('admin.confirmRemoveKeepVolume'))
+  // 卷二选一改 danger 正语义（确认=连卷删除不可逆；取消/Esc/遮罩=保留数据卷，
+  // 关闭弹窗必落安全面——原生时代"取消=删除"的反向地雷就此拆除）
+  const wipeVolume = await askConfirm({
+    message: t('admin.confirmRemoveKeepVolume'),
+    danger: true,
+    confirmLabel: t('admin.volWipeBtn'),
+    cancelLabel: t('admin.volKeepBtn'),
+  })
+  const keepVolume = !wipeVolume
 
   try {
     const headers = await signAdminOperation('remove', { address, keepVolume })
@@ -2185,50 +2263,63 @@ const removeUser = async (address) => {
       headers,
     })
     await fetchData()
-    alert(keepVolume ? t('admin.removedOkKeepVolume') : t('admin.removedOk'))
+    toast(keepVolume ? t('admin.removedOkKeepVolume') : t('admin.removedOk'))
   } catch (err) {
-    alert(t('admin.removeFail', { err: err.response?.data?.error || err.message }))
+    toast(t('admin.removeFail', { err: err.response?.data?.error || err.message }))
   }
 }
 
 const forceStopUser = async (address) => {
-  if (!confirm(t('admin.confirmForceStop', { addr: `${address.slice(0, 10)}...` }))) return
-
-  try {
-    const headers = await signAdminOperation('force-stop', { address })
-    await axios.post(`/api/admin/force-stop/${address}`, null, { headers })
-    await fetchData()
-    alert(t('admin.forceStoppedOk'))
-  } catch (err) {
-    alert(t('admin.forceStopFail', { err: err.response?.data?.error || err.message }))
-  }
+  await askConfirm({
+    message: t('admin.confirmForceStop', { addr: `${address.slice(0, 10)}...` }),
+    danger: true,
+    run: async () => {
+      try {
+        const headers = await signAdminOperation('force-stop', { address })
+        await axios.post(`/api/admin/force-stop/${address}`, null, { headers })
+        await fetchData()
+        toast(t('admin.forceStoppedOk'))
+      } catch (err) {
+        toast(t('admin.forceStopFail', { err: err.response?.data?.error || err.message }))
+      }
+    },
+  })
 }
 
 const deleteVolume = async (address) => {
-  if (!confirm(t('admin.confirmDeleteVolume', { addr: `${address.slice(0, 10)}...` }))) return
+  if (!(await askConfirm(t('admin.confirmDeleteVolume', { addr: `${address.slice(0, 10)}...` }))))
+    return
 
-  if (!confirm(t('admin.confirmDeleteVolume2'))) return
-
-  try {
-    const headers = await signAdminOperation('delete-volume', { address })
-    await axios.post(`/api/admin/delete-volume/${address}`, null, { headers })
-    await fetchData()
-    alert(t('admin.volumeDeletedOk'))
-  } catch (err) {
-    alert(t('admin.removeFail', { err: err.response?.data?.error || err.message }))
-  }
+  await askConfirm({
+    message: t('admin.confirmDeleteVolume2'),
+    danger: true,
+    run: async () => {
+      try {
+        const headers = await signAdminOperation('delete-volume', { address })
+        await axios.post(`/api/admin/delete-volume/${address}`, null, { headers })
+        await fetchData()
+        toast(t('admin.volumeDeletedOk'))
+      } catch (err) {
+        toast(t('admin.removeFail', { err: err.response?.data?.error || err.message }))
+      }
+    },
+  })
 }
 
 const promoteUser = async (address) => {
-  if (!confirm(t('admin.confirmPromote', { addr: `${address.slice(0, 10)}...` }))) return
-  try {
-    const headers = await signAdminOperation('promote', { address })
-    await axios.post(`/api/admin/promote/${address}`, null, { headers })
-    await fetchData()
-    alert(t('admin.promoteOk'))
-  } catch (err) {
-    alert(t('admin.promoteFail', { err: err.response?.data?.error || err.message }))
-  }
+  await askConfirm({
+    message: t('admin.confirmPromote', { addr: `${address.slice(0, 10)}...` }),
+    run: async () => {
+      try {
+        const headers = await signAdminOperation('promote', { address })
+        await axios.post(`/api/admin/promote/${address}`, null, { headers })
+        await fetchData()
+        toast(t('admin.promoteOk'))
+      } catch (err) {
+        toast(t('admin.promoteFail', { err: err.response?.data?.error || err.message }))
+      }
+    },
+  })
 }
 
 const tierBadge = (tier) => {
@@ -2405,23 +2496,27 @@ const loadDshImages = async () => {
 
 /** 把选中的本地镜像钦定为平台默认（签名绑 ref；只影响以后的新建/重建） */
 const selectPlatformImage = async (img) => {
-  if (!confirm(t('admin.dshSelectConfirm', { ref: img.ref }))) return
-  dshSelecting.value = img.ref
-  try {
-    const headers = await signAdminOperation('dsh/select', { ref: img.ref })
-    await axios.post('/api/admin/dsh/select', { ref: img.ref }, { headers })
-    alert(t('admin.dshSelectDone', { ref: img.ref }))
-  } catch (err) {
-    alert(t('admin.dshSelectFail', { err: err.response?.data?.error || err.message }))
-  } finally {
-    // 无论成败都刷新：latest tag 可能已挪、清单与状态必须回到事实态
-    dshSelecting.value = ''
-    await Promise.all([
-      loadDshImages().catch(() => {}),
-      loadDshStatus().catch(() => {}),
-      loadDshVersions().catch(() => {}),
-    ])
-  }
+  await askConfirm({
+    message: t('admin.dshSelectConfirm', { ref: img.ref }),
+    run: async () => {
+      dshSelecting.value = img.ref
+      try {
+        const headers = await signAdminOperation('dsh/select', { ref: img.ref })
+        await axios.post('/api/admin/dsh/select', { ref: img.ref }, { headers })
+        toast(t('admin.dshSelectDone', { ref: img.ref }))
+      } catch (err) {
+        toast(t('admin.dshSelectFail', { err: err.response?.data?.error || err.message }))
+      } finally {
+        // 无论成败都刷新：latest tag 可能已挪、清单与状态必须回到事实态
+        dshSelecting.value = ''
+        await Promise.all([
+          loadDshImages().catch(() => {}),
+          loadDshStatus().catch(() => {}),
+          loadDshVersions().catch(() => {}),
+        ])
+      }
+    },
+  })
 }
 
 /** 拉 npm 可用版本（force=true 时让后端清缓存重拉） */
@@ -3237,6 +3332,7 @@ table {
 .orphan-notice {
   margin-top: 0.6rem;
   font-size: 0.85rem;
+  text-align: center;
   color: #475569;
 }
 
@@ -3813,17 +3909,22 @@ table {
   color: #15803d;
 }
 
-/* 全局刷新条 */
-.refresh-bar {
+/* 概括页头：左标题/提示，右自动刷新提示+刷新按钮（按钮跟随每个 tab 的概括区） */
+.tab-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.tab-head-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.tab-head-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
-  padding: 0.5rem 0.75rem;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
+  gap: 0.5rem;
+  flex-shrink: 0;
 }
 .refresh-hint {
   font-size: 11px;
