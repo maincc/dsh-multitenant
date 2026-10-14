@@ -21,10 +21,13 @@
 #                             传 latest 会装上当时最新版（可用；已支持代激活）。
 #    SKIP_IMAGE=1     跳过 docker build；SKIP_FRONTEND=1 跳过前端构建
 #    FORCE=1          已存在 config.json 时也重新生成
-#    STORAGE          存储形态：mongodb(默认)=权威在库；json=回退文件轨
-#                     （对应 docs/storage-design.md 的集中存储；应急回退用 json）
-#    MONGODB_URI      存储连接串（默认 mongodb://127.0.0.1:27018/dsh_prod?replicaSet=dsh-rs）
+#    STORAGE          存储形态：显式参数 > 现场 config.json 的 storage.provider > 默认 mongodb
+#                     （mongodb=权威在库；json=回退文件轨，对应 docs/storage-design.md）
+#    MONGODB_URI      存储连接串：显式参数 > 现场 config.json 的 storage.mongodbUri
+#                     > 默认 mongodb://127.0.0.1:27018/dsh_prod?replicaSet=dsh-rs
 #                     库名必须写在 URI path——dbName 默认值 'dsh' 是历史诱饵，勿依赖
+#                     注：现场 config 有 storage 段时以它为准（config 为第一现场的部署
+#                     姿势），预检/迁移预览/systemd env 三处统一用同一个解析结果
 #    SKIP_MONGO_CHECK=1  跳过 Mongo 预检（mongod 在远端且本机无 mongosh 时用）
 #    MONGO_CONTAINER    mongod 跑在 Docker 容器里（服务器装不了 mongodb 的形态）时
 #                       指定容器名，预检借道容器内 mongosh；配方见手册 1b 节
@@ -48,7 +51,7 @@ if [ "$(id -u)" -ne 0 ]; then
     SKIP_IMAGE="${SKIP_IMAGE:-0}" \
     SKIP_FRONTEND="${SKIP_FRONTEND:-0}" \
     SKIP_MONGO_CHECK="${SKIP_MONGO_CHECK:-0}" \
-    STORAGE="${STORAGE:-mongodb}" \
+    STORAGE="${STORAGE:-}" \
     MONGODB_URI="${MONGODB_URI:-}" \
     MONGO_CONTAINER="${MONGO_CONTAINER:-}" \
     FORCE="${FORCE:-0}" \
@@ -62,6 +65,32 @@ PORT="${PORT:-8090}"
 RUN_USER="${RUN_USER:-root}"
 IMAGE="${DSH_TENANT_IMAGE:-dsh-multitenant:latest}"
 DSH_VERSION="${DSH_VERSION:-0.1.1-rc.2}"
+# ---- 存储形态解析：参数 > 现场 config.json 的 storage 段 > 内置默认 ----
+# 为什么必须先读现场 config：install 注入的 systemd env 是三级优先里最高层，
+# 不读现场 config 就按内置默认注入/预检，会把"以 config.json 为第一现场"的
+# 部署悄悄架空（测试服务器实证：现场 config 写 27017/dsh_test，脚本默认
+# 27018/dsh_prod 预检直接拦死——预检没错，错在没尊重现场声明）。
+STORAGE="${STORAGE:-}"
+MONGODB_URI="${MONGODB_URI:-}"
+if [ -f config.json ] && command -v node >/dev/null; then
+  CFG_STORAGE=$(node -e '
+    try {
+      const s = JSON.parse(require("fs").readFileSync("config.json", "utf8")).storage || {}
+      process.stdout.write((s.provider || "") + "\t" + (s.mongodbUri || ""))
+    } catch (e) { process.exit(1) }
+  ' 2>/dev/null) || echo ">> [提示] config.json 解析失败，storage 现场读取跳过（生成/预检将按参数或默认走）"
+  CFG_PROVIDER="${CFG_STORAGE%%	*}"
+  CFG_URI="${CFG_STORAGE#*	}"
+  if [ -z "$STORAGE" ] && { [ "$CFG_PROVIDER" = "mongodb" ] || [ "$CFG_PROVIDER" = "json" ]; }; then
+    STORAGE="$CFG_PROVIDER"
+    echo ">> STORAGE 取自现场 config.json: $STORAGE"
+  fi
+  if [ -z "$MONGODB_URI" ] && [ -n "$CFG_URI" ]; then
+    MONGODB_URI="$CFG_URI"
+    echo ">> MONGODB_URI 取自现场 config.json: $MONGODB_URI"
+  fi
+fi
+# 无参数且现场无声明时的兜底默认：
 STORAGE="${STORAGE:-mongodb}"
 # 库名写死在默认 URI path（dsh_prod）——config.js 的 dbName 默认 'dsh' 是历史诱饵
 MONGODB_URI="${MONGODB_URI:-mongodb://127.0.0.1:27018/dsh_prod?replicaSet=dsh-rs}"
