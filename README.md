@@ -85,17 +85,16 @@ node entry-server.mjs
   写路径经多文档事务确认；本机首次启动会自动把磁盘数据**一次性搬家**入库（幂等，
   重启即 `skipped`），此后库为权威、进程启动时六域水合（水合失败拒绝启动）。
 
-启用 mongodb 形态（本机两步；`storage` 段的字段与语义见 `config.json.example`；服务器部署形态由 deploy/install.sh 注入 config/systemd env，与本地测试默认互不干扰）：
+启用 mongodb 形态（本机两步；形态声明住在 config.json `storage` 段——字段语义与测试护盾机制见 `config.json.example`；服务器由 deploy/install.sh 注入）：
 
 ```bash
 # ① 起专用单成员副本集（事务前提；brew 的 27017 不碰、27018 专用）
 scripts/mongo-rs.sh start        # 空目录首起自动 rs.initiate；重启电脑后也是这一条
 
-# ② 带存储环境变量启动平台（本地切库走 env 是正规姿势：仓库 config.json
-#    同时是测试默认配置，须保持 provider=json，勿写死 mongodb）
-DSH_STORAGE_PROVIDER=mongodb \
-MONGODB_URI='mongodb://127.0.0.1:27018/dsh_prod?replicaSet=dsh-rs' \
+# ② 直接启动——config.json 的 storage 段就是形态声明（provider=mongodb）
 npm start
+# 测试不受影响：globalSetup 护盾在 worker 钉 provider=json（见 config.json.example
+# storage.comment）；应急回退文件形态用 env 压 config：DSH_STORAGE_PROVIDER=json npm start
 ```
 
 备份与恢复演练（mongodump 快照读，平台在线即可备）：

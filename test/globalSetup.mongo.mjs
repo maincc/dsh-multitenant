@@ -54,6 +54,14 @@ export async function setup() {
   // vitest 1.6：globalSetup 的 {env} 返回值【不会】注入 worker（2.x 才有），
   // 但 setup 在 worker fork 前于主进程执行——直接写主进程 env 即被子进程继承。
   process.env.DSH_TEST_MONGO = LIVE_RS
+  // ── 测试存储护盾 ──
+  // env 是 config.js 三级优先里的最高层：在 worker 继承前钉死"json + 无库名
+  // 基 URI"，仓库 config.json 从此可以写 provider=mongodb（本地平台启动
+  // 免 env）而不把几百个按文件形态断言的用例带偏（2026-10-13 实证：不设护
+  // 盾时 config 写 mongodb 直接爆 15 用例）。真库用例各自 new MongoStore
+  // 显式传库名（dsh_test 系），与本盾互不干扰、永不写 dsh_prod。
+  process.env.DSH_STORAGE_PROVIDER = 'json'
+  process.env.MONGODB_URI = LIVE_RS
   // 1) 复用人工起的专用实例（本会话反复使用的那台；绝不回收）
   if (await probe(LIVE_RS)) {
     return

@@ -48,3 +48,11 @@ describe('配置模块', () => {
     })
   })
 })
+
+// ── 测试存储护盾（globalSetup 钉 env；config.json 写 mongodb 也不带偏测试）──
+describe('测试环境存储护盾', () => {
+  it('worker env 被 globalSetup 钉死：provider=json、URI 无库名基串', () => {
+    expect(process.env.DSH_STORAGE_PROVIDER).toBe('json')
+    expect(process.env.MONGODB_URI).toBe('mongodb://127.0.0.1:27018/?replicaSet=dsh-rs')
+  })
+})
