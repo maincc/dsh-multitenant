@@ -173,11 +173,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   background: #b91c1c;
 }
 .gd-toasts {
+  /* 屏幕顶部横居中（原生 alert 居中惯性 + toast 不遮挡操作流的折中） */
   position: fixed;
-  top: 1rem;
-  right: 1rem;
+  top: 1.25rem;
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 0.5rem;
   z-index: 3100;
   max-width: min(420px, calc(100vw - 2rem));
@@ -204,6 +207,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 .gd-toast-enter-from,
 .gd-toast-leave-to {
   opacity: 0;
-  transform: translateY(-6px);
+  transform: translateY(-6px) scale(0.97);
 }
 </style>
