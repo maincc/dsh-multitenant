@@ -59,21 +59,21 @@
 
       <!-- 右侧内容 -->
       <section class="gate-content">
-        <!-- 全局刷新条：所有 tab 通用。轮询间隔调长（如 5 分钟）时靠它手动取最新 -->
-        <div class="refresh-bar">
-          <span class="refresh-hint">{{
-            $t('admin.refreshAuto', { n: Math.round(refreshIntervalMs / 1000) })
-          }}</span>
-          <button class="btn btn-small" :disabled="loading" @click="refreshNow(true)">
-            {{ loading ? $t('admin.loading') : $t('admin.refresh') }}
-          </button>
-        </div>
-
         <!-- ════════ 系统概览 ════════ -->
         <div v-if="activeTab === 'overview'" class="tab-content">
           <div class="tab-head">
-            <h4>{{ $t('admin.tabOverview') }}</h4>
-            <p class="tab-hint">{{ $t('admin.overviewHint') }}</p>
+            <div class="tab-head-text">
+              <h4>{{ $t('admin.tabOverview') }}</h4>
+              <p class="tab-hint">{{ $t('admin.overviewHint') }}</p>
+            </div>
+            <div class="tab-head-actions">
+              <span class="refresh-hint">{{
+                $t('admin.refreshAuto', { n: Math.round(refreshIntervalMs / 1000) })
+              }}</span>
+              <button class="btn btn-small" :disabled="loading" @click="refreshNow(true)">
+                {{ loading ? $t('admin.loading') : $t('admin.refresh') }}
+              </button>
+            </div>
           </div>
 
           <!-- 当前管理员信息 -->
@@ -149,8 +149,18 @@
         <!-- ════════ 用户管理 ════════ -->
         <div v-else-if="activeTab === 'users'" class="tab-content">
           <div class="tab-head">
-            <h4>{{ $t('admin.tabUsers') }}</h4>
-            <p class="tab-hint">{{ $t('admin.userListHint') }}</p>
+            <div class="tab-head-text">
+              <h4>{{ $t('admin.tabUsers') }}</h4>
+              <p class="tab-hint">{{ $t('admin.userListHint') }}</p>
+            </div>
+            <div class="tab-head-actions">
+              <span class="refresh-hint">{{
+                $t('admin.refreshAuto', { n: Math.round(refreshIntervalMs / 1000) })
+              }}</span>
+              <button class="btn btn-small" :disabled="loading" @click="refreshNow(true)">
+                {{ loading ? $t('admin.loading') : $t('admin.refresh') }}
+              </button>
+            </div>
           </div>
           <div v-if="loading" class="loading">{{ $t('admin.loading') }}</div>
           <div v-else-if="error" class="error">{{ error }}</div>
@@ -267,9 +277,19 @@
         <!-- ════════ 配额配置（只读） ════════ -->
         <div v-else-if="activeTab === 'quota'" class="tab-content">
           <div class="tab-head">
-            <h4>{{ $t('admin.tabQuota') }}</h4>
-            <p class="tab-hint">{{ $t('admin.tierConfigHint') }}</p>
-            <p class="tab-hint tab-hint-warn">{{ $t('admin.diskQuotaHint') }}</p>
+            <div class="tab-head-text">
+              <h4>{{ $t('admin.tabQuota') }}</h4>
+              <p class="tab-hint">{{ $t('admin.tierConfigHint') }}</p>
+              <p class="tab-hint tab-hint-warn">{{ $t('admin.diskQuotaHint') }}</p>
+            </div>
+            <div class="tab-head-actions">
+              <span class="refresh-hint">{{
+                $t('admin.refreshAuto', { n: Math.round(refreshIntervalMs / 1000) })
+              }}</span>
+              <button class="btn btn-small" :disabled="loading" @click="refreshNow(true)">
+                {{ loading ? $t('admin.loading') : $t('admin.refresh') }}
+              </button>
+            </div>
           </div>
           <table>
             <thead>
@@ -300,8 +320,18 @@
         <!-- ════════ 资源监控 ════════ -->
         <div v-else-if="activeTab === 'monitor'" class="tab-content">
           <div class="tab-head">
-            <h4>{{ $t('admin.tabMonitor') }}</h4>
-            <p class="tab-hint">{{ $t('admin.monitorHint') }}</p>
+            <div class="tab-head-text">
+              <h4>{{ $t('admin.tabMonitor') }}</h4>
+              <p class="tab-hint">{{ $t('admin.monitorHint') }}</p>
+            </div>
+            <div class="tab-head-actions">
+              <span class="refresh-hint">{{
+                $t('admin.refreshAuto', { n: Math.round(refreshIntervalMs / 1000) })
+              }}</span>
+              <button class="btn btn-small" :disabled="loading" @click="refreshNow(true)">
+                {{ loading ? $t('admin.loading') : $t('admin.refresh') }}
+              </button>
+            </div>
           </div>
 
           <!-- 资源监控（M2：自动升级） -->
@@ -504,8 +534,18 @@
         <!-- ════════ CWT 授权 ════════ -->
         <div v-else-if="activeTab === 'cwt'" class="tab-content">
           <div class="tab-head">
-            <h4>{{ $t('admin.tabCwt') }}</h4>
-            <p class="tab-hint">{{ $t('admin.cwtManageHint') }}</p>
+            <div class="tab-head-text">
+              <h4>{{ $t('admin.tabCwt') }}</h4>
+              <p class="tab-hint">{{ $t('admin.cwtManageHint') }}</p>
+            </div>
+            <div class="tab-head-actions">
+              <span class="refresh-hint">{{
+                $t('admin.refreshAuto', { n: Math.round(refreshIntervalMs / 1000) })
+              }}</span>
+              <button class="btn btn-small" :disabled="loading" @click="refreshNow(true)">
+                {{ loading ? $t('admin.loading') : $t('admin.refresh') }}
+              </button>
+            </div>
           </div>
 
           <div v-if="cwtLoading" class="config-loading">
@@ -757,8 +797,18 @@
         <!-- ════════ DSH 版本管理 ════════ -->
         <div v-else-if="activeTab === 'dsh'" class="tab-content">
           <div class="tab-head">
-            <h4>{{ $t('admin.tabDsh') }}</h4>
-            <p class="tab-hint">{{ $t('admin.dshHint') }}</p>
+            <div class="tab-head-text">
+              <h4>{{ $t('admin.tabDsh') }}</h4>
+              <p class="tab-hint">{{ $t('admin.dshHint') }}</p>
+            </div>
+            <div class="tab-head-actions">
+              <span class="refresh-hint">{{
+                $t('admin.refreshAuto', { n: Math.round(refreshIntervalMs / 1000) })
+              }}</span>
+              <button class="btn btn-small" :disabled="loading" @click="refreshNow(true)">
+                {{ loading ? $t('admin.loading') : $t('admin.refresh') }}
+              </button>
+            </div>
           </div>
 
           <!-- 两层模型说明：镜像层 vs 租户层 -->
@@ -3813,17 +3863,22 @@ table {
   color: #15803d;
 }
 
-/* 全局刷新条 */
-.refresh-bar {
+/* 概括页头：左标题/提示，右自动刷新提示+刷新按钮（按钮跟随每个 tab 的概括区） */
+.tab-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.tab-head-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.tab-head-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
-  padding: 0.5rem 0.75rem;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
+  gap: 0.5rem;
+  flex-shrink: 0;
 }
 .refresh-hint {
   font-size: 11px;
