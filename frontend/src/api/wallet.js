@@ -31,11 +31,12 @@ export async function requestAccounts() {
   return address
 }
 
-/** 钱包对 nonce 签名（from 必须为原始大小写插件地址） */
-export async function signMessage(pluginAddress, nonce) {
+/** 钱包对**服务端下发的消息**签名（from 必须为原始大小写插件地址）
+ *  注意：传的应是 challenge 响应里的 `message`（用途绑定内容），不是 `nonce`。 */
+export async function signMessage(pluginAddress, message) {
   return window.ccdao.request({
     method: 'swtc_signMessage',
-    params: [pluginAddress, nonce],
+    params: [pluginAddress, message],
   })
 }
 
@@ -102,8 +103,10 @@ export function watchAccountsChanged(handler, { pollIntervalMs = 3000 } = {}) {
 export async function signChallenge() {
   const pluginAddress = await requestAccounts()
   const challengeRes = await axios.post('/api/skills/challenge', { address: pluginAddress })
-  const nonce = challengeRes.data.nonce
-  const signature = await signMessage(pluginAddress, nonce)
+  // 签的是服务端下发的**用途绑定消息**（message，hex），不是裸 nonce：
+  // 这样为其它用途取得的签名不能在此处兑现（跨端点凭证混淆加固）。
+  const { nonce, message } = challengeRes.data
+  const signature = await signMessage(pluginAddress, message)
   const publicKey = await getPublicKey(pluginAddress)
   return { address: pluginAddress, nonce, signature, publicKey }
 }

@@ -4,7 +4,13 @@
 
 import { CONFIG, isAdmin } from '../config/config.js'
 import { userService } from '../services/user.service.js'
-import { tenantConfigService } from '../services/tenant-config.service.js'
+import { dataService } from '../services/data.service.js'
+import { resourceExhaustedPayload } from '../utils/resource-exhausted.js'
+import {
+  tenantConfigService,
+  SIGN_PURPOSE,
+  buildSignedMessage,
+} from '../services/tenant-config.service.js'
 import { validateSwtcAddress } from '../middleware/validate.middleware.js'
 import { rateLimit } from '../middleware/rate-limit.middleware.js'
 import { userSessionStore } from '../middleware/user-auth.middleware.js'
@@ -42,7 +48,7 @@ export async function handleTenantRoutes(req, res, path, url) {
 
       if (!hasAuth) {
         // 未携带签名材料 → 401 + 下发一次性挑战（签名后带参重试）
-        const challenge = tenantConfigService.issueChallenge(address)
+        const challenge = tenantConfigService.issueChallenge(address, SIGN_PURPOSE.CONNECT)
         if (!challenge) {
           res.writeHead(503, { 'content-type': 'application/json; charset=utf-8' })
           res.end(JSON.stringify({ error: '挑战发放过载，请稍后重试', code: 'OVERLOAD' }))
@@ -53,20 +59,29 @@ export async function handleTenantRoutes(req, res, path, url) {
           JSON.stringify({
             error: '需要签名验证容器所有权',
             code: 'SIGNATURE_REQUIRED',
-            nonce: challenge,
+            nonce: challenge.nonce,
+            // message 是交给钱包签的用途绑定内容（hex）；要签的是它，不是 nonce
+            message: challenge.message,
             address,
           }),
         )
         return true
       }
-      // 验签（公钥推导地址 === 声称地址）
-      if (!tenantConfigService.verifySignature(address, nonce, signature, publicKey)) {
+      // 验签（公钥推导地址 === 声称地址）：签的是 CONNECT 用途绑定消息
+      if (
+        !tenantConfigService.verifySignature(
+          address,
+          buildSignedMessage(SIGN_PURPOSE.CONNECT, address, nonce),
+          signature,
+          publicKey,
+        )
+      ) {
         res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify({ error: '签名验证失败', code: 'FORBIDDEN' }))
         return true
       }
-      // 挑战一次性（防重放）
-      if (!tenantConfigService.consumeChallenge(address, nonce)) {
+      // 挑战一次性（防重放）+ 必须是为 CONNECT 用途发放的
+      if (!tenantConfigService.consumeChallenge(address, nonce, SIGN_PURPOSE.CONNECT)) {
         res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify({ error: '挑战已失效，请重新获取', code: 'FORBIDDEN' }))
         return true
@@ -110,18 +125,10 @@ export async function handleTenantRoutes(req, res, path, url) {
       res.writeHead(302, headers)
       res.end()
     } catch (err) {
-      // 资源不足，进入等待队列
+      // 资源不足，进入等待队列（组装与 gateway-enter 单源共用）
       if (err.code === 'RESOURCE_EXHAUSTED') {
         res.writeHead(202, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(
-          JSON.stringify({
-            error: '资源不足，请等待',
-            code: 'RESOURCE_EXHAUSTED',
-            queuePosition: err.queuePosition,
-            failedResources: err.failedResources,
-            message: '系统资源不足，您已进入等待队列，资源释放后将自动为您创建容器',
-          }),
-        )
+        res.end(JSON.stringify(resourceExhaustedPayload(err)))
       } else if (err.code === 'USAGE_LIMIT_REACHED') {
         res.writeHead(202, { 'content-type': 'application/json; charset=utf-8' })
         res.end(
@@ -347,8 +354,13 @@ export async function handleTenantRoutes(req, res, path, url) {
 
   // POST /api/user/:address/reset - 删除数据卷并重建容器（放弃当前配置重新开始）
   if (path.startsWith('/api/user/') && path.endsWith('/reset') && req.method === 'POST') {
-    const { getSessionAddress, requireAdmin } = await import('../middleware/auth.middleware.js')
-    const session = getSessionAddress(req)
+    // 必须用 getRequestAddress（管理员会话优先，其次普通用户会话）。
+    // 曾经误用 getSessionAddress —— 那个只读**管理员会话**，于是普通用户
+    // （只有 user_session）的 session 恒为 null，重置自己的容器永远 403
+    // 「没有权限重置此容器」。本文件其它"本人或管理员"判定都用的
+    // getRequestAddress，只有这里漏改。
+    const { getRequestAddress } = await import('../middleware/auth.middleware.js')
+    const session = getRequestAddress(req)
     const isAdminUser = session && isAdmin(session)
 
     // 提取地址：/api/user/<address>/reset
@@ -372,8 +384,27 @@ export async function handleTenantRoutes(req, res, path, url) {
       return true
     }
 
+    // reset 会**删除数据卷**（user.service.resetContainer 第 2 步），破坏性等同
+    // delete-volume → 管理员代他人重置时，除会话外还要求当场钱包签名，绑目标地址。
+    // 本人重置自己免签：普通用户没有"操作挑战"通道，且前端已强制双重确认。
+    if (session !== address) {
+      const { requireAdminSignature, attachAdminSignature } =
+        await import('../middleware/admin-signature.middleware.js')
+      const { getAdminSession } = await import('../middleware/auth.middleware.js')
+      attachAdminSignature(req)
+      if (!requireAdminSignature(req, res, 'reset', { address }, getAdminSession(req))) {
+        return true
+      }
+    }
+
     try {
       const result = await userService.resetContainer(address)
+      // 抹卷重建=用户侧最毁灭性操作，必留痕（本人重置 vs 管理员代重置分清）
+      dataService.logOperation('user_reset', {
+        address,
+        operator: session,
+        byAdmin: session !== address,
+      })
       // 重置 = 清空后立即重建：构造新容器 url（跟随请求 Host，同 /connect），
       // 并签发该地址的会话 cookie，前端直接一步进入新容器
       let containerUrl = null
@@ -430,10 +461,34 @@ export async function handleTenantRoutes(req, res, path, url) {
     if (!validateSwtcAddress(address, res)) return true
     address = normalizeAddress(address)
 
+    // 删除租户（默认连数据卷一起删）是不可逆的 → 除会话外还要求当场钱包签名。
+    // 签名走请求头，这里显式挂一次（本文件不走 admin.routes 的统一解析）。
+    const { requireAdminSignature, attachAdminSignature } =
+      await import('../middleware/admin-signature.middleware.js')
+    const { getAdminSession } = await import('../middleware/auth.middleware.js')
+    attachAdminSignature(req)
+    if (
+      !requireAdminSignature(
+        req,
+        res,
+        'remove',
+        { address, keepVolume: url.searchParams.get('keepVolume') === '1' },
+        getAdminSession(req),
+      )
+    ) {
+      return true
+    }
+
     try {
       // 管理端删除：默认连数据卷一起删（不留孤儿卷）；?keepVolume=1 保留数据卷（留档/审计）
       const keepVolume = url.searchParams.get('keepVolume') === '1'
       const result = await userService.destroyContainer(address, true, { keepVolume })
+      // 删租户（默认连卷）不可逆，必留痕
+      dataService.logOperation('admin_remove_user', {
+        address,
+        operator: getAdminSession(req),
+        keepVolume,
+      })
       if (!res.headersSent) {
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify(result))

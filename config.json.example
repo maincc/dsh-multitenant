@@ -8,7 +8,9 @@
     "addresses": [
       "your-admin-address-here"
     ],
-    "comment": "管理员地址列表（小写），只有这些地址可以访问管理页面"
+    "refreshIntervalMs": 15000,
+    "usersCacheTtlMs": 3000,
+    "comment": "管理员地址列表（小写），只有这些地址可以访问管理页面；refreshIntervalMs: 管理端列表页自动刷新间隔（毫秒），只在前台可见时轮询（切后台/切走标签页会停，回前台与切 tab 都会立即刷一次），默认 15000（15 秒），想更省可填 300000（5 分钟），此时用顶栏「刷新」按钮补实时性；usersCacheTtlMs: 列表接口的服务端短缓存（毫秒），多个管理员/标签页共享一次 docker 采样，任何状态写入都会立即失效它，默认 3000"
   },
   "cleanup": {
     "stopTimeoutMs": 900000,
@@ -36,22 +38,69 @@
     "enabled": true,
     "ttlMs": 300000,
     "allowCwtEnt": false,
-    "comment": "CWT 申请-审批-出示：enabled 开关；ttlMs 出示 token 全局时效（毫秒）；allowCwtEnt CWT_ENT 组形态预留（本期关闭）"
+    "maxPending": 500,
+    "maxTokenBytes": 8192,
+    "comment": "CWT 申请-审批-出示：enabled 开关；ttlMs 出示 token 全局时效（毫秒，单向：0 ≤ now−issued ≤ ttl，拒绝未来签发；用于申请/出示防重放）；审批时只复核签名、不校验时效（人工审批延迟不应失败）；allowCwtEnt: 预留字段——当前代码无任何实现，改它不会有效果（CWT_ENT 组形态尚未开发）；maxPending: 待审批申请总条数上限（默认 500），超限时申请接口返回 503——/api/user/cwt/apply 是未认证端点且 token 自签，没有这道硬边界可被刷爆磁盘/灌满审批队列；maxTokenBytes: 单个 token 字节上限（默认 8192）"
   },
   "skills": {
     "autoInvoke": false,
     "comment": "技能市场信任边界（P0-4）：autoInvoke=false 时，市场技能安装到用户卷的副本强制注入 disable-model-invocation: true，模型不会自动调用，仅供用户显式使用；改 true 则放行自动调用（风险自担）"
   },
   "tiers": {
-    "1": { "label": "基础", "memory": "512m", "disk": "1g", "cpus": "1.0", "pids": 256 },
-    "2": { "label": "增强", "memory": "1g", "disk": "2g", "cpus": "2.0", "pids": 512 },
-    "3": { "label": "高性能", "memory": "2g", "disk": "4g", "cpus": "4.0", "pids": 1024 }
+    "1": {
+      "label": "基础",
+      "memory": "512m",
+      "disk": "1g",
+      "cpus": "1.0",
+      "pids": 256
+    },
+    "2": {
+      "label": "增强",
+      "memory": "1g",
+      "disk": "2g",
+      "cpus": "2.0",
+      "pids": 512
+    },
+    "3": {
+      "label": "高性能",
+      "memory": "2g",
+      "disk": "4g",
+      "cpus": "4.0",
+      "pids": 1024
+    }
   },
   "docker": {
     "image": "dsh-multitenant:latest",
     "basePort": 31000,
     "maxPort": 65535,
     "startupTimeoutMs": 120000,
-    "comment": "image: Docker 镜像名称；basePort: 起始端口；maxPort: 最大端口；startupTimeoutMs: 容器启动超时（毫秒）"
+    "privilegeProfile": "auto",
+    "seccompProfilePath": "",
+    "minFreeBytes": 4294967296,
+    "preflightMode": "warn",
+    "maintenance": {
+      "enabled": true,
+      "keepCache": "4GB",
+      "lowFreeBytes": 4294967296,
+      "fstrim": true
+    },
+    "comment": "image: Docker 镜像名称；basePort: 起始端口；maxPort: 最大端口；startupTimeoutMs: 容器启动超时（毫秒）；privilegeProfile: 租户容器安全参数档位——auto（默认，首次供应前实跑 bwrap 探测选档，不过则回落 compat 并告警）/ strict（强制 SYS_ADMIN+no-new-privileges+白名单seccomp，失败不回退）/ compat（强制旧行为 seccomp=unconfined，应急开关）；seccompProfilePath: 白名单 seccomp 文件的宿主机路径（由 Docker daemon 读取；留空=仓库内 deploy/seccomp-bwrap-minimal.json，rsync 部署随代码走）；minFreeBytes: 资源预检的 Docker 数据分区最低可用字节数（默认 4GiB；实际检查的是 docker info 的 DockerRootDir 所在分区，macOS 上该路径不在宿主则自动回落 /）；preflightMode: warn=预检不足只记日志照常放行（上线观察期默认）/ enforce=不足即拒绝供应并入等待队列；maintenance: 磁盘维护定时器——enabled 关全部周期回收（env DSH_MAINTENANCE_ENABLED=0/1 可应急覆盖）/ keepCache builder 缓存保留量（image prune 只删悬空、永不 -a、永不 volume prune，构建进行中自动避让）/ lowFreeBytes 低盘告警阈值（面板红条+日志列可回收 top-N）/ fstrim 仅 Docker Desktop 的 TRIM 回吐开关"
+  },
+  "dsh": {
+    "buildContext": ".",
+    "allowLocalBuild": true,
+    "registry": "https://registry.npmjs.org",
+    "versionCacheTtlMs": 600000,
+    "npmCacheDir": "",
+    "npmTimeoutMs": 20000,
+    "authActivateTimeoutMs": 8000,
+    "backupDir": "",
+    "backupBeforeApply": true,
+    "comment": "DSH 版本升级/回退（管理端 /admin）。buildContext: docker build 上下文（相对项目根），需含 Dockerfile；allowLocalBuild: 允许平台自己构建镜像（需服务器有完整源码树）；registry: 版本列表来源 npm registry；versionCacheTtlMs: 版本列表缓存时长（毫秒，默认 10 分钟）；npmTimeoutMs: npm view 超时（毫秒）；npmCacheDir: npm view 缓存目录（留空自动用 data/npm-cache，规避宿主 ~/.npm 不可写导致的 EPERM）；authActivateTimeoutMs: DSH 浏览器认证「代激活」请求超时（毫秒，默认 8000）——容器刚重启、launch token 还没打印时可能超时，网络慢可调大；backupDir: 切换版本前卷快照目录（留空=平台 data/backups，运行用户必然可写；填绝对路径如 /backup/dsh-multitenant 需该目录可写，不可写会自动降级）；backupBeforeApply: 应用镜像前强制备份租户卷（强烈建议保持 true——版本间可能有存储格式差异，这是唯一可能真丢数据的风险点）"
+  },
+  "storage": {
+    "provider": "mongodb",
+    "mongodbUri": "mongodb://127.0.0.1:27018/dsh_prod?replicaSet=dsh-rs",
+    "comment": "存储形态(docs/storage-design.md 九集合合同)：provider 'mongodb'=权威在库(事务+TTL)，'json'=文件形态(应急回退，用 env DSH_STORAGE_PROVIDER=json 压本段)。本仓库 config.json 写 mongodb 是安全的：test/globalSetup.mongo.mjs 测试护盾在 worker 钉 provider=json+无库名基URI，测试永不受影响也永不写 dsh_prod；真库用例各自显式传隔离库名。库名务必写 URI path(dsh_prod)，勿依赖代码默认'dsh'；事务要求副本集(单成员即可)。服务器部署由 deploy/install.sh 注入 config 段/systemd env"
   }
 }

@@ -19,6 +19,7 @@
 > **✅ 阶段 2 P0-1 已完成（2026-09-05）**：管理员钱包签名挑战登录 + 服务端随机会话（sha256 存表、12h 过期、可吊销、一次性 nonce 防重放、单测 11 例 + 实机 curl 端到端验证）。
 > **✅ P0-2 已完成（2026-09-05）**：/connect 所有权口径选 B（钱包签名：已存在容器免签直连、创建新容器要求验签；单测 6 例 + 实机验证 401/403）。阶段 1 已含 /leave 鉴权 + 三接口限流。
 > **✅ P0-4 已落地第 1 步（2026-09-05）**：`skills.autoInvoke` 默认 false——市场技能安装到用户卷时强制 `disable-model-invocation: true`（模型不可自动调用未装受信技能）；前端安装前确认 + 风险提示。P1-10（发布正文静态扫描）仍待办。
+> **✅ 追加加固：签名用途绑定 + 挑战分池 + 平台 cookie 不出境（补审计）**：修复"诱导管理员盲签 → 兑换 12h 管理会话"的跨端点凭证混淆链。要点：① 被签内容改为服务端构造的 `hex(dsh-multitenant|<purpose>|<address>|<nonce>[|<binding>])`，purpose ∈ {login, connect, tenant-config, skills, gateway-verify, admin-op} 且为服务端常量；② 挑战池按 `用途|地址` 分池；③ `tenant-proxy` 转发进租户容器前剥离 `admin_session`/`user_session`/`gw_ok`。**注意**：客户端（前端 + 网关校验页）必须签服务端下发的 `message` 字段而非 `nonce`，属**破坏性协议变更**（老前端会验签失败），需与前端 dist 同步部署。详见 README「已修复 35」。
 > **P0 全部执行完成**，剩余 P1/P2 按需推进。
 
 ### P0-1 管理员登录改「钱包签名挑战」，会话改服务端随机会话（✅ 已完成）
@@ -69,18 +70,18 @@
 
 ## 2. P1 —— 纵深与资源防线（每个独立可做，S~M）
 
-| 编号  | 问题                                                     | 方案                                                                                                                                                                                        | 测试/验收                                                |
-| ----- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| P1-1  | API Key 经 argv 泄露（tenant-config.service.js:157-161） | `merge-credentials.mjs` 增加 stdin 读值模式；`execFile('docker', args, {stdin})`；`runScript` 错误剥离命令行只留退出码+裁剪 stderr                                                          | docker 失败时响应/日志无密钥                             |
-| P1-2  | SSRF（probe-models.mjs）                                 | 服务端拒绝私网/链路本地/环回/云 metadata 段；DNS 解析后校验目标 IP；并发限流                                                                                                                | baseURL 指向 169.254.x 被拒                              |
-| P1-3  | IDOR `/api/user/:address`（user.routes.js:194-202）      | 无会话一律 403，仅 `session===address \|\| isAdmin`；用户会话见 P0-1 会话体系扩展                                                                                                           | 无 Cookie 读任意用户 403                                 |
-| P1-4  | 内存预检 Linux 恒真（user.service.js:60-68）             | 改用 Linux 可用内存（`/proc/meminfo` 或 `free`）；查询失败 **fail-closed** 拒绝供应                                                                                                         | Linux 下耗尽时拒绝创建                                   |
-| P1-5  | 卷无配额（docker.service.js:125-129）                    | `--storage-opt size=<tier.disk>` 已接入；仅 btrfs/zfs/devicemapper（及 overlay2+xfs+pquota）硬生效；overlay2/overlayfs 下记录不强制 → 降级告警 + 监控兜底。选型矩阵见 roadmap-next.md §P1-5 | 写满卷被拒而非写满宿主（配额后端）；软配额环境有降级告警 |
-| P1-6  | 容器特权过大（docker.service.js:104-109）                | 评估去掉 `SYS_ADMIN`（需容器内验证 bwrap 可用性）；至少 `--cap-drop ALL` + `--security-opt no-new-privileges`                                                                               | 租户容器内无特权/提权操作                                |
-| P1-7  | CWT 申请队列/token 无限（cwt-admin.service.js:59-73）    | token ≤8KB；pending 队列总条数上限（超限 503）；approved 的 token 改存 SHA-256 摘要（复核时需重新出示）                                                                                     | 洪泛申请被拒；磁盘增长受控                               |
-| P1-8  | CWT 状态泄露 approvedBy（cwt-admin.service.js:100-107）  | approvedBy 仅管理员可见；usr 对非本人脱敏                                                                                                                                                   | 匿名查不到审批人                                         |
-| P1-9  | 数据文件 0644（data.service.js 全量）                    | `writeFileSync` 显式 `{mode:0o600}`（state/cwt/日志）                                                                                                                                       | 落到磁盘 0600                                            |
-| P1-10 | 技能正文审核（接 P0-4 第 2 步）                          | 发布扫描 + 未审核标记 + 举报                                                                                                                                                                | 恶意技能被标记拦截                                       |
+| 编号  | 问题                                                     | 方案                                                                                                                                                                                                      | 测试/验收                                                |
+| ----- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| P1-1  | API Key 经 argv 泄露（tenant-config.service.js:157-161） | `merge-credentials.mjs` 增加 stdin 读值模式；`execFile('docker', args, {stdin})`；`runScript` 错误剥离命令行只留退出码+裁剪 stderr                                                                        | docker 失败时响应/日志无密钥                             |
+| P1-2  | SSRF（probe-models.mjs）                                 | 服务端拒绝私网/链路本地/环回/云 metadata 段；DNS 解析后校验目标 IP；并发限流                                                                                                                              | baseURL 指向 169.254.x 被拒                              |
+| P1-3  | IDOR `/api/user/:address`（user.routes.js:194-202）      | 无会话一律 403，仅 `session===address \|\| isAdmin`；用户会话见 P0-1 会话体系扩展                                                                                                                         | 无 Cookie 读任意用户 403                                 |
+| P1-4  | 内存预检 Linux 恒真（user.service.js:60-68）             | 改用 Linux 可用内存（`/proc/meminfo` 或 `free`）；查询失败 **fail-closed** 拒绝供应                                                                                                                       | Linux 下耗尽时拒绝创建                                   |
+| P1-5  | 卷无配额（docker.service.js:125-129）                    | `--storage-opt size=<tier.disk>` 已接入；仅 btrfs/zfs/devicemapper（及 overlay2+xfs+pquota）硬生效；overlay2/overlayfs 下记录不强制 → 降级告警 + 监控兜底。选型矩阵见 roadmap-next.md §P1-5               | 写满卷被拒而非写满宿主（配额后端）；软配额环境有降级告警 |
+| P1-6  | 容器特权过大（docker.service.js:104-109）                | 评估去掉 `SYS_ADMIN`（需容器内验证 bwrap 可用性）；至少 `--cap-drop ALL` + `--security-opt no-new-privileges`                                                                                             | 租户容器内无特权/提权操作                                |
+| P1-7  | CWT 申请队列/token 无限（cwt-admin.service.js:59-73）    | ✅ **已完成（限流+上限）**：token ≤8KB（413）、pending 总条数上限 500（503，**先于验签**卸载）、接口按 IP 限流 10/min；⬜ 剩余：approved token 改存 SHA-256 摘要（属存储格式迁移，需单独一轮 + 迁移方案） | 洪泛申请被拒；磁盘增长受控                               |
+| P1-8  | CWT 状态泄露 approvedBy（cwt-admin.service.js:100-107）  | approvedBy 仅管理员可见；usr 对非本人脱敏                                                                                                                                                                 | 匿名查不到审批人                                         |
+| P1-9  | 数据文件 0644（data.service.js 全量）                    | `writeFileSync` 显式 `{mode:0o600}`（state/cwt/日志）                                                                                                                                                     | 落到磁盘 0600                                            |
+| P1-10 | 技能正文审核（接 P0-4 第 2 步）                          | 发布扫描 + 未审核标记 + 举报                                                                                                                                                                              | 恶意技能被标记拦截                                       |
 
 ## 3. P2 —— 部署与体验类（依赖外部环境，S）
 
@@ -96,6 +97,36 @@
 | P2-8  | 配置浅合并 + 死配置                               | 深合并；清理 `allowCwtEnt` 死配置；admin 名单单一数据源                   |
 | P2-9  | 错误消息回显内部信息（/connect 502 等）           | 统一脱敏：只透传稳定错误码，详情进日志                                    |
 | P2-10 | 等待队列丢失（重启即空）                          | 队列落盘（data/queue.json）                                               |
+
+---
+
+### 存储 MongoDB 形态 —— 安全边界与语义（2026-10，已实现）
+
+设计合同见 `storage-design.md`；这里只记安全相关的"为什么"：
+
+- **吊销/登出必须 await 库写确认**（M2-3 按安全强度分级）：撤销若只是尽力镜像，
+  进程崩溃重启后库里的旧会话会被水合"复活"——已登出的凭据重新有效是安全倒退。
+  create/懒删除走尽力镜像可接受（最坏重新登录一次），revoke 不行。
+- **TTL 只认 BSON Date**（实测）：`audit` 90 天合规留存靠 TTL 回收，而 TTL 监控器
+  **永不**清理数字类型时间字段——存 `number` = 静默泄露。sessions.expiresAt 与
+  audit.at 落库一律 `new Date(ms)`；读取侧水合时 `Number()` 归一，调用方无感。
+- **拒绝带病启动（fail-closed）**：库不可达/水合失败 → 进程拒绝启动，不会以半空
+  缓存对外服务或把脏状态镜像回库；回退 json 形态只需去环境变量重启。
+- **优雅关停排空**（M3-3）：SIGTERM/SIGINT 先 await 会话镜像队列落库再 exit(0)，
+  不留"最后一次登录未入库就退场"的窗口。
+- **备份即敏感副本**：mongodump 快照含会话/审计/用户全量，备份目录权限 0700；
+  保留 7 份自动老化；恢复演练一律还原进**影子库** `dsh_prod_verify` 对账后即删，
+  演练路径对生产库零写暴露。
+- **本地形态 ≠ 服务器形态**：mongod 仅监听 127.0.0.1 且未启鉴权（本机信任域）。
+  上服务器是**部署门禁**：必须开 SCRAM 鉴权 + TLS + 最小权限独立账号（仅限 dsh 库
+  CRUD 与会话事务权）+ 网络 ACL——已列入服务器化待办，不属于本地测试范围。
+  - 2026-10-13 拍板：先上**测试服务器**，暂不启用 HTTPS/Mongo 鉴权（沿用
+    127.0.0.1 信任域 + bindIp 不外听这条底线）；上述门禁在"给真实用户"前偿还。
+    cookie 现仅 HttpOnly+SameSite=Strict、无 Secure，平台自身无 TLS 终结，
+    届时 https 反代 + Secure cookie 一并处理。部署环境要求与上传步骤见
+    [docs/deploy-test-server.md](./deploy-test-server.md)。
+- 顺带：P2-4 的 `writeWithLock` 竞态在 mongodb 形态由多文档事务根治（写路径整体
+  进事务）；json 形态维持原有锁语义。
 
 ---
 

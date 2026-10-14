@@ -9,7 +9,7 @@
  */
 
 import { skillService } from '../services/skill.service.js'
-import { tenantConfigService } from '../services/tenant-config.service.js'
+import { tenantConfigService, SIGN_PURPOSE } from '../services/tenant-config.service.js'
 import { requireAdmin, getAdminSession } from '../middleware/auth.middleware.js'
 import { validateSwtcAddress } from '../middleware/validate.middleware.js'
 import { isAdmin } from '../config/config.js'
@@ -55,7 +55,13 @@ export async function handleSkillRoutes(req, res, path) {
     const body = await parseJsonBody(req, res)
     if (!body) return true
     if (!validateSwtcAddress(body.address, res)) return true
-    send(res, 200, { ok: true, nonce: tenantConfigService.issueChallenge(body.address) })
+    const challenge = tenantConfigService.issueChallenge(body.address, SIGN_PURPOSE.SKILLS)
+    if (!challenge) {
+      send(res, 503, { error: '挑战发放过载，请稍后重试', code: 'OVERLOAD' })
+      return true
+    }
+    // message 是交给钱包签的用途绑定内容（hex）；要签的是它，不是 nonce
+    send(res, 200, { ok: true, nonce: challenge.nonce, message: challenge.message })
     return true
   }
 

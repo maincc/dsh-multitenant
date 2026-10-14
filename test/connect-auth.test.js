@@ -27,6 +27,7 @@ vi.mock('../src/services/data.service.js', () => ({
 
 import { handleTenantRoutes } from '../src/routes/tenant.routes.js'
 import { userService } from '../src/services/user.service.js'
+import { tenantConfigService, SIGN_PURPOSE } from '../src/services/tenant-config.service.js'
 
 const ADDR = 'jga9j9tkqtbcuohe2zqhvffbguved6o9or'
 
@@ -100,6 +101,8 @@ describe('/connect 所有权签名（一律要求签名，匿名 401）', () => 
     const body = JSON.parse(res.body)
     expect(body.code).toBe('SIGNATURE_REQUIRED')
     expect(body.nonce).toMatch(/^[0-9a-f]{64}$/)
+    // 新增：同时下发"用途绑定后的被签内容"（hex），客户端签的是它
+    expect(body.message).toMatch(/^[0-9a-f]+$/)
     expect(userService.ensureContainer).not.toHaveBeenCalled()
   })
 
@@ -128,18 +131,40 @@ describe('/connect 所有权签名（一律要求签名，匿名 401）', () => 
 
     const first = await bareConnect(wallet.address)
     expect(first.statusCode).toBe(401)
-    const nonce = JSON.parse(first.body).nonce
+    const { nonce, message } = JSON.parse(first.body)
 
     const res = makeRes()
     const url = connectUrl({
       address: wallet.address,
       nonce,
-      signature: wallet.sign(nonce),
+      signature: wallet.sign(message),
       publicKey: wallet.publicKey,
     })
     await handleTenantRoutes(makeReq(), res, '/connect', url)
     expect(res.statusCode).toBe(302)
     expect(userService.ensureContainer).toHaveBeenCalledWith(wallet.address)
+  })
+
+  it('跨用途签名：拿 CONNECT 的挑战却签 CONFIG 用途消息 → 403（用途绑定加固）', async () => {
+    const wallet = makeWallet()
+    userService.containerExists.mockResolvedValue(false)
+    userService.ensureContainer.mockResolvedValue(31002)
+
+    const first = await bareConnect(wallet.address)
+    const { nonce } = JSON.parse(first.body)
+    // 攻击者持有的是"配置用途"的签名：地址正确、nonce 正确，但用途不同 → 必须拒绝
+    const configCh = tenantConfigService.issueChallenge(wallet.address, SIGN_PURPOSE.TENANT_CONFIG)
+
+    const res = makeRes()
+    const url = connectUrl({
+      address: wallet.address,
+      nonce,
+      signature: wallet.sign(configCh.message),
+      publicKey: wallet.publicKey,
+    })
+    await handleTenantRoutes(makeReq(), res, '/connect', url)
+    expect(res.statusCode).toBe(403)
+    expect(userService.ensureContainer).not.toHaveBeenCalled()
   })
 
   it('container exists + signed + format=json → 200 JSON {url} + user_session cookie', async () => {
@@ -149,13 +174,13 @@ describe('/connect 所有权签名（一律要求签名，匿名 401）', () => 
 
     const first = await bareConnect(wallet.address)
     expect(first.statusCode).toBe(401)
-    const nonce = JSON.parse(first.body).nonce
+    const { nonce, message } = JSON.parse(first.body)
 
     const res = makeRes()
     const url = connectUrl({
       address: wallet.address,
       nonce,
-      signature: wallet.sign(nonce),
+      signature: wallet.sign(message),
       publicKey: wallet.publicKey,
       format: 'json',
     })
@@ -174,8 +199,8 @@ describe('/connect 所有权签名（一律要求签名，匿名 401）', () => 
     userService.ensureContainer.mockResolvedValue(31003)
 
     const first = await bareConnect(wallet.address)
-    const nonce = JSON.parse(first.body).nonce
-    const sig = wallet.sign(nonce)
+    const { nonce, message } = JSON.parse(first.body)
+    const sig = wallet.sign(message)
     const url = connectUrl({
       address: wallet.address,
       nonce,
@@ -200,13 +225,13 @@ describe('/connect 所有权签名（一律要求签名，匿名 401）', () => 
     userService.containerExists.mockResolvedValue(false)
 
     const first = await bareConnect(claimed)
-    const nonce = JSON.parse(first.body).nonce
+    const { nonce, message } = JSON.parse(first.body)
 
     const res = makeRes()
     const url = connectUrl({
       address: claimed,
       nonce,
-      signature: strangerWallet.sign(nonce), // 用陌生钱包签
+      signature: strangerWallet.sign(message), // 用陌生钱包签
       publicKey: strangerWallet.publicKey, // deriveAddress !== claimed
     })
     await handleTenantRoutes(makeReq(), res, '/connect', url)

@@ -72,10 +72,16 @@ export class CwtService {
    * @param {string} [opts.expectedAddress] 期望绑定的 SWTC 地址（不匹配则拒）
    * @param {number} [opts.ttlMs] 覆盖构造时的防重放窗口
    * @param {number} [opts.now] 当前时间（毫秒，测试用）
+   * @param {boolean} [opts.checkFreshness] 是否校验 time 新鲜度（默认 true）。
+   *   审批场景传 false：申请时刻已校验过新鲜度，人工审批延迟不应导致失败；
+   *   此时仍校验 time 可解析 + 签名有效（防篡改），仅跳过时效窗口。
    * @returns {{ ok: boolean, valid: boolean, address?: string, usr?: string,
    *             time?: number, chain?: string, alg?: string, error?: string }}
    */
-  async verify(token, { expectedAddress = null, ttlMs = this.ttlMs, now = Date.now() } = {}) {
+  async verify(
+    token,
+    { expectedAddress = null, ttlMs = this.ttlMs, now = Date.now(), checkFreshness = true } = {},
+  ) {
     const fail = (error) => ({ ok: true, valid: false, error })
     try {
       const parts = String(token).split('.')
@@ -98,8 +104,12 @@ export class CwtService {
       const issued = Number(payload.time)
       // 单向新鲜度窗口（security-hardening-plan P2-6）：拒绝"未来"签发，只接受
       // 0 ≤ now - issued*1000 ≤ ttlMs（防把未来时间也纳入窗口导致重放窗口翻倍）
+      // checkFreshness=false 时（审批场景）跳过窗口判定，但仍要求 time 可解析。
+      if (!Number.isFinite(issued)) {
+        throw new Error(`time 字段无效：${payload.time}`)
+      }
       const skewMs = now - issued * 1000
-      if (!Number.isFinite(issued) || skewMs < 0 || skewMs > ttlMs) {
+      if (checkFreshness && (skewMs < 0 || skewMs > ttlMs)) {
         throw new Error(`time 超出新鲜度窗口（0 ~ ${ttlMs / 60000}min）：${payload.time}`)
       }
       const pem = header.x5c?.[0]

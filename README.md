@@ -76,6 +76,38 @@ node entry-server.mjs
 
 服务启动后访问：http://127.0.0.1:8090/
 
+### 4. （可选）MongoDB 存储形态（灰度可用）
+
+平台支持两种存储形态（完整设计与合同见 `docs/storage-design.md`）：
+
+- **json（默认）**：数据文件在 `data/` 下，零外部依赖，`npm start` 即用。
+- **mongodb**：9 个集合入库（users/meta/sessions/cwt×2/audit/usage/skills/skill_installs），
+  写路径经多文档事务确认；本机首次启动会自动把磁盘数据**一次性搬家**入库（幂等，
+  重启即 `skipped`），此后库为权威、进程启动时六域水合（水合失败拒绝启动）。
+
+启用 mongodb 形态（本机两步；形态声明住在 config.json `storage` 段——字段语义与测试护盾机制见 `config.json.example`；服务器由 deploy/install.sh 注入）：
+
+```bash
+# ① 起专用单成员副本集（事务前提；brew 的 27017 不碰、27018 专用）
+scripts/mongo-rs.sh start        # 空目录首起自动 rs.initiate；重启电脑后也是这一条
+
+# ② 直接启动——config.json 的 storage 段就是形态声明（provider=mongodb）
+npm start
+# 测试不受影响：globalSetup 护盾在 worker 钉 provider=json（见 config.json.example
+# storage.comment）；应急回退文件形态用 env 压 config：DSH_STORAGE_PROVIDER=json npm start
+```
+
+备份与恢复演练（mongodump 快照读，平台在线即可备）：
+
+```bash
+scripts/mongo-backup.sh backup   # 快照+保留最近 7 份（默认 ~/.dshWorkspace/dsh-mongo/backup）
+scripts/mongo-backup.sh verify   # 演练：还原进影子库 dsh_prod_verify 逐集合对账，绝不碰生产库
+```
+
+回退 json 形态：去掉两个环境变量重启即可（文件轨未动过；代价是切换期间新产生的
+业务数据只在库里，以库为准）。安全边界：mongod 仅监听 127.0.0.1 且未启鉴权——
+**本地形态专用**，上服务器必须 auth+TLS+独立账号（见 docs/security-hardening-plan.md）。
+
 ## 🧪 运行测试
 
 ```bash
@@ -88,6 +120,10 @@ npm run test:watch
 # 覆盖率报告
 npm run test:coverage
 ```
+
+> 真库用例（35 个）已自包含：vitest globalSetup 自动探测/复用 27018，没人起就临时
+> spawn 一个 mongod（独立端口+临时数据目录，跑完回收）；连 mongod 二进制都没有的
+> 机器优雅跳过、其余用例照跑。不需要为测试手动起库。
 
 ## 📊 系统架构
 
@@ -136,6 +172,33 @@ npm run test:coverage
 
 ## 📝 配置说明
 
+### ⚠️ 改 `server.publicHost` 后必须重启平台进程
+
+`publicHost` 不只是拼 URL 用的：它会写进每个租户容器的 patch（`trustedHosts`），
+而 patch 在**创建容器时就烘死了**（宿主文件 bind-mount 进容器
+`/patches/tenant.patch.yml`，DSH 启动时读取，**不会热重载**）。
+
+改了 `publicHost` 后如果只重启容器而不重启平台，旧容器仍只信任老 IP。DSH 的
+`/api` fence 对"非回环且不在 `trustedHosts`"的 authority 直接返回 403
+`forbidden`，前端表现为：
+
+```
+client api: directoryPicker/list failed: transport failure for /api/directoryPicker/list: HTTP 403
+```
+
+**页面本身照常打开**，只有用到宿主机管道（目录选择器等）时才报错，非常难自查。
+
+平台启动时（`server.listen` 回调）会自动同步：比对磁盘 patch 与"按当前配置应生成的
+patch"，有漂移就重写，并把**正在运行**的容器重启一次使其生效（已停的只重写文件，
+下次启动自然生效）。所以正常流程是：**改 `config.json` → 重启平台进程 → 完成**。
+
+验证某个租户是否生效：
+
+```bash
+docker exec dsh-swtc-<address> cat /patches/tenant.patch.yml | tail -3
+# trustedHosts 里应包含 "<publicHost>:<对外端口>"
+```
+
 ### config.json
 
 ```json
@@ -165,14 +228,16 @@ npm run test:coverage
 
 ### 环境变量
 
-| 变量               | 说明                   | 默认值                 |
-| ------------------ | ---------------------- | ---------------------- |
-| `PORT`             | 服务端口               | 8090                   |
-| `PUBLIC_HOST`      | 对外主机名             | 127.0.0.1              |
-| `DSH_TENANT_IMAGE` | 租户镜像               | dsh-multitenant:latest |
-| `BASE_PORT`        | 起始端口               | 31000                  |
-| `PUBLIC_TRUST`     | 信任的浏览器 authority | -                      |
-| `INJECT_ENV`       | 注入容器的环境变量     | -                      |
+| 变量                   | 说明                                                                             | 默认值                      |
+| ---------------------- | -------------------------------------------------------------------------------- | --------------------------- |
+| `PORT`                 | 服务端口                                                                         | 8090                        |
+| `PUBLIC_HOST`          | 对外主机名                                                                       | 127.0.0.1                   |
+| `DSH_TENANT_IMAGE`     | 租户镜像                                                                         | dsh-multitenant:latest      |
+| `BASE_PORT`            | 起始端口                                                                         | 31000                       |
+| `PUBLIC_TRUST`         | 信任的浏览器 authority                                                           | -                           |
+| `INJECT_ENV`           | 注入容器的环境变量                                                               | -                           |
+| `DSH_STORAGE_PROVIDER` | 存储形态：`json`（默认）/ `mongodb`                                              | json                        |
+| `MONGODB_URI`          | mongodb 形态的库 URI（含库名与 replicaSet；常规配置在 config.json `storage` 段） | 27018 dsh_prod（见 config） |
 
 ## 🔌 API 文档
 
@@ -272,10 +337,14 @@ DSH 的模型选择器，**官方 DeepSeek 与自定义端点并列可选**，�
 # 1. 领取一次性签名挑战（5 分钟有效）
 POST /api/user/config-challenge
 Body: { "address": "j..." }
-Response: { "ok": true, "nonce": "<hex>" }
+Response: { "ok": true, "nonce": "<hex>", "message": "<hex>" }
+#    ⚠ 要签的是 message，不是 nonce。message 是服务端构造的**用途绑定**内容：
+#    hex( `dsh-multitenant|tenant-config|<address>|<nonce>` )
+#    用途前缀把"这次签名是授权什么"钉进被签字节，因此为其它用途
+#    （登录 / 连容器 / 网关校验 / 技能市场）取得的签名在这里一律验不过。
 
-# 2. 前端让 CCDAO 插件对 nonce 签名 + 取公钥（插件弹签名确认）
-window.ccdao.request({ method: 'swtc_signMessage',  params: [address, nonce] })
+# 2. 前端让 CCDAO 插件对 message 签名 + 取公钥（插件弹签名确认）
+window.ccdao.request({ method: 'swtc_signMessage',  params: [address, message] })
 window.ccdao.request({ method: 'swtc_getPublicKey', params: [address] })
 
 # 3. 提交（服务端验签 + 公钥推导地址比对后写入该租户卷）
@@ -324,6 +393,63 @@ Response: { "ok": true, "configured": false }
 3. **HttpOnly Cookie**：admin_session 使用 HttpOnly + SameSite
 4. **原子写入**：数据更新使用临时文件 + 重命名，防止损坏
 5. **输入清理**：地址统一转小写，防止大小写绕过
+6. **破坏性操作当场签名**：见下方"管理端破坏性操作签名"
+7. **签名用途绑定 + 挑战分池**：所有钱包签名签的都是服务端构造的
+   `hex(dsh-multitenant|<purpose>|<address>|<nonce>[|<binding>])`，且挑战池按
+   `用途|地址` 隔离。为 A 用途取得的签名/挑战在 B 用途处一律无效 —— 跨端点凭证
+   混淆（尤其"诱导管理员对一个没有 login 语义的 nonce 签名 → 兑换 12 小时管理
+   会话"）不再可行。purpose 是服务端常量，客户端无法影响。
+8. **平台 cookie 不出境**：网关转发进租户容器前，剥离 `admin_session` /
+   `user_session` / `gw_ok`。租户容器即使用户有 shell、完全可控，也拿不到平台
+   会话令牌（同 host 不同端口，浏览器本来会把它们一起带上）。
+
+### 管理端破坏性操作签名
+
+**威胁模型**：`admin_session` 是一个 12 小时有效的 bearer token，
+`requireAdmin` 只做 `sha256(token)` 查表 + 过期判断（不验签）。而租户网关会把
+浏览器带来的 cookie **原样转发进租户容器** —— `path=/` 的 cookie 不按端口
+隔离（RFC 6265），`SameSite=Strict` 也不判端口。于是一个能读到请求头的人
+（恶意 skill / 提示注入 / 容器内命令执行）就能拿到这串 token 并**重放**它
+冒充管理员；实测仅凭 cookie 即可成功 `promote` / `force-stop`。
+
+**加固**：会改变平台状态的操作，除会话外还要求**当场钱包签名**，做法与钱包侧
+（`tenant-config.configure`、skill 安装、`/connect`）同款 —— 一次性 nonce、
+5 分钟过期、用完即毁。
+
+覆盖的操作（`src/middleware/admin-signature.middleware.js` 白名单）：
+
+| 操作            | 端点                                     | 为什么破坏性           |
+| --------------- | ---------------------------------------- | ---------------------- |
+| `promote`       | `POST /api/admin/promote/:address`       | 持久化提权             |
+| `force-stop`    | `POST /api/admin/force-stop/:address`    | 打断在用租户           |
+| `delete-volume` | `POST /api/admin/delete-volume/:address` | 删数据卷，不可逆       |
+| `remove`        | `POST /api/user/:address/remove`         | 删租户记录（默认连卷） |
+| `dsh/apply`     | `POST /api/admin/dsh/apply`              | 重建容器（可能停机）   |
+
+纯读取接口（`/api/users`、`/api/stats`、`/api/admin/dsh/status` 等）**不要求
+签名**，日常查看管理面板不会被钱包弹窗打断。
+
+**签名内容由服务端推导**，客户端无法影响：
+
+```js
+// 挑战：服务端从 (operation, payload) 推导 binding
+binding = `promote:address=<目标地址>`
+canonical = `dsh-multitenant|admin-op|<address>|<nonce>|<binding>`
+message = hex(canonical) // 钱包里签的就是这个串
+
+// 执行：服务端重新推导 binding，与发放时记录的一致才验签
+```
+
+因此"签了 A 却执行 B"不可能成功 —— 绑定串含操作名与目标（`remove` 还含
+`keepVolume` 语义，`dsh/apply` 区分单租户与 `all=1`）。nonce 在验签**之前**
+就作废，失败也不给第二次机会。
+
+签名材料走请求头（`x-admin-nonce` / `x-admin-signature` / `x-admin-pubkey`），
+因为 `force-stop` / `remove` 根本不读请求体，用 body 会与业务解析互相干扰。
+
+**给管理员**：`admin_session` 的设计（避免每点一下都弹钱包）保持不变，但
+**请不要在登录管理面板的同一个浏览器里访问租户容器** —— 网关目前仍会把平台
+cookie 转发进容器，纵深防御尚未收口。
 
 ## ✅ 已知问题修复
 
@@ -334,6 +460,39 @@ Response: { "ok": true, "configured": false }
 3. **管理员提权持久化** - 写入 data/config/admin.json
 4. **全局错误处理** - 添加 unhandledRejection 和 uncaughtException 处理
 5. **局域网 HTTP 访问 DSH Web UI** - 前端"进入 DSH"链接硬编码 127.0.0.1 已改为动态 host；`crypto.randomUUID is not a function` 已通过镜像内 polyfill 注入解决（详见 [docs/crypto-randomuuid.md](docs/crypto-randomuuid.md)）
+6. **管理端破坏性操作可被 cookie 重放** - 网关转发 `admin_session` 导致提权链；已加"当场钱包签名"（见上方安全特性 6）。仅凭 cookie 现在返回 `SIGNATURE_REQUIRED`
+7. **启动时 tenant patch 漂移** - 改 `server.publicHost` 后旧 `trustedHosts` 残留致 `/api/directoryPicker/list` 403；已加启动自愈 + 重启必刷新 patch
+8. **网关把浏览器的失效 `dsh-auth-*` cookie 转发给容器** - 浏览器残留旧 cookie 时平台跳过注入，DSH 回 `dsh web authentication required`；已改为「平台现换的那份永远权威，旧 cookie 一律剔除」（HTTP 与 WebSocket 升级两处）
+9. **「版本更新」因备份目录默认值必然失败** - 内置默认 `backupDir` 是 `/backup/dsh-multitenant`，普通用户直接跑平台时无权创建 → 备份 EPERM → 更新中止（容器已停过一次白停）。默认已改为平台自有 `data/backups`；配置的目录不可写会**自动降级并告警**，且「预览」会提前报出快照目录可写性
+10. **版本列表取不到（npm EPERM）** - 宿主 `~/.npm` 不可写时 `npm view` 直接失败；已为 `npm view` 显式指定可写缓存目录（`dsh.npmCacheDir`，默认 `data/npm-cache`），不再依赖运行用户的 `~/.npm`
+11. **版本历史看不出镜像是否还在本地** - 同一版本可被构建多次（每次新镜像 ID，tag 只有一个 → 后来覆盖先前），历史却全部保留，容易误以为多条同版本记录都能回滚。已标出「在本地/不在本地」+ 体积 + 保留原因，并支持多选清理悬空构建（破坏性操作，需管理端签名）
+12. **悬空镜像清理筛不出任何东西** - 镜像 untag 后 `docker images` 的 Repository 变成 `<none>`，按仓库名过滤会一个都筛不出来（功能失效）。已改为用平台构建历史认领归属，既能清理自己的悬空构建，也绝不会误碰别的项目的镜像
+13. **清理入口在"没得清"时整个消失** - 清理区只在有可清理项时渲染，而镜像通常都带 tag → 用户看不到这个功能。已改为**始终显示**镜像清单与清理区（含"为什么不可删"与谁在用），并允许清理带 tag 的旧版本（旧 tag 一样占 1.2GB）
+14. **"容器在用"判定会漏判（有误删风险）** - `docker ps --format '{{.Image}}'` 对带 tag 的容器返回**名字**、对悬空镜像返回短 ID，用名字永远匹配不上 sha256 → 该容器被漏判。已改为逐个 `inspect` 取完整镜像 ID，并让"拿不到信息"直接失败而不是猜着删
+15. **镜像归属漏认自家悬空构建** - 只靠平台历史认领会漏掉"构建中途失败 / 手工 `docker build`"留下的镜像（它们从未进历史），那部分空间永远清不掉（实测有一个 843MB 的）。已补 Dockerfile 签名兜底（`DSH_HOME`/`DSH_TELEMETRY_DISABLED`/`DSH_VERSION`），只对无 tag 镜像逐个 `inspect`，认不到就不认领
+16. **"当前镜像"标记永远不亮** - 平台存完整 `sha256:...`、docker 给短 ID，用 `===` 比较恒为 false。已统一用双向前缀匹配
+17. **DSH 版本管理层次不清** - 版本列表 / 构建镜像 / 总体镜像 / 租户镜像混在两三个卡片里，看不出递进关系，且"本地手上已有哪些版本"无处可查（`stable` 还恒为空，因为该包目前只有预发布）。已重排为 4 步：①本地版本列表（含已验证已构建标记）②构建版本镜像 ③总体镜像（全部租户共用）④个别租户镜像，版本下拉合并并按版本号排序
+18. **租户镜像不能选（只能升到最新）** - 平台只能把租户升到 `latest`，既不能回滚到旧版本，也不能让不同租户跑不同版本。已在「个别租户镜像」加**目标镜像选择**：默认跟随最新，也可钉到任一已构建版本（`state.pinnedImage` 持久化，重建与重连都沿用；销毁中的租户也会记住选择）。安全上：镜像必须属于本平台仓库、必须能读出 DSH 版本号，且目标镜像会**签进管理签名绑定**（防"签 latest、实装别的版本"）
+19. **沙箱逃生开关变量名写错（写了也不生效）** - Dockerfile 注释让运维在 bubblewrap 不可用时改用 `ENV DSH_SANDBOX_MODE=danger-full-access`，但 DSH 只认 `DSH_PERMISSION_MODE`（`DSH_SANDBOX_MODE` 在整个 DSH 包里出现 0 次）。照注释改会以为已放开沙箱，实际仍以 `workspace-write` 启动后失败。已改为正确变量名并注明副作用（`danger-full-access` 会同时把审批策略变成 `never`）
+20. **租户容器缺 agent 常用工具** - 容器内实测没有 `curl`/`jq`/`ripgrep`：抓网页只能 `node -e "fetch(...)"`、解析 JSON 要写一行式、搜索只能用 `grep -r`，每次绕路都消耗 token。已在 apt 层补上这三个包（镜像仅增 ~10MB）
+21. **租户列表看不到 DSH 版本** - 后端未下发版本、且「版本」列实际渲染的是状态徽章；已加 `containerDshVersion()`（问容器 `dsh --version`，按镜像 ID 缓存）并在两个列表里正确展示
+22. **「重启 DSH」报 `Container ... not found`（线上实测）** - 状态漂移：容器已停止 >60min 被清理定时器销毁，而界面还停在打开状态，用户点重启时后端仍按"重启已有容器"执行 `docker restart` → 404。修法：四处 `containerInfo` 为不存在时的处理全部改为**按各自目标语义对齐**，而不是把不一致抛给用户 —— `restartContainer` 降级为启动（委托 `ensureContainer`，沿用 `pinnedImage`，重建无损）、`stopContainerForUser` 照常结算额度并返回成功（停止目标已达成）、`forceStopContainer` 对齐状态且不把 `destroyed` 覆写回 `stopped`、`upgradeContainer` 只记录 tier 待下次创建生效
+23. **容器创建报 `--storage-opt is supported only for overlay over xfs with 'pquota'`（线上实测，阻断性）** - 磁盘配额参数只在特定宿主后端可用（overlay2 需 xfs+pquota；btrfs/zfs 原生）。在不支持的宿主上 Docker **直接拒绝整个 `docker run`（exit 125）**，容器根本创建不出来、租户全部进不去 —— 旧注释/`deploy/check-storage.sh` 假设的「参数被接受但不强制（软配额）」在部分 Docker 版本上不成立（本地实测 overlayfs 确实接受并记入 `HostConfig.StorageOpt`，所以本地永远复现不出来）。已改为：首次被该原因拒绝 → 去掉参数重试一次（配额降级为不限制）并记住宿主能力，后续创建直接跳过；**只对这一种明确原因降级**，其它错误照旧上抛。同时修正 `check-storage.sh` 的判定与 `--test` 分支（原先会把「驱动拒绝」误报成「软配额」）
+24. **启动失败只报 `did not become ready`（线上实测，无法定位）** - 容器创建/重启成功但容器内 DSH 没就绪时，错误里只有一句「没就绪」：看不出是崩了还是没监听，也没有日志。更糟的是 `finalizeTenant` 失败会**回滚删容器**，日志随之永久消失。已加 `containerDiagnostics()`：采集 `status/exitCode/OOMKilled/内存上限` + **合并 stdout/stderr 的日志尾部**（`docker logs` 把容器 stderr 写到进程 stderr，只用 `sh()` 会丢关键行）并写进错误；且采集严格发生在回滚**之前**。同时 `waitReady` 支持 `{containerName}`：容器已退出时**立即失败**，不再白等满 120 秒
+25. **保存 API Key 把 `.credentials.yaml` 写坏 → 容器再也起不来（线上阻断性）** - 平台的合并工具是「整篇解析 → 重新渲染」，把不认识的行当注释收集后**搬到文件开头**，且 refs 块结束分支缺 `continue` 导致同一行被 push 两次 → 重复键/缩进行跑到文档开头 → YAML 非法 → DSH `credentials-local` 拒绝加载 → 退出 1 → 平台只能看到「容器未能就绪」。触发条件很现实：DSH ≥0.1.5 会自己往该文件写 `client-connection/browser-session`（认证 cookie 签名密钥靠它持久化），此后用户只要在「模型配置」存一次 Key 就会写坏。已改为**原地最小编辑**（只动 refs 块内的目标条目，其余内容逐字节原位保留），并修正：键名接受 `.`/`-`、删空写 `refs: {}`、既有值规范化为字符串（裸 `123`/`null` 会被 YAML 解析成非字符串而遭 DSH 拒绝）
+26. **凭据文件损坏 → 整个租户进不去（兜底自愈）** - 第 25 条修好了「不再写坏」，但已经坏掉的文件仍会让 DSH 启动即退出、用户完全进不去（数据卷其实是好的）。已加自愈：启动未就绪时采集现场，**若判据是 `credentials-local` 解析 `/dsh-home/.credentials.yaml` 失败**，就把坏文件改名为 `.credentials.yaml.broken-<时间戳>`（留档不删）并再启一次，容器便能以默认值起来；租户记录留下 `credentialsQuarantinedAt/Path`。判据取自 DSH 自己的报错（生产依赖里没有 YAML 库，DSH 的 credentials-local 才是权威），并**严格要求同时命中文件名与错误类型** —— OOM/端口占用等无关故障照旧回滚，绝不误伤用户已保存的 API Key。代价：隔离后需在「模型配置」重填 Key（平台不留存 Key 值）
+27. **浏览器报 `dsh web authentication required`（本地正常，线上必现）** - 浏览器看到的是 **DSH 自己的英文提示** → 说明请求被转发进了 DSH，即平台注入了失效的 `dsh-auth` cookie。根因：DSH 的 cookie 由租户卷 `.credentials.yaml` 里的签名密钥签发，容器重建/换镜像/**凭据被自愈隔离（密钥重生成）**都会让其失效；而 `AuthCookieCache` 把 cookie 缓存 **29 天**，`clear()` 虽然写了、注释也写明「容器重建/换镜像后必须清掉」，**全仓却无一处调用** → 网关持续注入死 cookie，DSH 恒回 401。已加两道防线：① `tenantGateway.listen()`（容器就绪：新建/重启/换镜像/启动恢复）与 `close()`（容器下线）时清缓存；② 上游回 **401** 时丢缓存、重新激活并**重试一次**（仅 GET/HEAD，避免重放 POST 请求体），仍失败才透传。注意 `listen()` 内部先调 `close()`，两处清缓存互为冗余
+28. **保存 Key 会把「多行折叠值」改坏（第 25 条修复自身的回归，实测真实文件才发现）** - DSH 自己写出的 API Key 值是**跨行折叠的引号标量**（`KEY: "sk-sp-AAAA` 换行 `  BBBB…"`），第 25 条为「值必须是字符串」而加的「规范化所有 refs 值」是**按单行**取值的，会把这种值截断成 `"\"sk-sp-…"` 并把续行留成孤立残行 → YAML 再次非法。已改为：只对**完整单行裸标量**补引号，跨行折叠值与已带完整引号的值一律原样保留；并且 `set`/`del` 按**条目整段**（含续行）替换/删除，不留残骸
+29. **「重置容器」总是报「没有权限重置此容器」(403)，管理员却可以** - `/api/user/:addr/reset` 用了 `getSessionAddress()`，而它只读**管理员会话**（`return getAdminSession(req)`），普通用户只有 `user_session`，于是 `session` 恒为 null → `session !== address && !isAdminUser` 恒真 → 普通用户重置自己的容器**永远 403**；只有带 `admin_session` 的管理员能重置。本文件其余 6 处「本人或管理员」判定都用的 `getRequestAddress()`（= 管理员会话 ?? 用户会话），只有这里漏改。已改用 `getRequestAddress()`
+30. **「启动容器」提示成功但状态仍是「已销毁」** - 前端 `restartContainer` 走 `/connect` 后**完全不检查 HTTP 状态**，容器创建失败时后端回 502（未就绪/内部错误）、202（额度用尽或排队）、503（队列满），前端一律弹「启动成功」，于是出现「提示启动了、状态却还是已销毁」——真实原因被吞掉。已改为检查 `res.ok`，失败时把后端的 `message/error` 展示出来（「进入 DSH」本来就有检查，只有这一处漏了）
+31. **凭据文件被搅乱的结构继续被写入** - 实测真实损坏形态：DSH 的 `records:` 块被塞进 `refs:` 内部（`records: ""` 却带更深子级）→ DSH 完全起不来。本工具是按行编辑，遇到这种输入只能尽力而为。已加**写入前结构自检（fail closed）**：找不到顶层 refs、refs 内有重复键、单行标量条目却跟着更深子行、出现无法识别的行 → **拒绝写入并报错**，绝不二次破坏（文件保持原样）
+32. **「保存 Key」写坏凭据文件的真正根因** - DSH 在没有 API Key 时写的文件是 `version: 1` + `records:`（**没有 `refs:` 块**）。而「旧扁平布局迁移」把 `records:` —— 一个**块头**（自身无值、后面跟更深子级）—— 误当成凭据条目迁进 refs，其子级随即成为 refs 下的孤儿 → 文件损坏 → DSH 起不来（容器 120s 不就绪 → 回滚 → 界面「已销毁」；保存 Key 的接口则因第 31 条的 fail-closed 自检而报「拒绝写入」）。已修：只有**值非空的顶层标量行**才算旧扁平凭据条目，块头及其子级一律原样保留。这条才是「填 Key 反而坏文件」的根因
+33. **容器里所有 bash 命令报 `Error: spawn bwrap ENOENT`（本地/线上都有）** - 报错文案是**误导**：bwrap 一直好好的，真因是 **DSH 会话的默认工作目录 `/root/workspace`（= `$HOME/workspace`）在镜像里不存在**。bash 工具的沙箱以该目录作为 `spawn` 的 cwd，而 **Node 在 cwd 不存在时同样抛 ENOENT**，报错文案却是 `spawn bwrap ENOENT` —— 于是被误判成「bwrap 没装」（连 DSH 自己的提示都这么说）。本地精确复现：`spawn('bwrap', …, {cwd:'/root/workspace'})` → `ENOENT syscall=spawn bwrap`；换成存在的 `/srv` → 正常；`mkdir -p /root/workspace` 后 → 沙箱正常运行且可写。已修：镜像内置该目录（Dockerfile），平台在容器就绪后（finalizeTenant / restartContainer）再 `mkdir -p` 兜一层，老镜像建的容器也能自愈
+34. **管理端刷新频率可调 + 分层轮询** - 原来前端硬编码 `setInterval(fetchData, 10000)`：切 tab 不刷新（最多滞后 10 秒）、切到后台仍空转、多管理员/多标签页各自重复打 docker（每轮约 2 秒）。已改：① 间隔改由后端下发（`config.json` 的 `admin.refreshIntervalMs`，**默认 15000**，可填 300000=5 分钟，改完只需重启服务、不必重建前端）；② 只在前台可见时轮询（后台跳过、回到前台立即补一次、切 tab 立即刷新，1 秒节流）；③ 顶栏新增全局「🔄 刷新」按钮（手动刷新带 `?force=1` 绕过服务端短缓存）；④ 服务端 `getAllUsers` 加 3 秒短 TTL 缓存（`admin.usersCacheTtlMs`）并在**任何状态写入时立即失效**，多个管理员共享一次采样；⑤ `docker stats` 改**批量一次**（N 进程 → 1）。另修一处既有测试隔离缺陷：`finalize-tenant.test.js` 用的是真实 `state.json` 且未清 `usages`，平台自己把该地址跑到当日上限后会让用例无故失败
+
+35. **管理员会话可被"盲签"夺取（跨端点凭证混淆）** - 加固前所有入口只签一个**与用途无关的裸 nonce**，且共用同一个挑战池。于是存在一条完整攻击链：攻击者自行调用**公开无鉴权**的 `POST /api/admin/challenge {address: 管理员地址}` 领到属于管理员的 nonce（服务器主动回给他），再诱导管理员对这个没有任何语义的十六进制串签名（钱包弹窗里看不出在授权什么；平台自己的网关校验页 `tenant-proxy` 就常驻在**租户容器域**上要求签 nonce，租户完全可控 → 这条链对"管理员点开会话中的租户容器"是内建的），最后把签名交到 `POST /api/admin/login` 即得 12 小时管理员会话——**私钥全程安全，签名是管理员本人真签的**。已修：① 被签内容改为服务端构造的**用途绑定**消息 `hex(dsh-multitenant|<purpose>|<address>|<nonce>[|<binding>])`，用途是服务端常量、客户端无法影响；② 挑战池按 `用途|地址` **分池**，为 A 用途发的 nonce 在 B 用途处消费不了；③ 网关转发进租户容器前剥离 `admin_session`/`user_session`/`gw_ok`（纵深防御，租户再也偷不到那串 cookie）。hex 编码不是装饰：`@swtc/keypairs` 内部按 hex 解码消息，直接喂含 `|` 的 ASCII 会被**有损解码**（非法字符对 → NaN → 0）而产生碰撞。覆盖 login / connect / tenant-config / skills / gateway-verify / admin-op 全部签名入口。
+
+36. **CWT 申请可被未认证洪泛刷爆磁盘/灌满审批队列** - `POST /api/user/cwt/apply` 是**未认证**端点，token 由调用方自签（零成本），而加固前 pending 申请**无任何总条数上限**、且每次入队都**全量重写** `data/cwt/applications.json`（刷 n 条是 O(n²) 写放大）——可被刷爆磁盘并灌满管理端审批队列。已加三道边界：① **token 字节上限**（`cwt.maxTokenBytes`，默认 8192，超限 413）；② **待审批队列总条数上限**（`cwt.maxPending`，默认 500，超限 503 `OVERLOAD`）——这道检查**刻意放在验签之前**，队列满时连密码学开销都不付；③ 该接口**按 IP 限流**（10 次/分钟，10 之外的请求 429）。上限用实例字段实现（便于测试注入小值，与 `data.service.recordsMaxBytes` 同一做法）。**未做**：approved 申请仍明文存 token（改存 SHA-256 摘要属存储格式迁移，需单独一轮）。
 
 ## 🧹 空闲清理机制（不会误停正在干活的容器）
 

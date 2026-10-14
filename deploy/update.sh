@@ -4,6 +4,11 @@
 #  用法：./deploy/update.sh        （非 root 时自动 sudo）
 #  环境变量：
 #    FORCE_IMAGE=1    强制重建租户镜像
+#    DSH_VERSION      目标 DSH 版本（默认 0.1.1-rc.2）；与镜像内实际版本不同则重建
+#                     默认值是"最后一个不需要浏览器认证的 DSH 版本"
+#                     （保守默认；≥0.1.2-alpha.2 也能用——平台已代做 launch
+#                     token 激活；详见 Dockerfile 注释）。
+#                     传 latest 可跟上游最新版（可用；已支持代激活）。
 #    SKIP_GIT_PULL=1  跳过 git pull（rsync 上传 / 服务器无法访问 GitHub 时）
 #                     不设置时也会自动检测：git 远端不可达则跳过 pull
 #
@@ -17,8 +22,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 if [ "$(id -u)" -ne 0 ]; then
-  exec sudo env FORCE_IMAGE="${FORCE_IMAGE:-0}" SKIP_GIT_PULL="${SKIP_GIT_PULL:-0}" "$0" "$@"
+  exec sudo env FORCE_IMAGE="${FORCE_IMAGE:-0}" SKIP_GIT_PULL="${SKIP_GIT_PULL:-0}" \
+    DSH_VERSION="${DSH_VERSION:-0.1.1-rc.2}" "$0" "$@"
 fi
+
+DSH_VERSION="${DSH_VERSION:-0.1.1-rc.2}"
+IMAGE="${DSH_TENANT_IMAGE:-dsh-multitenant:latest}"
 
 # ---------------------------------------------------------------------------
 # 1. 代码同步（git pull）
@@ -66,6 +75,21 @@ if [ ! -d frontend/dist ]; then
   NEED_FRONTEND=1
 fi
 
+# DSH 版本变更检测（关键：Dockerfile diff 检测不到版本变化）
+# DSH_VERSION 是 docker build 的 --build-arg，改它不会修改 Dockerfile 文件内容，
+# 所以上面的 `git diff Dockerfile` 永远看不到"升级 DSH"这件事。
+# 真正可靠的判据是：镜像内实际烘焙的版本 vs 本次目标版本。
+CURRENT_IMAGE_VER=""
+if docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  CURRENT_IMAGE_VER="$(docker run --rm --entrypoint cat "$IMAGE" /usr/local/share/dsh-version 2>/dev/null || true)"
+fi
+if [ "$DSH_VERSION" != "latest" ] && [ "$CURRENT_IMAGE_VER" != "$DSH_VERSION" ]; then
+  echo ">> DSH 版本变更：镜像内=${CURRENT_IMAGE_VER:-未知} → 目标=$DSH_VERSION"
+  NEED_IMAGE=1
+elif [ -n "$CURRENT_IMAGE_VER" ]; then
+  echo ">> 镜像内 DSH 版本：$CURRENT_IMAGE_VER"
+fi
+
 if [ "${NEED_FRONTEND:-0}" = "1" ]; then
   echo ">> 前端有变更，重新构建 ..."
   (cd frontend && npm ci && npm run build)
@@ -74,13 +98,22 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 4. 租户镜像（Dockerfile 有变更时重建；FORCE_IMAGE=1 强制）
+# 4. 租户镜像（Dockerfile 变更 / DSH 版本变更时重建；FORCE_IMAGE=1 强制）
 # ---------------------------------------------------------------------------
 if [ "${FORCE_IMAGE:-0}" = "1" ] || [ "${NEED_IMAGE:-0}" = "1" ]; then
-  echo ">> 重建租户镜像 dsh-multitenant:latest ...（需几分钟，编译 node-pty）"
-  docker build -t dsh-multitenant:latest .
+  echo ">> 重建租户镜像 $IMAGE ...（需几分钟，编译 node-pty）DSH_VERSION=$DSH_VERSION"
+  if [ "$DSH_VERSION" != "latest" ]; then
+    # 额外打版本 tag：latest 被下个版本覆盖后，这是回滚的唯一退路
+    docker build --build-arg "DSH_VERSION=$DSH_VERSION" \
+      -t "$IMAGE" -t "${IMAGE%%:*}:$DSH_VERSION" .
+  else
+    docker build --build-arg "DSH_VERSION=$DSH_VERSION" -t "$IMAGE" .
+  fi
+  NEW_VER="$(docker run --rm --entrypoint cat "$IMAGE" /usr/local/share/dsh-version 2>/dev/null || echo '?')"
+  echo ">> 新镜像 DSH 版本：$NEW_VER"
+  echo ">> 注意：已有租户容器仍引用旧镜像，需重建容器才会应用（管理端「应用到租户」）"
 else
-  echo ">> 镜像无需重建（FORCE_IMAGE=1 可强制）"
+  echo ">> 镜像无需重建（FORCE_IMAGE=1 可强制；改 DSH_VERSION 也会触发）"
 fi
 
 # ---------------------------------------------------------------------------

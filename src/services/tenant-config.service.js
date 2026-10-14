@@ -3,7 +3,8 @@
  *
  * 身份验证：钱包签名挑战-响应
  *   1. POST config-challenge 领取一次性 nonce（5 分钟有效，用完即焚）
- *   2. 前端让 CCDAO 插件对 nonce 签名（swtc_signMessage）+ 取公钥（swtc_getPublicKey）
+ *   2. 前端让 CCDAO 插件对服务端下发的 message（用途绑定内容）签名
+ *      （swtc_signMessage）+ 取公钥（swtc_getPublicKey）。**不能签裸 nonce**。
  *   3. 服务端用 @swtc/keypairs 验签，且公钥推导出的 SWTC 地址必须等于声称地址
  *   全部通过才允许写入该租户的数据卷。
  *
@@ -59,24 +60,105 @@ const MAX_MODELS = 64
 /** 自定义 Provider 数量上限 */
 const MAX_PROVIDERS = 20
 
-/** 一次性挑战：address -> { nonce, expiresAt }（进程内存，重启即失效，可接受） */
+/**
+ * 签名用途（purpose）。每个"需要钱包签名"的入口一个，**服务端常量**，
+ * 客户端无法影响。
+ *
+ * ## 为什么必须有它（这是本次安全加固的核心）
+ *
+ * 加固前所有入口只签一个与用途无关的裸 nonce，且共用同一个挑战池：
+ * 攻击者可以自行向**公开无鉴权**的挑战接口领取"地址为管理员"的 nonce，
+ * 再诱导管理员对这个无任何语义的十六进制串签名（钱包弹窗里看不出在授权
+ * 什么），然后把签名交到另一个入口兑现。最严重的是：
+ *
+ *   /api/admin/challenge（登录挑战，匿名可取）
+ *     → 管理员签了 → POST /api/admin/login → 12 小时管理员会话
+ *
+ * 把用途绑进**被签内容**之后，为 A 用途取的签名在 B 用途处一律验签失败，
+ * 上面这条链就断了（跨用途兑换不再可能）。
+ */
+export const SIGN_PURPOSE = Object.freeze({
+  LOGIN: 'login',
+  CONNECT: 'connect',
+  TENANT_CONFIG: 'tenant-config',
+  SKILLS: 'skills',
+  GATEWAY: 'gateway-verify',
+  ADMIN_OP: 'admin-op',
+})
+
+/** 签名域前缀：把"哪个应用"也绑进被签内容，避免与其它 DSH 部署互换签名 */
+const SIGN_DOMAIN = 'dsh-multitenant'
+
+/**
+ * 构造"这次到底签什么"的规范化消息，hex 编码后交付钱包。
+ *
+ * 被签原文形如：
+ *   dsh-multitenant|<purpose>|<address>|<nonce>[|<binding>]
+ *
+ * **为什么必须 hex 编码**：`@swtc/keypairs` 的 sign/verify 内部走
+ * `funcHexToBytes()`，它是按 2 字符 `parseInt(substr(c,2),16)` 解码的——
+ * 直接喂含 `|`/`:` 的 ASCII 会被**有损解码**（非法字符对 → NaN → 0），
+ * 于是不同的用途/绑定串可能解码成同一串字节 → 碰撞 → 绑定失效。
+ * hex 编码后解码无损，用途才真正被密码学地绑定（也不再有碰撞面）。
+ *
+ * @param {string} purpose SIGN_PURPOSE 之一
+ * @param {string} address SWTC 地址
+ * @param {string} nonce 一次性挑战
+ * @param {string} [binding] 额外的操作绑定串（如破坏性操作的 promote:address=xxx）
+ * @returns {string} 交给钱包签名的消息（hex）
+ */
+export function buildSignedMessage(purpose, address, nonce, binding = '') {
+  const base = `${SIGN_DOMAIN}|${purpose}|${normalizeAddress(address)}|${nonce}`
+  const canonical = binding ? `${base}|${binding}` : base
+  return Buffer.from(canonical, 'utf8').toString('hex')
+}
+
+/**
+ * 一次性挑战池。
+ *
+ * key = `<purpose>|<address>` —— 按**用途分池**，这是与用途绑定配套的第二道
+ * 防线：即使某个入口的消息格式将来被改回裸 nonce，为 A 用途发放的 nonce
+ * 也无法在 B 用途处被消费。
+ * value = { nonce, purpose, expiresAt }（进程内存，重启即失效，可接受）
+ */
 const challenges = new Map()
+
+/** 挑战池的复合 key（用途 + 地址） */
+const challengeKey = (purpose, address) => `${purpose}|${normalizeAddress(address)}`
 
 /** 自定义 provider route 对应的凭据引用名：<ROUTE>_API_KEY（大写、非字母数字转下划线） */
 const credentialRefFor = (route) => `${route.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_API_KEY`
 
-/** 封装 execFile 为 Promise */
-function sh(cmd, args) {
+/**
+ * Docker CLI 子进程默认超时（毫秒）。
+ * 修复前只有 maxBuffer 没有 timeout：辅助容器卡住会让 HTTP 请求永久挂起。
+ * 取 180s：这些调用要起辅助容器（必要时拉镜像），比普通 docker 命令慢。
+ */
+const DEFAULT_TIMEOUT_MS = Number(process.env.DOCKER_CLI_TIMEOUT_MS || 180000)
+
+/** 封装 execFile 为 Promise（带超时 + 超时错误标注） */
+function sh(cmd, args, opts = {}) {
+  const timeout = Number(opts.timeout ?? DEFAULT_TIMEOUT_MS)
   return new Promise((resolvePromise, reject) => {
-    execFile(cmd, args, { maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (err) {
-        err.stdout = String(stdout ?? '')
-        err.stderr = String(stderr ?? '')
-        reject(err)
-      } else {
-        resolvePromise(String(stdout ?? '').trim())
-      }
-    })
+    execFile(
+      cmd,
+      args,
+      { maxBuffer: 16 * 1024 * 1024, ...opts, timeout },
+      (err, stdout, stderr) => {
+        if (err) {
+          err.stdout = String(stdout ?? '')
+          err.stderr = String(stderr ?? '')
+          if (err.killed || err.signal === 'SIGTERM') {
+            err.code = err.code ?? 'ETIMEDOUT'
+            err.timedOut = true
+            err.stderr = `${err.stderr}\n[docker-cli] timed out after ${timeout}ms`.trim()
+          }
+          reject(err)
+        } else {
+          resolvePromise(String(stdout ?? '').trim())
+        }
+      },
+    )
   })
 }
 
@@ -86,43 +168,57 @@ export class TenantConfigService {
    */
   pruneChallenges() {
     const now = Date.now()
-    for (const [addr, rec] of challenges) {
-      if (rec.expiresAt < now) challenges.delete(addr)
+    for (const [key, rec] of challenges) {
+      if (rec.expiresAt < now) challenges.delete(key)
     }
   }
 
   /**
-   * 发放一次性挑战
+   * 发放一次性挑战（按用途分池）
    * @param {string} address SWTC 地址
-   * @returns {string|null} nonce（hex）；挑战池已满时返回 null
+   * @param {string} purpose SIGN_PURPOSE 之一（服务端常量，客户端不可影响）
+   * @returns {{nonce: string, message: string}|null}
+   *   nonce 用于回传定位挑战；message 是**交给钱包签名**的用途绑定消息。
+   *   挑战池已满时返回 null。
    */
-  issueChallenge(address) {
+  issueChallenge(address, purpose) {
     this.pruneChallenges()
     if (challenges.size >= MAX_CHALLENGES) return null
     const nonce = randomBytes(32).toString('hex')
-    challenges.set(normalizeAddress(address), {
+    challenges.set(challengeKey(purpose, address), {
       nonce,
+      purpose,
       expiresAt: Date.now() + CHALLENGE_TTL_MS,
     })
-    return nonce
+    return { nonce, message: buildSignedMessage(purpose, address, nonce) }
   }
 
-  /** 消费挑战（一次性；不存在/不匹配/过期都失败） */
-  consumeChallenge(address, nonce) {
-    const rec = challenges.get(normalizeAddress(address))
+  /**
+   * 消费挑战（一次性；用途/地址/nonce 任一不匹配或过期都失败）
+   * @param {string} purpose 必须与发放时一致，否则取不到（分池效果）
+   */
+  consumeChallenge(address, nonce, purpose) {
+    const key = challengeKey(purpose, address)
+    const rec = challenges.get(key)
     if (!rec || rec.nonce !== nonce || rec.expiresAt < Date.now()) return false
-    challenges.delete(normalizeAddress(address))
+    challenges.delete(key)
     return true
   }
 
   /**
-   * 验签：nonce 的签名有效，且公钥推导出的地址 === 声称地址。
+   * 验签：消息的签名有效，且公钥推导出的地址 === 声称地址。
    * 与 CCDAO 插件同库同流程（Keypairs.sign(messageHex, privateKey)）。
+   *
+   * 注意：调用方必须传入**服务端构造的用途绑定消息**
+   * （见 `buildSignedMessage`），绝不能把裸 nonce 或客户端传来的原文交给它。
+   *
+   * @param {string} message 被签消息（hex；由 buildSignedMessage 构造）
    */
-  verifySignature(address, nonce, signature, publicKey) {
+  verifySignature(address, message, signature, publicKey) {
     try {
       if (typeof signature !== 'string' || typeof publicKey !== 'string') return false
-      if (!Keypairs.verify(nonce, signature, publicKey)) return false
+      if (typeof message !== 'string' || !message) return false
+      if (!Keypairs.verify(message, signature, publicKey)) return false
       const derived = normalizeAddress(Keypairs.deriveAddress(publicKey))
       return derived === normalizeAddress(address)
     } catch {
@@ -492,10 +588,17 @@ export class TenantConfigService {
    * @returns {Promise<Array<{id: string, name: string}>>}
    */
   async discoverWithAuth(address, { nonce, signature, publicKey, baseURL, apiKey, credentialRef }) {
-    if (!this.consumeChallenge(address, nonce)) {
+    if (!this.consumeChallenge(address, nonce, SIGN_PURPOSE.TENANT_CONFIG)) {
       throw new ForbiddenError('挑战无效或已过期，请重新获取')
     }
-    if (!this.verifySignature(address, nonce, signature, publicKey)) {
+    if (
+      !this.verifySignature(
+        address,
+        buildSignedMessage(SIGN_PURPOSE.TENANT_CONFIG, address, nonce),
+        signature,
+        publicKey,
+      )
+    ) {
       throw new ForbiddenError('签名验证失败：无法确认该地址归您所有')
     }
     return this.discoverModels(address, { baseURL, apiKey, credentialRef })
@@ -509,10 +612,17 @@ export class TenantConfigService {
    * @throws BadRequestError 全部字段为空，或配置非法
    */
   async configure(address, { nonce, signature, publicKey, apiKey, baseURL, models, providers }) {
-    if (!this.consumeChallenge(address, nonce)) {
+    if (!this.consumeChallenge(address, nonce, SIGN_PURPOSE.TENANT_CONFIG)) {
       throw new ForbiddenError('挑战无效或已过期，请重新获取')
     }
-    if (!this.verifySignature(address, nonce, signature, publicKey)) {
+    if (
+      !this.verifySignature(
+        address,
+        buildSignedMessage(SIGN_PURPOSE.TENANT_CONFIG, address, nonce),
+        signature,
+        publicKey,
+      )
+    ) {
       throw new ForbiddenError('签名验证失败：无法确认该地址归您所有')
     }
     const hasKey = typeof apiKey === 'string' && apiKey.trim() !== ''
@@ -541,10 +651,17 @@ export class TenantConfigService {
    *   其他（默认）：删官方 key + 端点覆盖 + 自定义 Provider（恢复默认）
    */
   async clear(address, { nonce, signature, publicKey, scope }) {
-    if (!this.consumeChallenge(address, nonce)) {
+    if (!this.consumeChallenge(address, nonce, SIGN_PURPOSE.TENANT_CONFIG)) {
       throw new ForbiddenError('挑战无效或已过期，请重新获取')
     }
-    if (!this.verifySignature(address, nonce, signature, publicKey)) {
+    if (
+      !this.verifySignature(
+        address,
+        buildSignedMessage(SIGN_PURPOSE.TENANT_CONFIG, address, nonce),
+        signature,
+        publicKey,
+      )
+    ) {
       throw new ForbiddenError('签名验证失败：无法确认该地址归您所有')
     }
     if (scope === 'official-key') {

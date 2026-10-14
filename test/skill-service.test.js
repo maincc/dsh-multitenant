@@ -15,23 +15,32 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 
-vi.mock('../src/services/tenant-config.service.js', () => ({
-  tenantConfigService: {
-    issueChallenge: vi.fn(() => 'deadbeef'.repeat(8)),
-    consumeChallenge: vi.fn(() => true),
-    verifySignature: vi.fn(() => true),
-    runScript: vi.fn(async () => '{"ok":true}'),
-  },
-}))
+vi.mock('../src/services/tenant-config.service.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual, // 保留 SIGN_PURPOSE / buildSignedMessage 真实导出
+    tenantConfigService: {
+      issueChallenge: vi.fn(() => ({ nonce: 'deadbeef'.repeat(8), message: 'ab'.repeat(16) })),
+      consumeChallenge: vi.fn(() => true),
+      verifySignature: vi.fn(() => true),
+      runScript: vi.fn(async () => '{"ok":true}'),
+    },
+  }
+})
 
-vi.mock('../src/config/config.js', () => ({
-  CONFIG: { skills: { autoInvoke: false } },
-}))
+vi.mock('../src/config/config.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  // 保留 docker 等真实字段（tenant-config.service 导入时要读 CONFIG.docker.image）
+  return { ...actual, CONFIG: { ...actual.CONFIG, skills: { autoInvoke: false } } }
+})
 
 import { SkillService } from '../src/services/skill.service.js'
 import { tenantConfigService } from '../src/services/tenant-config.service.js'
 import { forceDisableModelInvocation } from '../src/utils/skill.js'
 import { CONFIG } from '../src/config/config.js'
+import { dataService } from '../src/services/data.service.js'
+import { isolateOpsLog } from './ops-log-isolation.js'
+isolateOpsLog(dataService) // 留痕 json 轨进临时目录，防写真实 operations.log
 
 const VALID_ADDR = 'jga9j9tkqtbcuohe2zqhvffbguved6o9or'
 

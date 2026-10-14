@@ -118,5 +118,5 @@ ADMIN_ADDRESS=<管理员地址> PUBLIC_HOST=<公网IP或域名> ./deploy/install
 
 ## 7. 限制与路线图
 
-- **当前限制**：单实例部署（多实例需共享存储扩展）；容器特权 SYS_ADMIN 暂未降权（待真机验证 bwrap）；正文内容无自动扫描（技能"未审核"标记、举报为 P1-10 待办）
+- **当前限制**：单实例部署（多实例需共享存储扩展）；容器特权 SYS_ADMIN 暂未移除（去它需宿主内核允许无特权嵌套 userns，按机器自动探测分档）——但 seccomp 已从 unconfined 收紧为"默认白名单 + 仅补 pivot_root"并加 no-new-privileges（`docker.privilegeProfile: auto|strict|compat`，探测不过自动回退旧行为）；正文内容无自动扫描（技能"未审核"标记、举报为 P1-10 待办）
 - **路线图**：见 `docs/roadmap-next.md`——P1 纵深（密钥 argv 泄露、SSRF、IDOR、配额）→ P2 部署（HTTPS + Secure Cookie、CSP、写锁）→ 产品（AdminPanel 技能管理 UI、技能 zip 打包、插件市场）

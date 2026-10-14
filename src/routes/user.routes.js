@@ -4,11 +4,14 @@
 
 import { CONFIG, isAdmin } from '../config/config.js'
 import { userService } from '../services/user.service.js'
-import { tenantConfigService } from '../services/tenant-config.service.js'
+import { dataService } from '../services/data.service.js'
+import { resourceExhaustedPayload } from '../utils/resource-exhausted.js'
+import { tenantConfigService, SIGN_PURPOSE } from '../services/tenant-config.service.js'
 import { cwtAdminService } from '../services/cwt-admin.service.js'
 import { cwtService } from '../services/cwt.service.js'
 import { cwtStore } from '../services/cwt.store.js'
 import { userSessionStore } from '../middleware/user-auth.middleware.js'
+import { rateLimit } from '../middleware/rate-limit.middleware.js'
 import { getAdminSession, getRequestAddress } from '../middleware/auth.middleware.js'
 import { validateSwtcAddress } from '../middleware/validate.middleware.js'
 import { normalizeAddress } from '../utils/address.js'
@@ -24,6 +27,9 @@ export async function handleUserRoutes(req, res, path) {
 
   // POST /api/user/cwt/apply - 提交 CWT 授权申请（token 即凭证，服务端解析+预验签）
   if (path === '/api/user/cwt/apply' && req.method === 'POST') {
+    // 未认证端点（token 自签、零成本）→ 按 IP 限流，防洪泛刷队列/撑磁盘。
+    // 真正的硬边界在 cwtAdminService 的 pending 总条数上限（超限 503）。
+    if (!rateLimit(req, res, { max: 10, keyPrefix: 'cwt-apply' })) return true
     const body = await parseJsonBody(req, res)
     if (!body) return true
     try {
@@ -73,7 +79,12 @@ export async function handleUserRoutes(req, res, path) {
   if (path === '/api/user/logout' && req.method === 'POST') {
     const cookie = req.headers.cookie || ''
     const m = cookie.match(/user_session=([^;]+)/)
-    if (m) userSessionStore.revoke(decodeURIComponent(m[1]))
+    const who = getRequestAddress(req) // 先取操作人：吊销之后就查不到了
+    if (m) {
+      await userSessionStore.revoke(decodeURIComponent(m[1]))
+      // 会话吊销留痕（换钱包场景高频、单行成本可忽略）
+      dataService.logOperation('user_logout', { address: who })
+    }
     res.writeHead(200, {
       'content-type': 'application/json; charset=utf-8',
       'set-cookie': 'user_session=; path=/; max-age=0; httponly; samesite=strict',
@@ -121,15 +132,10 @@ export async function handleUserRoutes(req, res, path) {
       port = await userService.ensureContainer(address)
     } catch (err) {
       if (err.code === 'RESOURCE_EXHAUSTED') {
+        // F1：把"缺了什么"透给前端（failedResources）并拼进文案——
+        // 「资源不足」不再是一句无信息的空话。组装与 /connect 单源共用。
         res.writeHead(202, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(
-          JSON.stringify({
-            error: '资源不足，请等待',
-            code: 'RESOURCE_EXHAUSTED',
-            queuePosition: err.queuePosition,
-            message: '系统资源不足，您已进入等待队列，资源释放后将自动为您创建容器',
-          }),
-        )
+        res.end(JSON.stringify(resourceExhaustedPayload(err)))
         return true
       }
       if (err.code === 'USAGE_LIMIT_REACHED') {
@@ -168,14 +174,15 @@ export async function handleUserRoutes(req, res, path) {
     const body = await parseJsonBody(req, res)
     if (!body) return true
     if (!validateSwtcAddress(body.address, res)) return true
-    const nonce = tenantConfigService.issueChallenge(body.address)
-    if (!nonce) {
+    const challenge = tenantConfigService.issueChallenge(body.address, SIGN_PURPOSE.TENANT_CONFIG)
+    if (!challenge) {
       res.writeHead(503, { 'content-type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify({ error: '挑战发放过载，请稍后重试', code: 'OVERLOAD' }))
       return true
     }
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-    res.end(JSON.stringify({ ok: true, nonce }))
+    // message 是交给钱包签的用途绑定内容（hex）；要签的是它，不是 nonce
+    res.end(JSON.stringify({ ok: true, nonce: challenge.nonce, message: challenge.message }))
     return true
   }
 

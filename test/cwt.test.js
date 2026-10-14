@@ -182,6 +182,37 @@ describe('CWT 验证服务（ed25519）', () => {
     )
     expect(r.valid).toBe(false)
   })
+
+  it('checkFreshness=false（审批场景）：跳过时效窗口，签名仍被校验', async () => {
+    const wallet = makeEdWallet()
+    wallet.alg = 'ed25519'
+    const stale = buildToken(wallet, {
+      payload: { time: Math.floor(Date.now() / 1000) - 3600 },
+    })
+
+    // 过期 token：默认校验时效 → 拒；跳过时效 → 通过（签名有效）
+    const strict = await cwtService.verify(stale)
+    expect(strict.valid).toBe(false)
+
+    const lenient = await cwtService.verify(stale, { checkFreshness: false })
+    expect(lenient.valid).toBe(true)
+    expect(lenient.address).toBe(wallet.address)
+
+    // 但签名无效（篡改）时，即使跳过时效也必须拒
+    const tampered = await cwtService.verify(tamperPayload(stale, { usr: 'mallory' }), {
+      checkFreshness: false,
+    })
+    expect(tampered.valid).toBe(false)
+  })
+
+  it('checkFreshness=false：time 字段无法解析仍拒绝', async () => {
+    const wallet = makeEdWallet()
+    wallet.alg = 'ed25519'
+    const r = await cwtService.verify(buildToken(wallet, { payload: { time: 'not-a-number' } }), {
+      checkFreshness: false,
+    })
+    expect(r.valid).toBe(false)
+  })
 })
 
 describe('CWT 验证服务（与 cwt-lib 签名互认）', () => {

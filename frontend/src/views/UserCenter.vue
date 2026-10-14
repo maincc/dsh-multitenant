@@ -76,7 +76,9 @@
           <div class="wallet-summary">
             <span class="live-dot"></span>
             <span class="wallet-label">{{ $t('user.connected') }}</span>
-            <code class="wallet-short">{{ shortAddrText }}</code>
+            <code class="wallet-short addr-tip" :data-full="userInfo.address">{{
+              shortAddrText
+            }}</code>
           </div>
           <!-- 导航项 -->
           <nav class="sidebar-nav">
@@ -105,59 +107,11 @@
           <div class="stat-rows">
             <div class="stat-row">
               <span class="stat-label">{{ $t('user.swtcAddress') }}</span>
-              <code class="stat-value mono">{{ userInfo.address }}</code>
-              <button class="btn btn-small" @click="switchAddress">
-                {{ $t('user.switchAddress') }}
-              </button>
-            </div>
-            <div class="stat-row">
-              <span class="stat-label">{{ $t('user.port') }}</span>
-              <code class="stat-value mono">{{ userInfo.port }}</code>
-            </div>
-            <div class="stat-row">
-              <span class="stat-label">{{ $t('user.tier') }}</span>
-              <span class="badge" :class="tierBadge(userInfo.tier)">{{ userInfo.tierLabel }}</span>
-            </div>
-            <div class="stat-row">
-              <span class="stat-label">{{ $t('user.containerStatus') }}</span>
-              <span class="badge" :class="statusBadge(userInfo.status)">{{
-                statusText(userInfo.status)
-              }}</span>
-              <button
-                v-if="userInfo.status !== 'running'"
-                class="btn btn-small btn-success"
-                @click="restartContainer"
-              >
-                {{ $t('user.startContainer') }}
-              </button>
+              <code class="stat-value mono addr-tip" :data-full="userInfo.address">{{
+                userInfo.address
+              }}</code>
             </div>
           </div>
-
-          <div class="tab-divider" />
-
-          <div class="tab-head">
-            <h4>{{ $t('user.resourceUsage') }}</h4>
-          </div>
-          <div v-if="userInfo.stats" class="resource-usage">
-            <div class="resource-item">
-              <div class="resource-header">
-                <span>{{ $t('user.cpuUsage') }}</span>
-                <span class="mono">{{ userInfo.stats.cpu }}</span>
-              </div>
-            </div>
-            <div class="resource-item">
-              <div class="resource-header">
-                <span>{{ $t('user.memUsage') }}</span>
-                <span class="mono"
-                  >{{ userInfo.stats.memory }} ({{ userInfo.stats.memoryPercent }})</span
-                >
-              </div>
-              <div class="progress-bar">
-                <div class="progress-fill" :style="{ width: userInfo.stats.memoryPercent }"></div>
-              </div>
-            </div>
-          </div>
-          <div v-else class="loading">{{ $t('user.noData') }}</div>
         </div>
 
         <!-- ════════ 模型配置 ════════ -->
@@ -389,7 +343,55 @@
             <h4>{{ $t('user.containerManage') }}</h4>
             <p class="tab-hint">{{ $t('user.containerManageHint') }}</p>
           </div>
-          <!-- 进入容器入口（原在账户信息，已移至此处） -->
+          <!-- 容器信息（原在账户信息）：端口/配额/状态/资源使用都归容器 -->
+          <div class="stat-rows">
+            <div class="stat-row">
+              <span class="stat-label">{{ $t('user.port') }}</span>
+              <code class="stat-value mono">{{ userInfo.port }}</code>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">{{ $t('user.tier') }}</span>
+              <span class="badge" :class="tierBadge(userInfo.tier)">{{ userInfo.tierLabel }}</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">{{ $t('user.containerStatus') }}</span>
+              <span class="badge" :class="statusBadge(userInfo.status)">{{
+                statusText(userInfo.status)
+              }}</span>
+              <button
+                v-if="userInfo.status !== 'running'"
+                class="btn btn-small btn-success"
+                @click="restartContainer"
+              >
+                {{ $t('user.startContainer') }}
+              </button>
+            </div>
+          </div>
+
+          <div v-if="userInfo.stats" class="resource-usage">
+            <div class="resource-item">
+              <div class="resource-header">
+                <span>{{ $t('user.cpuUsage') }}</span>
+                <span class="mono">{{ userInfo.stats.cpu }}</span>
+              </div>
+            </div>
+            <div class="resource-item">
+              <div class="resource-header">
+                <span>{{ $t('user.memUsage') }}</span>
+                <span class="mono"
+                  >{{ userInfo.stats.memory }} ({{ userInfo.stats.memoryPercent }})</span
+                >
+              </div>
+              <div class="progress-bar">
+                <div class="progress-fill" :style="{ width: userInfo.stats.memoryPercent }"></div>
+              </div>
+            </div>
+          </div>
+          <div v-else class="loading">{{ $t('user.noData') }}</div>
+
+          <div class="tab-divider" />
+
+          <!-- 进入容器入口（连同容器状态/端口/配额/资源使用一起，均已从账户信息迁来） -->
           <div class="enter-box">
             <div class="enter-info">
               <div class="enter-title">{{ $t('user.enterDsh') }}</div>
@@ -448,7 +450,6 @@
             <!-- 已授权 -->
             <div v-if="cwtStatus.authorized" class="info-row">
               <span class="badge badge-success">{{ $t('user.cwtAuthorized') }}</span>
-              <span class="cwt-meta">usr: {{ cwtStatus.registry?.usr }}</span>
             </div>
 
             <!-- 待审批 -->
@@ -650,7 +651,9 @@ import { requestAccounts, signMessage, getPublicKey, watchAccountsChanged } from
 const { t } = useI18n()
 
 // ---- 侧栏导航（与 React 原型稿一致） ----
-const activeTab = ref('account')
+// 落地页 = 容器管理：多数操作（进入 DSH、启停、资源查看）都发生在这里，
+// 账户信息只剩地址一项，不该默认挡在前面。
+const activeTab = ref('container')
 const sidebarTabs = [
   {
     key: 'account',
@@ -884,12 +887,17 @@ const removeModel = (idx, mi) => {
 /**
  * 钱包签名挑战-响应：先取插件当前账户 → 领 nonce → 插件签名 + 取公钥。
  *
+ * 【挑战池按用途隔离】后端只在发放时的 purpose 池里消费，借错池必报
+ * "挑战无效或已过期"——
+ *   - 租户配置操作（保存/清除/重置/模型发现）→ 默认 '/api/user/config-challenge'
+ *   - 技能操作（mine/import/unpublish/uninstall/publish）→ '/api/skills/challenge'
+ *
  * 关键：签名对象必须用插件【当前选中的账户】，否则插件会以
  * "The requested account and/or method has not been authorized" 拒绝
  * （源码：swtc_signMessage 检查 accounts.includes(from)）。
  * 返回的 address 即插件当前账户，后续提交/清除都用它（写的是该账户自己的卷）。
  */
-const signChallenge = async () => {
+const signChallenge = async (challengeUrl = '/api/user/config-challenge') => {
   if (!window.ccdao || !window.ccdao.request) {
     throw new Error(t('user.errNoCcdao'))
   }
@@ -898,11 +906,12 @@ const signChallenge = async () => {
   //    jndwret... 再传回去会被判"未授权"(4100)。只有 requestAccounts 原样
   //    返回的字符串才能通过。后端 normalizeAddress 会自己转小写，无需担心。
   const pluginAddress = await requestAccounts()
-  // 2. 领一次性挑战
-  const challengeRes = await axios.post('/api/user/config-challenge', { address: pluginAddress })
-  const nonce = challengeRes.data.nonce
-  // 3. 插件对 nonce 签名 + 取公钥（都用原始大小写地址）
-  const signature = await signMessage(pluginAddress, nonce)
+  // 2. 领一次性挑战（响应含 message：服务端构造的用途绑定被签内容）
+  const challengeRes = await axios.post(challengeUrl, { address: pluginAddress })
+  const { nonce, message } = challengeRes.data
+  // 3. 插件对 **message** 签名 + 取公钥（都用原始大小写地址）。
+  //    签的是用途绑定消息（hex），不是裸 nonce —— 跨端点凭证混淆加固。
+  const signature = await signMessage(pluginAddress, message)
   const publicKey = await getPublicKey(pluginAddress)
   return { address: pluginAddress, nonce, signature, publicKey }
 }
@@ -1177,6 +1186,28 @@ const setupAccountChangeListener = () => {
   unbindAccounts = watchAccountsChanged(handleAccountsChanged)
 }
 
+/**
+ * 确立「已连接」身份：**只要拿到钱包地址就算连上**，与容器是否可用、是否被限时无关。
+ *
+ * 背景（用户实测死循环）：模板里「连接钱包」卡片是 `v-else-if="!connected"`，
+ * 而额度用完 / 排队时 `handleAddressChange` 会提前 return。若这些分支不把
+ * `connected` 置真，页面就一直停在「连接钱包」卡片 —— 用户点一次弹一次
+ * 「今日时长已用完」，弹完还停在连接钱包；而**解除限时的 CWT 验证 tab 恰恰在
+ * `connected === true` 之后的主界面里**，于是永远进不去 → 永远无法自助解锁。
+ *
+ * `fetchUserInfo` 失败也不阻断：无会话时 `/api/user/:address` 会回脱敏壳
+ * （只有 address/exists/status），有 address 就足够把界面（含 CWT tab）渲染出来。
+ */
+const establishConnected = async (address) => {
+  try {
+    await fetchUserInfo(address)
+  } catch (err) {
+    console.warn('[UserCenter] 建立已连接态时拉取用户信息失败（不阻断）:', err?.message)
+  }
+  if (!userInfo.value?.address) userInfo.value = { ...(userInfo.value || {}), address }
+  connected.value = true
+}
+
 // 处理地址变化的通用函数
 const handleAddressChange = async (newAddress, isInitialLoad = false) => {
   const oldAddress = localStorage.getItem('swtc_address')
@@ -1217,6 +1248,9 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
       hideLoading()
       // 保存地址
       localStorage.setItem('swtc_address', newAddress)
+      // 身份已确立（地址已拿到）→ 必须进入已连接态，否则模板会停在
+      // 「连接钱包」卡片上（!connected 分支在 waiting 分支之前），排队页根本看不到
+      await establishConnected(newAddress)
       return
     }
 
@@ -1224,6 +1258,11 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
     if (containerStatus === 'usage-limit') {
       hideLoading()
       localStorage.setItem('swtc_address', newAddress)
+      // 关键修复：额度用完 ≠ 没连上钱包。这里必须进入「已连接」态并直接切到
+      // CWT 验证页 —— 否则页面停在「连接钱包」卡片，而解除限时的 CWT 入口又在
+      // 已连接界面里，点了弹限时、弹完还是连接钱包，形成死循环（用户实测反馈）
+      await establishConnected(newAddress)
+      activeTab.value = 'cwt'
       if (!isInitialLoad) {
         alert(lastConnect202Message || t('user.usageLimitReached'))
       }
@@ -1329,16 +1368,22 @@ const connectWithOwnership = async (address, opts = {}) => {
     showLoading(title, t('user.loadingVerify'), progress0)
 
     const pluginAddress = await requestAccounts()
-    // 1) 领取一次性挑战（按插件账户下发，5 分钟有效）
+    // 1) 领取一次性挑战：**必须向 /connect 领**（CONNECT 用途分池）。
+    //    不能借用 config-challenge —— 挑战池按用途隔离，借来的 nonce 在 /connect
+    //    处取不到（这正是防"跨端点凭证混淆"的设计）。无签名调用 /connect 会
+    //    返回 401 + { nonce, message }，这就是本流程要签的材料。
     showLoading(title, t('user.loadingWalletConnect'), Math.max(progress0, 25))
-    const challengeRes = await axios.post('/api/user/config-challenge', {
-      address: pluginAddress,
-    })
-    const nonce = challengeRes.data.nonce
+    const chalRes = await fetch(`/connect?address=${encodeURIComponent(pluginAddress)}`)
+    const challenge = await chalRes.json()
+    const nonce = challenge.nonce
+    const message = challenge.message
+    if (!nonce || !message) {
+      throw new Error(challenge.error || '领取连接挑战失败，请重试')
+    }
     console.log('[flow] F7 挑战获取完成 nonce.length=' + (nonce ? String(nonce).length : 0))
-    // 2) 插件签名（用户确认弹窗，可能等待较久）
+    // 2) 插件签名（用户确认弹窗，可能等待较久）：签的是用途绑定消息（hex）
     showLoading(title, t('user.loadingSign'), Math.max(progress0, 45))
-    const signature = await signMessage(pluginAddress, nonce)
+    const signature = await signMessage(pluginAddress, message)
     const publicKey = await getPublicKey(pluginAddress)
     console.log('[flow] F8 钱包签名+公钥完成')
     // 3) 带签名访问 /connect（已存在容器同样验签并发 cookie）
@@ -1599,40 +1644,34 @@ const fetchUserInfo = async (address) => {
   }
 }
 
-const switchAddress = async () => {
-  if (!hasCCDAO.value) {
-    alert(t('user.errInstallCcdao'))
-    return
-  }
-
-  try {
-    const pluginAddress = await requestAccounts()
-
-    if (!pluginAddress) {
-      throw new Error(t('user.noAccounts'))
-    }
-
-    // 统一转小写
-    const newAddress = accounts[0].toLowerCase()
-    console.log('[UserCenter] 切换地址:', newAddress)
-
-    // 使用通用处理函数
-    await handleAddressChange(newAddress)
-  } catch (err) {
-    console.error('[UserCenter] 切换失败:', err)
-    alert(t('user.switchFail', { err: err.message }))
-  }
-}
-
 const restartContainer = async () => {
   try {
     const address = userInfo.value.address
     showLoading(t('user.loadingStarting'), t('user.loadingPleaseWait'), 40)
 
-    await connectWithOwnership(address, {
+    const res = await connectWithOwnership(address, {
       title: t('user.loadingStarting'),
       progress: 40,
     })
+
+    // 必须检查 /connect 的 HTTP 状态：容器创建/启动失败时后端会回
+    // 502（未就绪/内部错误）、202（额度用尽或排队）、503（队列满），
+    // 旧实现完全不看状态码就弹"启动成功"，于是出现"提示启动了、
+    // 状态却仍是已销毁"（实测：容器未就绪被回滚，用户以为已就绪）。
+    if (!res.ok) {
+      let detail = ''
+      try {
+        const data = await res.json()
+        detail = data?.message || data?.error || ''
+      } catch {
+        try {
+          detail = (await res.text()).slice(0, 300)
+        } catch {
+          /* 响应体不可读则只用状态码 */
+        }
+      }
+      throw new Error(detail || `HTTP ${res.status}`)
+    }
 
     // 等待容器完全就绪
     await new Promise((resolve) => setTimeout(resolve, 5000))
@@ -1812,7 +1851,7 @@ const importBusy = ref(false)
 
 /** 拉取 mine 数据（含签名） */
 const fetchMine = async () => {
-  const sig = await signChallenge()
+  const sig = await signChallenge('/api/skills/challenge')
   const res = await skillsApi.mine(sig)
   return {
     published: res.published || [],
@@ -1914,7 +1953,7 @@ const doImport = async () => {
   }
   importBusy.value = true
   try {
-    const sig = await signChallenge()
+    const sig = await signChallenge('/api/skills/challenge')
     await skillsApi.importSkill(sig, name, importText.value)
     alert(t('user.importedOk', { name }))
     closeImportDialog()
@@ -1929,7 +1968,7 @@ const doImport = async () => {
 const unpublishSkill = async (name) => {
   if (!confirm(t('user.confirmUnpublish', { name }))) return
   try {
-    const sig = await signChallenge()
+    const sig = await signChallenge('/api/skills/challenge')
     await skillsApi.unpublish(sig, name)
     await loadMine()
   } catch (err) {
@@ -1940,7 +1979,7 @@ const unpublishSkill = async (name) => {
 const uninstallSkill = async (name) => {
   if (!confirm(t('user.confirmUninstall', { name }))) return
   try {
-    const sig = await signChallenge()
+    const sig = await signChallenge('/api/skills/challenge')
     await skillsApi.uninstall(sig, name)
     await loadMine()
   } catch (err) {
@@ -1989,7 +2028,7 @@ const doShare = async () => {
   }
   shareBusy.value = true
   try {
-    const sig = await signChallenge()
+    const sig = await signChallenge('/api/skills/challenge')
     await skillsApi.publish(sig, source, renameTo || undefined)
     alert(
       renameTo
@@ -2785,5 +2824,36 @@ onUnmounted(() => {
   border: 1px solid #fcd34d;
   border-radius: 10px;
   background: #fffbeb;
+}
+
+/* 缩写地址/镜像 ID：悬停立即弹出完整值。
+   用自绘 tooltip 而不是原生 title —— 原生有约 1 秒延迟、样式不可控、不能选中。 */
+.addr-tip {
+  position: relative;
+  cursor: help;
+}
+.addr-tip[data-full]:hover::after {
+  content: attr(data-full);
+  position: absolute;
+  left: 0;
+  top: 100%;
+  z-index: 40;
+  margin-top: 4px;
+  padding: 6px 10px;
+  width: max-content;
+  max-width: 460px;
+  background: #1e293b;
+  color: #f8fafc;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: normal;
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.28);
+  white-space: normal;
+  word-break: break-all;
+  text-align: left;
+  pointer-events: none;
 }
 </style>

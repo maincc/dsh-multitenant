@@ -92,17 +92,23 @@ case "${DRIVER}" in
       echo "✅ 结论：磁盘配额【硬生效】（overlay2 + xfs 项目配额）"
       echo "   底层 xfs 已启用 pquota/prjquota，容器可写层受 size 限制。"
     else
-      echo "⚠️  结论：磁盘配额【软配额】——记录但不强制"
-      echo "   overlay2 不支持 --storage-opt size= 强制（参数被接受并记录在"
-      echo "   HostConfig.StorageOpt，但写超不会被拦）。"
-      echo "   注意：Linux 默认安装即为此情形，与 Docker Desktop 一致。"
-      echo "   要硬生效：初始化时选 btrfs/zfs，或把 ${DOCKER_ROOT} 所在分区"
-      echo "   格式化为 xfs 并挂载 pquota 后重建 Docker 数据目录。"
+      echo "⚠️  结论：磁盘配额【不可用】—— Docker 会拒绝整个 docker run"
+      echo "   线上实测（/home/oc-skywelld-1，Docker 28.x）：overlay/overlay2 的底层"
+      echo "   分区不是 xfs+pquota 时，--storage-opt size= 会让 docker run 直接失败："
+      echo "     \"--storage-opt is supported only for overlay over xfs with 'pquota'"
+      echo "      mount option\"  ← exit 125，容器根本创建不出来"
+      echo "   （注意：不是「参数被接受但不强制」的软配额——那种旧说法在部分 Docker"
+      echo "     版本上不成立，别据此判断「不影响使用」。）"
+      echo "   平台已自愈：docker.service 首次被拒后会自动去掉该参数重试并记住结果，"
+      echo "   日志出现「宿主存储驱动不支持 --storage-opt …已降级为不限制磁盘」。"
+      echo "   要硬生效：把 ${DOCKER_ROOT} 所在分区格式化为 xfs 挂载 pquota 后"
+      echo "   重建 Docker 数据目录，或改用 btrfs/zfs；也可跑本脚本 --test 实测确认。"
     fi
     ;;
   overlay | overlayfs)
-    echo "⚠️  结论：磁盘配额【软配额】——记录但不强制"
-    echo "   ${DRIVER} 不支持 size 强制（Docker Desktop 常见）。"
+    echo "⚠️  结论：磁盘配额【不可用】"
+    echo "   ${DRIVER} 不支持 size 强制；Docker 可能直接拒绝 docker run（exit 125，"
+    echo "   见上面 overlay2 分支的说明）。平台会自动去掉该参数重试。"
     ;;
   vfs)
     echo "⚠️  结论：磁盘配额【不支持】"
@@ -127,6 +133,11 @@ if [ "${1:-}" = "--test" ]; then
   echo ""
   if echo "${OUT}" | grep -qiE 'no space|quota exceeded|exceeded'; then
     echo "✅ 实测结果：写入被拒 → 配额【已生效】"
+  elif echo "${OUT}" | grep -qiE 'storage-opt is supported only for|storage-opt.*(not supported|unsupported)'; then
+    echo "❌ 实测结果：驱动【拒绝】了 --storage-opt（exit 125）→ 容器创建会直接失败"
+    echo "   这【不是】软配额，是硬失败（旧版脚本会误报成「未强制/软配额」）。"
+    echo "   平台已自愈：自动去掉该参数重试，配额降级为不限制。"
+    echo "   要硬配额：${DOCKER_ROOT} 所在分区改 xfs+pquota，或换 btrfs/zfs。"
   else
     echo "⚠️  实测结果：写满 50MB 成功 → 配额【未强制】（软配额）"
   fi

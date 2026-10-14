@@ -15,6 +15,7 @@
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { createHash } from 'node:crypto'
+import { createServer } from 'node:http'
 
 vi.mock('../src/services/data.service.js', async (importOriginal) => {
   const mod = await importOriginal()
@@ -29,17 +30,26 @@ vi.mock('../src/services/data.service.js', async (importOriginal) => {
 
 import { tenantGateway } from '../src/services/tenant-proxy.service.js'
 import { userSessionStore } from '../src/middleware/user-auth.middleware.js'
+import { tenantConfigService, SIGN_PURPOSE } from '../src/services/tenant-config.service.js'
 import { Keypairs } from '@swtc/keypairs'
 
 const OWNER = 'jga9j9tkqtbcuohe2zqhvffbguved6o9or'
 
 describe('租户网关门禁：顶层导航一致性校验（插件地址 vs 会话地址）', () => {
   let publicPort, internalPort
+  /** 老版本能力：不需要 DSH 浏览器认证 → 平台门禁通过后直接转发 */
+  const declaredCapability = { requiresToken: false, version: '0.1.1-rc.2' }
   beforeEach(async () => {
     publicPort = 39100 + Math.floor(Math.random() * 500)
+    // ⚠️ upstream 监听段 39700-39899：下方 listen 用例的占位 internalPort 必须避开
+    // 此段（历史 flaky 根因：占位值曾用 39700/39701/39702，随机 upstream 撞上即自锁）
     internalPort = 39700 + Math.floor(Math.random() * 200)
-    tenantGateway.listen(publicPort, internalPort, OWNER)
-    await new Promise((r) => setTimeout(r, 40)) // 等 server.listen 就绪
+    // listen 现在是 Promise（bind 成功才 resolve）；必须 await，否则 bind 失败
+    // 会变成 unhandled rejection 而不是测试失败
+    // 第 4 参 declaredCapability：本文件测的是"平台门禁"这条链路，
+    // 因此声明为老版本（不需要 DSH 浏览器认证）→ 走到转发；
+    // 需要认证的分岔由本文件末尾的专门用例覆盖。
+    await tenantGateway.listen(publicPort, internalPort, OWNER, declaredCapability)
   })
   afterEach(() => {
     tenantGateway.closeAll()
@@ -191,8 +201,8 @@ describe('租户网关门禁：顶层导航一致性校验（插件地址 vs 会
     expect(await res.json()).toMatchObject({ ok: true, valid: false })
   })
 
-  it('/__gw__/verify 正路径：对 challenge nonce 的真实签名 → valid:true', async () => {
-    // 真实密钥对 → 动态地址 → 会话；challenge 拿 nonce → 签名 → 验证
+  it('/__gw__/verify 正路径：对 challenge message 的真实签名 → valid:true', async () => {
+    // 真实密钥对 → 动态地址 → 会话；challenge 拿 message → 签名 → 验证
     const seed = Keypairs.generateSeed()
     const kp = Keypairs.deriveKeypair(seed)
     const addr = Keypairs.deriveAddress(kp.publicKey).toLowerCase()
@@ -202,11 +212,12 @@ describe('租户网关门禁：顶层导航一致性校验（插件地址 vs 会
     const cRes = await fetch(`http://127.0.0.1:${publicPort}/__gw__/challenge`, {
       headers: { cookie: `user_session=${token}` },
     })
-    const { nonce } = await cRes.json()
+    const { nonce, message } = await cRes.json()
     expect(typeof nonce).toBe('string')
+    expect(typeof message).toBe('string') // 用途绑定消息（GATEWAY 用途）
 
-    // 签名（与平台配置签名同一算法：Keypairs.sign(nonceHex, privateKey)）
-    const signature = Keypairs.sign(nonce, kp.privateKey)
+    // 签名（与平台签名同一算法：Keypairs.sign(messageHex, privateKey)）
+    const signature = Keypairs.sign(message, kp.privateKey)
 
     const vRes = await fetch(`http://127.0.0.1:${publicPort}/__gw__/verify`, {
       method: 'POST',
@@ -220,5 +231,111 @@ describe('租户网关门禁：顶层导航一致性校验（插件地址 vs 会
     })
     const j = await vRes.json()
     expect(j.valid).toBe(true) // body 被正确解析 + 真实签名验证通过
+  })
+
+  it('用途绑定：拿 LOGIN 用途的挑战/签名过网关校验 → valid:false（跨用途加固）', async () => {
+    const seed = Keypairs.generateSeed()
+    const kp = Keypairs.deriveKeypair(seed)
+    const addr = Keypairs.deriveAddress(kp.publicKey).toLowerCase()
+    const token = userSessionStore.create(addr)
+
+    // 攻击者持有的是"登录用途"的挑战与签名（地址/nonce 都对，但用途不对）
+    const foreign = tenantConfigService.issueChallenge(addr, SIGN_PURPOSE.LOGIN)
+    const signature = Keypairs.sign(foreign.message, kp.privateKey)
+
+    const vRes = await fetch(`http://127.0.0.1:${publicPort}/__gw__/verify`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: `user_session=${token}` },
+      body: JSON.stringify({
+        address: addr,
+        nonce: foreign.nonce,
+        signature,
+        publicKey: kp.publicKey,
+      }),
+    })
+    const j = await vRes.json()
+    expect(j.valid).toBe(false)
+  })
+
+  it('H1 加固：平台自身的门禁 cookie 绝不转发进租户容器', async () => {
+    const token = userSessionStore.create(OWNER)
+    let seenCookie = null
+    const upstream = createServer((req, res) => {
+      seenCookie = req.headers.cookie || ''
+      res.writeHead(200, { 'content-type': 'text/plain' })
+      res.end('ok')
+    })
+    await new Promise((r) => upstream.listen(internalPort, '127.0.0.1', r))
+    try {
+      // 非顶层导航（子资源/fetch）→ 过门禁后直接转发到容器
+      const res = await fetch(`http://127.0.0.1:${publicPort}/api/session/list`, {
+        headers: {
+          cookie: `admin_session=stolen-admin-token; user_session=${token}; gw_ok=1; theme=dark`,
+        },
+      })
+      expect(res.status).toBe(200)
+      // 平台自身的门禁 cookie 一律剥离（否则租户可窃取 admin_session 冒充管理员）
+      expect(seenCookie).not.toContain('admin_session')
+      expect(seenCookie).not.toContain('user_session')
+      expect(seenCookie).not.toContain('gw_ok')
+      // 容器自己的 cookie 原样保留
+      expect(seenCookie).toContain('theme=dark')
+    } finally {
+      await new Promise((r) => upstream.close(r))
+    }
+  })
+})
+
+/**
+ * listen 的 Promise 语义（修复"假 running"的关键一环）
+ *
+ * 修复前 listen 是同步的：bind 失败只 console.error，然后无条件写入 routes。
+ * 调用方（finalizeTenant）因此以为成功、落盘 running，用户拿到一个没人监听的 URL。
+ * 现在 bind 失败必须 reject。
+ */
+describe('tenantGateway.listen：绑定结果可见性', () => {
+  afterEach(() => {
+    tenantGateway.closeAll()
+  })
+
+  it('端口被占用 → listen reject（不再静默吞掉）', async () => {
+    const port = 39600 + Math.floor(Math.random() * 300)
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    // 用一个独立的裸 server 占住端口（不能复用 listen 自身：listen 内部会先
+    // close 旧监听再重绑，同端口是幂等成功而不是失败）
+    const blocker = createServer(() => {})
+    await new Promise((resolve, reject) => {
+      blocker.once('error', reject)
+      blocker.listen(port, '0.0.0.0', resolve)
+    })
+
+    try {
+      await expect(tenantGateway.listen(port, 39951, OWNER)).rejects.toThrow()
+      // 失败时不得把路由写进去，否则端口归属会被指错
+      expect(tenantGateway.ownerOf(port)).toBeNull()
+    } finally {
+      await new Promise((r) => blocker.close(r))
+      spy.mockRestore()
+    }
+  })
+
+  it('同端口重复 listen → 幂等成功（重启/重绑场景）', async () => {
+    const port = 39600 + Math.floor(Math.random() * 300)
+    const other = 'jga9j9tkqtbcuohe2zqhvffbguved6o9or'
+
+    await tenantGateway.listen(port, 39950, OWNER)
+    expect(tenantGateway.ownerOf(port)).toBe(OWNER)
+
+    // listen 内部会 close(port) 再重绑，因此同端口应成功并换主
+    await expect(tenantGateway.listen(port, 39951, other)).resolves.toBeUndefined()
+    expect(tenantGateway.ownerOf(port)).toBe(other)
+  })
+
+  it('成功时 resolve，并把路由写入 routes', async () => {
+    const port = 39600 + Math.floor(Math.random() * 300)
+
+    await expect(tenantGateway.listen(port, 39952, OWNER)).resolves.toBeUndefined()
+    expect(tenantGateway.ownerOf(port)).toBe(OWNER)
   })
 })

@@ -7,17 +7,25 @@
 
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
-vi.mock('../src/services/tenant-config.service.js', () => ({
-  tenantConfigService: {
-    issueChallenge: vi.fn(() => 'deadbeef'.repeat(8)),
-    consumeChallenge: vi.fn(() => false), // 默认挑战无效：走鉴权失败路径
-    verifySignature: vi.fn(() => false),
-    runScript: vi.fn(),
-  },
-}))
+vi.mock('../src/services/tenant-config.service.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    // 保留 SIGN_PURPOSE / buildSignedMessage 等真实导出（验签逻辑要用）
+    ...actual,
+    tenantConfigService: {
+      issueChallenge: vi.fn(() => ({ nonce: 'deadbeef'.repeat(8), message: 'ab'.repeat(16) })),
+      consumeChallenge: vi.fn(() => false), // 默认挑战无效：走鉴权失败路径
+      verifySignature: vi.fn(() => false),
+      runScript: vi.fn(),
+    },
+  }
+})
 
 import { handleSkillRoutes } from '../src/routes/skill.routes.js'
 import { tenantConfigService } from '../src/services/tenant-config.service.js'
+import { dataService } from '../src/services/data.service.js'
+import { isolateOpsLog } from './ops-log-isolation.js'
+isolateOpsLog(dataService) // 留痕 json 轨进临时目录，防写真实 operations.log
 
 const VALID_ADDR = 'jga9j9tkqtbcuohe2zqhvffbguved6o9or'
 
@@ -75,8 +83,8 @@ describe('技能市场路由冒烟', () => {
     expect(res.statusCode).toBe(200)
   })
 
-  it('POST /api/skills/challenge 返回 nonce', async () => {
-    tenantConfigService.issueChallenge.mockReturnValue('ab12cd34')
+  it('POST /api/skills/challenge 返回 nonce 与用途绑定 message', async () => {
+    tenantConfigService.issueChallenge.mockReturnValue({ nonce: 'ab12cd34', message: 'cd12ab34' })
     const req = makeReq({
       method: 'POST',
       url: '/api/skills/challenge',
@@ -86,7 +94,9 @@ describe('技能市场路由冒烟', () => {
     const handled = await handleSkillRoutes(req, res, '/api/skills/challenge')
     expect(handled).toBe(true)
     expect(res.statusCode).toBe(200)
-    expect(JSON.parse(res.body).nonce).toBe('ab12cd34')
+    const body = JSON.parse(res.body)
+    expect(body.nonce).toBe('ab12cd34')
+    expect(body.message).toBe('cd12ab34')
   })
 
   it('POST /api/skills/challenge 非法地址返回 400', async () => {

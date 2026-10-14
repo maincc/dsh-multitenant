@@ -26,11 +26,17 @@ import { fileURLToPath } from 'node:url'
 
 import { CONFIG } from './config/config.js'
 import { userService } from './services/user.service.js'
+import { cwtStore } from './services/cwt.store.js'
+import { dataService } from './services/data.service.js'
+import { adminSessionStore } from './middleware/auth.middleware.js'
+import { userSessionStore } from './middleware/user-auth.middleware.js'
+import { skillService } from './services/skill.service.js'
 import { handleAdminRoutes } from './routes/admin.routes.js'
 import { handleUserRoutes } from './routes/user.routes.js'
 import { handleTenantRoutes } from './routes/tenant.routes.js'
 import { handleSkillRoutes } from './routes/skill.routes.js'
 import { handleError } from './utils/errors.js'
+import { startMaintenanceTimer } from './services/maintenance.service.js'
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const FRONTEND_DIST = join(ROOT, 'frontend', 'dist')
@@ -107,6 +113,32 @@ function startCleanupTimer() {
   console.log(
     `[cleanup] timer started: check every ${checkMin}min, stop after ${stopMin}min idle, destroy after ${destroyMin}min stopped`,
   )
+}
+
+/**
+ * 启动网关路由自愈定时器。
+ *
+ * 容器可能在平台运行期间被重建（清理销毁 → 用户再连接新建），此时平台侧
+ * 路由不会被自动补回，用户访问容器 URL 会拿到网关 403
+ * "该租户容器需要登录会话才能访问"（容器本身是好的）——实测踩过。
+ * 每 60 秒对"running 但无路由"的租户补一次监听（幂等，只补不拆）。
+ */
+function startGatewayHealTimer() {
+  const interval = 60_000
+  const tick = async () => {
+    try {
+      const { checked, restored, failed } = await userService.ensureGatewayRoutes()
+      if (restored > 0 || failed > 0) {
+        console.log(`[gateway-heal] 检查 ${checked} 个，补回 ${restored} 个，失败 ${failed} 个`)
+      }
+    } catch (err) {
+      console.error('[gateway-heal] 失败:', err.message)
+    }
+  }
+  setInterval(tick, interval)
+  // 启动时立即跑一次（restoreFromDocker 之后状态才完整）
+  void tick()
+  console.log(`[gateway-heal] timer started: check every ${interval / 1000}s`)
 }
 
 /**
@@ -189,88 +221,146 @@ function startQueueProcessor() {
 
 // 创建 HTTP 服务器
 const server = createServer(async (req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host}`)
-  const path = url.pathname
+  // 顶层兜底：任何路由逃逸的异常都在此收敛。
+  // 修复前整个 handler 无 try/catch，一次逃逸就是 unhandledRejection——
+  // 只打一行日志、不响应客户端，连接会一直挂到超时。
+  try {
+    const url = new URL(req.url, `http://${req.headers.host}`)
+    const path = url.pathname
 
-  // GET /health：健康检查
-  if (path === '/health') {
-    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-    res.end(JSON.stringify({ ok: true }))
-    return
-  }
-
-  // 管理路由
-  if (
-    path.startsWith('/api/admin/') ||
-    path === '/api/users' ||
-    path === '/api/stats' ||
-    path === '/api/docker/status'
-  ) {
-    if (await handleAdminRoutes(req, res, path, url)) return
-  }
-
-  // 技能市场路由
-  if (path.startsWith('/api/skills')) {
-    if (await handleSkillRoutes(req, res, path)) return
-  }
-
-  // 用户路由
-  if (
-    path.startsWith('/api/user/') ||
-    path.startsWith('/api/upgrade/') ||
-    path.startsWith('/api/cwt/')
-  ) {
-    if (await handleUserRoutes(req, res, path)) return
-  }
-
-  // 租户路由
-  if (
-    path === '/connect' ||
-    path === '/connect-status' ||
-    path.startsWith('/leave/') ||
-    (path.startsWith('/api/user/') &&
-      (path.endsWith('/remove') ||
-        path.endsWith('/restart') ||
-        path.endsWith('/reset') ||
-        path.endsWith('/stop')))
-  ) {
-    if (await handleTenantRoutes(req, res, path, url)) return
-  }
-
-  // 静态资源
-  if (path.startsWith('/assets/') || path === '/favicon.ico') {
-    const filePath = join(FRONTEND_DIST, path)
-    if (serveStaticFile(filePath, res)) {
+    // GET /health：健康检查
+    if (path === '/health') {
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ ok: true }))
       return
     }
-    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
-    res.end('Not found')
-    return
-  }
 
-  // SPA 路由 fallback；未注册的 /api/* 一律返回 404 JSON，绝不能吞成前端 HTML
-  if (!res.headersSent) {
-    if (path.startsWith('/api/')) {
-      res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ error: 'Not found', code: 'NOT_FOUND' }))
+    // 管理路由
+    if (
+      path.startsWith('/api/admin/') ||
+      path === '/api/users' ||
+      path === '/api/stats' ||
+      path === '/api/docker/status'
+    ) {
+      if (await handleAdminRoutes(req, res, path, url)) return
+    }
+
+    // 技能市场路由
+    if (path.startsWith('/api/skills')) {
+      if (await handleSkillRoutes(req, res, path)) return
+    }
+
+    // 用户路由
+    if (
+      path.startsWith('/api/user/') ||
+      path.startsWith('/api/upgrade/') ||
+      path.startsWith('/api/cwt/')
+    ) {
+      if (await handleUserRoutes(req, res, path)) return
+    }
+
+    // 租户路由
+    if (
+      path === '/connect' ||
+      path === '/connect-status' ||
+      path.startsWith('/leave/') ||
+      (path.startsWith('/api/user/') &&
+        (path.endsWith('/remove') ||
+          path.endsWith('/restart') ||
+          path.endsWith('/reset') ||
+          path.endsWith('/stop')))
+    ) {
+      if (await handleTenantRoutes(req, res, path, url)) return
+    }
+
+    // 静态资源
+    if (path.startsWith('/assets/') || path === '/favicon.ico') {
+      const filePath = join(FRONTEND_DIST, path)
+      if (serveStaticFile(filePath, res)) {
+        return
+      }
+      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+      res.end('Not found')
       return
     }
-    serveFrontend(res)
+
+    // SPA 路由 fallback；未注册的 /api/* 一律返回 404 JSON，绝不能吞成前端 HTML
+    if (!res.headersSent) {
+      if (path.startsWith('/api/')) {
+        res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: 'Not found', code: 'NOT_FOUND' }))
+        return
+      }
+      serveFrontend(res)
+    }
+  } catch (err) {
+    handleError(err, res)
   }
 })
 
 // 启动服务器
 const PORT = Number(process.env.PORT || CONFIG.server.port)
 server.listen(PORT, '0.0.0.0', async () => {
-  await userService.restoreFromDocker()
+  // MongoDB 迁移钩子（storage-design §6，M1）：仅 provider='mongodb' 生效，
+  // 默认 json 下本块零执行（连 mongodb 驱动都不加载，动态 import 门控）。
+  // 与 restoreFromDocker 的"失败不拦"刻意相反：迁移失败必须【拒绝启动】——
+  // 带着半迁移/未校验的库上活，比停机严重一个量级。
+  if (CONFIG.storage?.provider === 'mongodb') {
+    try {
+      const { getStore } = await import('./services/mongo.store.js')
+      const r = await getStore().runMigration()
+      console.log(`[startup] storage 迁移：${r.status}`, JSON.stringify(r.stats ?? {}))
+    } catch (err) {
+      console.error('[startup] MongoDB 迁移失败，拒绝启动：', err.message)
+      process.exit(1)
+    }
+  }
+  // M2-1：provider='mongodb' 时用户域状态以库为准，在这里原地水合缓存（json=no-op）。
+  // 失败拦启动：带着文件旧数的缓存上活，下一次存盘会把库里真数抹成旧镜像。
+  try {
+    await dataService.init() // M2-5：meta 单例域（admin/镜像版本）水合；admin 地址注入提权热路径
+    await userService.init()
+    await cwtStore.init() // M2-2：CWT 缓存同理由库水合（json=空操作）
+    await adminSessionStore.init() // M2-3：双会话并入 sessions 集合（scope 区分，TTL 兜底）
+    await userSessionStore.init()
+    await skillService.init() // M2-4：技能元数据（目录+安装记录）水合；正文文件按合同留磁盘
+  } catch (err) {
+    console.error('[startup] 存储态水合失败，拒绝启动：', err.message)
+    process.exit(1)
+  }
+  try {
+    await userService.restoreFromDocker()
+  } catch (err) {
+    // 恢复失败不应阻止服务启动（Docker 未就绪/部分容器异常），但必须可见
+    console.error('[startup] restoreFromDocker failed:', err.message)
+  }
+  // 修复 patch 配置漂移：改了 server.publicHost 后，旧容器的 trustedHosts 会过期，
+  // 表现为 directoryPicker 等宿主管道 403 forbidden（普通页面却照常打开，极难自查）。
+  // 失败不阻止启动，只记录。
+  try {
+    const { checked, refreshed, failed } = await userService.syncTenantPatches()
+    if (refreshed.length || failed.length) {
+      console.log(
+        `[startup] patch 同步：检查 ${checked} 个租户，刷新 ${refreshed.length} 个，失败 ${failed.length} 个`,
+      )
+    }
+  } catch (err) {
+    console.error('[startup] syncTenantPatches failed:', err.message)
+  }
   startCleanupTimer()
   startUsageLimitTimer()
+  // 路由自愈必须在 restoreFromDocker 之后：那时 state 才是完整的
+  startGatewayHealTimer()
   startResourceMonitor()
   startDiskMonitor()
   startQueueProcessor()
+  startMaintenanceTimer()
   console.log(`[dsh-multitenant] entry server on http://127.0.0.1:${PORT}/`)
   console.log(
     `[dsh-multitenant] tenant image: ${CONFIG.docker.image}, host: ${CONFIG.server.publicHost}, ports from ${CONFIG.docker.basePort}`,
+  )
+  console.log(
+    `[dsh-multitenant] preflight=${userService.preflightMode()} minFree=${((CONFIG.docker?.minFreeBytes ?? 4 * 1024 * 1024 * 1024) / 1073741824).toFixed(0)}GB（warn=只记日志不拦截）`,
   )
   console.log(`[dsh-multitenant] Frontend: http://127.0.0.1:${PORT}/`)
   console.log(`[dsh-multitenant] Admin: http://127.0.0.1:${PORT}/admin`)
@@ -278,6 +368,17 @@ server.listen(PORT, '0.0.0.0', async () => {
 })
 
 // 全局错误处理
+// 优雅关停：SIGTERM/SIGINT 退出前【排空会话镜像队列】——create 走的是尽力
+// 镜像轨（M2-3 设计），不留最后一次登录未落库就退场的窗口。
+// （revoke 本就 await 写确认；state/cwt/skill/meta 域全部 await 落库，无需 drain）
+for (const sig of ['SIGTERM', 'SIGINT']) {
+  process.once(sig, () => {
+    Promise.all([adminSessionStore.flush(), userSessionStore.flush()])
+      .catch(() => {})
+      .finally(() => process.exit(0))
+  })
+}
+
 process.on('unhandledRejection', (reason, promise) => {
   console.error('[fatal] Unhandled Rejection at:', promise, 'reason:', reason)
 })
