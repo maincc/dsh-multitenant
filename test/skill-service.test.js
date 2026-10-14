@@ -38,6 +38,9 @@ import { SkillService } from '../src/services/skill.service.js'
 import { tenantConfigService } from '../src/services/tenant-config.service.js'
 import { forceDisableModelInvocation } from '../src/utils/skill.js'
 import { CONFIG } from '../src/config/config.js'
+import { dataService } from '../src/services/data.service.js'
+import { isolateOpsLog } from './ops-log-isolation.js'
+isolateOpsLog(dataService) // 留痕 json 轨进临时目录，防写真实 operations.log
 
 const VALID_ADDR = 'jga9j9tkqtbcuohe2zqhvffbguved6o9or'
 

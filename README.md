@@ -76,6 +76,38 @@ node entry-server.mjs
 
 服务启动后访问：http://127.0.0.1:8090/
 
+### 4. （可选）MongoDB 存储形态（灰度可用）
+
+平台支持两种存储形态（完整设计与合同见 `docs/storage-design.md`）：
+
+- **json（默认）**：数据文件在 `data/` 下，零外部依赖，`npm start` 即用。
+- **mongodb**：9 个集合入库（users/meta/sessions/cwt×2/audit/usage/skills/skill_installs），
+  写路径经多文档事务确认；本机首次启动会自动把磁盘数据**一次性搬家**入库（幂等，
+  重启即 `skipped`），此后库为权威、进程启动时六域水合（水合失败拒绝启动）。
+
+启用 mongodb 形态（本机两步；形态声明住在 config.json `storage` 段——字段语义与测试护盾机制见 `config.json.example`；服务器由 deploy/install.sh 注入）：
+
+```bash
+# ① 起专用单成员副本集（事务前提；brew 的 27017 不碰、27018 专用）
+scripts/mongo-rs.sh start        # 空目录首起自动 rs.initiate；重启电脑后也是这一条
+
+# ② 直接启动——config.json 的 storage 段就是形态声明（provider=mongodb）
+npm start
+# 测试不受影响：globalSetup 护盾在 worker 钉 provider=json（见 config.json.example
+# storage.comment）；应急回退文件形态用 env 压 config：DSH_STORAGE_PROVIDER=json npm start
+```
+
+备份与恢复演练（mongodump 快照读，平台在线即可备）：
+
+```bash
+scripts/mongo-backup.sh backup   # 快照+保留最近 7 份（默认 ~/.dshWorkspace/dsh-mongo/backup）
+scripts/mongo-backup.sh verify   # 演练：还原进影子库 dsh_prod_verify 逐集合对账，绝不碰生产库
+```
+
+回退 json 形态：去掉两个环境变量重启即可（文件轨未动过；代价是切换期间新产生的
+业务数据只在库里，以库为准）。安全边界：mongod 仅监听 127.0.0.1 且未启鉴权——
+**本地形态专用**，上服务器必须 auth+TLS+独立账号（见 docs/security-hardening-plan.md）。
+
 ## 🧪 运行测试
 
 ```bash
@@ -88,6 +120,10 @@ npm run test:watch
 # 覆盖率报告
 npm run test:coverage
 ```
+
+> 真库用例（35 个）已自包含：vitest globalSetup 自动探测/复用 27018，没人起就临时
+> spawn 一个 mongod（独立端口+临时数据目录，跑完回收）；连 mongod 二进制都没有的
+> 机器优雅跳过、其余用例照跑。不需要为测试手动起库。
 
 ## 📊 系统架构
 
@@ -192,14 +228,16 @@ docker exec dsh-swtc-<address> cat /patches/tenant.patch.yml | tail -3
 
 ### 环境变量
 
-| 变量               | 说明                   | 默认值                 |
-| ------------------ | ---------------------- | ---------------------- |
-| `PORT`             | 服务端口               | 8090                   |
-| `PUBLIC_HOST`      | 对外主机名             | 127.0.0.1              |
-| `DSH_TENANT_IMAGE` | 租户镜像               | dsh-multitenant:latest |
-| `BASE_PORT`        | 起始端口               | 31000                  |
-| `PUBLIC_TRUST`     | 信任的浏览器 authority | -                      |
-| `INJECT_ENV`       | 注入容器的环境变量     | -                      |
+| 变量                   | 说明                                                                             | 默认值                      |
+| ---------------------- | -------------------------------------------------------------------------------- | --------------------------- |
+| `PORT`                 | 服务端口                                                                         | 8090                        |
+| `PUBLIC_HOST`          | 对外主机名                                                                       | 127.0.0.1                   |
+| `DSH_TENANT_IMAGE`     | 租户镜像                                                                         | dsh-multitenant:latest      |
+| `BASE_PORT`            | 起始端口                                                                         | 31000                       |
+| `PUBLIC_TRUST`         | 信任的浏览器 authority                                                           | -                           |
+| `INJECT_ENV`           | 注入容器的环境变量                                                               | -                           |
+| `DSH_STORAGE_PROVIDER` | 存储形态：`json`（默认）/ `mongodb`                                              | json                        |
+| `MONGODB_URI`          | mongodb 形态的库 URI（含库名与 replicaSet；常规配置在 config.json `storage` 段） | 27018 dsh_prod（见 config） |
 
 ## 🔌 API 文档
 

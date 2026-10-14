@@ -224,9 +224,12 @@ export async function handleAdminRoutes(req, res, path, url) {
   if (path === '/api/admin/logout' && req.method === 'POST') {
     const cookie = req.headers.cookie || ''
     const match = cookie.match(/admin_session=([^;]+)/)
+    const who = getAdminSession(req) // 先取操作人：吊销之后就查不到了
     if (match) {
       try {
-        adminSessionStore.revoke(decodeURIComponent(match[1]))
+        await adminSessionStore.revoke(decodeURIComponent(match[1]))
+        // 会话吊销也是"改变世界的动作"——进录像
+        dataService.logOperation('admin_logout', { address: who })
       } catch {
         // 忽略损坏的 token
       }
@@ -371,6 +374,15 @@ export async function handleAdminRoutes(req, res, path, url) {
           failed.push({ name: volume, error: err.message })
         }
       }
+      // 批量不可逆删除必须留痕（真删了或有失败才记——全空说明没动世界）
+      if (removed.length || failed.length) {
+        dataService.logOperation('admin_cleanup_orphan_volumes', {
+          operator: getAdminSession(req),
+          removed,
+          failedNames: failed.map((f) => f.name),
+          skipped,
+        })
+      }
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(
         JSON.stringify({
@@ -402,7 +414,7 @@ export async function handleAdminRoutes(req, res, path, url) {
     }
 
     // 添加到管理员列表（运行时 + 持久化）
-    const added = dataService.addAdmin(address, getAdminSession(req) || 'system')
+    const added = await dataService.addAdmin(address, getAdminSession(req) || 'system')
 
     if (added) {
       console.log(`[admin] promoted ${address} to admin`)
@@ -463,6 +475,7 @@ export async function handleAdminRoutes(req, res, path, url) {
 
     try {
       const result = await userService.forceStopContainer(address)
+      dataService.logOperation('admin_force_stop', { address, operator: getAdminSession(req) })
       if (!res.headersSent) {
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify(result))
@@ -642,7 +655,7 @@ export async function handleAdminRoutes(req, res, path, url) {
       const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 200) : 10
       const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? rawOffset : 0
 
-      const { records, hasMore } = cwtAdminService.listRecords(limit, offset)
+      const { records, hasMore } = await cwtAdminService.listRecords(limit, offset) // mongodb 形态为异步读
       if (!res.headersSent) {
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify({ ok: true, records, limit, offset, hasMore }))
@@ -669,6 +682,13 @@ export async function handleAdminRoutes(req, res, path, url) {
 
     try {
       const result = await userService.deleteUserVolume(address)
+      // 不可逆删除必须留痕（volumeDeleted=真实删除的卷名；status:stopped=仅停容器）
+      dataService.logOperation('admin_delete_volume', {
+        address,
+        operator: getAdminSession(req),
+        volume: result?.volumeDeleted ?? null,
+        resultStatus: result?.status ?? null,
+      })
       if (!res.headersSent) {
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify(result))
@@ -1019,6 +1039,16 @@ export async function handleAdminRoutes(req, res, path, url) {
         .filter((i) => removed.includes(i.id))
         .reduce((s, i) => s + i.sizeBytes, 0)
 
+      // 破坏性删除留痕（真删了或有失败才记；全 skipped=没动世界）
+      if (removed.length || failed.length) {
+        dataService.logOperation('admin_image_prune', {
+          operator: getAdminSession(req),
+          removed,
+          failed,
+          skippedIds: skipped.map((s) => s.id),
+          freedBytes,
+        })
+      }
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(
         JSON.stringify({
@@ -1093,8 +1123,14 @@ export async function handleAdminRoutes(req, res, path, url) {
       const by = getAdminSession(req) || 'admin'
       dockerService
         .buildImage(version, { context })
-        .then((result) => {
-          dataService.saveDshImage({ ...result, by })
+        .then(async (result) => {
+          await dataService.saveDshImage({ ...result, by })
+          // P2 留痕：构建完成（新镜像进历史+默认）记一条
+          dataService.logOperation('dsh_image_build', {
+            address: by,
+            version: result.version,
+            imageId: result.imageId,
+          })
           // 镜像换了 → 能力缓存必须立即失效。
           // 否则最长 CAPABILITY_CACHE_TTL_MS 内，网关仍按旧镜像的
           // requiresToken 判定：比如刚从"需要认证的新版"退回"可直通的
@@ -1210,7 +1246,7 @@ export async function handleAdminRoutes(req, res, path, url) {
       }
 
       const applied = await dockerService.setDefaultImage(ref)
-      const record = dataService.saveDshImage({
+      const record = await dataService.saveDshImage({
         version,
         imageId: applied.imageId,
         tag: ref,
@@ -1220,6 +1256,12 @@ export async function handleAdminRoutes(req, res, path, url) {
       // 在 TTL 内仍按旧镜像的 requiresToken 判定（见 dsh/image 构建处注释）
       dockerService.clearCapabilityCache()
 
+      // P2 留痕：钦定平台默认镜像（影响所有新建租户）记一条
+      dataService.logOperation('dsh_image_select', {
+        address: getAdminSession(req),
+        version,
+        imageId: applied.imageId,
+      })
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify({ ok: true, version, imageId: applied.imageId, current: record }))
     } catch (err) {

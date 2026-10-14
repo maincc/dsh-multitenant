@@ -4,6 +4,7 @@
 
 import { CONFIG, isAdmin } from '../config/config.js'
 import { userService } from '../services/user.service.js'
+import { dataService } from '../services/data.service.js'
 import { resourceExhaustedPayload } from '../utils/resource-exhausted.js'
 import { tenantConfigService, SIGN_PURPOSE } from '../services/tenant-config.service.js'
 import { cwtAdminService } from '../services/cwt-admin.service.js'
@@ -78,7 +79,12 @@ export async function handleUserRoutes(req, res, path) {
   if (path === '/api/user/logout' && req.method === 'POST') {
     const cookie = req.headers.cookie || ''
     const m = cookie.match(/user_session=([^;]+)/)
-    if (m) userSessionStore.revoke(decodeURIComponent(m[1]))
+    const who = getRequestAddress(req) // 先取操作人：吊销之后就查不到了
+    if (m) {
+      await userSessionStore.revoke(decodeURIComponent(m[1]))
+      // 会话吊销留痕（换钱包场景高频、单行成本可忽略）
+      dataService.logOperation('user_logout', { address: who })
+    }
     res.writeHead(200, {
       'content-type': 'application/json; charset=utf-8',
       'set-cookie': 'user_session=; path=/; max-age=0; httponly; samesite=strict',

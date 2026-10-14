@@ -15,6 +15,10 @@ WorkingDirectory=__REMOTE_DIR__
 Environment=PORT=__PORT__
 Environment=PUBLIC_HOST=__PUBLIC_HOST__
 Environment=PUBLIC_TRUST=__PUBLIC_TRUST__
+# 存储形态（docs/storage-design.md）：install.sh 注入；env 优先级高于 config.json，
+# 老机器升级即使 config.json 没 storage 段也生效（fail-closed：连不上库平台拒启）
+Environment=DSH_STORAGE_PROVIDER=__STORAGE_PROVIDER__
+Environment=MONGODB_URI=__MONGODB_URI__
 # 可选：把宿主机同名环境变量注入每个租户容器（逗号分隔，如 DEEPSEEK_API_KEY）
 #Environment=INJECT_ENV=
 ExecStart=__NODE_BIN__ __REMOTE_DIR__/src/server.js

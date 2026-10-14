@@ -19,6 +19,7 @@ import { promisify } from 'node:util'
 import { CONFIG, getTierLimits, isAdmin } from '../config/config.js'
 import { dockerService } from './docker.service.js'
 import { dataService } from './data.service.js'
+import { stateStore } from './state.store.js'
 import { cwtStore } from './cwt.store.js'
 import { tenantGateway } from './tenant-proxy.service.js'
 // 代激活 cookie 缓存（check-rpc 的 /api 调用也要带上，否则新版会 401）
@@ -508,7 +509,7 @@ export class UserService {
       lastSeenAt: Date.now(),
       containerStatus: 'running',
     }
-    this._saveState()
+    await this._saveState()
 
     // 等待容器完全就绪
     const ready = await dockerService.waitReady(internalPort, undefined, {
@@ -620,7 +621,7 @@ export class UserService {
           internalPort: prev.internalPort ?? null,
           containerStatus: 'running',
         }
-        this._saveState()
+        await this._saveState()
       } catch (err) {
         console.error(`[startup] ${address} 保存状态失败:`, err.message)
       }
@@ -697,7 +698,7 @@ export class UserService {
       }
     }
 
-    this._saveState()
+    await this._saveState()
 
     // 5. 立即重建全新容器（重置 = 清空后重新开始，一步到位；返回新端口供前端直接跳转）
     let newPort = null
@@ -754,8 +755,9 @@ export class UserService {
     const rec = this.state.usages[address] || {}
     const prev = rec.date === today ? rec.minutes || 0 : 0
     const minutes = Math.floor((Date.now() - startedAt) / 60000)
-    this.state.usages[address] = { date: today, minutes: prev + minutes }
+    // P7 顺序纪律：先清表针再累计——若颠倒，中间任何失败会让下一段重复计费
     delete user.usageStartedAt
+    this.state.usages[address] = { date: today, minutes: prev + minutes }
     return minutes
   }
 
@@ -790,7 +792,7 @@ export class UserService {
    * @param {string} excludeAddress - 本次申请者自身（不征用自己的端口）
    * @returns {number} 征用到的端口数量
    */
-  reclaimDestroyedPorts(excludeAddress) {
+  async reclaimDestroyedPorts(excludeAddress) {
     if (!this.state.availablePorts) this.state.availablePorts = []
     let reclaimed = 0
     for (const [addr, user] of Object.entries(this.state.swtcUsers || {})) {
@@ -808,7 +810,7 @@ export class UserService {
     }
     if (reclaimed > 0) {
       this.state.availablePorts.sort((a, b) => a - b)
-      this._saveState()
+      await this._saveState()
     }
     return reclaimed
   }
@@ -867,8 +869,13 @@ export class UserService {
         console.log(
           `[usage-limit] ${address} reached ${limit}min daily limit, container stopped (grace ${grace}s)`,
         )
+        dataService.logOperation('system_usage_limit_stop', {
+          address,
+          operator: 'system',
+          dailyLimitMinutes: limit,
+        })
       }
-      if (changed) this._saveState()
+      if (changed) await this._saveState()
     } finally {
       this._usageCheckRunning = false
     }
@@ -939,7 +946,7 @@ export class UserService {
           console.error(`[monitor] auto-upgrade failed for ${address}:`, err.message)
         }
       }
-      if (changed) this._saveState()
+      if (changed) await this._saveState()
     } finally {
       this._monitorRunning = false
     }
@@ -1052,7 +1059,7 @@ export class UserService {
       if (driftUser && driftUser.containerStatus !== 'destroyed') {
         driftUser.containerStatus = 'stopped'
         driftUser.stoppedAt = Date.now()
-        this._saveState()
+        await this._saveState()
       }
       console.log(`[user-stop] ${address} container already absent (state aligned)`)
       return { ok: true, address, status: 'already_stopped' }
@@ -1071,7 +1078,7 @@ export class UserService {
     if (user) {
       user.containerStatus = 'stopped'
       user.stoppedAt = Date.now()
-      this._saveState()
+      await this._saveState()
     }
     console.log(`[user-stop] ${address} container stopped by user (data preserved)`)
     return { ok: true, address, status: 'stopped' }
@@ -1092,7 +1099,7 @@ export class UserService {
       if (driftUser && driftUser.containerStatus !== 'destroyed') {
         driftUser.containerStatus = 'stopped'
         driftUser.stoppedAt = Date.now()
-        this._saveState()
+        await this._saveState()
       }
       return { ok: true, address, status: 'already_stopped' }
     }
@@ -1101,7 +1108,7 @@ export class UserService {
       // 已经停止了，直接更新状态
       if (this.state.swtcUsers?.[address]) {
         this.state.swtcUsers[address].containerStatus = 'stopped'
-        this._saveState()
+        await this._saveState()
       }
       return { ok: true, address, status: 'already_stopped' }
     }
@@ -1116,7 +1123,7 @@ export class UserService {
     if (this.state.swtcUsers?.[address]) {
       this.state.swtcUsers[address].containerStatus = 'stopped'
       this.state.swtcUsers[address].stoppedAt = Date.now()
-      this._saveState()
+      await this._saveState()
     }
 
     console.log(`[force-stop] ${address} container stopped by admin`)
@@ -1168,7 +1175,7 @@ export class UserService {
       }
       this.state.swtcUsers[address].containerStatus = 'destroyed'
       delete this.state.swtcUsers[address].internalPort // 重建时会分配新的内部端口
-      this._saveState()
+      await this._saveState()
     }
 
     return { ok: true, address, volumeDeleted: volume }
@@ -1250,10 +1257,32 @@ export class UserService {
   /**
    * 状态落盘 + 列表缓存失效。所有 saveState 统一走这里 ——
    * 少挂一处就会让管理员点完按钮看到旧状态。
+   * {session}：加入外部事务（CWT 审批四方写，§5.2 边界①）；缺省自开单事务。
    */
-  _saveState() {
+  async _saveState(opts = {}) {
     this.invalidateUsersCache()
-    dataService.saveState(this.state)
+    await stateStore.save(this.state, opts)
+  }
+
+  /**
+   * M2-1：provider='mongodb' 时启动从库整读、原地水合缓存（server 迁移钩子后调）。
+   * json = no-op。失败必须拦启动：缓存带着文件旧数上活，之后每次存盘都会把
+   * 库里真数抹成旧镜像——静默数据回退，不可逆。
+   */
+  async init() {
+    if ((CONFIG.storage?.provider || 'json') === 'json') return
+    const fresh = await stateStore.load()
+    this.state.swtcUsers = fresh.swtcUsers ?? {}
+    this.state.nextPort = fresh.nextPort ?? 31000
+    this.state.availablePorts = fresh.availablePorts ?? []
+    this.state.cleanupPolicy = fresh.cleanupPolicy ?? this.state.cleanupPolicy
+    this.state.usages = fresh.usages ?? {}
+    this.invalidateUsersCache()
+    console.log(
+      '[state] 已从 MongoDB 水合用户域状态：租户 ' +
+        Object.keys(this.state.swtcUsers).length +
+        ' 个',
+    )
   }
 
   async _computeAllUsers() {
@@ -1400,7 +1429,7 @@ export class UserService {
       port = this.state.swtcUsers?.[address]?.port ?? this.state.nextPort ?? CONFIG.docker.basePort
       // 端口即将耗尽：把「容器已销毁（destroyed）、记录还占着端口」的闲置端口
       // 一次性征用进回收池，供新用户使用（被征用者下次连接时重新分配新端口，内部透明）
-      if (port > CONFIG.docker.maxPort && this.reclaimDestroyedPorts(address) > 0) {
+      if (port > CONFIG.docker.maxPort && (await this.reclaimDestroyedPorts(address)) > 0) {
         port = this.state.availablePorts.shift()
         console.log(`[port] reclaimed destroyed tenants' ports, using ${port} for ${address}`)
       }
@@ -1648,7 +1677,7 @@ export class UserService {
         ...capFields,
         ...healFields,
       }
-      this._saveState()
+      await this._saveState()
       throw new Error(`网关端口 ${port} 绑定失败（该端口可能被宿主其他程序占用）：${err.message}`)
     }
 
@@ -1666,7 +1695,7 @@ export class UserService {
       ...healFields,
     }
     delete this.state.swtcUsers[address].stoppedAt
-    this._saveState()
+    await this._saveState()
     return port
   }
 
@@ -1698,7 +1727,7 @@ export class UserService {
       }
       delete this.state.swtcUsers[address].stoppedAt
       delete this.state.swtcUsers[address].usageStartedAt
-      this._saveState()
+      await this._saveState()
     }
   }
 
@@ -1847,7 +1876,16 @@ export class UserService {
         }
         if (!dryRun) {
           this.state.swtcUsers[address] = { ...user, pinnedImage: targetImage }
-          this._saveState()
+          await this._saveState()
+          // ops 留痕：钉版是"改变世界的动作"，进审计（尽力轨：写失败内部
+          // 已 catch 记日志，不反炸调用方；dryRun 预览不改世界所以不留痕）
+          dataService.logOperation('dsh_version_pin', {
+            address,
+            from: user.pinnedImage ?? null,
+            to: targetImage,
+            dshVersion: ver,
+            note: '容器不存在，仅记下钉版（下次创建生效）',
+          })
         }
         return {
           skipped: true,
@@ -1970,7 +2008,7 @@ export class UserService {
       lastDshVersion: user.baseImageVersion ?? null,
     }
     delete this.state.swtcUsers[address].usageStartedAt
-    this._saveState()
+    await this._saveState()
 
     // ⑤ 重建容器（ensureContainer 会复用记录里的 port → 对外 URL 不变）
     let newPort
@@ -1998,7 +2036,16 @@ export class UserService {
       pinnedImage: targetImage,
       versionChangedAt: Date.now(),
     }
-    this._saveState()
+    await this._saveState()
+    // ops 留痕：钉版并实际重建完成——旧→新版本进审计（rec 是赋值前快照，
+    // from 取旧值安全；尽力轨写失败内部记日志，不影响已完成的升级）
+    dataService.logOperation('dsh_version_pin', {
+      address,
+      from: rec.baseImageVersion ?? null,
+      to: targetVersion ?? null,
+      image: targetImage,
+      port: newPort,
+    })
 
     console.log(
       `[apply] ${address} rebuilt on image ${imageId} (dsh ${targetVersion ?? 'unknown'}), port ${newPort}`,
@@ -2033,7 +2080,7 @@ export class UserService {
         tier,
         lastUpgradeAt: Date.now(),
       }
-      this._saveState()
+      await this._saveState()
       console.log(
         `[upgrade] ${address} container absent: tier ${tier} (${limits.label}) 已记录，下次创建生效`,
       )
@@ -2062,7 +2109,7 @@ export class UserService {
       lastSeenAt: Date.now(),
       usageStartedAt: Date.now(), // 升级重启 = 新的运行段
     }
-    this._saveState()
+    await this._saveState()
 
     console.log(
       `[upgrade] ${address} upgraded to tier ${tier} (${limits.label}), container restarted`,
@@ -2122,7 +2169,7 @@ export class UserService {
         this.state.availablePorts.sort((a, b) => a - b)
       }
 
-      this._saveState()
+      await this._saveState()
       console.log(
         `[destroy] ${address} completely removed, port ${port} recycled, volume ${volumeStatus}`,
       )
@@ -2139,7 +2186,7 @@ export class UserService {
       if (user.port) tenantGateway.close(user.port)
       user.containerStatus = 'destroyed'
       delete user.internalPort // 重建时会分配新的内部端口
-      this._saveState()
+      await this._saveState()
       return { ok: true, address, status: 'destroyed', volume: swtcVolumeName(address) }
     }
   }
@@ -2401,7 +2448,7 @@ export class UserService {
         user.stoppedAt = user.stoppedAt ?? Date.now()
       }
     }
-    this._saveState()
+    await this._saveState()
   }
 
   /**
@@ -2568,6 +2615,12 @@ export class UserService {
           console.log(
             `[cleanup] stopped idle container: ${address} (idle ${idleMin}min, grace ${grace}s)`,
           )
+          // 系统动作也进录像：机器改变世界同样要可追溯（actor 拉平成 system）
+          dataService.logOperation('system_idle_stop', {
+            address,
+            operator: 'system',
+            idleMinutes: Number(idleMin),
+          })
           changed = true
         } catch (err) {
           if (String(err.stderr).includes('No such container')) {
@@ -2598,6 +2651,12 @@ export class UserService {
             console.log(
               `[cleanup] destroyed stopped container: ${address} (stopped ${stoppedMin}min, data preserved)`,
             )
+            dataService.logOperation('system_idle_destroy', {
+              address,
+              operator: 'system',
+              stoppedMinutes: Number(stoppedMin),
+              note: '容器已销毁，数据卷保留',
+            })
             changed = true
           } catch (err) {
             if (String(err.stderr).includes('No such container')) {
@@ -2620,7 +2679,7 @@ export class UserService {
     }
 
     if (changed) {
-      this._saveState()
+      await this._saveState()
     }
   }
 

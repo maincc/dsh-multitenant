@@ -12,6 +12,8 @@ import { cwtService } from '../src/services/cwt.service.js'
 import { cwtAdminService } from '../src/services/cwt-admin.service.js'
 import { userService } from '../src/services/user.service.js'
 import { dataService } from '../src/services/data.service.js'
+import { isolateOpsLog } from './ops-log-isolation.js'
+isolateOpsLog(dataService) // 留痕 json 轨进临时目录，防写真实 operations.log
 import { cwtStore } from '../src/services/cwt.store.js'
 
 const b64url = (v) => Buffer.from(v).toString('base64url')

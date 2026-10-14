@@ -16,6 +16,8 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { userService } from '../src/services/user.service.js'
 import { dockerService } from '../src/services/docker.service.js'
 import { dataService } from '../src/services/data.service.js'
+import { isolateOpsLog } from './ops-log-isolation.js'
+isolateOpsLog(dataService) // 留痕 json 轨进临时目录，防写真实 operations.log
 
 const ADDR = 'jndwretndumoqbt2uauclmfmx7xbqjykva'
 const NAME = `dsh-swtc-${ADDR}`

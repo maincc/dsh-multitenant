@@ -20,6 +20,8 @@ import {
   statSync,
 } from 'node:fs'
 import { join } from 'node:path'
+import { CONFIG, setAdminAddressesOverride } from '../config/config.js'
+import { getStore } from './mongo.store.js'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(fileURLToPath(new URL('../..', import.meta.url)))
@@ -39,6 +41,8 @@ export class DataService {
     this.recordsMaxBytes = RECORDS_MAX_BYTES
     this.initDataDir()
     this.hardenDataPermissions()
+    this._adminCache = null
+    this._dshImageCache = null
   }
 
   /**
@@ -360,6 +364,8 @@ export class DataService {
    * 获取管理员配置
    */
   getAdminConfig() {
+    if (this.provider !== 'json')
+      return this._adminCache ?? { addresses: [], history: [], updatedAt: null }
     const filePath = join(this.dataDir, 'config', 'admin.json')
     return this.readJson(filePath) || { addresses: [], history: [], updatedAt: null }
   }
@@ -367,9 +373,72 @@ export class DataService {
   /**
    * 保存管理员配置
    */
-  saveAdminConfig(config) {
-    const filePath = join(this.dataDir, 'config', 'admin.json')
+  /** provider 分流（M2-5）：json 默认=逐调用不变；mongodb=meta 单例入库 */
+  get provider() {
+    return CONFIG.storage?.provider || 'json'
+  }
+
+  /**
+   * provider='mongodb' 启动水合（server 启动链调；json=空操作）。
+   * meta#admin / meta#dsh_image 两个单例文档 → 进程内缓存；admin 地址同步
+   * 注入 config.js 的提权热路径（getAdminAddresses 不再碰磁盘）。
+   */
+  async init() {
+    if (this.provider === 'json') return
+    const store = getStore()
+    await store.connect()
+    const [adminDoc, imgDoc] = await Promise.all([
+      store.col('meta').findOne({ _id: 'admin' }),
+      store.col('meta').findOne({ _id: 'dsh_image' }),
+    ])
+    this._adminCache = adminDoc
+      ? {
+          addresses: adminDoc.addresses ?? [],
+          history: adminDoc.history ?? [],
+          updatedAt: adminDoc.updatedAt ?? null,
+        }
+      : { addresses: [], history: [], updatedAt: null }
+    this._dshImageCache = imgDoc
+      ? {
+          current: imgDoc.current ?? null,
+          history: Array.isArray(imgDoc.history) ? imgDoc.history : [],
+        }
+      : { current: null, history: [] }
+    this._applyAdminOverride()
+    console.log(
+      `[meta] 已从 MongoDB 水合管理员/镜像版本域：管理员 ${this._adminCache.addresses.length} 个，镜像历史 ${this._dshImageCache.history.length} 条`,
+    )
+  }
+
+  _applyAdminOverride() {
+    setAdminAddressesOverride(this._adminCache?.addresses ?? [])
+  }
+
+  /**
+   * 保存管理员配置。mongodb：await 返回=库里已确认（单文档 updateOne 天然
+   * 原子，无需事务包裹）；json：同步文件写，行为零变化。
+   */
+  async saveAdminConfig(config) {
     config.updatedAt = Date.now()
+    if (this.provider !== 'json') {
+      this._adminCache = config
+      this._applyAdminOverride()
+      const store = getStore()
+      await store.connect()
+      await store.col('meta').updateOne(
+        { _id: 'admin' },
+        {
+          $set: {
+            addresses: config.addresses ?? [],
+            history: config.history ?? [],
+            updatedAt: config.updatedAt,
+          },
+        },
+        { upsert: true },
+      )
+      return
+    }
+    const filePath = join(this.dataDir, 'config', 'admin.json')
     this.writeWithLock(filePath, config)
   }
 
@@ -385,6 +454,7 @@ export class DataService {
    * @returns {{current: object|null, history: Array<object>}}
    */
   getDshImage() {
+    if (this.provider !== 'json') return this._dshImageCache ?? { current: null, history: [] }
     const data = this.readJson(this.dshImageFile())
     return {
       current: data?.current ?? null,
@@ -396,7 +466,7 @@ export class DataService {
    * 记录一次镜像升级（追加历史，保留最近 50 条）
    * @param {{version:string|null, imageId:string|null, tag?:string|null, by?:string}} info
    */
-  saveDshImage(info) {
+  async saveDshImage(info) {
     const prev = this.getDshImage()
     const record = {
       version: info.version ?? null,
@@ -405,15 +475,22 @@ export class DataService {
       at: Date.now(),
       by: info.by ?? 'system',
     }
-    const history = [...prev.history, record].slice(-50)
-    this.writeWithLock(this.dshImageFile(), { current: record, history })
+    const next = { current: record, history: [...prev.history, record].slice(-50) }
+    if (this.provider !== 'json') {
+      this._dshImageCache = next
+      const store = getStore()
+      await store.connect()
+      await store.col('meta').updateOne({ _id: 'dsh_image' }, { $set: next }, { upsert: true })
+      return record
+    }
+    this.writeWithLock(this.dshImageFile(), next)
     return record
   }
 
   /**
    * 添加管理员
    */
-  addAdmin(address, operator = 'system') {
+  async addAdmin(address, operator = 'system') {
     const config = this.getAdminConfig()
     if (!config.addresses.includes(address)) {
       config.addresses.push(address)
@@ -424,28 +501,54 @@ export class DataService {
         timestamp: Date.now(),
         operator,
       })
-      this.saveAdminConfig(config)
+      await this.saveAdminConfig(config)
       return true
     }
     return false
   }
 
   /**
-   * 记录操作日志
+   * 记录操作日志（ops 审计：admin_login / admin_promote / 钉版 等）。
+   *
+   * provider 分流——mongodb 落 audit 集合（与 cwt 审计同表，靠 kind 区分），
+   * 这是 M2 漏掉的分流点：mongodb 形态下 ops 审计曾【只进文件、不进库】，
+   * 等于管理动作在库里没录像。行形状对齐迁移器（migration.js）的 ops 记录：
+   *   {kind:'ops', action, actor, at:Date(BSON)} + 保留原 {timestamp,operation,details}
+   * 供读侧兼容。关键语义：
+   *   - at 必须是【BSON Date】——audit 的 ttl_90d 索引只认 Date（90 天合规
+   *     留存要求，实测：number 类型 TTL 永不回收 = 静默泄露）。
+   *   - 写失败【不阻塞调用方】：审计是尽力轨（丢了是合规缺口，不是正确性/
+   *     安全漏洞；登录本身已成功不应因审计回滚）。返回 Promise 便于需要确认
+   *     的调用方 await；失败已被内部 catch，不会炸调用方。
+   * json 形态维持原样：operations.log 追加，行为零变化。
    */
   logOperation(operation, details) {
+    const timestamp = Date.now()
+    const logEntry = { timestamp, operation, details }
+    if (this.provider !== 'json') {
+      // async 闭包不可省：getStore()/col() 在"库未连接"时是【同步 throw】，
+      // 挂在 promise 链上接不住（e2e 实测炸过一次）——包进 try 转成 rejection，
+      // 才兑现"审计失败不反噬调用方"的承诺。
+      return (async () => {
+        await getStore()
+          .col('audit')
+          .insertOne({
+            ...logEntry,
+            kind: 'ops',
+            action: operation,
+            actor: details?.address ?? details?.operator ?? null,
+            at: new Date(timestamp),
+          })
+      })().catch((err) => {
+        console.error(`[audit:ops] 操作审计写库失败（不阻塞业务）：${operation} → ${err.message}`)
+      })
+    }
     const logDir = join(this.dataDir, 'logs')
     mkdirSync(logDir, { recursive: true })
     const logFile = join(logDir, 'operations.log')
-
-    const logEntry = {
-      timestamp: Date.now(),
-      operation,
-      details,
-    }
-
     appendFileSync(logFile, JSON.stringify(logEntry) + '\n', { mode: 0o600 })
     chmodSync(logFile, 0o600)
+    return Promise.resolve()
   }
 }
 

@@ -47,9 +47,27 @@
     "comment": "技能市场信任边界（P0-4）：autoInvoke=false 时，市场技能安装到用户卷的副本强制注入 disable-model-invocation: true，模型不会自动调用，仅供用户显式使用；改 true 则放行自动调用（风险自担）"
   },
   "tiers": {
-    "1": { "label": "基础", "memory": "512m", "disk": "1g", "cpus": "1.0", "pids": 256 },
-    "2": { "label": "增强", "memory": "1g", "disk": "2g", "cpus": "2.0", "pids": 512 },
-    "3": { "label": "高性能", "memory": "2g", "disk": "4g", "cpus": "4.0", "pids": 1024 }
+    "1": {
+      "label": "基础",
+      "memory": "512m",
+      "disk": "1g",
+      "cpus": "1.0",
+      "pids": 256
+    },
+    "2": {
+      "label": "增强",
+      "memory": "1g",
+      "disk": "2g",
+      "cpus": "2.0",
+      "pids": 512
+    },
+    "3": {
+      "label": "高性能",
+      "memory": "2g",
+      "disk": "4g",
+      "cpus": "4.0",
+      "pids": 1024
+    }
   },
   "docker": {
     "image": "dsh-multitenant:latest",
@@ -71,7 +89,6 @@
   "dsh": {
     "buildContext": ".",
     "allowLocalBuild": true,
-    
     "registry": "https://registry.npmjs.org",
     "versionCacheTtlMs": 600000,
     "npmCacheDir": "",
@@ -80,5 +97,10 @@
     "backupDir": "",
     "backupBeforeApply": true,
     "comment": "DSH 版本升级/回退（管理端 /admin）。buildContext: docker build 上下文（相对项目根），需含 Dockerfile；allowLocalBuild: 允许平台自己构建镜像（需服务器有完整源码树）；registry: 版本列表来源 npm registry；versionCacheTtlMs: 版本列表缓存时长（毫秒，默认 10 分钟）；npmTimeoutMs: npm view 超时（毫秒）；npmCacheDir: npm view 缓存目录（留空自动用 data/npm-cache，规避宿主 ~/.npm 不可写导致的 EPERM）；authActivateTimeoutMs: DSH 浏览器认证「代激活」请求超时（毫秒，默认 8000）——容器刚重启、launch token 还没打印时可能超时，网络慢可调大；backupDir: 切换版本前卷快照目录（留空=平台 data/backups，运行用户必然可写；填绝对路径如 /backup/dsh-multitenant 需该目录可写，不可写会自动降级）；backupBeforeApply: 应用镜像前强制备份租户卷（强烈建议保持 true——版本间可能有存储格式差异，这是唯一可能真丢数据的风险点）"
+  },
+  "storage": {
+    "provider": "mongodb",
+    "mongodbUri": "mongodb://127.0.0.1:27018/dsh_prod?replicaSet=dsh-rs",
+    "comment": "存储形态(docs/storage-design.md 九集合合同)：provider 'mongodb'=权威在库(事务+TTL)，'json'=文件形态(应急回退，用 env DSH_STORAGE_PROVIDER=json 压本段)。本仓库 config.json 写 mongodb 是安全的：test/globalSetup.mongo.mjs 测试护盾在 worker 钉 provider=json+无库名基URI，测试永不受影响也永不写 dsh_prod；真库用例各自显式传隔离库名。库名务必写 URI path(dsh_prod)，勿依赖代码默认'dsh'；事务要求副本集(单成员即可)。服务器部署由 deploy/install.sh 注入 config 段/systemd env"
   }
 }

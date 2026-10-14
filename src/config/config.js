@@ -122,38 +122,77 @@ const DEFAULTS = {
     // 任何状态写入都会立即失效它（见 user.service 的 _saveState）。
     usersCacheTtlMs: 3000,
   },
+  storage: {
+    // 业务数据存储介质。见 docs/storage-design.md（MongoDB 集中存储，9 集合合同）。
+    // provider：'json'=维持现状（文件，默认）；'mongodb'=迁入 Mongo。
+    // D5 灰度：本地验证通过后手动切 'mongodb'，服务器本期不部署。
+    provider: 'json',
+    // 连接串。环境变量 MONGODB_URI 优先于此（部署侧注入凭据，不入仓库）。
+    // 本地专用单成员副本集（27018，独立 dbpath，与 brew 服务隔离）。
+    mongodbUri: 'mongodb://127.0.0.1:27018/?replicaSet=dsh-rs',
+    dbName: 'dsh', // 测试库由 globalSetup 覆盖为 dsh_test
+    // 事务必须副本集；裸 standalone 下 withTransaction 直接报错（见设计 §5.2 R1）。
+    txnRetries: 3, // withTransaction 冲突重试上限
+    connectTimeoutMs: 5000,
+    archiveAfterMigration: true, // 迁移后 data/+state.json 保留归档（D3，不自动删）
+  },
 }
 
 export function loadConfig() {
+  let merged = DEFAULTS
   try {
     if (existsSync(CONFIG_FILE)) {
       const config = JSON.parse(readFileSync(CONFIG_FILE, 'utf8'))
-      return { ...DEFAULTS, ...config }
+      merged = { ...DEFAULTS, ...config }
     }
   } catch (err) {
     console.error(`[config] Failed to load config.json: ${err.message}, using defaults`)
+    merged = DEFAULTS
   }
-  return DEFAULTS
+  // storage.mongodbUri：env MONGODB_URI 覆盖 config.json（部署侧注入凭据，不入仓库）。
+  // env DSH_STORAGE_PROVIDER 可临时切介质（灰度/回退应急开关）。
+  const uri = process.env.MONGODB_URI
+  const prov = process.env.DSH_STORAGE_PROVIDER
+  if (uri || prov) {
+    merged = { ...merged, storage: { ...merged.storage } }
+    if (uri) merged.storage.mongodbUri = uri
+    if (prov === 'json' || prov === 'mongodb') merged.storage.provider = prov
+  }
+  return merged
 }
 
 export function getConfig() {
   return loadConfig()
 }
 
+/** mongodb 形态注入的 admin.json 地址权威（小写 Set）；null=json 文件直读 */
+let ADMIN_JSON_OVERRIDE = null
+export function setAdminAddressesOverride(addresses) {
+  ADMIN_JSON_OVERRIDE = addresses
+    ? new Set([...addresses].map((a) => String(a).toLowerCase()))
+    : null
+}
+
 export function getAdminAddresses() {
   const config = loadConfig()
   const addresses = new Set((config.admin?.addresses || []).map((addr) => addr.toLowerCase()))
 
-  // 同时从 data/config/admin.json 读取（提权操作写入的位置）
-  try {
-    if (existsSync(ADMIN_FILE)) {
-      const adminConfig = JSON.parse(readFileSync(ADMIN_FILE, 'utf8'))
-      if (adminConfig.addresses) {
-        adminConfig.addresses.forEach((addr) => addresses.add(addr.toLowerCase()))
+  // admin.json 部分（提权操作写入的位置）：mongodb 形态下由 dataService
+  // 注入【进程内权威缓存】（水合/保存时更新，热路径提权判定零磁盘 I/O；
+  // override 已小写化）；json 形态逐调用原样读文件，行为零变化。
+  if (ADMIN_JSON_OVERRIDE) {
+    ADMIN_JSON_OVERRIDE.forEach((addr) => addresses.add(addr))
+  } else {
+    try {
+      if (existsSync(ADMIN_FILE)) {
+        const adminConfig = JSON.parse(readFileSync(ADMIN_FILE, 'utf8'))
+        if (adminConfig.addresses) {
+          adminConfig.addresses.forEach((addr) => addresses.add(addr.toLowerCase()))
+        }
       }
+    } catch {
+      // 忽略读取错误
     }
-  } catch {
-    // 忽略读取错误
   }
 
   return addresses

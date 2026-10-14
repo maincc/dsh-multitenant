@@ -4,6 +4,7 @@
 
 import { CONFIG, isAdmin } from '../config/config.js'
 import { userService } from '../services/user.service.js'
+import { dataService } from '../services/data.service.js'
 import { resourceExhaustedPayload } from '../utils/resource-exhausted.js'
 import {
   tenantConfigService,
@@ -398,6 +399,12 @@ export async function handleTenantRoutes(req, res, path, url) {
 
     try {
       const result = await userService.resetContainer(address)
+      // 抹卷重建=用户侧最毁灭性操作，必留痕（本人重置 vs 管理员代重置分清）
+      dataService.logOperation('user_reset', {
+        address,
+        operator: session,
+        byAdmin: session !== address,
+      })
       // 重置 = 清空后立即重建：构造新容器 url（跟随请求 Host，同 /connect），
       // 并签发该地址的会话 cookie，前端直接一步进入新容器
       let containerUrl = null
@@ -476,6 +483,12 @@ export async function handleTenantRoutes(req, res, path, url) {
       // 管理端删除：默认连数据卷一起删（不留孤儿卷）；?keepVolume=1 保留数据卷（留档/审计）
       const keepVolume = url.searchParams.get('keepVolume') === '1'
       const result = await userService.destroyContainer(address, true, { keepVolume })
+      // 删租户（默认连卷）不可逆，必留痕
+      dataService.logOperation('admin_remove_user', {
+        address,
+        operator: getAdminSession(req),
+        keepVolume,
+      })
       if (!res.headersSent) {
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify(result))

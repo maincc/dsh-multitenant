@@ -26,6 +26,11 @@ import { fileURLToPath } from 'node:url'
 
 import { CONFIG } from './config/config.js'
 import { userService } from './services/user.service.js'
+import { cwtStore } from './services/cwt.store.js'
+import { dataService } from './services/data.service.js'
+import { adminSessionStore } from './middleware/auth.middleware.js'
+import { userSessionStore } from './middleware/user-auth.middleware.js'
+import { skillService } from './services/skill.service.js'
 import { handleAdminRoutes } from './routes/admin.routes.js'
 import { handleUserRoutes } from './routes/user.routes.js'
 import { handleTenantRoutes } from './routes/tenant.routes.js'
@@ -296,6 +301,33 @@ const server = createServer(async (req, res) => {
 // 启动服务器
 const PORT = Number(process.env.PORT || CONFIG.server.port)
 server.listen(PORT, '0.0.0.0', async () => {
+  // MongoDB 迁移钩子（storage-design §6，M1）：仅 provider='mongodb' 生效，
+  // 默认 json 下本块零执行（连 mongodb 驱动都不加载，动态 import 门控）。
+  // 与 restoreFromDocker 的"失败不拦"刻意相反：迁移失败必须【拒绝启动】——
+  // 带着半迁移/未校验的库上活，比停机严重一个量级。
+  if (CONFIG.storage?.provider === 'mongodb') {
+    try {
+      const { getStore } = await import('./services/mongo.store.js')
+      const r = await getStore().runMigration()
+      console.log(`[startup] storage 迁移：${r.status}`, JSON.stringify(r.stats ?? {}))
+    } catch (err) {
+      console.error('[startup] MongoDB 迁移失败，拒绝启动：', err.message)
+      process.exit(1)
+    }
+  }
+  // M2-1：provider='mongodb' 时用户域状态以库为准，在这里原地水合缓存（json=no-op）。
+  // 失败拦启动：带着文件旧数的缓存上活，下一次存盘会把库里真数抹成旧镜像。
+  try {
+    await dataService.init() // M2-5：meta 单例域（admin/镜像版本）水合；admin 地址注入提权热路径
+    await userService.init()
+    await cwtStore.init() // M2-2：CWT 缓存同理由库水合（json=空操作）
+    await adminSessionStore.init() // M2-3：双会话并入 sessions 集合（scope 区分，TTL 兜底）
+    await userSessionStore.init()
+    await skillService.init() // M2-4：技能元数据（目录+安装记录）水合；正文文件按合同留磁盘
+  } catch (err) {
+    console.error('[startup] 存储态水合失败，拒绝启动：', err.message)
+    process.exit(1)
+  }
   try {
     await userService.restoreFromDocker()
   } catch (err) {
@@ -336,6 +368,17 @@ server.listen(PORT, '0.0.0.0', async () => {
 })
 
 // 全局错误处理
+// 优雅关停：SIGTERM/SIGINT 退出前【排空会话镜像队列】——create 走的是尽力
+// 镜像轨（M2-3 设计），不留最后一次登录未落库就退场的窗口。
+// （revoke 本就 await 写确认；state/cwt/skill/meta 域全部 await 落库，无需 drain）
+for (const sig of ['SIGTERM', 'SIGINT']) {
+  process.once(sig, () => {
+    Promise.all([adminSessionStore.flush(), userSessionStore.flush()])
+      .catch(() => {})
+      .finally(() => process.exit(0))
+  })
+}
+
 process.on('unhandledRejection', (reason, promise) => {
   console.error('[fatal] Unhandled Rejection at:', promise, 'reason:', reason)
 })

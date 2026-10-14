@@ -24,6 +24,22 @@ PUBLIC_HOST=1.2.3.4 \
 - `ADMIN_ADDRESS`：你的管理员 SWTC 地址（小写，决定谁能进管理面板）
 - `PUBLIC_HOST`：用户浏览器可达的公网 IP 或域名（302 跳转目标 + trustedHosts）
 - 有 HTTPS 域名时建议同时设置 `PUBLIC_TRUST=你的域名`
+- **存储形态（2026-10 新增）**：解析顺序 = 显式参数 > **现场 config.json 的
+  `storage` 段** > 默认 `STORAGE=mongodb` + `mongodb://127.0.0.1:27018/dsh_prod
+?replicaSet=dsh-rs`（库名以 URI path 为准）。现场 config 已有 storage 段时
+  install 全程尊重它（预检/迁移预览/systemd env 三处同一个值），改库只需改
+  config.json 后重跑 install 或 update。
+  **前置要求**：mongod 7.0+ 且为副本集（单成员即可，安装与 `rs.initiate`
+  见 `docs/deploy-test-server.md` 三.1）——install.sh 有预检，连不上/非副本集
+  会直接失败。应急回退文件形态 `STORAGE=json`；mongod 在远端加 `SKIP_MONGO_CHECK=1`。
+- mongod 装不了二进制、跑在 Docker 容器里时（配方见 `docs/deploy-test-server.md`
+  三.1b，已实弹验证）：预检借道容器——`MONGO_CONTAINER=dsh-mongo` 即可，
+  平台连接 URI 无需任何改动。
+- 老 json 服务器升级进库：**普通上传即可，别加 UPLOAD_DATA**——M1 迁移原料
+  是服务器自己的 `data/`（rsync 的 exclude 保护让它一直在场），install 后首启
+  自动搬家（日志 `[startup] storage 迁移：{...}`）。`UPLOAD_DATA=1` 只用于
+  "往空服务器注入本地数据当测试种子"这种外部注料场景，且会把本地文件覆盖
+  服务器同名文件，日常上传绝不可带。
 
 ### 3. 验证
 
