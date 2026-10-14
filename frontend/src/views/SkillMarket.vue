@@ -335,28 +335,29 @@ const install = async (name) => {
   const target = (isDetail ? detail.value : skills.value.find((s) => s.name === name)) || {}
   const autoLine = target.modelAutoInvoke ? t('skills.confirmAutoYes') : t('skills.confirmAutoNo')
   const publisher = target.sharer ? shortAddress(target.sharer) : t('skills.unknown')
-  const confirmed = await askConfirm(
-    `${t('skills.confirmTitle', { name })}\n\n` +
+  await askConfirm({
+    message:
+      `${t('skills.confirmTitle', { name })}\n\n` +
       `${t('skills.confirmRisk')}\n` +
       `${t('skills.confirmPublisher', { publisher })}\n\n` +
       `${autoLine}\n\n` +
       t('skills.confirmAsk'),
-  )
-  if (!confirmed) return
-
-  installing.value = true
-  try {
-    const auth = await signChallenge()
-    await skillsApi.install(auth, name)
-    toast(t('skills.okInstalled', { name }))
-    detail.value = null
-    detailLoading.value = false
-    await loadList()
-  } catch (err) {
-    toast(t('skills.errInstall', { err: friendlyPluginError(err) }))
-  } finally {
-    installing.value = false
-  }
+    run: async () => {
+      installing.value = true
+      try {
+        const auth = await signChallenge()
+        await skillsApi.install(auth, name)
+        toast(t('skills.okInstalled', { name }))
+        detail.value = null
+        detailLoading.value = false
+        await loadList()
+      } catch (err) {
+        toast(t('skills.errInstall', { err: friendlyPluginError(err) }))
+      } finally {
+        installing.value = false
+      }
+    },
+  })
 }
 
 onMounted(() => {

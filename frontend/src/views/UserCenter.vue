@@ -872,13 +872,10 @@ const addItem = () => {
 
 const removeItem = async (idx) => {
   const item = items.value[idx]
-  if (
-    !(await askConfirm(
-      t('user.confirmRemoveEndpoint', { name: item.displayName || t('user.unnamed') }),
-    ))
-  )
-    return
-  items.value.splice(idx, 1)
+  await askConfirm({
+    message: t('user.confirmRemoveEndpoint', { name: item.displayName || t('user.unnamed') }),
+    run: () => items.value.splice(idx, 1),
+  })
 }
 
 const addModel = (idx) => {
@@ -1081,20 +1078,24 @@ const discoverItem = async (idx) => {
 /** 只删除官方 DeepSeek API Key（不影响端点覆盖与自定义端点，需签名） */
 const clearOfficialKey = async () => {
   if (!currentAddress()) return toast(t('user.errConnectFirst'))
-  if (!(await askConfirm(t('user.confirmClearOfficialKey')))) return
-  keySaving.value = true
-  try {
-    const { address, nonce, signature, publicKey } = await signChallenge()
-    await axios.delete('/api/user/tenant-config', {
-      data: { address, nonce, signature, publicKey, scope: 'official-key' },
-    })
-    await syncWalletAccount(address)
-    toast(t('user.officialKeyCleared'))
-  } catch (err) {
-    toast(t('user.delFail', { err: friendlyPluginError(err) }))
-  } finally {
-    keySaving.value = false
-  }
+  await askConfirm({
+    message: t('user.confirmClearOfficialKey'),
+    run: async () => {
+      keySaving.value = true
+      try {
+        const { address, nonce, signature, publicKey } = await signChallenge()
+        await axios.delete('/api/user/tenant-config', {
+          data: { address, nonce, signature, publicKey, scope: 'official-key' },
+        })
+        await syncWalletAccount(address)
+        toast(t('user.officialKeyCleared'))
+      } catch (err) {
+        toast(t('user.delFail', { err: friendlyPluginError(err) }))
+      } finally {
+        keySaving.value = false
+      }
+    },
+  })
 }
 
 /** 恢复默认：清除官方 key + 官方端点覆盖 + 所有自定义端点（需签名） */
@@ -1102,21 +1103,25 @@ const resetConfig = async () => {
   if (!currentAddress()) return toast(t('user.errConnectFirst'))
   const customLine =
     customCount.value > 0 ? t('user.confirmResetCustomLine', { n: customCount.value }) : ''
-  if (!(await askConfirm(t('user.confirmResetBase1') + customLine + t('user.confirmResetBase2'))))
-    return
-  keySaving.value = true
-  try {
-    const { address, nonce, signature, publicKey } = await signChallenge()
-    await axios.delete('/api/user/tenant-config', {
-      data: { address, nonce, signature, publicKey },
-    })
-    await syncWalletAccount(address)
-    toast(t('user.resetOk'))
-  } catch (err) {
-    toast(t('user.resetFail', { err: friendlyPluginError(err) }))
-  } finally {
-    keySaving.value = false
-  }
+  await askConfirm({
+    message: t('user.confirmResetBase1') + customLine + t('user.confirmResetBase2'),
+    danger: true,
+    run: async () => {
+      keySaving.value = true
+      try {
+        const { address, nonce, signature, publicKey } = await signChallenge()
+        await axios.delete('/api/user/tenant-config', {
+          data: { address, nonce, signature, publicKey },
+        })
+        await syncWalletAccount(address)
+        toast(t('user.resetOk'))
+      } catch (err) {
+        toast(t('user.resetFail', { err: friendlyPluginError(err) }))
+      } finally {
+        keySaving.value = false
+      }
+    },
+  })
 }
 
 // 加载状态
@@ -1692,47 +1697,53 @@ const restartContainer = async () => {
 }
 
 const restartDSH = async () => {
-  if (!(await askConfirm(t('user.confirmRestartDsh')))) return
+  await askConfirm({
+    message: t('user.confirmRestartDsh'),
+    run: async () => {
+      try {
+        const address = userInfo.value.address
+        showLoading(t('user.loadingRestarting'), t('user.loadingPleaseWait'), 50)
 
-  try {
-    const address = userInfo.value.address
-    showLoading(t('user.loadingRestarting'), t('user.loadingPleaseWait'), 50)
+        const res = await axios.post(`/api/user/${address}/restart`)
 
-    const res = await axios.post(`/api/user/${address}/restart`)
+        // 等待容器完全就绪
+        await new Promise((resolve) => setTimeout(resolve, 5000))
 
-    // 等待容器完全就绪
-    await new Promise((resolve) => setTimeout(resolve, 5000))
-
-    await fetchUserInfo(address)
-    hideLoading()
-    toast(t('user.restartedOk'))
-  } catch (err) {
-    hideLoading()
-    toast(t('user.restartFail', { err: err.response?.data?.error || err.message }))
-  }
+        await fetchUserInfo(address)
+        hideLoading()
+        toast(t('user.restartedOk'))
+      } catch (err) {
+        hideLoading()
+        toast(t('user.restartFail', { err: err.response?.data?.error || err.message }))
+      }
+    },
+  })
 }
 
 const resetContainer = async () => {
   if (!(await askConfirm(t('user.confirmResetContainer')))) return
 
-  if (!(await askConfirm(t('user.confirmResetContainer2')))) return
+  await askConfirm({
+    message: t('user.confirmResetContainer2'),
+    danger: true,
+    run: async () => {
+      const address = userInfo.value.address
+      showLoading(t('user.loadingResetting'), t('user.loadingDeleteRebuild'), 50)
+      try {
+        // 后端在同一个请求里完成「清空旧容器/数据 → 重建全新容器 → 签发会话」，
+        // 返回新容器 url，前端直接打开即可（无需手动重新连接）
+        const res = await axios.post(`/api/user/${address}/reset`)
 
-  try {
-    const address = userInfo.value.address
-    showLoading(t('user.loadingResetting'), t('user.loadingDeleteRebuild'), 50)
-
-    // 后端在同一个请求里完成「清空旧容器/数据 → 重建全新容器 → 签发会话」，
-    // 返回新容器 url，前端直接打开即可（无需手动重新连接）
-    const res = await axios.post(`/api/user/${address}/reset`)
-
-    hideLoading()
-    const { url } = res.data
-    if (url) window.open(url, '_blank', 'noopener')
-    toast(t('user.resetContainerOk'))
-  } catch (err) {
-    hideLoading()
-    toast(t('user.resetContainerFail', { err: err.response?.data?.error || err.message }))
-  }
+        hideLoading()
+        const { url } = res.data
+        if (url) window.open(url, '_blank', 'noopener')
+        toast(t('user.resetContainerOk'))
+      } catch (err) {
+        hideLoading()
+        toast(t('user.resetContainerFail', { err: err.response?.data?.error || err.message }))
+      }
+    },
+  })
 }
 
 /**
@@ -1740,21 +1751,24 @@ const resetContainer = async () => {
  * （停止期间不计时，挂机不再消耗每日限额；数据保留，随时可重新启动）
  */
 const stopContainer = async () => {
-  if (!(await askConfirm(t('user.confirmStopContainer')))) return
+  await askConfirm({
+    message: t('user.confirmStopContainer'),
+    run: async () => {
+      try {
+        const address = userInfo.value.address
+        showLoading(t('user.loadingStopping'), t('user.loadingSettleStop'), 50)
 
-  try {
-    const address = userInfo.value.address
-    showLoading(t('user.loadingStopping'), t('user.loadingSettleStop'), 50)
+        await axios.post(`/api/user/${address}/stop`)
 
-    await axios.post(`/api/user/${address}/stop`)
-
-    await fetchUserInfo(address)
-    hideLoading()
-    toast(t('user.stoppedOk'))
-  } catch (err) {
-    hideLoading()
-    toast(t('user.stopFail', { err: err.response?.data?.error || err.message }))
-  }
+        await fetchUserInfo(address)
+        hideLoading()
+        toast(t('user.stoppedOk'))
+      } catch (err) {
+        hideLoading()
+        toast(t('user.stopFail', { err: err.response?.data?.error || err.message }))
+      }
+    },
+  })
 }
 
 const tierBadge = (tier) => {
@@ -1972,25 +1986,33 @@ const doImport = async () => {
 }
 
 const unpublishSkill = async (name) => {
-  if (!(await askConfirm(t('user.confirmUnpublish', { name })))) return
-  try {
-    const sig = await signChallenge('/api/skills/challenge')
-    await skillsApi.unpublish(sig, name)
-    await loadMine()
-  } catch (err) {
-    toast(t('user.opFail', { err: friendlyPluginError(err) }))
-  }
+  await askConfirm({
+    message: t('user.confirmUnpublish', { name }),
+    run: async () => {
+      try {
+        const sig = await signChallenge('/api/skills/challenge')
+        await skillsApi.unpublish(sig, name)
+        await loadMine()
+      } catch (err) {
+        toast(t('user.opFail', { err: friendlyPluginError(err) }))
+      }
+    },
+  })
 }
 
 const uninstallSkill = async (name) => {
-  if (!(await askConfirm(t('user.confirmUninstall', { name })))) return
-  try {
-    const sig = await signChallenge('/api/skills/challenge')
-    await skillsApi.uninstall(sig, name)
-    await loadMine()
-  } catch (err) {
-    toast(t('user.uninstallFail', { err: friendlyPluginError(err) }))
-  }
+  await askConfirm({
+    message: t('user.confirmUninstall', { name }),
+    run: async () => {
+      try {
+        const sig = await signChallenge('/api/skills/challenge')
+        await skillsApi.uninstall(sig, name)
+        await loadMine()
+      } catch (err) {
+        toast(t('user.uninstallFail', { err: friendlyPluginError(err) }))
+      }
+    },
+  })
 }
 
 // ===================== 📤 共享容器内的技能（含撞名重命名） =====================
