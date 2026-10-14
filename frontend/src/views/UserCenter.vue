@@ -642,6 +642,7 @@
 </template>
 
 <script setup>
+import { askConfirm, toast } from '../composables/useDialog'
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import axios from 'axios'
 import { useI18n } from 'vue-i18n'
@@ -753,7 +754,7 @@ const fetchCwtStatus = async (address) => {
  */
 const applyCwt = async () => {
   if (!window.ccdao || !window.ccdao.request) {
-    alert(t('user.errNoCcdao'))
+    toast(t('user.errNoCcdao'))
     return
   }
   cwtSubmitting.value = true
@@ -770,10 +771,10 @@ const applyCwt = async () => {
       throw new Error(t('user.errNoToken'))
     }
     await axios.post('/api/user/cwt/apply', { token })
-    alert(t('user.cwtAppliedOk'))
+    toast(t('user.cwtAppliedOk'))
     await fetchCwtStatus(userInfo.value.address)
   } catch (err) {
-    alert(t('user.cwtApplyFail', { err: err.response?.data?.error || err.message }))
+    toast(t('user.cwtApplyFail', { err: err.response?.data?.error || err.message }))
   } finally {
     cwtSubmitting.value = false
   }
@@ -855,7 +856,7 @@ const toggleExpand = (idx) => {
 }
 
 const addItem = () => {
-  if (customCount.value >= 20) return alert(t('user.limitEndpoints'))
+  if (customCount.value >= 20) return toast(t('user.limitEndpoints'))
   items.value.push({
     kind: 'custom',
     route: undefined,
@@ -869,9 +870,13 @@ const addItem = () => {
   })
 }
 
-const removeItem = (idx) => {
+const removeItem = async (idx) => {
   const item = items.value[idx]
-  if (!confirm(t('user.confirmRemoveEndpoint', { name: item.displayName || t('user.unnamed') })))
+  if (
+    !(await askConfirm(
+      t('user.confirmRemoveEndpoint', { name: item.displayName || t('user.unnamed') }),
+    ))
+  )
     return
   items.value.splice(idx, 1)
 }
@@ -982,9 +987,9 @@ const validateAll = () => {
 }
 
 const saveConfig = async () => {
-  if (!currentAddress()) return alert(t('user.errConnectFirst'))
+  if (!currentAddress()) return toast(t('user.errConnectFirst'))
   const check = validateAll()
-  if (!check.ok) return alert(check.msg)
+  if (!check.ok) return toast(check.msg)
 
   keySaving.value = true
   try {
@@ -1022,9 +1027,9 @@ const saveConfig = async () => {
 
     await axios.post('/api/user/tenant-config', payload)
     await syncWalletAccount(address)
-    alert(t('user.savedOk'))
+    toast(t('user.savedOk'))
   } catch (err) {
-    alert(t('user.saveFail', { err: friendlyPluginError(err) }))
+    toast(t('user.saveFail', { err: friendlyPluginError(err) }))
   } finally {
     keySaving.value = false
   }
@@ -1032,9 +1037,9 @@ const saveConfig = async () => {
 
 /** 探测某个自定义端点的模型列表（优先用输入框 key，否则用该端点已存 key） */
 const discoverItem = async (idx) => {
-  if (!currentAddress()) return alert(t('user.errConnectFirst'))
+  if (!currentAddress()) return toast(t('user.errConnectFirst'))
   const item = items.value[idx]
-  if (!item?.baseURL?.trim()) return alert(t('user.errNeedBaseUrl'))
+  if (!item?.baseURL?.trim()) return toast(t('user.errNeedBaseUrl'))
   discovering.value = idx
   try {
     const { address, nonce, signature, publicKey } = await signChallenge()
@@ -1057,9 +1062,9 @@ const discoverItem = async (idx) => {
       maxTokens: undefined,
     }))
     if (models.length === 0) {
-      alert(t('user.discoverEmpty'))
+      toast(t('user.discoverEmpty'))
     } else {
-      alert(
+      toast(
         t('user.discoveredOk', {
           count: models.length,
           name: item.displayName || t('user.unnamed'),
@@ -1067,7 +1072,7 @@ const discoverItem = async (idx) => {
       )
     }
   } catch (err) {
-    alert(t('user.discoverFail', { err: friendlyPluginError(err) }))
+    toast(t('user.discoverFail', { err: friendlyPluginError(err) }))
   } finally {
     discovering.value = null
   }
@@ -1075,8 +1080,8 @@ const discoverItem = async (idx) => {
 
 /** 只删除官方 DeepSeek API Key（不影响端点覆盖与自定义端点，需签名） */
 const clearOfficialKey = async () => {
-  if (!currentAddress()) return alert(t('user.errConnectFirst'))
-  if (!confirm(t('user.confirmClearOfficialKey'))) return
+  if (!currentAddress()) return toast(t('user.errConnectFirst'))
+  if (!(await askConfirm(t('user.confirmClearOfficialKey')))) return
   keySaving.value = true
   try {
     const { address, nonce, signature, publicKey } = await signChallenge()
@@ -1084,9 +1089,9 @@ const clearOfficialKey = async () => {
       data: { address, nonce, signature, publicKey, scope: 'official-key' },
     })
     await syncWalletAccount(address)
-    alert(t('user.officialKeyCleared'))
+    toast(t('user.officialKeyCleared'))
   } catch (err) {
-    alert(t('user.delFail', { err: friendlyPluginError(err) }))
+    toast(t('user.delFail', { err: friendlyPluginError(err) }))
   } finally {
     keySaving.value = false
   }
@@ -1094,10 +1099,11 @@ const clearOfficialKey = async () => {
 
 /** 恢复默认：清除官方 key + 官方端点覆盖 + 所有自定义端点（需签名） */
 const resetConfig = async () => {
-  if (!currentAddress()) return alert(t('user.errConnectFirst'))
+  if (!currentAddress()) return toast(t('user.errConnectFirst'))
   const customLine =
     customCount.value > 0 ? t('user.confirmResetCustomLine', { n: customCount.value }) : ''
-  if (!confirm(t('user.confirmResetBase1') + customLine + t('user.confirmResetBase2'))) return
+  if (!(await askConfirm(t('user.confirmResetBase1') + customLine + t('user.confirmResetBase2'))))
+    return
   keySaving.value = true
   try {
     const { address, nonce, signature, publicKey } = await signChallenge()
@@ -1105,9 +1111,9 @@ const resetConfig = async () => {
       data: { address, nonce, signature, publicKey },
     })
     await syncWalletAccount(address)
-    alert(t('user.resetOk'))
+    toast(t('user.resetOk'))
   } catch (err) {
-    alert(t('user.resetFail', { err: friendlyPluginError(err) }))
+    toast(t('user.resetFail', { err: friendlyPluginError(err) }))
   } finally {
     keySaving.value = false
   }
@@ -1154,7 +1160,7 @@ const handleAccountsChanged = async (accounts) => {
     localStorage.removeItem('swtc_address')
     connected.value = false
     userInfo.value = {}
-    alert(t('user.walletDisconnected'))
+    toast(t('user.walletDisconnected'))
     return
   }
 
@@ -1264,7 +1270,7 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
       await establishConnected(newAddress)
       activeTab.value = 'cwt'
       if (!isInitialLoad) {
-        alert(lastConnect202Message || t('user.usageLimitReached'))
+        toast(lastConnect202Message || t('user.usageLimitReached'))
       }
       return
     }
@@ -1296,7 +1302,7 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
 
     // 只在地址真正变化时才显示提示
     if (!isInitialLoad && newAddress !== oldAddress) {
-      alert(t('user.switchedAddress', { addr: `${newAddress.slice(0, 10)}...` }))
+      toast(t('user.switchedAddress', { addr: `${newAddress.slice(0, 10)}...` }))
     }
 
     // 切换/连接后刷新"我的技能"为当前地址的个人视图
@@ -1307,7 +1313,7 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
     console.error('[UserCenter] 处理地址失败:', err)
     hideLoading()
     if (!isInitialLoad) {
-      alert(t('user.addressFail', { err: err.message }))
+      toast(t('user.addressFail', { err: err.message }))
     }
   }
 }
@@ -1331,7 +1337,7 @@ const connectWallet = async () => {
     await handleAddressChange(address)
   } catch (err) {
     console.error('[UserCenter] 连接失败:', err)
-    alert(t('user.connectFail', { err: err.message }))
+    toast(t('user.connectFail', { err: err.message }))
   } finally {
     connecting.value = false
     hideLoading()
@@ -1407,11 +1413,11 @@ const connectWithOwnership = async (address, opts = {}) => {
 const enterDsh = async () => {
   const address = currentAddress()
   if (!address) {
-    alert(t('user.errConnectFirst'))
+    toast(t('user.errConnectFirst'))
     return
   }
   if (!window.ccdao) {
-    alert(t('user.errNoAccount'))
+    toast(t('user.errNoAccount'))
     return
   }
   try {
@@ -1426,7 +1432,7 @@ const enterDsh = async () => {
         window.open(data.url, '_blank', 'noopener')
         return
       }
-      alert(data?.message || data?.error || t('user.enterDshFail', { err: res.status }))
+      toast(data?.message || data?.error || t('user.enterDshFail', { err: res.status }))
       return
     }
     if (res.status === 302) {
@@ -1439,13 +1445,13 @@ const enterDsh = async () => {
     }
     if (res.status === 202) {
       const data = await res.json()
-      alert(data.message || data.error || '资源不足，请等待')
+      toast(data.message || data.error || '资源不足，请等待')
       return
     }
-    alert(t('user.enterDshFail', { err: res.status }))
+    toast(t('user.enterDshFail', { err: res.status }))
   } catch (err) {
     hideLoading()
-    alert(t('user.enterDshFail', { err: err.message || err }))
+    toast(t('user.enterDshFail', { err: err.message || err }))
   }
 }
 
@@ -1621,7 +1627,7 @@ const fetchUserInfo = async (address) => {
       localStorage.removeItem('swtc_address')
       connected.value = false
       userInfo.value = {}
-      alert(t('user.invalidAddress'))
+      toast(t('user.invalidAddress'))
       return
     }
 
@@ -1678,15 +1684,15 @@ const restartContainer = async () => {
 
     await fetchUserInfo(address)
     hideLoading()
-    alert(t('user.startedOk'))
+    toast(t('user.startedOk'))
   } catch (err) {
     hideLoading()
-    alert(t('user.startFail', { err: err.message }))
+    toast(t('user.startFail', { err: err.message }))
   }
 }
 
 const restartDSH = async () => {
-  if (!confirm(t('user.confirmRestartDsh'))) return
+  if (!(await askConfirm(t('user.confirmRestartDsh')))) return
 
   try {
     const address = userInfo.value.address
@@ -1699,17 +1705,17 @@ const restartDSH = async () => {
 
     await fetchUserInfo(address)
     hideLoading()
-    alert(t('user.restartedOk'))
+    toast(t('user.restartedOk'))
   } catch (err) {
     hideLoading()
-    alert(t('user.restartFail', { err: err.response?.data?.error || err.message }))
+    toast(t('user.restartFail', { err: err.response?.data?.error || err.message }))
   }
 }
 
 const resetContainer = async () => {
-  if (!confirm(t('user.confirmResetContainer'))) return
+  if (!(await askConfirm(t('user.confirmResetContainer')))) return
 
-  if (!confirm(t('user.confirmResetContainer2'))) return
+  if (!(await askConfirm(t('user.confirmResetContainer2')))) return
 
   try {
     const address = userInfo.value.address
@@ -1722,10 +1728,10 @@ const resetContainer = async () => {
     hideLoading()
     const { url } = res.data
     if (url) window.open(url, '_blank', 'noopener')
-    alert(t('user.resetContainerOk'))
+    toast(t('user.resetContainerOk'))
   } catch (err) {
     hideLoading()
-    alert(t('user.resetContainerFail', { err: err.response?.data?.error || err.message }))
+    toast(t('user.resetContainerFail', { err: err.response?.data?.error || err.message }))
   }
 }
 
@@ -1734,7 +1740,7 @@ const resetContainer = async () => {
  * （停止期间不计时，挂机不再消耗每日限额；数据保留，随时可重新启动）
  */
 const stopContainer = async () => {
-  if (!confirm(t('user.confirmStopContainer'))) return
+  if (!(await askConfirm(t('user.confirmStopContainer')))) return
 
   try {
     const address = userInfo.value.address
@@ -1744,10 +1750,10 @@ const stopContainer = async () => {
 
     await fetchUserInfo(address)
     hideLoading()
-    alert(t('user.stoppedOk'))
+    toast(t('user.stoppedOk'))
   } catch (err) {
     hideLoading()
-    alert(t('user.stopFail', { err: err.response?.data?.error || err.message }))
+    toast(t('user.stopFail', { err: err.response?.data?.error || err.message }))
   }
 }
 
@@ -1797,7 +1803,7 @@ onMounted(async () => {
               `[UserCenter] 会话地址(${cookieAddr}) ≠ 插件地址(${currentAddress})，吊销旧钥匙`,
             )
             await axios.post('/api/user/logout')
-            alert(t('user.sessionMismatchRevoked'))
+            toast(t('user.sessionMismatchRevoked'))
           }
         } catch (sessionErr) {
           console.warn('[UserCenter] 会话比对失败（非关键）:', sessionErr.message)
@@ -1944,46 +1950,46 @@ const onImportFile = (e) => {
 const doImport = async () => {
   const name = importName.value.trim()
   if (!name) {
-    alert(t('user.errNeedSkillName'))
+    toast(t('user.errNeedSkillName'))
     return
   }
   if (!importText.value.trim()) {
-    alert(t('user.errNeedSkillText'))
+    toast(t('user.errNeedSkillText'))
     return
   }
   importBusy.value = true
   try {
     const sig = await signChallenge('/api/skills/challenge')
     await skillsApi.importSkill(sig, name, importText.value)
-    alert(t('user.importedOk', { name }))
+    toast(t('user.importedOk', { name }))
     closeImportDialog()
     await loadMine()
   } catch (err) {
-    alert(t('user.importFail', { err: friendlyPluginError(err) }))
+    toast(t('user.importFail', { err: friendlyPluginError(err) }))
   } finally {
     importBusy.value = false
   }
 }
 
 const unpublishSkill = async (name) => {
-  if (!confirm(t('user.confirmUnpublish', { name }))) return
+  if (!(await askConfirm(t('user.confirmUnpublish', { name })))) return
   try {
     const sig = await signChallenge('/api/skills/challenge')
     await skillsApi.unpublish(sig, name)
     await loadMine()
   } catch (err) {
-    alert(t('user.opFail', { err: friendlyPluginError(err) }))
+    toast(t('user.opFail', { err: friendlyPluginError(err) }))
   }
 }
 
 const uninstallSkill = async (name) => {
-  if (!confirm(t('user.confirmUninstall', { name }))) return
+  if (!(await askConfirm(t('user.confirmUninstall', { name })))) return
   try {
     const sig = await signChallenge('/api/skills/challenge')
     await skillsApi.uninstall(sig, name)
     await loadMine()
   } catch (err) {
-    alert(t('user.uninstallFail', { err: friendlyPluginError(err) }))
+    toast(t('user.uninstallFail', { err: friendlyPluginError(err) }))
   }
 }
 
@@ -2018,19 +2024,19 @@ const closeShareDialog = () => {
 const doShare = async () => {
   const source = shareSourceName.value
   if (!source) {
-    alert(t('user.errNeedShareSource'))
+    toast(t('user.errNeedShareSource'))
     return
   }
   const renameTo = shareConflict.value ? shareRenameTo.value.trim() : ''
   if (shareConflict.value && !renameTo) {
-    alert(t('user.errNeedShareRename'))
+    toast(t('user.errNeedShareRename'))
     return
   }
   shareBusy.value = true
   try {
     const sig = await signChallenge('/api/skills/challenge')
     await skillsApi.publish(sig, source, renameTo || undefined)
-    alert(
+    toast(
       renameTo
         ? t('user.sharedWithRename', { name: renameTo })
         : t('user.sharedOk', { name: source }),
@@ -2044,7 +2050,7 @@ const doShare = async () => {
       shareRenameTo.value = ''
       return
     }
-    alert(t('user.shareFail', { err: friendlyPluginError(err) }))
+    toast(t('user.shareFail', { err: friendlyPluginError(err) }))
   } finally {
     shareBusy.value = false
   }
