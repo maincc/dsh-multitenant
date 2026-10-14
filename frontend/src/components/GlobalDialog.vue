@@ -9,17 +9,21 @@
         <li v-for="(d, i) in opts.details" :key="i" class="gd-detail-item">{{ d }}</li>
       </ul>
       <div class="gd-actions">
-        <button class="gd-btn" @click="settleConfirm(false)">
+        <button class="gd-btn" :disabled="busy" @click="settleConfirm(false)">
           {{ (opts && opts.cancelLabel) || $t('common.confirmCancel') }}
         </button>
         <button
           class="gd-btn"
           :class="opts && opts.danger ? 'gd-btn-danger' : 'gd-btn-primary'"
-          @click="settleConfirm(true)"
+          :disabled="busy"
+          @click="confirmWithRun"
         >
+          <span v-if="busy" class="gd-spin"></span>
           {{
-            (opts && opts.confirmLabel) ||
-            (opts && opts.danger ? $t('common.confirmDelete') : $t('common.confirmOk'))
+            busy
+              ? $t('common.confirmBusy')
+              : (opts && opts.confirmLabel) ||
+                (opts && opts.danger ? $t('common.confirmDelete') : $t('common.confirmOk'))
           }}
         </button>
       </div>
@@ -38,9 +42,10 @@
 
 <script setup>
 import { computed, onMounted, onBeforeUnmount } from 'vue'
-import { dialogState, settleConfirm } from '../composables/useDialog'
+import { dialogState, settleConfirm, confirmWithRun } from '../composables/useDialog'
 
 const confirm = computed(() => dialogState.confirm)
+const busy = computed(() => confirm.value.busy)
 const opts = computed(() => confirm.value.opts)
 const toasts = computed(() => dialogState.toasts)
 // 兼容旧 confirm 文案里的 \n 换行习惯：按行拆开，次级行弱化处理
@@ -125,6 +130,30 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 }
 .gd-btn:hover {
   background: #f1f5f9;
+}
+.gd-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+.gd-btn-primary:disabled,
+.gd-btn-danger:disabled {
+  opacity: 0.8;
+}
+.gd-spin {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  vertical-align: -2px;
+  border: 2px solid rgba(255, 255, 255, 0.45);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: gd-spin 0.7s linear infinite;
+}
+@keyframes gd-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 .gd-btn-primary {
   background: #2563eb;

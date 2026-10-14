@@ -15,6 +15,7 @@ export default {
     confirmOk: 'OK',
     confirmCancel: 'Cancel',
     confirmDelete: 'Delete',
+    confirmBusy: 'Working…',
   },
   home: {},
   user: {},

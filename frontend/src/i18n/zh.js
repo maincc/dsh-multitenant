@@ -21,6 +21,7 @@ export default {
     confirmOk: '确定',
     confirmCancel: '取消',
     confirmDelete: '删除',
+    confirmBusy: '执行中…',
   },
 
   home: {
