@@ -20,11 +20,15 @@
     <main class="page">
       <router-view />
     </main>
+
+    <!-- 全局对话框：确认弹窗 + 轻提示（替代原生 confirm/alert，见 useDialog） -->
+    <GlobalDialog />
   </div>
 </template>
 
 <script setup>
 import dshLogo from './assets/dsh-logo-white.svg'
+import GlobalDialog from './components/GlobalDialog.vue'
 </script>
 
 <style scoped>

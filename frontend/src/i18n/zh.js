@@ -18,6 +18,9 @@ export default {
       admin: '系统管理',
       user: '用户中心',
     },
+    confirmOk: '确定',
+    confirmCancel: '取消',
+    confirmDelete: '删除',
   },
 
   home: {
