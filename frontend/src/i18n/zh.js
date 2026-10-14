@@ -458,7 +458,7 @@ export default {
     orphanHint: '扫描并清理无人使用的残留数据卷（不影响任何在案用户与运行中的容器）',
     orphanScanBtn: '扫描孤儿卷',
     orphanScanning: '扫描中…',
-    orphanCleanBtn: '清理 {n} 个',
+    orphanCleanBtn: '删除这 {n} 个',
     orphanFound: '发现 {n} 个孤儿数据卷',
     orphanNone: '未发现孤儿数据卷 ✓',
     orphanConfirm: '确认删除这 {n} 个孤儿数据卷？\n（在案用户的卷与容器引用的卷不会被删除）',
@@ -629,7 +629,9 @@ export default {
     confirmRemove:
       '确定要彻底删除用户 {addr} 吗？\n此操作将：\n1. 删除用户记录\n2. 释放端口 {port}\n3. 不可恢复',
     confirmRemoveKeepVolume:
-      '是否保留该用户的数据卷？\n\n点「确定」＝保留数据（留档/审计，仍占用磁盘）\n点「取消」＝连同数据一起删除（彻底清除，不留痕迹）',
+      '要连同该用户的数据卷一起删除吗？\n\n「连同数据卷一起删除」＝彻底清除不留痕迹（不可恢复）\n「保留数据卷」＝留档/审计，仍占用磁盘（可稍后手动清理）',
+    volWipeBtn: '连同数据卷一起删除',
+    volKeepBtn: '保留数据卷',
     removedOk: '删除成功！记录已清除，端口已释放，数据卷已删除。',
     removedOkKeepVolume: '删除成功！记录已清除，端口已释放；数据卷已保留在磁盘（可稍后手动清理）。',
     removeFail: '删除失败: {err}',
