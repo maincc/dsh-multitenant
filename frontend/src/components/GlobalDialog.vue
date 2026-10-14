@@ -82,6 +82,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 .gd-msg {
   margin: 0;
   font-size: 14px;
+  text-align: center;
   color: #0f172a;
   white-space: pre-wrap;
   word-break: break-word;
