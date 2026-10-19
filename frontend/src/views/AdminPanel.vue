@@ -1153,13 +1153,26 @@
             >
               {{ $t('admin.ledgerKind_' + k) }}
             </button>
-            <input
-              v-model="credQ"
-              class="input input-small"
-              :placeholder="$t('admin.ledgerSearchPh')"
-              style="width: 12rem"
-              @keyup.enter="setCredKind(credKind)"
-            />
+            <div class="cred-search">
+              <svg
+                class="cred-search-ico"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.2"
+                stroke-linecap="round"
+              >
+                <circle cx="11" cy="11" r="7" />
+                <line x1="21" y1="21" x2="16.5" y2="16.5" />
+              </svg>
+              <input
+                v-model="credQ"
+                :placeholder="$t('admin.ledgerSearchPh')"
+                @keyup.enter="setCredKind(credKind)"
+              />
+            </div>
             <span class="badge badge-info">{{ $t('admin.credTotal', { n: credTotal }) }}</span>
             <button class="btn btn-small" :disabled="credLoading" @click="loadCredRows">
               {{ $t('admin.refresh') }}
@@ -3838,5 +3851,45 @@ table {
   gap: 0.5rem;
   flex-wrap: wrap;
   margin-bottom: 0.75rem;
+}
+
+/* 台账搜索：大号胶囊 + 放大镜 + 聚焦光晕 */
+.cred-search {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex: 1 1 18rem;
+  max-width: 26rem;
+  padding: 0.65rem 1.1rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #fff;
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+
+.cred-search:focus-within {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(64, 126, 255, 0.15);
+}
+
+.cred-search-ico {
+  flex-shrink: 0;
+  color: #94a3b8;
+}
+
+.cred-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 0.92rem;
+  color: #1e293b;
+}
+
+.cred-search input::placeholder {
+  color: #94a3b8;
 }
 </style>

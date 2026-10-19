@@ -942,7 +942,7 @@ export default {
     ledgerKind_all: '全部',
     ledgerKind_did: '普通凭证',
     ledgerKind_cwt: '解限凭证',
-    ledgerSearchPh: '搜索地址…',
+    ledgerSearchPh: '输入地址片段筛选台账…',
     ledgerColKind: '卡种',
     ledgerColState: '状态',
     ledgerColSource: '来源',
