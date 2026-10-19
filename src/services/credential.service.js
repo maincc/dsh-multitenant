@@ -776,13 +776,13 @@ class CredentialService {
         next = {
           status: 'stale',
           at: new Date().toISOString(),
-          reason: `档案里还是旧卡（…${String(stale.id).slice(-12)}），点领取同步新卡`,
+          reason: `您档案里还是旧版本（…${String(stale.id).slice(-12)}），点「更新我的档案」即可换成最新`,
         }
       } else if (!vc) {
         next = {
           status: 'missing',
           at: new Date().toISOString(),
-          reason: '档案里没有这张凭证（可能被删除，重新领取可找回）',
+          reason: '档案里找不到这张凭证（可能被删除，点「存入我的数字档案」找回）',
         }
       } else {
         try {
