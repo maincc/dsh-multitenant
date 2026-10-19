@@ -21,6 +21,11 @@
           <p>{{ $t('home.features.scale.desc') }}</p>
         </div>
         <div class="feature-card">
+          <div class="icon">🪪</div>
+          <h3>{{ $t('home.features.credential.title') }}</h3>
+          <p>{{ $t('home.features.credential.desc') }}</p>
+        </div>
+        <div class="feature-card">
           <div class="icon">💾</div>
           <h3>{{ $t('home.features.persist.title') }}</h3>
           <p>{{ $t('home.features.persist.desc') }}</p>
@@ -63,6 +68,7 @@
             <p>
               {{ $t('home.guide.step2.body') }}
               {{ $t('home.guide.step2.sig', { sign: $t('home.guide.step2.signLabel') }) }}
+              {{ $t('home.guide.step2.cred', { cred: $t('home.guide.step2.credLabel') }) }}
             </p>
           </div>
         </div>
@@ -73,8 +79,8 @@
             <p>
               {{
                 $t('home.guide.step3.body', {
-                  min: $t('home.guide.step3.minLabel'),
-                  exempt: $t('home.guide.step3.exemptLabel'),
+                  claim: $t('home.guide.step3.claimLabel'),
+                  verify: $t('home.guide.step3.verifyLabel'),
                 })
               }}
             </p>
@@ -85,7 +91,13 @@
           <div class="step-body">
             <h3>{{ $t('home.guide.step4.title') }}</h3>
             <p>
-              {{ $t('home.guide.step4.body', { admin: $t('home.guide.step4.adminLabel') }) }}
+              {{
+                $t('home.guide.step4.body', {
+                  min: $t('home.guide.step4.minLabel'),
+                  cwt: $t('home.guide.step4.cwtLabel'),
+                  exempt: $t('home.guide.step4.exemptLabel'),
+                })
+              }}
             </p>
           </div>
         </div>
@@ -94,12 +106,7 @@
           <div class="step-body">
             <h3>{{ $t('home.guide.step5.title') }}</h3>
             <p>
-              {{
-                $t('home.guide.step5.body', {
-                  install: $t('home.guide.step5.installLabel'),
-                  noAuto: $t('home.guide.step5.noAutoLabel'),
-                })
-              }}
+              {{ $t('home.guide.step5.body', { admin: $t('home.guide.step5.adminLabel') }) }}
             </p>
           </div>
         </div>
@@ -108,7 +115,21 @@
           <div class="step-body">
             <h3>{{ $t('home.guide.step6.title') }}</h3>
             <p>
-              {{ $t('home.guide.step6.body', { sign: $t('home.guide.step6.signLabel') }) }}
+              {{
+                $t('home.guide.step6.body', {
+                  install: $t('home.guide.step6.installLabel'),
+                  noAuto: $t('home.guide.step6.noAutoLabel'),
+                })
+              }}
+            </p>
+          </div>
+        </div>
+        <div class="guide-step">
+          <div class="step-num">7</div>
+          <div class="step-body">
+            <h3>{{ $t('home.guide.step7.title') }}</h3>
+            <p>
+              {{ $t('home.guide.step7.body', { sign: $t('home.guide.step7.signLabel') }) }}
             </p>
           </div>
         </div>
@@ -122,6 +143,14 @@
             {{ $t('home.guide.notes.item2', { before: $t('home.guide.notes.beforeLabel') }) }}
           </li>
           <li>{{ $t('home.guide.notes.item3') }}</li>
+          <li>
+            {{
+              $t('home.guide.notes.item4', {
+                sync: $t('home.guide.notes.syncLabel'),
+                btn: $t('home.guide.notes.btnLabel'),
+              })
+            }}
+          </li>
         </ul>
       </div>
     </div>

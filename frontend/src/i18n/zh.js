@@ -26,11 +26,15 @@ export default {
 
   home: {
     heroTitle: '🚀 DSH 多租户平台',
-    subtitle: '基于 SWTC 地址的智能容器分配系统',
+    subtitle: '基于 SWTC 地址与链上凭证的智能容器分配系统',
     features: {
       wallet: { title: '钱包认证', desc: '通过 CCDAO 插件获取 SWTC 地址，无需注册' },
       container: { title: '独立容器', desc: '每个用户独享 Docker 容器，数据完全隔离' },
       scale: { title: '智能扩容', desc: '自动监控资源使用，按需动态调整配额' },
+      credential: {
+        title: '链上凭证',
+        desc: '平台签发 DID/VC 凭证，领取存入个人数字档案，链上可验',
+      },
       persist: { title: '数据持久化', desc: '容器销毁后数据保留，重新连接自动恢复' },
     },
     actions: {
@@ -46,33 +50,41 @@ export default {
         tail: '，点击浏览器工具栏插件图标完成解锁与授权。',
       },
       step2: {
-        title: '连接钱包（用户中心）',
+        title: '连接钱包（自动分配凭证）',
         body: '进入「用户中心」→ 点击「连接钱包」→ 在插件中选择账户。',
         sig: '第一次创建容器时会弹出{sign}（验证地址归属），确认后自动开通你的独立容器。',
         signLabel: '签名确认',
+        cred: '首次进入还会自动分配一张{cred}，并在平台链上登记册留档，公开可查验。',
+        credLabel: '普通用户凭证',
       },
       step3: {
+        title: '领取凭证（存入你的数字档案）',
+        body: '在「用户中心 → 凭证」卡片点「{claim}」→ 插件签名确认 → 平台签发的凭证写入你自己的 DID 数字档案（链上副本，只有你能写）。之后页面自动做{verify}，凭证真伪不依赖平台在线。',
+        claimLabel: '领取凭证',
+        verifyLabel: '链上验真',
+      },
+      step4: {
         title: '每日使用时限',
-        body: '每个地址每天累计可使用 {min}，到点容器自动优雅停止（数据保留）。用户在界面主动停止容器可保全剩余时长；完成 {cwt} 的地址{exempt}。',
+        body: '每个地址每天累计可使用 {min}，到点容器自动优雅停止（数据保留）。主动停止可保全剩余时长；持有 {cwt} 的地址{exempt}。',
         minLabel: '120 分钟',
-        cwtLabel: 'CWT 验证',
+        cwtLabel: '解限凭证（CWT）',
         exemptLabel: '豁免限时',
         exemptTail: '，无限使用',
       },
-      step4: {
-        title: 'CWT 验证（申请不限时）',
-        body: '在「用户中心」的 🛡️ CWT 验证卡片点击「申请验证」→ 插件签名 → 等待{admin} → 获批后该地址永久豁免每日限时。',
-        adminLabel: '管理员审批',
-      },
       step5: {
+        title: '申请解限（换发 CWT 凭证）',
+        body: '先领取普通凭证，再在同一卡片点「申请解限」→ 插件签名提交 → 等待{admin}。获批后你的凭证自动换发为解限凭证（一人一证，与普通凭证互斥），豁免即时生效；一年到期后登录时平台按登记记录自动续发，全程无感。',
+        adminLabel: '管理员钱包签名审批',
+      },
+      step6: {
         title: '技能市场',
         body: '浏览无需登录；{install}，安装前会弹确认提示。市场技能默认{noAuto}（仅供你显式使用），安装后即可在 DSH 对话中使用。',
         installLabel: '安装 / 下载需钱包签名',
         noAutoLabel: '不会被模型自动调用',
       },
-      step6: {
+      step7: {
         title: '系统管理（仅管理员）',
-        body: '登录须{sign}（管理员地址由平台配置）。可管理容器、审批 CWT 验证、查看审计记录。',
+        body: '登录须{sign}（管理员地址由平台配置）。可管理容器、审批解限申请、浏览凭证台账、查看审计记录。',
         signLabel: '钱包签名验证',
       },
       notes: {
@@ -80,8 +92,12 @@ export default {
         item1: '容器销毁后{data}，重新连接自动恢复，无需担心丢失。',
         dataLabel: '数据保留',
         item2: '每日额度按地址累计，{before}请留意剩余时长。',
-        beforeLabel: 'CWT 获批前',
+        beforeLabel: '解限凭证获批前',
         item3: '技能内容来自社区市场，安装前请确认信任发布者。',
+        item4:
+          '{sync}——凭证到期会在下次登录自动续发；若个人档案提示「未同步新卡」，点{btn}签一次名即可归一，不影响任何权限。',
+        syncLabel: '凭证提示不用慌',
+        btnLabel: '「同步凭证到档案」',
       },
     },
     tiers: {
