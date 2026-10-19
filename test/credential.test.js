@@ -653,6 +653,24 @@ describe('链上验真（onChainVerify）', () => {
     expect(r.status).toBe('ok') // 上次结论原样返回
     expect(b.creds.get(ADDR).onChain.at).not.toBe(new Date().toISOString()) // 未被改写
   })
+  it('刚落档 60s 内不验真（副本传播宽限，防 stale 误报）', async () => {
+    const b = claimed() // claimedAt 未设 → 补设成现在
+    b.creds.get(ADDR).claimedAt = new Date().toISOString()
+    okRelay(
+      docWith([
+        {
+          id: 'vc-live',
+          type: ['VerifiableCredential', 'DshCwtCredential'],
+          issuer: 'did:swtc:jplatform',
+        },
+      ]),
+    )
+    const r = await credentialService.onChainVerify(ADDR)
+    expect(r).toEqual({}) // 没读档没结论
+    expect(fetchStub.mock.calls.length).toBe(0)
+    const f = await credentialService.onChainVerify(ADDR, { force: true })
+    expect(f.status).toBe('ok') // force 绕过宽限
+  })
   it('5 分钟保鲜期内不重复读档（节流）', async () => {
     claimed()
     okRelay(

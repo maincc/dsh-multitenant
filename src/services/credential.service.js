@@ -754,6 +754,10 @@ class CredentialService {
     // 节流：ok 结论保鲜 5 分钟；失效结论 1 分钟内不重复锤（用户刷新页面别轰炸 relay）
     const ttl = prev.status === 'ok' ? 300000 : 60000
     if (!opts.force && prev.at && Date.now() - new Date(prev.at).getTime() < ttl) return prev
+    // 副本传播宽限：刚落档 60s 内 relay 读副本可能没追上，此时验真会误报 stale
+    // （2026-10-19 实测：同步成功 3 秒后被误判）——结论推迟到下次登录
+    if (!opts.force && cred.claimedAt && Date.now() - new Date(cred.claimedAt).getTime() < 60000)
+      return prev
     const read = await relayRead(cred.profileDid.replace(/^did:swtc:/, ''))
     if (read.status === 'probe-fail') return prev // 网络抖动不下"失效"结论
     let next
