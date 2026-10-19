@@ -1,5 +1,7 @@
 # Dsh DID/VC 实施方案手册 · 定稿 v1.2
 
+> ⚠️ **凭证模型部分已被 [`credential-v1.4.md`](./credential-v1.4.md) 取代**（2026-10-19 上线：互斥单台账 did/解限双凭证、登录续发、链上验真、stale 同步、解限术语）。本手册保留价值：wodecards 生态调研结论、预验证记录（§5）、私钥红线（§3.4）、relay 文件签与档案路径口径。阅读顺序：先 v1.4，再回看本篇考证细节。
+
 > **状态：步骤 1-6 已实施 + v1.2 用户持有改版已落地（2026-10，dev 实例 E2E 全通，844/844 测试全绿）**。v1.2=用户拍板改版（§10）：凭证主副本入用户手中、账本为效力权威、货架降为可选公示副本、平台补展示与管理面。本版取代此前所有讨论形态（闭环 JWT 草案 / 挂法 A/B 二选一 / 双投影方案）。依据一：wodecards 全仓源码复核（`~/.dshWorkspace/wodecards`，backend 全量 + docs/DID 全量 + did_DApp 关键链路 + vc-compat 规格）；依据二：**预验证两轮全绿**（ethr 版+SWTC 版各 8/8：造钥→锚文档→上传→公共读→真库 mint LD proof→挂架→官方 resolver 外部验签 verified:true→下架清零，dev 8550；工件 `~/.dshWorkspace/vc-preflight/`）+ **prod 实例试挂/查询页渲染/撤架走通**（`ipfsserver.ccda.ooo`，一次性测试钥，阅后即焚）。v1.0→v1.1 增量=预验证协议回写（§5.1-5.3）+ issuer 链族 SWTC 化（ADR-18）+ 生命周期/管线流程图（§1/§2）。
 > 上游：`identity-auth-current.md`（基线）、`ccdao-did-integration.md`（生态调研+§8 勘误）、`cwt-access-design.md`（零门槛决策，维持）。
 
