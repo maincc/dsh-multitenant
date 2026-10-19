@@ -67,8 +67,9 @@
             <h3>{{ $t('home.guide.step2.title') }}</h3>
             <p>
               {{ $t('home.guide.step2.body') }}
-              {{ $t('home.guide.step2.sig', { sign: $t('home.guide.step2.signLabel') }) }}
-              {{ $t('home.guide.step2.cred', { cred: $t('home.guide.step2.credLabel') }) }}
+              {{ $t('home.guide.step2.sig', { sign: $t('home.guide.step2.signLabel') }) }}　{{
+                $t('home.guide.step2.cred', { cred: $t('home.guide.step2.credLabel') })
+              }}
             </p>
           </div>
         </div>
@@ -214,7 +215,7 @@
   background: linear-gradient(135deg, #6b7bdb 0%, #6c69c2 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.75rem;
 }
 
 .subtitle {
@@ -226,7 +227,7 @@
 .features {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  gap: 1rem;
+  gap: 1.25rem;
   margin: 2rem 0;
   text-align: left;
 }
@@ -234,7 +235,7 @@
 .feature-card {
   display: flex;
   flex-direction: column;
-  padding: 1.25rem 1rem;
+  padding: 1.5rem 1.35rem;
   background: #f9fafb;
   border-radius: 12px;
   transition: transform 0.3s;
@@ -252,12 +253,12 @@
 
 .feature-card .icon {
   font-size: 2rem;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.75rem;
 }
 
 .feature-card h3 {
   font-size: 1.1rem;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.6rem;
   color: #374151;
 }
 
@@ -290,7 +291,7 @@
 .guide-steps {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 1.25rem;
+  gap: 1.5rem 1.5rem;
   margin-bottom: 2rem;
 }
 
@@ -322,7 +323,7 @@
 }
 
 .step-body h3 {
-  margin: 0 0 0.35rem;
+  margin: 0 0 0.6rem;
   font-size: 1rem;
   color: #374151;
 }
@@ -331,7 +332,7 @@
   margin: 0;
   font-size: 0.88rem;
   color: #6b7280;
-  line-height: 1.55;
+  line-height: 1.7;
 }
 
 .step-body a {
