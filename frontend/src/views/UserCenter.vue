@@ -3145,6 +3145,16 @@ onUnmounted(() => {
   color: #1e293b;
 }
 
+/* 下拉框自绘箭头：文字左右等距（原生箭头挤右侧会失衡） */
+.import-field select {
+  -webkit-appearance: none;
+  appearance: none;
+  padding: 0.5rem 1.85rem 0.5rem 0.6rem;
+  background: #fff
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='11' height='7' viewBox='0 0 11 7'><path d='M1 1l4.5 4.5L10 1' fill='none' stroke='%2364748b' stroke-width='1.6' stroke-linecap='round'/></svg>")
+    no-repeat right 0.7rem center;
+}
+
 .share-empty-hint {
   padding: 0.5rem 0.6rem;
   border: 1px dashed #cbd5e1;

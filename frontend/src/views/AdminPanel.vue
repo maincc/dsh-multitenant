@@ -3135,10 +3135,14 @@ table {
 }
 
 .cwt-filter select {
-  padding: 0.25rem 0.5rem;
+  -webkit-appearance: none;
+  appearance: none;
+  padding: 0.25rem 1.5rem 0.25rem 0.45rem; /* 文字左右等距：左侧=0.45rem，右侧=箭头让位后的0.45rem */
   border: 1px solid #cbd5e1;
   border-radius: 6px;
-  background: #fff;
+  background: #fff
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='7' viewBox='0 0 10 7'><path d='M1 1l4 4 4-4' fill='none' stroke='%2364748b' stroke-width='1.6' stroke-linecap='round'/></svg>")
+    no-repeat right 0.5rem center;
   font-size: 0.82rem;
   color: #334155;
 }
@@ -3331,10 +3335,14 @@ table {
 
 .dsh-select {
   flex: 1 1 220px;
-  padding: 0.35rem 0.5rem;
+  -webkit-appearance: none;
+  appearance: none;
+  padding: 0.35rem 1.7rem 0.35rem 0.55rem; /* 文字左右等距，右侧为箭头让位 */
   border: 1px solid #cbd5e1;
   border-radius: 6px;
-  background: #fff;
+  background: #fff
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='7' viewBox='0 0 10 7'><path d='M1 1l4 4 4-4' fill='none' stroke='%2364748b' stroke-width='1.6' stroke-linecap='round'/></svg>")
+    no-repeat right 0.6rem center;
   font-size: 0.82rem;
   color: #334155;
 }
