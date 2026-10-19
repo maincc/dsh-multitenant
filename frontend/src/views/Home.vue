@@ -225,17 +225,25 @@
 
 .features {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 1.5rem;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 1rem;
   margin: 2rem 0;
   text-align: left;
 }
 
 .feature-card {
-  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  padding: 1.25rem 1rem;
   background: #f9fafb;
   border-radius: 12px;
   transition: transform 0.3s;
+}
+
+.feature-card p {
+  flex: 1; /* 文字块撑满，末行底边齐 */
+  font-size: 0.88rem;
+  color: #6b7280;
 }
 
 .feature-card:hover {
@@ -251,11 +259,6 @@
   font-size: 1.1rem;
   margin-bottom: 0.5rem;
   color: #374151;
-}
-
-.feature-card p {
-  font-size: 0.9rem;
-  color: #6b7280;
 }
 
 .actions {
@@ -286,9 +289,14 @@
 
 .guide-steps {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(3, 1fr);
   gap: 1.25rem;
   margin-bottom: 2rem;
+}
+
+/* 第 7 步独占整行收尾：三列永远排齐，不留半行空格 */
+.guide-step:nth-child(7) {
+  grid-column: 1 / -1;
 }
 
 .guide-step {
@@ -369,8 +377,36 @@
 
 .tier-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  grid-template-columns: repeat(3, 1fr);
   gap: 1.5rem;
+}
+
+/* ── 响应式收列：每档都保证末行整行收尾，不出半宽孤儿卡 ── */
+@media (max-width: 980px) {
+  .features {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .features .feature-card:last-child {
+    grid-column: 1 / -1;
+  }
+  .guide-steps {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .tier-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  .features {
+    grid-template-columns: 1fr;
+  }
+  .features .feature-card:last-child {
+    grid-column: auto;
+  }
+  .guide-steps {
+    grid-template-columns: 1fr;
+  }
 }
 
 .tier-card {
