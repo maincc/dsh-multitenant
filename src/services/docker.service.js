@@ -191,7 +191,7 @@ function configuredPrivilegeProfile() {
 
 /**
  * 白名单 profile 路径的**使用处兜底**：config.json 的 docker 块会整块顶掉
- * DEFAULTS（loadConfig 是浅合并——见 config.js cwt 段同款警告），老部署
+ * DEFAULTS（loadConfig 是浅合并——loadConfig 同款警告），老部署
  * 不改 config.json 就没有 seccompProfilePath。兜回仓库内文件路径，
  * 与"未配置"语义一致；显式配置了别人的路径则尊重配置。
  */

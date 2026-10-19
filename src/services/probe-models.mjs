@@ -47,7 +47,8 @@ function loadYaml() {
 const yaml = loadYaml()
 
 const [baseURL, apiKeyArg, refArg] = process.argv.slice(2)
-const credentialRef = typeof refArg === 'string' && refArg.trim() ? refArg.trim() : 'DEEPSEEK_API_KEY'
+const credentialRef =
+  typeof refArg === 'string' && refArg.trim() ? refArg.trim() : 'DEEPSEEK_API_KEY'
 
 if (typeof baseURL !== 'string' || !/^https?:\/\//.test(baseURL)) {
   console.log(JSON.stringify({ error: 'baseURL 必须是 http(s) 地址' }))
@@ -87,13 +88,16 @@ try {
   const url = baseURL.replace(/\/+$/, '') + '/models'
   const res = await fetch(url, { headers, signal: controller.signal })
   if (!res.ok) {
-    console.log(JSON.stringify({ error: `HTTP ${res.status}${keySource === 'none' ? NO_KEY_HINT : ''}` }))
+    console.log(
+      JSON.stringify({ error: `HTTP ${res.status}${keySource === 'none' ? NO_KEY_HINT : ''}` }),
+    )
   } else {
     const data = await res.json()
     const models = (Array.isArray(data?.data) ? data.data : [])
       .map((m) => ({
         id: String(m?.id ?? '').trim(),
-        name: typeof m?.name === 'string' && m.name.trim() ? m.name.trim() : String(m?.id ?? '').trim(),
+        name:
+          typeof m?.name === 'string' && m.name.trim() ? m.name.trim() : String(m?.id ?? '').trim(),
       }))
       .filter((m) => m.id.length > 0)
     console.log(JSON.stringify({ models }))

@@ -207,7 +207,9 @@ function assertWellFormed(lines) {
         indentOf(lines[j]).length > entryIndent.length
       ) {
         if (!multiline) {
-          problems.push(`条目 ${m[2]} 的值是单行标量，却跟着更深的子行：${lines[j].trim().slice(0, 30)}`)
+          problems.push(
+            `条目 ${m[2]} 的值是单行标量，却跟着更深的子行：${lines[j].trim().slice(0, 30)}`,
+          )
         }
         j++
       }
@@ -397,7 +399,9 @@ if (action === 'del') {
       lines.splice(first, 1, 'refs:', ...entries)
     } else {
       // 空文件 / 只有注释与 version：在 version 之后（或文件末尾）补一个 refs 块
-      const versionIdx = lines.findIndex((l) => indentOf(l) === '' && VERSION_LINE_RE.test(l.trim()))
+      const versionIdx = lines.findIndex(
+        (l) => indentOf(l) === '' && VERSION_LINE_RE.test(l.trim()),
+      )
       const insertAt = versionIdx >= 0 ? versionIdx + 1 : lines.length
       lines.splice(insertAt, 0, 'refs:')
     }

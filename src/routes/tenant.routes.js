@@ -4,6 +4,7 @@
 
 import { CONFIG, isAdmin } from '../config/config.js'
 import { userService } from '../services/user.service.js'
+import { credentialService } from '../services/credential.service.js'
 import { dataService } from '../services/data.service.js'
 import { resourceExhaustedPayload } from '../utils/resource-exhausted.js'
 import {
@@ -137,7 +138,7 @@ export async function handleTenantRoutes(req, res, path, url) {
             code: 'USAGE_LIMIT_REACHED',
             usedMinutes: err.usedMinutes,
             dailyLimit: err.dailyLimit,
-            message: `今日使用时长已达上限（${err.dailyLimit} 分钟），请明日再试，或完成 CWT 验证解锁`,
+            message: `今日使用时长已达上限（${err.dailyLimit} 分钟），请明日再试`,
           }),
         )
       } else if (err.code === 'QUEUE_FULL') {
@@ -202,9 +203,15 @@ export async function handleTenantRoutes(req, res, path, url) {
 
     const idle = Date.now() - user.lastSeenAt
     const usageCfg = userService.usageLimitConfig()
-    const exempt = userService.isUsageExempt(address)
     const used = userService.getUsedMinutes(address)
+    // 权益判定与凭证体系解耦（2026-10 大拆除）：全员统一按 usageLimit 默认档
     const limit = usageCfg.enabled ? usageCfg.dailyMinutes : null
+    // v1.4：持 CWT 解除凭证 = 不限时（与 usage 闸门口径一致的同步快照判据）
+    const unlimited =
+      limit === null ||
+      !Number.isFinite(limit) ||
+      limit <= 0 ||
+      credentialService.isExemptSync(address)
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
     res.end(
       JSON.stringify({
@@ -212,6 +219,7 @@ export async function handleTenantRoutes(req, res, path, url) {
         address,
         port: user.port,
         status: user.containerStatus ?? 'running',
+        tier: 1,
         idleMs: idle,
         idleHuman:
           idle < 60000
@@ -221,10 +229,9 @@ export async function handleTenantRoutes(req, res, path, url) {
               : `${(idle / 3600000).toFixed(1)}h`,
         usage: {
           enabled: Boolean(usageCfg.enabled),
-          dailyMinutes: limit,
+          dailyMinutes: unlimited ? null : limit,
           usedMinutes: used,
-          remainingMinutes: limit !== null && !exempt ? Math.max(0, limit - used) : null,
-          exempt,
+          remainingMinutes: !unlimited ? Math.max(0, limit - used) : null,
         },
       }),
     )

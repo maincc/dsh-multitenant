@@ -20,7 +20,7 @@ const fixtureState = () => ({
       usageStartedAt: 123,
       pinnedImage: 'img:1',
     },
-    jb: { port: 31002, containerStatus: 'stopped', cwtAuthorizedAt: 999 },
+    jb: { port: 31002, containerStatus: 'stopped', pinnedImage: 'img:jb' },
   },
   nextPort: 31003,
   availablePorts: [31009],
@@ -47,9 +47,7 @@ describe('A 组·json 透传合同（无 DB 恒跑）', () => {
   })
 
   it('USER_OWNED_FIELDS 与水合合同互锁（新增运行时字段必须同步登记两处）', () => {
-    // cwt-admin 往缓存写的标记字段——漏一个，重启水合就丢、下次存盘还 $unset
-    expect(USER_OWNED_FIELDS).toContain('cwtAuthorizedAt')
-    expect(USER_OWNED_FIELDS).toContain('cwtVerifiedAt')
+    // 缓存往 user 写的标记字段——漏一个，重启水合就丢、下次存盘还 $unset
     expect(USER_OWNED_FIELDS).toContain('usageStartedAt')
     expect(USER_OWNED_FIELDS).toContain('pinnedImage')
   })
@@ -97,27 +95,27 @@ describe('B 组·mongodb 扇出', () => {
       usageStartedAt: 123,
       pinnedImage: 'img:1',
     })
-    expect(back.swtcUsers.jb.cwtAuthorizedAt).toBe(999)
+    expect(back.swtcUsers.jb.pinnedImage).toBe('img:jb')
     expect(back.nextPort).toBe(31003)
     expect(back.availablePorts).toEqual([31009])
     expect(back.cleanupPolicy.stopTimeoutMs).toBe(111)
     expect(back.usages.ja).toEqual({ date: '2026-01-02', minutes: 7 })
   })
 
-  it('所有权：白名单外的库字段（profile/迁移回填值）不被扇出误伤', async (ctx) => {
+  it('所有权：白名单外的库字段（profile/历史遗留值）不被扇出误伤', async (ctx) => {
     if (!skip(ctx)) return
     await store
       .col('users')
       .updateOne(
         { _id: 'ja' },
-        { $set: { profile: { nickname: 'keepme' }, cwtVerifiedAt: 777 } },
+        { $set: { profile: { nickname: 'keepme' }, legacyMarker: 777 } },
         { upsert: true },
       )
     await repo.save(fixtureState())
     const ja = await store.col('users').findOne({ _id: 'ja' })
     expect(ja.profile).toEqual({ nickname: 'keepme' })
-    // cwtVerifiedAt 在 USER_OWNED（缓存权威）但 fixture 没带 → 按纪律 $unset 传播
-    expect(ja.cwtVerifiedAt).toBe(undefined)
+    // 白名单外的库侧字段：扇出既不抹也不改
+    expect(ja.legacyMarker).toBe(777)
   })
 
   it('删除传播：缓存里消失的用户，库文档同步删除', async (ctx) => {

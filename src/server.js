@@ -26,11 +26,11 @@ import { fileURLToPath } from 'node:url'
 
 import { CONFIG } from './config/config.js'
 import { userService } from './services/user.service.js'
-import { cwtStore } from './services/cwt.store.js'
 import { dataService } from './services/data.service.js'
 import { adminSessionStore } from './middleware/auth.middleware.js'
 import { userSessionStore } from './middleware/user-auth.middleware.js'
 import { skillService } from './services/skill.service.js'
+import { credentialService } from './services/credential.service.js'
 import { handleAdminRoutes } from './routes/admin.routes.js'
 import { handleUserRoutes } from './routes/user.routes.js'
 import { handleTenantRoutes } from './routes/tenant.routes.js'
@@ -149,7 +149,7 @@ function startUsageLimitTimer() {
   setInterval(() => userService.checkUsageLimitAndStop(), interval)
   const minutes = CONFIG.usageLimit?.dailyMinutes ?? 120
   console.log(
-    `[usage-limit] timer started: check every ${(interval / 1000).toFixed(0)}s, daily limit ${minutes}min, CWT authorized users exempt`,
+    `[usage-limit] timer started: check every ${(interval / 1000).toFixed(0)}s, daily limit ${minutes}min`,
   )
 }
 
@@ -228,6 +228,25 @@ const server = createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`)
     const path = url.pathname
 
+    // ★请求留痕（2026-10 "没修复成功"排查观测）：身份相关路径一行日志——
+    // 带哪个会话 cookie、解析状态、耗时。此前服务端对请求完全无痕迹，只能隔空猜。
+    if (
+      path.startsWith('/api/user/') ||
+      path.startsWith('/api/admin/') ||
+      path === '/connect-status'
+    ) {
+      const _end = res.end.bind(res)
+      const t0 = Date.now()
+      res.end = (d) => {
+        const ck = req.headers.cookie || ''
+        // eslint-disable-next-line no-console
+        console.log(
+          `[req] ${new Date().toISOString().slice(11, 23)} ${req.method} ${path} → ${res.statusCode} ${Date.now() - t0}ms admin=${ck.includes('admin_session') ? 'Y' : 'N'} user=${ck.includes('user_session') ? 'Y' : 'N'}${url.searchParams?.get('address') ? ' addr=' + url.searchParams.get('address').slice(0, 8) : ''}`,
+        )
+        return _end(d)
+      }
+    }
+
     // GET /health：健康检查
     if (path === '/health') {
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
@@ -251,11 +270,7 @@ const server = createServer(async (req, res) => {
     }
 
     // 用户路由
-    if (
-      path.startsWith('/api/user/') ||
-      path.startsWith('/api/upgrade/') ||
-      path.startsWith('/api/cwt/')
-    ) {
+    if (path.startsWith('/api/user/') || path.startsWith('/api/upgrade/')) {
       if (await handleUserRoutes(req, res, path)) return
     }
 
@@ -320,10 +335,10 @@ server.listen(PORT, '0.0.0.0', async () => {
   try {
     await dataService.init() // M2-5：meta 单例域（admin/镜像版本）水合；admin 地址注入提权热路径
     await userService.init()
-    await cwtStore.init() // M2-2：CWT 缓存同理由库水合（json=空操作）
     await adminSessionStore.init() // M2-3：双会话并入 sessions 集合（scope 区分，TTL 兜底）
     await userSessionStore.init()
     await skillService.init() // M2-4：技能元数据（目录+安装记录）水合；正文文件按合同留磁盘
+    await credentialService.init() // v1.4：凭证台账集合索引 + legacy 名单加载 + 豁免快照水合
   } catch (err) {
     console.error('[startup] 存储态水合失败，拒绝启动：', err.message)
     process.exit(1)
@@ -370,7 +385,7 @@ server.listen(PORT, '0.0.0.0', async () => {
 // 全局错误处理
 // 优雅关停：SIGTERM/SIGINT 退出前【排空会话镜像队列】——create 走的是尽力
 // 镜像轨（M2-3 设计），不留最后一次登录未落库就退场的窗口。
-// （revoke 本就 await 写确认；state/cwt/skill/meta 域全部 await 落库，无需 drain）
+// （revoke 本就 await 写确认；state/skill/meta 域全部 await 落库，无需 drain）
 for (const sig of ['SIGTERM', 'SIGINT']) {
   process.once(sig, () => {
     Promise.all([adminSessionStore.flush(), userSessionStore.flush()])

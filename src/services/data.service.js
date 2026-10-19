@@ -30,15 +30,13 @@ const DATA_DIR = join(ROOT, 'data')
 
 /** 审计日志尾部读取的初始窗口（字节）；不足 limit 条时按倍数向前扩大 */
 const RECORDS_TAIL_CHUNK = 64 * 1024
-/** 审计日志轮转阈值（字节）；超过则由 appendCwtRecord 归档为 records.log.1 */
-const RECORDS_MAX_BYTES = 5 * 1024 * 1024
+/** 审计日志轮转阈值（字节） */
 
 export class DataService {
   constructor() {
     this.stateFile = STATE_FILE
     this.dataDir = DATA_DIR
     // 轮转阈值（实例字段便于测试注入小值）
-    this.recordsMaxBytes = RECORDS_MAX_BYTES
     this.initDataDir()
     this.hardenDataPermissions()
     this._adminCache = null
@@ -52,9 +50,6 @@ export class DataService {
   hardenDataPermissions() {
     const targets = [
       this.stateFile,
-      this.cwtFilePath('registry.json'),
-      this.cwtFilePath('applications.json'),
-      this.cwtFilePath('records.log'),
       join(this.dataDir, 'logs', 'operations.log'),
       join(this.dataDir, 'config', 'sessions.json'),
       join(this.dataDir, 'config', 'user-sessions.json'),
@@ -110,7 +105,6 @@ export class DataService {
     mkdirSync(join(this.dataDir, 'users'), { recursive: true })
     mkdirSync(join(this.dataDir, 'config'), { recursive: true })
     mkdirSync(join(this.dataDir, 'stats'), { recursive: true })
-    mkdirSync(join(this.dataDir, 'cwt'), { recursive: true })
   }
 
   /**
@@ -122,140 +116,6 @@ export class DataService {
       return JSON.parse(readFileSync(this.stateFile, 'utf8'))
     } catch {
       return null
-    }
-  }
-
-  /**
-   * 移除 state.json 中的 CWT 旧块（迁移完成后清理，防止 state.json 继续膨胀）
-   */
-  stripLegacyCwt() {
-    const s = this.readStateFile()
-    if (!s) return
-    if (
-      s.cwtRegistry !== undefined ||
-      s.cwtApplications !== undefined ||
-      s.cwtRecords !== undefined
-    ) {
-      delete s.cwtRegistry
-      delete s.cwtApplications
-      delete s.cwtRecords
-      this.writeWithLock(this.stateFile, s)
-    }
-  }
-
-  // ---------- CWT 数据（data/cwt/） ----------
-
-  cwtFilePath(name) {
-    return join(this.dataDir, 'cwt', name)
-  }
-
-  loadCwtRegistry() {
-    return this.readJson(this.cwtFilePath('registry.json'))
-  }
-
-  saveCwtRegistry(registry) {
-    this.writeWithLock(this.cwtFilePath('registry.json'), registry)
-  }
-
-  loadCwtApplications() {
-    return this.readJson(this.cwtFilePath('applications.json'))
-  }
-
-  saveCwtApplications(applications) {
-    this.writeWithLock(this.cwtFilePath('applications.json'), applications)
-  }
-
-  /**
-   * 追加一条 CWT 审计记录（append-only 日志）。
-   * 超过 recordsMaxBytes 时轮转：当前日志归档为 records.log.1（覆盖旧归档），
-   * 新建空日志继续写——保证磁盘占用有界且保留最近一份历史。
-   */
-  appendCwtRecord(record) {
-    mkdirSync(join(this.dataDir, 'cwt'), { recursive: true })
-    const filePath = this.cwtFilePath('records.log')
-
-    // 轮转检查（失败不阻断写入：记录审计优先）
-    try {
-      if (existsSync(filePath) && statSync(filePath).size >= this.recordsMaxBytes) {
-        renameSync(filePath, `${filePath}.1`)
-        console.log(
-          `[data] cwt records rotated → records.log.1 (threshold ${this.recordsMaxBytes} bytes)`,
-        )
-      }
-    } catch (err) {
-      console.error(`[data] cwt records rotation failed: ${err.message}`)
-    }
-
-    appendFileSync(filePath, JSON.stringify(record) + '\n', { mode: 0o600 })
-    chmodSync(filePath, 0o600)
-  }
-
-  /**
-   * 分页读取审计记录（新 → 旧）。
-   * 只从文件尾部按块读取，不读整个文件：日志随运行时间增长时本方法开销恒定。
-   * @param {number} [limit] 本页条数
-   * @param {number} [offset] 偏移（0 = 最新一条开始）
-   * @returns {{ records: object[], hasMore: boolean }} hasMore 表示还有更早的记录
-   */
-  readCwtRecords(limit = 10, offset = 0) {
-    const filePath = this.cwtFilePath('records.log')
-    if (!existsSync(filePath)) return { records: [], hasMore: false }
-
-    // 需要从尾部读出的条数；多读 1 条用于判断是否还有更早记录
-    const pageLimit = Math.max(1, limit)
-    const pageOffset = Math.max(0, offset)
-    const need = pageLimit + pageOffset
-
-    let fd
-    try {
-      fd = openSync(filePath, 'r')
-      const size = fstatSync(fd).size
-      if (size <= 0) return { records: [], hasMore: false }
-
-      // 从尾部向前取窗口；行数不足 need 时窗口翻倍继续（最终可覆盖整个文件）
-      let windowSize = Math.max(RECORDS_TAIL_CHUNK, need * 256)
-      let start = Math.max(0, size - windowSize)
-      let text = ''
-      for (;;) {
-        const len = size - start
-        const buf = Buffer.allocUnsafe(len)
-        readSync(fd, buf, 0, len, start)
-        text = buf.toString('utf8')
-        const lineCount = text.split('\n').filter(Boolean).length
-        // 留一行余量：非文件开头时首行可能被截断，需丢弃
-        if (start === 0 || lineCount > need) break
-        windowSize *= 2
-        start = Math.max(0, size - windowSize)
-      }
-
-      let lines = text.split('\n').filter(Boolean)
-      // 非从头读取时，首行可能是不完整的半行（或含截断的多字节字符）→ 丢弃
-      if (start > 0) lines = lines.slice(1)
-
-      const parsed = []
-      for (const line of lines) {
-        try {
-          parsed.push(JSON.parse(line))
-        } catch {
-          // 跳过损坏行
-        }
-      }
-      const newestFirst = parsed.reverse() // 新 → 旧
-      return {
-        records: newestFirst.slice(pageOffset, pageOffset + pageLimit),
-        hasMore: newestFirst.length > pageOffset + pageLimit,
-      }
-    } catch (err) {
-      console.error(`[data] readCwtRecords failed: ${err.message}`)
-      return { records: [], hasMore: false }
-    } finally {
-      if (fd !== undefined) {
-        try {
-          closeSync(fd)
-        } catch {
-          // 忽略关闭失败
-        }
-      }
     }
   }
 
@@ -510,7 +370,7 @@ export class DataService {
   /**
    * 记录操作日志（ops 审计：admin_login / admin_promote / 钉版 等）。
    *
-   * provider 分流——mongodb 落 audit 集合（与 cwt 审计同表，靠 kind 区分），
+   * provider 分流——mongodb 落 audit 集合（多域同表，靠 kind 区分），
    * 这是 M2 漏掉的分流点：mongodb 形态下 ops 审计曾【只进文件、不进库】，
    * 等于管理动作在库里没录像。行形状对齐迁移器（migration.js）的 ops 记录：
    *   {kind:'ops', action, actor, at:Date(BSON)} + 保留原 {timestamp,operation,details}

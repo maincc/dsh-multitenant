@@ -19,7 +19,13 @@
     "hooks:uninstall": "rm -f .git/hooks/pre-commit .git/hooks/pre-push"
   },
   "dependencies": {
+    "@jccdex/did": "^0.3.2",
+    "@jccdex/ipfs-rpc-client": "^0.1.8",
+    "@jccdex/vc-vocabularies": "^0.1.2",
+    "@noble/curves": "^1.9.7",
+    "@noble/hashes": "^1.8.0",
     "@swtc/keypairs": "^1.2.0",
+    "bs58": "^5.0.0",
     "mongodb": "^7.7.0"
   },
   "devDependencies": {

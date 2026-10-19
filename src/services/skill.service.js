@@ -95,7 +95,7 @@ export class SkillService {
   // 存储基础
   // ---------------------------------------------------------------------------
 
-  /** provider 分流（与 user.service/cwtStore 同型：json 默认=逐调用不变） */
+  /** provider 分流（与 user.service 同型：json 默认=逐调用不变） */
   get provider() {
     return CONFIG.storage?.provider || 'json'
   }

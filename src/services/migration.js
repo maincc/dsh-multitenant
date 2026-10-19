@@ -53,9 +53,6 @@ export function emptySources() {
     sessions: {},
     userSessions: {},
     admin: { addresses: [], history: [] },
-    cwtRegistry: {},
-    cwtApplications: [],
-    cwtRecords: [],
     opsLog: [],
     skillsIndex: { entries: [] },
     installs: {},
@@ -74,9 +71,6 @@ export function readSources(root = DEFAULT_ROOT) {
   s.sessions = readJsonAt(root, 'data/config/sessions.json') ?? {}
   s.userSessions = readJsonAt(root, 'data/config/user-sessions.json') ?? {}
   s.admin = readJsonAt(root, 'data/config/admin.json') ?? s.admin
-  s.cwtRegistry = readJsonAt(root, 'data/cwt/registry.json') ?? {}
-  s.cwtApplications = readJsonAt(root, 'data/cwt/applications.json') ?? []
-  s.cwtRecords = readNdjsonAt(root, 'data/cwt/records.log')
   s.opsLog = readNdjsonAt(root, 'data/logs/operations.log')
   s.skillsIndex = readJsonAt(root, 'data/skills/index.json') ?? { entries: [] }
   s.installs = readJsonAt(root, 'data/installs.json') ?? {}
@@ -93,7 +87,6 @@ export function readSources(root = DEFAULT_ROOT) {
  */
 export function buildCollections(s) {
   const users = Object.entries(s.state.swtcUsers ?? {}).map(([addr, u]) => {
-    const reg = s.cwtRegistry[addr]
     return {
       _id: addr,
       port: u.port ?? null,
@@ -109,11 +102,6 @@ export function buildCollections(s) {
       versionChangedAt: u.versionChangedAt ?? null,
       usageStartedAt: u.usageStartedAt ?? null,
       pinnedImage: u.pinnedImage ?? null,
-      // 豁免运行标记：M2 水合合同 USER_OWNED_FIELDS 含它（漏迁=重启后静默 $unset）
-      cwtAuthorizedAt: u.cwtAuthorizedAt ?? null,
-      // 反范式冗余（P：审批事务内同步维护；豁免判定热读免跨集合）：
-      // 迁移初值 = registry 现行 approved 记录的 approvedAt
-      cwtVerifiedAt: reg && reg.status === 'approved' ? (reg.approvedAt ?? null) : null,
       profile: s.userData[addr] ?? null,
     }
   })
@@ -153,16 +141,9 @@ export function buildCollections(s) {
     })),
   ]
 
-  const cwt_registry = Object.entries(s.cwtRegistry).map(([addr, v]) => ({ _id: addr, ...v }))
-  const cwt_applications = (s.cwtApplications ?? []).map(({ id, ...rest }) => ({
-    _id: id,
-    ...rest,
-  }))
-
   // 双日志合并：时间统一 at（同为 TTL 字段——ttl_90d 索引只认 Date，P4 的
   // "90 天自动清"要求它必须是 Date）；ops 的 details.address 拉平为 actor（P6）
   const audit = [
-    ...(s.cwtRecords ?? []).map((r) => ({ ...r, kind: 'cwt', at: toDate(r.at) })),
     ...(s.opsLog ?? []).map((r) => ({
       ...r,
       kind: 'ops',
@@ -188,8 +169,6 @@ export function buildCollections(s) {
     users,
     meta,
     sessions,
-    cwt_registry,
-    cwt_applications,
     audit,
     usage,
     skills,

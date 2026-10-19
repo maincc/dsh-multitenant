@@ -73,15 +73,20 @@ function rpc(path, method, payload, timeoutMs) {
   if (cookie) headers.cookie = cookie
 
   return new Promise((resolvePromise) => {
-    const req = httpRequest({ host: '127.0.0.1', port: rpcPort, path, method: 'POST', headers }, (res) => {
-      let data = ''
-      res.setEncoding('utf8')
-      res.on('data', (c) => {
-        data += c
-      })
-      res.on('end', () => resolvePromise({ status: res.statusCode, data }))
-    })
-    req.on('error', (err) => resolvePromise({ status: 0, data: '', error: String(err?.message ?? err) }))
+    const req = httpRequest(
+      { host: '127.0.0.1', port: rpcPort, path, method: 'POST', headers },
+      (res) => {
+        let data = ''
+        res.setEncoding('utf8')
+        res.on('data', (c) => {
+          data += c
+        })
+        res.on('end', () => resolvePromise({ status: res.statusCode, data }))
+      },
+    )
+    req.on('error', (err) =>
+      resolvePromise({ status: 0, data: '', error: String(err?.message ?? err) }),
+    )
     req.setTimeout(timeoutMs, () => {
       req.destroy()
       resolvePromise({ status: 0, data: '', error: 'timeout' })

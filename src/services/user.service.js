@@ -17,10 +17,10 @@ import { fileURLToPath } from 'node:url'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { CONFIG, getTierLimits, isAdmin } from '../config/config.js'
+import { credentialService } from './credential.service.js'
 import { dockerService } from './docker.service.js'
 import { dataService } from './data.service.js'
 import { stateStore } from './state.store.js'
-import { cwtStore } from './cwt.store.js'
 import { tenantGateway } from './tenant-proxy.service.js'
 // 代激活 cookie 缓存（check-rpc 的 /api 调用也要带上，否则新版会 401）
 import { authCookieCache } from './dsh-auth.service.js'
@@ -195,8 +195,6 @@ export class UserService {
   constructor() {
     this.state = dataService.loadState()
     this.state.usages = this.state.usages || {} // 每日使用时长记录 { address: { date, minutes } }
-    // 注：CWT 数据（cwtRegistry / cwtApplications / cwtRecords）已迁移到 data/cwt/，
-    // 由 cwtStore 管理，不再写入 state.json
     this.waitQueue = [] // 等待队列
   }
 
@@ -731,18 +729,6 @@ export class UserService {
   }
 
   /**
-   * CWT 授权用户豁免每日限时。
-   * 判定：审批注册表（cwtStore，data/cwt/registry.json）status=approved 优先（权威）；
-   * 其次兼容 swtcUsers 上的授权/验证时间戳字段。撤销（revoked）后不再豁免，冗余字段同步清除。
-   */
-  isUsageExempt(address) {
-    const registry = cwtStore.getRegistry()[address]
-    if (registry?.status === 'approved') return true
-    const user = this.state.swtcUsers?.[address]
-    return Boolean(user && (user.cwtAuthorizedAt || user.cwtVerifiedAt))
-  }
-
-  /**
    * 结算一段运行时长：把 usageStartedAt 累计进当日 usages，然后清零起点。
    * 所有"容器停止"路径都要调用，保证挂机时间也被准确结算。
    * @returns {number} 本次结算的分钟数
@@ -816,19 +802,18 @@ export class UserService {
   }
 
   /**
-   * 启动容器前的每日额度检查；超限抛 USAGE_LIMIT_REACHED（CWT 授权豁免、开关关闭则放行）
+   * 启动容器前的每日额度检查；超限抛 USAGE_LIMIT_REACHED（开关关闭则放行）
    */
   ensureUsageAllowed(address) {
     const cfg = this.usageLimitConfig()
     if (!cfg.enabled) return
-    if (this.isUsageExempt(address)) return
+    // v1.4：持 CWT 解除凭证 = 不限时（台账快照同步查，零 I/O）
+    if (credentialService.isExemptSync(address)) return
     const limit = cfg.dailyMinutes
-    if (!Number.isFinite(limit) || limit <= 0) return
+    if (limit === null || !Number.isFinite(limit) || limit <= 0) return
     const used = this.getUsedMinutes(address)
     if (used >= limit) {
-      const err = new Error(
-        `今日使用时长已达上限（${limit} 分钟），请明日再试，或完成 CWT 验证解锁`,
-      )
+      const err = new Error(`今日使用时长已达上限（${limit} 分钟），请明日再试`)
       err.code = 'USAGE_LIMIT_REACHED'
       err.usedMinutes = used
       err.dailyLimit = limit
@@ -845,6 +830,7 @@ export class UserService {
     try {
       const cfg = this.usageLimitConfig()
       if (!cfg.enabled) return
+      // 豁免判据走 credentialService 内存快照（其 init 自带周期水合，不在热循环里 await 库）
       const limit = cfg.dailyMinutes
       if (!Number.isFinite(limit) || limit <= 0) return
       const grace =
@@ -852,7 +838,7 @@ export class UserService {
       let changed = false
       for (const [address, user] of Object.entries(this.state.swtcUsers || {})) {
         if (user.containerStatus !== 'running') continue
-        if (this.isUsageExempt(address)) continue
+        if (credentialService.isExemptSync(address)) continue
         if (this.getUsedMinutes(address) < limit) continue
         // 超限：先结算本次运行段，再优雅停止
         this.settleUsage(address)
@@ -1257,7 +1243,7 @@ export class UserService {
   /**
    * 状态落盘 + 列表缓存失效。所有 saveState 统一走这里 ——
    * 少挂一处就会让管理员点完按钮看到旧状态。
-   * {session}：加入外部事务（CWT 审批四方写，§5.2 边界①）；缺省自开单事务。
+   * {session}：加入外部事务（审批多表写共用事务，§5.2 边界①）；缺省自开单事务。
    */
   async _saveState(opts = {}) {
     this.invalidateUsersCache()
@@ -1352,7 +1338,7 @@ export class UserService {
   async ensureContainer(address, skipQueueCheck = false, image = null) {
     address = normalizeAddress(address)
 
-    // 每日使用时限额度检查（CWT 授权用户豁免；超限抛 USAGE_LIMIT_REACHED）
+    // 每日使用时限额度检查（超限抛 USAGE_LIMIT_REACHED）
     this.ensureUsageAllowed(address)
 
     const name = swtcContainerName(address)

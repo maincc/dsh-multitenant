@@ -76,9 +76,7 @@
           <div class="wallet-summary">
             <span class="live-dot"></span>
             <span class="wallet-label">{{ $t('user.connected') }}</span>
-            <code class="wallet-short addr-tip" :data-full="userInfo.address">{{
-              shortAddrText
-            }}</code>
+            <code class="wallet-short addr-tip" :data-full="displayAddr">{{ shortAddrText }}</code>
           </div>
           <!-- 导航项 -->
           <nav class="sidebar-nav">
@@ -107,9 +105,195 @@
           <div class="stat-rows">
             <div class="stat-row">
               <span class="stat-label">{{ $t('user.swtcAddress') }}</span>
-              <code class="stat-value mono addr-tip" :data-full="userInfo.address">{{
-                userInfo.address
+              <code class="stat-value mono addr-tip" :data-full="displayAddr">{{
+                shortAddrText
               }}</code>
+            </div>
+          </div>
+
+          <!-- ════ v1.4 凭证体系（DID 普通凭证 / CWT 解除限制凭证，互斥） ════ -->
+          <div v-if="credInfo" class="cred-card">
+            <div class="cred-head">
+              <span class="cred-title">{{ $t('user.credTitle') }}</span>
+              <span class="badge" :class="credInfo.kind === 'cwt' ? 'badge-success' : 'badge-info'">
+                {{ credInfo.kind === 'cwt' ? $t('user.credKindCwt') : $t('user.credKindDid') }}
+              </span>
+              <span
+                class="badge"
+                :class="credInfo.state === 'claimed' ? 'badge-success' : 'badge-warning'"
+              >
+                {{
+                  credInfo.state === 'claimed'
+                    ? $t('user.credStateClaimed')
+                    : $t('user.credStateAssigned')
+                }}
+              </span>
+            </div>
+            <p class="tab-hint">
+              {{ credInfo.kind === 'cwt' ? $t('user.credHintCwt') : $t('user.credHintDid') }}
+            </p>
+
+            <!-- 凭证明细：这张卡的关键字段（与平台档案登记册一致） -->
+            <div class="cred-detail">
+              <div class="stat-row">
+                <span class="stat-label">{{ $t('user.credDVCId') }}</span>
+                <span class="stat-value mono addr-tip" :data-full="credInfo.vcId || '—'">
+                  {{ credInfo.vcId ? '#' + (credInfo.vcId.split('#')[1] || credInfo.vcId) : '—' }}
+                  <button
+                    v-if="credInfo.vcId"
+                    class="copy-mini"
+                    :title="$t('user.credCopy')"
+                    @click="copyText(credInfo.vcId)"
+                  >
+                    📋
+                  </button>
+                </span>
+              </div>
+              <div v-if="credInfo.profileDid" class="stat-row">
+                <span class="stat-label">{{ $t('user.credDProfile') }}</span>
+                <span class="stat-value mono addr-tip" :data-full="credInfo.profileDid">
+                  {{ credInfo.profileDid.slice(0, 18) }}…{{ credInfo.profileDid.slice(-6) }}
+                  <button
+                    class="copy-mini"
+                    :title="$t('user.credCopy')"
+                    @click="copyText(credInfo.profileDid)"
+                  >
+                    📋
+                  </button>
+                </span>
+              </div>
+              <div class="stat-row">
+                <span class="stat-label">{{ $t('user.credDSource') }}</span>
+                <span class="stat-value">{{ $t('user.credSrc_' + credInfo.source) }}</span>
+              </div>
+              <div class="stat-row">
+                <span class="stat-label">{{ $t('user.credDIssued') }}</span>
+                <span class="stat-value">{{
+                  credInfo.issuedAt ? new Date(credInfo.issuedAt).toLocaleString() : '—'
+                }}</span>
+              </div>
+              <div v-if="credInfo.claimedAt" class="stat-row">
+                <span class="stat-label">{{ $t('user.credDClaimed') }}</span>
+                <span class="stat-value">{{ new Date(credInfo.claimedAt).toLocaleString() }}</span>
+              </div>
+              <div v-if="credInfo.expiresAt" class="stat-row">
+                <span class="stat-label">{{ $t('user.credDExpires') }}</span>
+                <span
+                  class="stat-value"
+                  :class="{ 'cred-exp-warn': credExpDays !== null && credExpDays <= 30 }"
+                  >{{ new Date(credInfo.expiresAt).toLocaleDateString() }}
+                  <em v-if="credExpDays > 30">{{ $t('user.credExpLeft', { n: credExpDays }) }}</em>
+                  <em v-else-if="credExpDays > 0">{{ $t('user.credExpSoon') }}</em>
+                  <em v-else>{{ $t('user.credExpRenewing') }}</em></span
+                >
+              </div>
+              <div v-if="credInfo.state === 'claimed'" class="stat-row">
+                <span class="stat-label">{{ $t('user.credDOnchain') }}</span>
+                <span class="stat-value">
+                  <span
+                    v-if="credInfo.onChain && credInfo.onChain.status === 'ok'"
+                    class="badge badge-success"
+                    >{{ $t('user.credOnchainOk') }}</span
+                  >
+                  <span
+                    v-else-if="credInfo.onChain && credInfo.onChain.status === 'stale'"
+                    class="badge badge-warning"
+                    :title="credInfo.onChain.reason || ''"
+                    >{{ $t('user.credOnchainStale') }}</span
+                  >
+                  <span
+                    v-else-if="
+                      credInfo.onChain &&
+                      (credInfo.onChain.status === 'invalid' ||
+                        credInfo.onChain.status === 'missing')
+                    "
+                    class="badge badge-warning"
+                    :title="credInfo.onChain.reason || ''"
+                    >{{ $t('user.credOnchainGone') }}</span
+                  >
+                  <span v-else class="badge badge-info">{{ $t('user.credOnchainPending') }}</span>
+                </span>
+              </div>
+              <div v-if="credInfo.state === 'claimed'" class="stat-row">
+                <span class="stat-label">{{ $t('user.credDBody') }}</span>
+                <span class="stat-value">
+                  <button
+                    class="btn btn-small btn-secondary"
+                    :disabled="credVcLoading"
+                    @click="toggleCredVc"
+                  >
+                    {{ credVcOpen ? $t('user.credVcHide') : $t('user.credVcShow') }}
+                  </button>
+                </span>
+              </div>
+            </div>
+            <div v-if="credVcOpen" class="cred-vc-view">
+              <div v-if="credVcOpen && credVc && !credVcConsistent" class="cred-nodid">
+                <p class="cred-nodid-title">⚠️ {{ $t('user.credVcStaleTitle') }}</p>
+                <p>{{ $t('user.credVcStaleBody') }}</p>
+              </div>
+              <div class="cred-vc-bar">
+                <span class="stat-label">{{ $t('user.credVcTitle') }}</span>
+                <button
+                  class="btn btn-small btn-secondary"
+                  :disabled="!credVc"
+                  @click="copyText(JSON.stringify(credVc, null, 2))"
+                >
+                  {{ $t('user.credCopyJson') }}
+                </button>
+              </div>
+              <div v-if="credVcLoading" class="loading">{{ $t('user.loading') }}</div>
+              <pre v-else-if="credVc" class="cred-vc-json">{{
+                JSON.stringify(credVc, null, 2)
+              }}</pre>
+            </div>
+
+            <!-- 无 DID 档案指引：先去生成，务必核对地址 -->
+            <div v-if="credNoDid" class="cred-nodid">
+              <p class="cred-nodid-title">⚠️ {{ $t('user.credNoDidTitle') }}</p>
+              <p>
+                {{ $t('user.credNoDidBody') }}
+                <a :href="credNoDid.didGenUrl" target="_blank" rel="noopener" class="mono">{{
+                  credNoDid.didGenUrl
+                }}</a>
+              </p>
+              <p class="cred-warn">
+                {{ $t('user.credNoDidWarnPrefix') }}
+                <code class="mono">{{ credNoDid.expectedAddress }}</code>
+                {{ $t('user.credNoDidWarnSuffix') }}
+              </p>
+            </div>
+
+            <div class="action-buttons">
+              <button
+                v-if="credInfo.state === 'assigned' || credNeedsSync"
+                class="btn btn-primary"
+                :disabled="credBusy === 'claim'"
+                @click="claimCredential"
+              >
+                {{
+                  credBusy === 'claim'
+                    ? $t('user.credClaiming')
+                    : credInfo.state === 'assigned'
+                      ? $t('user.credClaimBtn')
+                      : $t('user.credSyncBtn')
+                }}
+              </button>
+              <button
+                v-if="
+                  credInfo.kind === 'did' &&
+                  credInfo.state === 'claimed' &&
+                  (!credApp || credApp.status === 'rejected')
+                "
+                class="btn btn-secondary"
+                :disabled="credBusy === 'apply'"
+                @click="applyCwt"
+              >
+                {{ credBusy === 'apply' ? $t('user.credApplying') : $t('user.credApplyBtn') }}
+              </button>
+              <span v-if="credApp && credApp.status === 'pending'" class="badge badge-warning">{{
+                $t('user.credAppPending')
+              }}</span>
             </div>
           </div>
         </div>
@@ -434,57 +618,6 @@
           </div>
         </div>
 
-        <!-- ════════ CWT 验证 ════════ -->
-        <div v-else-if="activeTab === 'cwt'" class="tab-content">
-          <div class="tab-head">
-            <h4>{{ $t('user.cwtVerify') }}</h4>
-            <p class="tab-hint">{{ $t('user.cwtVerifyHint') }}</p>
-          </div>
-
-          <div v-if="cwtLoading" class="config-loading">
-            <div class="mini-spinner"></div>
-            <span>{{ $t('user.cwtLoading') }}</span>
-          </div>
-
-          <template v-else-if="cwtStatus">
-            <!-- 已授权 -->
-            <div v-if="cwtStatus.authorized" class="info-row">
-              <span class="badge badge-success">{{ $t('user.cwtAuthorized') }}</span>
-            </div>
-
-            <!-- 待审批 -->
-            <div v-else-if="hasPendingApplication" class="info-row">
-              <span class="badge badge-warning">{{ $t('user.cwtPending') }}</span>
-              <span class="cwt-meta">
-                {{ $t('user.cwtPendingHint', { text: pendingAppText }) }}
-              </span>
-            </div>
-
-            <!-- 未申请 / 被拒 / 已撤销 -->
-            <div v-else>
-              <p class="cwt-meta">
-                {{ $t('user.cwtNotVerified', { min: dailyLimitText }) }}
-                {{
-                  cwtStatus.applications?.[0]?.status === 'rejected'
-                    ? $t('user.cwtRejectedHint')
-                    : ''
-                }}
-              </p>
-              <div class="cwt-apply-form">
-                <button class="btn btn-primary" :disabled="cwtSubmitting" @click="applyCwt">
-                  {{ cwtSubmitting ? $t('user.cwtSigning') : $t('user.cwtApplyBtn') }}
-                </button>
-                <div class="action-hints">
-                  <div class="hint">
-                    <strong>{{ $t('user.cwtFlowTitle') }}</strong>
-                    {{ $t('user.cwtFlow') }}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </template>
-        </div>
-
         <!-- ════════ 我的技能 ════════ -->
         <div v-else class="tab-content">
           <div class="tab-head">
@@ -647,7 +780,14 @@ import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import axios from 'axios'
 import { useI18n } from 'vue-i18n'
 import { skillsApi } from '../api/skills.js'
-import { requestAccounts, signMessage, getPublicKey, watchAccountsChanged } from '../api/wallet.js'
+import {
+  requestAccounts,
+  signMessage,
+  getPublicKey,
+  signFileBytes,
+  getIpfsPublicKey,
+  watchAccountsChanged,
+} from '../api/wallet.js'
 
 const { t } = useI18n()
 
@@ -672,11 +812,6 @@ const sidebarTabs = [
     icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41m11.32-11.32 1.41-1.41"/></svg>',
   },
   {
-    key: 'cwt',
-    label: t('user.tabCwt'),
-    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
-  },
-  {
     key: 'skills',
     label: t('user.tabSkills'),
     icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>',
@@ -684,7 +819,7 @@ const sidebarTabs = [
 ]
 
 const shortAddrText = computed(() => {
-  const a = userInfo.value.address
+  const a = displayAddr.value
   return a ? `${a.slice(0, 12)}…${a.slice(-4)}` : ''
 })
 
@@ -692,6 +827,18 @@ const connected = ref(false)
 const connecting = ref(false)
 const hasCCDAO = ref(false)
 const userInfo = ref({})
+// 地址展示统一为钱包原始大小写形态（内部匹配/台账主键仍是小写，不动语义）
+const pluginCaseAddr = ref(localStorage.getItem('swtc_plugin_case') || '')
+const displayAddr = computed(
+  () =>
+    pluginCaseAddr.value || userInfo.value.address || localStorage.getItem('swtc_address') || '',
+)
+function rememberPluginCase(a) {
+  if (a && typeof a === 'string' && /[A-Z]/.test(a)) {
+    pluginCaseAddr.value = a
+    localStorage.setItem('swtc_plugin_case', a)
+  }
+}
 const usageInfo = ref(null)
 const waiting = ref(false)
 const queuePosition = ref(0)
@@ -707,76 +854,227 @@ const usageInfoLabel = computed(() => {
   return t('user.usageToday', { used: u.usedMinutes, total: u.dailyMinutes })
 })
 
+const loginAttempted = ref(false)
+const walletLogin = async (address) => {
+  const pluginAddress = await requestAccounts()
+  rememberPluginCase(pluginAddress)
+  const target =
+    (address || '').toLowerCase() === pluginAddress.toLowerCase() ? address : pluginAddress
+  const ch = await axios.post('/api/user/wallet-login-challenge', { address: target })
+  const { nonce, message } = ch.data
+  const signature = await signMessage(pluginAddress, message)
+  const publicKey = await getPublicKey(pluginAddress)
+  await axios.post('/api/user/wallet-login', {
+    address: pluginAddress,
+    nonce,
+    signature,
+    publicKey,
+  })
+  return pluginAddress
+}
+
 const fetchUsage = async (address) => {
   try {
     const res = await axios.get(`/connect-status?address=${encodeURIComponent(address)}`)
     usageInfo.value = res.data.usage || null
+    // 隐私门分支（无 tier 字段）且还没试过 → 静默签名登录一次再刷新
+    if (res?.data?.exists === true && !('tier' in res.data) && !loginAttempted.value && address) {
+      loginAttempted.value = true
+      try {
+        await walletLogin(address)
+        await fetchUsage(address)
+        loadCredentialStatus(address)
+        return
+      } catch {
+        /* 保持"需要重新登录"提示，按钮手动兜底 */
+      }
+    }
   } catch {
     usageInfo.value = null
   }
 }
 
-// ---- CWT 验证状态（M1：展示 + 插件签名申请）----
-const cwtStatus = ref(null)
-const cwtLoading = ref(false)
-const cwtSubmitting = ref(false)
+// ════ v1.4 凭证体系（进入即判定 / 账户详情领取 / CWT 申请）════════
+const credInfo = ref(null) // 台账公开形态 {kind:'did'|'cwt', state:'assigned'|'claimed', source}
+const credApp = ref(null) // 本人 CWT 申请单（did 凭证已领取态才查）
+const credBusy = ref('') // 'claim' | 'apply' | ''
+const credNoDid = ref(null) // scaffold 返回的无档案指引 {didGenUrl, expectedAddress}
+const credPopupShown = ref('') // 已弹过提醒的地址（切钱包=新地址=再提醒一次，轮询不轰炸）
+const credVcOpen = ref(false) // 凭证本体 JSON 展开态
+const credVc = ref(null) // 档案读回的 VC 全文（收起再开会用缓存；换凭证时置 null）
+const credVcConsistent = ref(true) // 档案卡与台账现行卡是否一致（false=档案是旧副本）
+const credVcLoading = ref(false)
 
-const hasPendingApplication = computed(() =>
-  (cwtStatus.value?.applications || []).some((a) => a.status === 'pending'),
-)
-
-const pendingAppText = computed(() => {
-  const app = (cwtStatus.value?.applications || []).find((a) => a.status === 'pending')
-  return app
-    ? t('user.pendingAppText', { id: app.id, date: new Date(app.submittedAt).toLocaleString() })
-    : ''
+// 档案需要跟上链上：续发/被改动/缺失——显示"同步凭证"按钮，让信息归一
+const credNeedsSync = computed(() => {
+  const c = credInfo.value
+  return !!c && c.state === 'claimed' && ['stale', 'missing', 'invalid'].includes(c.onChain?.status)
 })
 
-const dailyLimitText = computed(() => usageInfo.value?.dailyMinutes ?? '120')
+// 到期剩余天数：到期前 30 天黄标；≤0 无需慌——登录时平台按台账记录自动续发
+const credExpDays = computed(() => {
+  if (!credInfo.value?.expiresAt) return null
+  return Math.ceil((new Date(credInfo.value.expiresAt).getTime() - Date.now()) / 864e5)
+})
 
-const fetchCwtStatus = async (address) => {
-  if (!address) return
+const copyText = async (text) => {
+  if (!text) return
   try {
-    cwtLoading.value = true
-    const res = await axios.get(`/api/user/cwt/status?address=${encodeURIComponent(address)}`)
-    cwtStatus.value = res.data || null
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text)
+    } else {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+    }
+    toast(t('user.credCopied'))
   } catch {
-    cwtStatus.value = null
-  } finally {
-    cwtLoading.value = false
+    toast(t('user.credCopyFail'))
   }
 }
 
+const toggleCredVc = async () => {
+  credVcOpen.value = !credVcOpen.value
+  if (!credVcOpen.value || credVc.value || credVcLoading.value) return
+  credVcLoading.value = true
+  try {
+    const res = await axios.get('/api/user/credential-vc')
+    credVc.value = res.data.credential
+    credVcConsistent.value = res.data.consistent !== false
+  } catch (err) {
+    toast(t('user.credVcFail', { err: err?.response?.data?.error || err.message }))
+    credVcOpen.value = false
+  } finally {
+    credVcLoading.value = false
+  }
+}
+
+const loadCredentialStatus = async (address) => {
+  if (!address) return
+  try {
+    const res = await axios.get('/api/user/credential-status', { params: { address } })
+    const data = res.data || {}
+    credInfo.value = data.credential || null
+    if (data.renewed) {
+      // 平台按台账 cwt/did 记录自动续发了新凭证（链上登记册同步换卡）
+      credVc.value = null
+      toast(t('user.credRenewed'))
+    }
+    if (data.credential && data.credential.kind === 'did' && data.credential.state === 'claimed') {
+      try {
+        const ar = await axios.get('/api/user/cwt-application', { params: { address } })
+        credApp.value = ar.data.application || null
+      } catch {
+        credApp.value = null
+      }
+    } else {
+      credApp.value = null
+    }
+    // 分配了但还没领取 → 弹窗提醒（领取=把凭证写进用户自己的 DID 档案）；按地址节流
+    if (data.popup && credInfo.value && credPopupShown.value !== address) {
+      credPopupShown.value = address
+      await askConfirm({
+        message: credInfo.value.kind === 'cwt' ? t('user.credPopupCwt') : t('user.credPopupDid'),
+        confirmLabel: t('user.credClaimBtn'),
+        run: () => claimCredential(),
+      })
+    }
+  } catch {
+    credInfo.value = null
+  }
+}
+
+const sha256Hex = async (bytes) => {
+  const buf = await crypto.subtle.digest('SHA-256', bytes)
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
+}
+
 /**
- * 申请 CWT 验证：点击 → 插件 cwt_sign 签名（usr 统一为 dsh-usr）→ 自动提交后端。
- * 插件弹窗确认后返回 token（header.payload.Signature），无需用户手动粘贴。
- * cwt_sign 参数：对象 { address: 插件当前账户(原始大小写), usr: 'dsh-usr' }。
+ * 领取凭证：scaffold（平台签 VC）→ 插件对档案字节做 IPFS 口径文件签 → upload 上链。
+ * 无 DID 档案时只亮指引（生成地址 + 核对提醒），不硬试写入。
  */
-const applyCwt = async () => {
+const claimCredential = async () => {
   if (!window.ccdao || !window.ccdao.request) {
     toast(t('user.errNoCcdao'))
     return
   }
-  cwtSubmitting.value = true
+  credBusy.value = 'claim'
   try {
-    // 插件当前账户（requestAccounts 返回原始大小写，插件 accounts.includes 大小写敏感）
     const pluginAddress = await requestAccounts()
-    // 插件 cwt_sign：usr 统一使用平台标识 dsh-usr（用户无需输入）
-    const result = await window.ccdao.request({
-      method: 'cwt_sign',
-      params: [{ address: pluginAddress, usr: 'dsh-usr' }],
-    })
-    const token = typeof result === 'string' ? result : (result?.token ?? result?.signature)
-    if (!token) {
-      throw new Error(t('user.errNoToken'))
+    rememberPluginCase(pluginAddress)
+    if (!pluginAddress) {
+      toast(t('user.errNoAccount'))
+      return
     }
-    await axios.post('/api/user/cwt/apply', { token })
-    toast(t('user.cwtAppliedOk'))
-    await fetchCwtStatus(userInfo.value.address)
+    const scfRes = await axios.post('/api/user/credential-scaffold', {
+      canonicalAddress: pluginAddress,
+    })
+    const scf = scfRes.data || {}
+    if (scf.alreadyClaimed) {
+      credNoDid.value = null
+      toast(t('user.credAlreadyClaimed'))
+      await loadCredentialStatus(pluginAddress.toLowerCase())
+      return
+    }
+    if (scf.probeFailed) {
+      // 档案服务瞬断≠没档案：只提示重试，不出"去生成 DID"的重指引（防误导）
+      credNoDid.value = null
+      toast(scf.hint || t('user.credProbeFail'))
+      return
+    }
+    if (scf.noProfile) {
+      credNoDid.value = scf
+      toast(t('user.credNeedDid'))
+      return
+    }
+    if (!scf.document) throw new Error(scf.error || t('user.credScaffoldFail'))
+    // wodecards 文件签口径：签的字节是 utf8(sha256(文件).hex)（官方 ipfs-rpc-client 拆包定样）
+    const docBytes = new TextEncoder().encode(JSON.stringify(scf.document))
+    const msgBytes = new TextEncoder().encode(await sha256Hex(docBytes))
+    const signature = await signFileBytes(pluginAddress, msgBytes)
+    let publicKey = null
+    try {
+      publicKey = await getIpfsPublicKey(pluginAddress)
+    } catch {
+      publicKey = await getPublicKey(pluginAddress)
+    }
+    await axios.post('/api/user/credential-upload', {
+      document: scf.document,
+      fileName: scf.fileName,
+      publicKey,
+      signature,
+    })
+    credNoDid.value = null
+    toast(scf.reissue ? t('user.credSynced') : t('user.credClaimed'))
+    credVc.value = null // 换卡/首领：重置凭证本体查看态
+    credVcOpen.value = false
+    await loadCredentialStatus(pluginAddress.toLowerCase())
   } catch (err) {
-    toast(t('user.cwtApplyFail', { err: err.response?.data?.error || err.message }))
+    const msg = err?.response?.data?.error || err?.message || String(err)
+    toast(t('user.credClaimFail', { msg }))
   } finally {
-    cwtSubmitting.value = false
+    credBusy.value = ''
+  }
+}
+
+const applyCwt = async () => {
+  const address = currentAddress()
+  credBusy.value = 'apply'
+  try {
+    await axios.post('/api/user/cwt-apply', { address })
+    toast(t('user.credApplied'))
+    await loadCredentialStatus(address)
+  } catch (err) {
+    toast(err?.response?.data?.error || t('user.credApplyFail'))
+  } finally {
+    credBusy.value = ''
   }
 }
 
@@ -908,6 +1206,7 @@ const signChallenge = async (challengeUrl = '/api/user/config-challenge') => {
   //    jndwret... 再传回去会被判"未授权"(4100)。只有 requestAccounts 原样
   //    返回的字符串才能通过。后端 normalizeAddress 会自己转小写，无需担心。
   const pluginAddress = await requestAccounts()
+  rememberPluginCase(pluginAddress)
   // 2. 领一次性挑战（响应含 message：服务端构造的用途绑定被签内容）
   const challengeRes = await axios.post(challengeUrl, { address: pluginAddress })
   const { nonce, message } = challengeRes.data
@@ -1165,10 +1464,12 @@ const handleAccountsChanged = async (accounts) => {
     localStorage.removeItem('swtc_address')
     connected.value = false
     userInfo.value = {}
+    pluginCaseAddr.value = ''
     toast(t('user.walletDisconnected'))
     return
   }
 
+  rememberPluginCase(accounts[0]) // 先记原始大小写（全界面地址展示以它为准）
   const newAddress = accounts[0].toLowerCase()
   const saved = localStorage.getItem('swtc_address')
   if (!saved || saved === newAddress) {
@@ -1243,7 +1544,6 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
     userInfo.value = {}
     connected.value = false
     usageInfo.value = null
-    cwtStatus.value = null
   }
 
   try {
@@ -1332,7 +1632,7 @@ const connectWallet = async () => {
   showLoading(t('user.connecting'), t('user.loadingWalletConnect'), 5)
   try {
     const pluginAddress = await requestAccounts()
-
+    rememberPluginCase(pluginAddress)
     // 统一转小写
     const address = pluginAddress.toLowerCase()
     console.log('[flow] F2 拿到地址:', address)
@@ -1379,6 +1679,7 @@ const connectWithOwnership = async (address, opts = {}) => {
     showLoading(title, t('user.loadingVerify'), progress0)
 
     const pluginAddress = await requestAccounts()
+    rememberPluginCase(pluginAddress)
     // 1) 领取一次性挑战：**必须向 /connect 领**（CONNECT 用途分池）。
     //    不能借用 config-challenge —— 挑战池按用途隔离，借来的 nonce 在 /connect
     //    处取不到（这正是防"跨端点凭证混淆"的设计）。无签名调用 /connect 会
@@ -1603,6 +1904,10 @@ const cancelWaiting = () => {
   }
   connected.value = false
   userInfo.value = {}
+  // 断开即清凭证视图（防上一钱包的卡片残留给下一个地址）
+  credInfo.value = null
+  credApp.value = null
+  credNoDid.value = null
 }
 
 const fetchUserInfo = async (address) => {
@@ -1621,8 +1926,8 @@ const fetchUserInfo = async (address) => {
     )
     userInfo.value = res.data
     fetchUsage(address)
-    fetchCwtStatus(address)
     fetchConfigStatus()
+    loadCredentialStatus(address)
   } catch (err) {
     console.error('获取用户信息失败:', err)
 
@@ -1632,6 +1937,7 @@ const fetchUserInfo = async (address) => {
       localStorage.removeItem('swtc_address')
       connected.value = false
       userInfo.value = {}
+      pluginCaseAddr.value = ''
       toast(t('user.invalidAddress'))
       return
     }
@@ -1802,7 +2108,7 @@ onMounted(async () => {
   if (hasCCDAO.value && window.ccdao && window.ccdao.request) {
     try {
       const pluginAddress = await requestAccounts()
-
+      rememberPluginCase(pluginAddress)
       if (pluginAddress) {
         const currentAddress = pluginAddress.toLowerCase()
         console.log('[UserCenter] 从 CCDAO 获取当前地址:', currentAddress)
@@ -1935,7 +2241,10 @@ const loadContainerSkills = async () => {
 }
 
 watch(connected, (v) => {
-  if (v) loadMine()
+  if (v) {
+    loadMine()
+    loadCredentialStatus(userInfo.value.address)
+  }
 })
 
 const openImportDialog = () => {
@@ -2860,6 +3169,12 @@ onUnmounted(() => {
   position: relative;
   cursor: help;
 }
+/* 悬停提示是元素的 ::after 子节点：带 overflow:hidden 的省略号会把提示裁掉。
+   凡承载 data-full 提示的元素一律不裁剪，短展示由 JS 头尾截取负责 */
+.addr-tip[data-full] {
+  overflow: visible;
+  text-overflow: clip;
+}
 .addr-tip[data-full]:hover::after {
   content: attr(data-full);
   position: absolute;
@@ -2883,5 +3198,94 @@ onUnmounted(() => {
   word-break: break-all;
   text-align: left;
   pointer-events: none;
+}
+
+/* ─── v1.4 凭证体系 ─── */
+.cred-card {
+  margin-top: 1rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 0.75rem;
+  background: var(--surface-2, #f9fafb);
+}
+.cred-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.cred-detail {
+  margin: 0.5rem 0 0.75rem;
+  padding: 0.25rem 0.75rem;
+  background: var(--surface-1, rgba(127, 127, 127, 0.05));
+  border-radius: 0.6rem;
+}
+.copy-mini {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 0.8em;
+  padding: 0 0.2rem;
+  opacity: 0.6;
+  vertical-align: baseline;
+}
+.copy-mini:hover {
+  opacity: 1;
+}
+.cred-vc-view {
+  margin: -0.25rem 0 0.75rem;
+}
+.cred-vc-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.35rem;
+}
+.cred-exp-warn {
+  color: #d97706;
+}
+.cred-exp-warn em {
+  font-style: normal;
+  font-size: 0.85em;
+}
+.cred-vc-json {
+  max-height: 18rem;
+  overflow: auto;
+  padding: 0.75rem;
+  background: var(--surface-1, #f3f4f6);
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 0.6rem;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.cred-title {
+  font-weight: 600;
+  font-size: 1rem;
+}
+.cred-nodid {
+  margin: 0.75rem 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--warning, #f59e0b);
+  border-radius: 0.5rem;
+  background: rgba(245, 158, 11, 0.08);
+  font-size: 0.875rem;
+}
+.cred-nodid a {
+  font-weight: 600;
+  word-break: break-all;
+}
+.cred-nodid-title {
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+.cred-warn {
+  margin-top: 0.25rem;
+  color: var(--danger, #dc2626);
+  font-weight: 500;
+}
+.cred-warn code {
+  word-break: break-all;
 }
 </style>

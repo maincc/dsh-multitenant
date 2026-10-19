@@ -22,17 +22,17 @@ import { CONFIG } from '../config/config.js'
 import { InternalError } from '../utils/errors.js'
 import { readSources, buildCollections, expectedCounts } from './migration.js'
 
-/** 设计 §4.1 定稿的 9 集合；访问器与索引初始化都以此为准，越界即拒 */
+/** 设计 §4.1 定稿集合（2026-10 大拆除后 7 + v1.4 凭证体系新增 2 = 9）；访问器与索引初始化都以此为准，越界即拒 */
 const COLLECTIONS = Object.freeze([
   'users',
   'meta',
   'sessions',
-  'cwt_registry',
-  'cwt_applications',
   'audit',
   'usage',
   'skills',
   'skill_installs',
+  'credentials',
+  'cwt_applications',
 ])
 
 /** 索引合同（storage-design §4.1）。TTL 秒数按拍板：audit 90 天(P4)。 */
@@ -47,11 +47,14 @@ const INDEX_SPECS = Object.freeze({
     // P4：审计 90 天 TTL。expireAfterSeconds 单位是秒（相对 at 字段值）。
     { key: { at: 1 }, options: { name: 'ttl_90d', expireAfterSeconds: 90 * 24 * 3600 } },
   ],
-  cwt_applications: [
-    { key: { status: 1 }, options: { name: 'by_status' } },
-    { key: { 'parsed.address': 1 }, options: { name: 'by_address' } },
-  ],
   users: [{ key: { containerStatus: 1 }, options: { name: 'by_status' } }],
+  // v1.4 凭证台账：_id=addrLower 天然互斥（一地址一条）；kind 供管理端统计
+  credentials: [{ key: { kind: 1, state: 1 }, options: { name: 'by_kind_state' } }],
+  // CWT 申请：管理端按状态分页 + 时间序
+  cwt_applications: [
+    { key: { status: 1, submittedAt: -1 }, options: { name: 'by_status_time' } },
+    { key: { address: 1, submittedAt: -1 }, options: { name: 'by_addr_time' } },
+  ],
 })
 
 export class MongoStore {

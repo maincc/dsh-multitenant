@@ -11,7 +11,7 @@
  *                     失败=库保持上一次镜像，进程缓存不受影响（重试即追平）。
  *
  * ⚠️ 所有权纪律（§4.1 meta 准入同款思路）：扇出只碰 USER_OWNED_FIELDS 白名单。
- * users 文档里的 profile 属技能/资料域、迁移回填的 cwtVerifiedAt 初值属 CWT 域——
+ * users 文档里的 profile 属技能/资料域——
  * 白名单外的键永不动，杜绝"用户域存盘顺手把别人家的字段抹掉"。
  * 白名单内、缓存里不存在的键会 $unset（缓存是权威：delete user.port 必须传播）。
  */
@@ -34,8 +34,6 @@ export const USER_OWNED_FIELDS = [
   'versionChangedAt',
   'usageStartedAt', // 计量表针（P7：结算先清针再累计，随整存盘单事务原子落库）
   'pinnedImage',
-  'cwtVerifiedAt', // 冗余标记：缓存里由 CWT 授权路径维护（hydrate 时从库里带回）
-  'cwtAuthorizedAt',
 ]
 
 const DEFAULT_STATE = () => ({
@@ -68,7 +66,7 @@ export class StateStore {
 
   /**
    * 整存（user.service._saveState 的唯一下游）。
-   * {session}=加入【外部事务】（§5.2 CWT 审批四方写共用一个事务）；缺省自开单事务。
+   * {session}=加入【外部事务】（§5.2 审批多表写共用一个事务）；缺省自开单事务。
    */
   async save(state, { session } = {}) {
     if (this.provider === 'json') return dataService.saveState(state)
@@ -116,7 +114,7 @@ async function loadFromMongo(store) {
 }
 
 // 扇出操作序列，跑在【传入的 session】上——是否包事务由调用方决定（save 自开 /
-// CWT 审批注入外部事务）。绝不在这里 withTransaction，否则与外部事务嵌套会炸。
+// 审批注入外部事务）。绝不在这里 withTransaction，否则与外部事务嵌套会炸。
 async function fanoutOps(store, state, session) {
   const users = store.col('users')
   const addrs = Object.keys(state.swtcUsers || {})
@@ -162,3 +160,6 @@ async function fanoutOps(store, state, session) {
 }
 
 export const stateStore = new StateStore()
+
+// 测试护盾出口（v1.2 白名单丢字段事故复盘）：round-trip 直测内部纯函数
+export { loadFromMongo as __test_loadFromMongo, fanoutOps as __test_fanoutOps }

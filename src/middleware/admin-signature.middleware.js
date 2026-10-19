@@ -44,12 +44,12 @@ export const ADMIN_SIGNED_OPERATIONS = Object.freeze([
   'delete-volume',
   'reset',
   'cleanup-orphan-volumes',
-  'cwt/approve',
-  'cwt/reject',
-  'cwt/revoke',
   'dsh/apply',
   'dsh/prune-images',
   'dsh/select',
+  // v1.4 凭证体系：批准=签发 CWT 解除凭证（改变用户限制语义），签目标地址绑定
+  'cwt/approve',
+  'cwt/reject',
 ])
 
 /** 待执行的管理操作挑战（地址 → 记录）。与 tenantConfigService 的挑战池同样是一次性 */
@@ -94,14 +94,6 @@ export function buildBinding(operation, payload = {}) {
       const norm = [...new Set(names.map((s) => String(s).trim()).filter(Boolean))].sort()
       return norm.length ? `cleanup-orphan-volumes:names=${norm.join(',')}` : null
     }
-    case 'cwt/approve':
-    case 'cwt/reject': {
-      // 审批绑申请 id，不绑地址：同一地址可以有多张申请，语义要精确到"哪一张"
-      const id = p.id ? String(p.id).trim() : ''
-      return id ? `${operation}:id=${id}` : null
-    }
-    case 'cwt/revoke':
-      return addr ? `cwt/revoke:address=${addr}` : null
     case 'dsh/apply': {
       // 必须把"钉到哪个镜像"也签进去：否则一个针对 latest 的签名可以被改成
       // 装任意本地镜像（越权通道）。image 为空 = 平台默认，binding 保持不变，
@@ -137,6 +129,13 @@ export function buildBinding(operation, payload = {}) {
       // 空 ref 与含非法字符的 ref 一律拒发挑战（路由层还会查存在性）。
       const ref = p.ref ? String(p.ref).trim() : ''
       return ref && /^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/.test(ref) ? `dsh/select:ref=${ref}` : null
+    }
+    case 'cwt/approve':
+    case 'cwt/reject': {
+      // 批准=给用户签发解除限制凭证。签"哪一张申请单 + 批准给谁"双绑定，
+      // 防签 A 单批 B 单（路由层从库里取申请人地址并入 payload，前端伪造无效）。
+      const id = p.id ? String(p.id).trim() : ''
+      return id && addr ? `${operation}:id=${id}:address=${addr}` : null
     }
     default:
       return null

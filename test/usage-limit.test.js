@@ -4,9 +4,8 @@
  * 覆盖：
  *   - settleUsage：把运行段累计进当日 usages，并清零起点
  *   - getUsedMinutes：跨日重置 / 当前运行段计入
- *   - isUsageExempt：CWT 授权/验证用户豁免
- *   - ensureUsageAllowed：超限抛 USAGE_LIMIT_REACHED、豁免放行、开关关闭放行
- *   - checkUsageLimitAndStop：超限优雅停止、豁免不停、未超限不停
+ *   - ensureUsageAllowed：超限抛 USAGE_LIMIT_REACHED、开关关闭放行
+ *   - checkUsageLimitAndStop：超限优雅停止、未超限不停
  *   - stopContainerForUser：用户主动停止（结算 + 优雅停止 + 状态）
  *
  * 隔离：清空真实 state 用户；mock dockerService 全部破坏性调用与 saveState，
@@ -88,15 +87,6 @@ describe('每日使用时限', () => {
     expect(userService.getUsedMinutes(ADDR)).toBe(20)
   })
 
-  it('isUsageExempt：cwtAuthorizedAt / cwtVerifiedAt 任一存在即豁免', () => {
-    injectUser({ cwtAuthorizedAt: Date.now() })
-    expect(userService.isUsageExempt(ADDR)).toBe(true)
-    injectUser({ cwtAuthorizedAt: undefined, cwtVerifiedAt: Date.now() })
-    expect(userService.isUsageExempt(ADDR)).toBe(true)
-    injectUser({})
-    expect(userService.isUsageExempt(ADDR)).toBe(false)
-  })
-
   it('ensureUsageAllowed：未超限放行', () => {
     userService.state.usages[ADDR] = { date: new Date().toISOString().slice(0, 10), minutes: 5 }
     injectUser()
@@ -115,12 +105,6 @@ describe('每日使用时限', () => {
     }
   })
 
-  it('ensureUsageAllowed：豁免用户超限也放行', () => {
-    userService.state.usages[ADDR] = { date: new Date().toISOString().slice(0, 10), minutes: 999 }
-    injectUser({ cwtAuthorizedAt: Date.now() })
-    expect(() => userService.ensureUsageAllowed(ADDR)).not.toThrow()
-  })
-
   it('ensureUsageAllowed：开关关闭放行', () => {
     userService.state.usageLimit = { enabled: false, dailyMinutes: 30 }
     userService.state.usages[ADDR] = { date: new Date().toISOString().slice(0, 10), minutes: 999 }
@@ -135,13 +119,6 @@ describe('每日使用时限', () => {
     expect(userService.state.swtcUsers[ADDR].containerStatus).toBe('stopped')
     expect(userService.state.swtcUsers[ADDR].usageStartedAt).toBeUndefined()
     expect(userService.state.usages[ADDR].minutes).toBeGreaterThanOrEqual(40)
-  })
-
-  it('checkUsageLimitAndStop：豁免用户不停', async () => {
-    injectUser({ cwtVerifiedAt: Date.now(), usageStartedAt: Date.now() - 40 * 60000 })
-    await userService.checkUsageLimitAndStop()
-    expect(dockerService.stopContainer).not.toHaveBeenCalled()
-    expect(userService.state.swtcUsers[ADDR].containerStatus).toBe('running')
   })
 
   it('checkUsageLimitAndStop：未超限不停（含当前运行段）', async () => {

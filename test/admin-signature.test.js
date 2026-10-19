@@ -30,7 +30,6 @@ import { handleAdminRoutes } from '../src/routes/admin.routes.js'
 import { handleTenantRoutes } from '../src/routes/tenant.routes.js'
 import { userService } from '../src/services/user.service.js'
 import { dockerService } from '../src/services/docker.service.js'
-import { cwtAdminService } from '../src/services/cwt-admin.service.js'
 
 const ADMIN_ADDR = 'jndwretndumoqbt2uauclmfmx7xbqjykva'
 const OTHER_ADDR = 'jga9j9tkqtbcuohe2zqhvffbguved6o9or'
@@ -58,14 +57,10 @@ vi.mock('../src/services/data.service.js', async (importOriginal) => {
       ...mod.dataService,
       loadSessions: vi.fn(() => ({})),
       loadUserSessions: vi.fn(() => ({})),
-      loadCwtRegistry: vi.fn(() => ({})),
-      loadCwtApplications: vi.fn(() => []),
       readStateFile: vi.fn(() => null),
       saveState: vi.fn(() => {}),
       saveUserSessions: vi.fn(() => {}),
       saveSessions: vi.fn(() => {}),
-      saveCwtRegistry: vi.fn(() => {}),
-      saveCwtApplications: vi.fn(() => {}),
       addAdmin: vi.fn(() => true),
       logOperation: vi.fn(),
       getAdminConfig: vi.fn(() => ({ addresses: [], history: [] })),
@@ -78,13 +73,6 @@ vi.mock('../src/services/docker.service.js', () => ({
     listVolumes: vi.fn().mockResolvedValue([]),
     listReferencedVolumes: vi.fn().mockResolvedValue(new Set()),
     removeVolume: vi.fn().mockResolvedValue(undefined),
-  },
-}))
-vi.mock('../src/services/cwt-admin.service.js', () => ({
-  cwtAdminService: {
-    approveApplication: vi.fn().mockResolvedValue({ ok: true }),
-    rejectApplication: vi.fn().mockResolvedValue({ ok: true }),
-    revokeRegistry: vi.fn().mockResolvedValue({ ok: true }),
   },
 }))
 vi.mock('../src/services/tenant-proxy.service.js', () => ({ tenantGateway: {} }))
@@ -424,38 +412,13 @@ describe('加固：绑定串由服务端推导', () => {
     expect(json(res).code).toBe('SIGNATURE_NOT_APPLICABLE')
   })
 
-  it('cwt/approve 绑定申请 id（非地址）', async () => {
-    const { data } = await issueChallenge('cwt/approve', { id: 'app-77' })
-    expect(data.binding).toBe('cwt/approve:id=app-77')
-  })
-
-  it('cwt/revoke 绑定地址', async () => {
-    const { data } = await issueChallenge('cwt/revoke', { address: TENANT.toUpperCase() })
-    expect(data.binding).toBe(`cwt/revoke:address=${TENANT}`)
-  })
-
   it('reset 绑定地址', async () => {
     const { data } = await issueChallenge('reset', { address: TENANT })
     expect(data.binding).toBe(`reset:address=${TENANT}`)
   })
 })
 
-describe('收口：CWT 审批 + 孤儿卷清理也要求当场签名', () => {
-  async function callCwtApprove(id, headers = {}) {
-    const res = makeRes()
-    await handleAdminRoutes(
-      makeReq({
-        method: 'POST',
-        url: `/api/admin/cwt/applications/${id}/approve`,
-        cookie: adminCookie(),
-        ...headers,
-      }),
-      res,
-      `/api/admin/cwt/applications/${id}/approve`,
-    )
-    return res
-  }
-
+describe('收口：孤儿卷清理要求当场签名', () => {
   async function callCleanupOrphans(body, headers = {}) {
     const res = makeRes()
     await handleAdminRoutes(
@@ -504,27 +467,5 @@ describe('收口：CWT 审批 + 孤儿卷清理也要求当场签名', () => {
     expect(res.statusCode).toBe(403)
     expect(json(res).code).toBe('SIGNATURE_MISMATCH')
     expect(dockerService.removeVolume).not.toHaveBeenCalled()
-  })
-
-  it('CWT approve：只有会话无签名 → SIGNATURE_REQUIRED，业务层零触达', async () => {
-    const res = await callCwtApprove('app-1')
-    expect(res.statusCode).toBe(403)
-    expect(json(res).code).toBe('SIGNATURE_REQUIRED')
-    expect(cwtAdminService.approveApplication).not.toHaveBeenCalled()
-  })
-
-  it('CWT approve：签名正确 → 落到业务层且传入会话地址为审批人', async () => {
-    const { data } = await issueChallenge('cwt/approve', { id: 'app-2' })
-    const res = await callCwtApprove('app-2', headersFor(data))
-    expect(res.statusCode).toBe(200)
-    expect(cwtAdminService.approveApplication).toHaveBeenCalledWith('app-2', ADMIN_ADDR)
-  })
-
-  it('CWT approve：签 app-2 却执行 app-3 → MISMATCH（不能偷换审批对象）', async () => {
-    const { data } = await issueChallenge('cwt/approve', { id: 'app-2' })
-    const res = await callCwtApprove('app-3', headersFor(data))
-    expect(res.statusCode).toBe(403)
-    expect(json(res).code).toBe('SIGNATURE_MISMATCH')
-    expect(cwtAdminService.approveApplication).not.toHaveBeenCalled()
   })
 })

@@ -74,7 +74,6 @@
               {{
                 $t('home.guide.step3.body', {
                   min: $t('home.guide.step3.minLabel'),
-                  cwt: $t('home.guide.step3.cwtLabel'),
                   exempt: $t('home.guide.step3.exemptLabel'),
                 })
               }}

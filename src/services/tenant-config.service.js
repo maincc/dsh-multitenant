@@ -84,6 +84,9 @@ export const SIGN_PURPOSE = Object.freeze({
   SKILLS: 'skills',
   GATEWAY: 'gateway-verify',
   ADMIN_OP: 'admin-op',
+  // VC 出示/领取确认（did-vc-runbook §3/ADR-5）：挑战机器新用途，
+  // 被签内容绑定 purpose|addr|nonce|jti——凭证被盗也签不出这一域。
+  VC_PRESENT: 'vc-present',
 })
 
 /** 签名域前缀：把"哪个应用"也绑进被签内容，避免与其它 DSH 部署互换签名 */

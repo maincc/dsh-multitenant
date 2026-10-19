@@ -82,20 +82,16 @@ vi.mock('../src/services/tenant-config.service.js', async (importOriginal) => {
 
 // 数据层默认走真实实现，但把「会话/状态 load/save」全部替换为内存空 + 落空：
 // 避免测试写入真实 data/（state.json、user-sessions.json、admin sessions），
-// 同时保留 loadCwt* 等只读方法的行为（routes.test.js 不涉及 CWT 用例，空值即可）
+// 只读探测方法置空即可
 vi.mock('../src/services/data.service.js', async (importOriginal) => {
   const mod = await importOriginal()
   const empty = {
     loadSessions: vi.fn(() => ({})),
     loadUserSessions: vi.fn(() => ({})),
-    loadCwtRegistry: vi.fn(() => ({})),
-    loadCwtApplications: vi.fn(() => []),
     readStateFile: vi.fn(() => null), // migrateLegacy 只读探测，空即可
     saveState: vi.fn(() => {}),
     saveUserSessions: vi.fn(() => {}),
     saveSessions: vi.fn(() => {}),
-    saveCwtRegistry: vi.fn(() => {}),
-    saveCwtApplications: vi.fn(() => {}),
     logOperation: vi.fn(() => Promise.resolve()), // 留痕加固后 reset/remove/logout 会调它——防写真实 operations.log
   }
   return { dataService: { ...mod.dataService, ...empty } }
@@ -710,7 +706,7 @@ describe('网关门禁会话（TTL 分权 + logout 吊销）', () => {
     vi.clearAllMocks()
   })
 
-  it('create(address) 默认 12h；create(address, ttl) 使用自定义 TTL（CWT 入场 30min）', () => {
+  it('create(address) 默认 12h；create(address, ttl) 使用自定义 TTL', () => {
     const shortToken = userSessionStore.create(TARGET_ADDR, 30 * 60 * 1000)
     const longToken = userSessionStore.create(TARGET_ADDR)
     const shortEntry = userSessionStore.sessions[sha256(shortToken)]
@@ -771,22 +767,5 @@ describe('网关门禁会话（TTL 分权 + logout 吊销）', () => {
     )
     expect(handled).toBe(true)
     expect(JSON.parse(res.body).address).toBeNull()
-  })
-
-  // ---------- CWT 申请防洪泛（P1-7） ----------
-
-  it('POST /api/user/cwt/apply 未认证端点按 IP 限流 → 第 11 次 429', async () => {
-    // 前 10 次：缺 token → 400（限流放行到业务层）；第 11 次：限流拦截
-    let last = null
-    for (let i = 0; i < 11; i++) {
-      last = makeRes()
-      await handleUserRoutes(
-        makeReq({ method: 'POST', url: '/api/user/cwt/apply', body: {} }),
-        last,
-        '/api/user/cwt/apply',
-      )
-    }
-    expect(last.statusCode).toBe(429)
-    expect(JSON.parse(last.body).code).toBe('RATE_LIMITED')
   })
 })

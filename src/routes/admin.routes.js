@@ -8,7 +8,6 @@ import { dataService } from '../services/data.service.js'
 import { dockerService } from '../services/docker.service.js'
 // 镜像归属与可清理性判定的唯一真源（2026-09 从本文件抽出，与 F3 维护定时器共用）
 import { collectPrunableImages, matchImageId } from '../services/image-inventory.service.js'
-import { cwtAdminService } from '../services/cwt-admin.service.js'
 import {
   tenantConfigService,
   SIGN_PURPOSE,
@@ -16,6 +15,7 @@ import {
 } from '../services/tenant-config.service.js'
 import { tenantGateway } from '../services/tenant-proxy.service.js'
 import { dshVersionService } from '../services/dsh-version.service.js'
+import { credentialService } from '../services/credential.service.js'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -490,182 +490,6 @@ export async function handleAdminRoutes(req, res, path, url) {
     return true
   }
 
-  // GET /api/admin/cwt/applications - CWT 申请列表（分页 + 状态筛选）
-  // 查询参数：limit（默认 50，上限 200）、offset（默认 0）、status（pending|approved|rejected|all）
-  if (path === '/api/admin/cwt/applications' && req.method === 'GET') {
-    if (!requireAdmin(req, res)) return
-    try {
-      const rawLimit = Number.parseInt(url.searchParams.get('limit') ?? '10', 10)
-      const rawOffset = Number.parseInt(url.searchParams.get('offset') ?? '0', 10)
-      const statusParam = url.searchParams.get('status')
-      const VALID_STATUS = ['pending', 'approved', 'rejected', 'all']
-      const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 200) : 10
-      const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? rawOffset : 0
-      const status = statusParam && VALID_STATUS.includes(statusParam) ? statusParam : 'all'
-
-      const { items, total } = cwtAdminService.queryApplications({ limit, offset, status })
-      if (!res.headersSent) {
-        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(
-          JSON.stringify({
-            ok: true,
-            applications: items,
-            total,
-            limit,
-            offset,
-            status,
-            hasMore: offset + items.length < total,
-          }),
-        )
-      }
-    } catch (err) {
-      if (!res.headersSent) handleError(err, res)
-    }
-    return true
-  }
-
-  // POST /api/admin/cwt/applications/:id/approve - 批准（复核验签后入库）
-  if (
-    path.startsWith('/api/admin/cwt/applications/') &&
-    path.endsWith('/approve') &&
-    req.method === 'POST'
-  ) {
-    if (!requireAdmin(req, res)) return
-    const id = path.slice('/api/admin/cwt/applications/'.length, -'/approve'.length)
-    // 批准＝发放"无限时长豁免"，与被签名的 promote 同级 → 当场签名，绑申请 id
-    const adminAddr = getAdminSession(req)
-    if (!requireAdminSignature(req, res, 'cwt/approve', { id }, adminAddr)) {
-      return true
-    }
-    try {
-      const result = await cwtAdminService.approveApplication(id, adminAddr)
-      if (!res.headersSent) {
-        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify(result))
-      }
-    } catch (err) {
-      if (!res.headersSent) {
-        const status = err.statusCode || (err.code ? 400 : 500)
-        res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ error: err.message, code: err.code || 'INTERNAL_ERROR' }))
-      }
-    }
-    return true
-  }
-
-  // POST /api/admin/cwt/applications/:id/reject - 拒绝
-  if (
-    path.startsWith('/api/admin/cwt/applications/') &&
-    path.endsWith('/reject') &&
-    req.method === 'POST'
-  ) {
-    if (!requireAdmin(req, res)) return
-    const id = path.slice('/api/admin/cwt/applications/'.length, -'/reject'.length)
-    // 拒绝同样改变审批状态机 → 当场签名，绑申请 id（防"签这张拒那张"）
-    const adminAddr = getAdminSession(req)
-    if (!requireAdminSignature(req, res, 'cwt/reject', { id }, adminAddr)) {
-      return true
-    }
-    try {
-      const result = await cwtAdminService.rejectApplication(id, adminAddr)
-      if (!res.headersSent) {
-        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify(result))
-      }
-    } catch (err) {
-      if (!res.headersSent) {
-        const status = err.statusCode || (err.code ? 400 : 500)
-        res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ error: err.message, code: err.code || 'INTERNAL_ERROR' }))
-      }
-    }
-    return true
-  }
-
-  // GET /api/admin/cwt/registry - 已批准注册表（分页）
-  // 查询参数：limit（默认 50，上限 200）、offset（默认 0）
-  if (path === '/api/admin/cwt/registry' && req.method === 'GET') {
-    if (!requireAdmin(req, res)) return
-    try {
-      const rawLimit = Number.parseInt(url.searchParams.get('limit') ?? '10', 10)
-      const rawOffset = Number.parseInt(url.searchParams.get('offset') ?? '0', 10)
-      const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 200) : 10
-      const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? rawOffset : 0
-
-      const { items, total } = cwtAdminService.queryRegistry({ limit, offset })
-      if (!res.headersSent) {
-        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(
-          JSON.stringify({
-            ok: true,
-            registry: items,
-            total,
-            limit,
-            offset,
-            hasMore: offset + items.length < total,
-          }),
-        )
-      }
-    } catch (err) {
-      if (!res.headersSent) handleError(err, res)
-    }
-    return true
-  }
-
-  // POST /api/admin/cwt/registry/:address/revoke - 撤销授权
-  if (
-    path.startsWith('/api/admin/cwt/registry/') &&
-    path.endsWith('/revoke') &&
-    req.method === 'POST'
-  ) {
-    if (!requireAdmin(req, res)) return
-    let address = path.slice('/api/admin/cwt/registry/'.length, -'/revoke'.length)
-    if (!validateSwtcAddress(address, res)) return
-    address = normalizeAddress(address)
-    // 撤销授权会让用户从"CWT 豁免"跌回每日时限，是权限状态改变 → 当场签名，绑地址
-    const adminAddr = getAdminSession(req)
-    if (!requireAdminSignature(req, res, 'cwt/revoke', { address }, adminAddr)) {
-      return true
-    }
-    try {
-      const result = await cwtAdminService.revokeRegistry(address, adminAddr)
-      if (!res.headersSent) {
-        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify(result))
-      }
-    } catch (err) {
-      if (!res.headersSent) {
-        const status = err.statusCode || (err.code ? 400 : 500)
-        res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ error: err.message, code: err.code || 'INTERNAL_ERROR' }))
-      }
-    }
-    return true
-  }
-
-  // GET /api/admin/cwt/records - 审计记录（分页；token 原文可查可重验）
-  // 查询参数：limit（默认 10，上限 200）、offset（默认 0）。
-  // 不返回 total：审计日志为 append-only，统计总行数需读全文件，会破坏尾部读取优化；
-  // 前端据 hasMore 判断是否还有更早记录。
-  if (path === '/api/admin/cwt/records' && req.method === 'GET') {
-    if (!requireAdmin(req, res)) return
-    try {
-      const rawLimit = Number.parseInt(url.searchParams.get('limit') ?? '10', 10)
-      const rawOffset = Number.parseInt(url.searchParams.get('offset') ?? '0', 10)
-      const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 200) : 10
-      const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? rawOffset : 0
-
-      const { records, hasMore } = await cwtAdminService.listRecords(limit, offset) // mongodb 形态为异步读
-      if (!res.headersSent) {
-        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ ok: true, records, limit, offset, hasMore }))
-      }
-    } catch (err) {
-      if (!res.headersSent) handleError(err, res)
-    }
-    return true
-  }
-
   // POST /api/admin/delete-volume/:address - 删除数据卷
   if (path.startsWith('/api/admin/delete-volume/') && req.method === 'POST') {
     if (!requireAdmin(req, res)) return
@@ -717,6 +541,136 @@ export async function handleAdminRoutes(req, res, path, url) {
           volumes: disk?.volumes ?? [],
         }),
       )
+    } catch (err) {
+      handleError(err, res)
+    }
+    return true
+  }
+
+  // ════════════ v1.4 凭证体系 · CWT 解限申请审批（管理员当场签名）════════════
+
+  // GET /api/admin/credentials?kind=did|cwt|all&q=<地址片段>&limit&offset - 凭证台账浏览
+  if (path === '/api/admin/credentials' && req.method === 'GET') {
+    if (!requireAdmin(req, res)) return true
+    const kind = url.searchParams.get('kind') || 'all'
+    const q = (url.searchParams.get('q') || '').slice(0, 64)
+    const limit = Math.min(50, Math.max(1, Number(url.searchParams.get('limit')) || 20))
+    const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0)
+    try {
+      const r = await credentialService.listCredentials({ kind, q, limit, offset })
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(
+        JSON.stringify({
+          credentials: r.items,
+          total: r.total,
+          limit,
+          offset,
+          hasMore: offset + r.items.length < r.total,
+        }),
+      )
+    } catch (err) {
+      handleError(err, res)
+    }
+    return true
+  }
+
+  // GET /api/admin/cwt-applications?status=pending|approved|rejected|all&limit&offset
+  if (path === '/api/admin/cwt-applications' && req.method === 'GET') {
+    if (!requireAdmin(req, res)) return true
+    const status = url.searchParams.get('status') || 'pending'
+    const limit = Math.min(50, Math.max(1, Number(url.searchParams.get('limit')) || 10))
+    const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0)
+    try {
+      const r = await credentialService.listApplications({ status, limit, offset })
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(
+        JSON.stringify({
+          applications: r.items,
+          total: r.total,
+          limit,
+          offset,
+          hasMore: offset + r.items.length < r.total,
+        }),
+      )
+    } catch (err) {
+      handleError(err, res)
+    }
+    return true
+  }
+
+  // POST /api/admin/cwt-applications/:id/approve - 批准=签发 CWT 解限凭证
+  // 签名绑定 {id, address}：address 由服务端按申请单查出（前端传了也只当展示，绑定的以库为准）
+  if (/^\/api\/admin\/cwt-applications\/[^/]+\/approve$/.test(path) && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return true
+    const id = decodeURIComponent(path.split('/')[4])
+    const app = await credentialService._findApp(id)
+    if (!app) {
+      res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '申请不存在', code: 'NOT_FOUND' }))
+      return true
+    }
+    if (
+      !requireAdminSignature(
+        req,
+        res,
+        'cwt/approve',
+        { id, address: app.address },
+        getAdminSession(req),
+      )
+    ) {
+      return true
+    }
+    try {
+      const out = await credentialService.approveApplication(id, getAdminSession(req))
+      dataService.logOperation('admin_cwt_approve', {
+        operator: getAdminSession(req),
+        id,
+        address: app.address,
+      })
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify(out))
+    } catch (err) {
+      handleError(err, res)
+    }
+    return true
+  }
+
+  // POST /api/admin/cwt-applications/:id/reject - 拒绝（同样当场签名绑定单号+申请人）
+  if (/^\/api\/admin\/cwt-applications\/[^/]+\/reject$/.test(path) && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return true
+    const id = decodeURIComponent(path.split('/')[4])
+    const app = await credentialService._findApp(id)
+    if (!app) {
+      res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '申请不存在', code: 'NOT_FOUND' }))
+      return true
+    }
+    if (
+      !requireAdminSignature(
+        req,
+        res,
+        'cwt/reject',
+        { id, address: app.address },
+        getAdminSession(req),
+      )
+    ) {
+      return true
+    }
+    let reason = ''
+    try {
+      reason = (JSON.parse((await parseBody(req)) || '{}').reason || '').slice(0, 300)
+    } catch {
+      reason = ''
+    }
+    try {
+      const out = await credentialService.rejectApplication(id, getAdminSession(req), reason)
+      dataService.logOperation('admin_cwt_reject', {
+        operator: getAdminSession(req),
+        id,
+        address: app.address,
+      })
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify(out))
     } catch (err) {
       handleError(err, res)
     }

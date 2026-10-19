@@ -23,19 +23,28 @@ const DEFAULTS = {
   },
   usageLimit: {
     enabled: true, // 每日使用时限开关
-    dailyMinutes: 120, // 每个地址每天累计使用上限（分钟），CWT 授权用户豁免
+    dailyMinutes: 120, // 每个地址每天累计使用上限（分钟）
     checkIntervalMs: 60000, // 超时检查间隔（毫秒）
   },
-  cwt: {
-    enabled: true, // CWT 申请-审批-出示体系开关
-    ttlMs: 300000, // 出示 token 时效（单向：0 ≤ now−issued ≤ ttl，拒绝未来签发）
-    allowCwtEnt: false, // CWT_ENT 组形态预留，本期关闭
-    // 防洪泛（未认证端点 + token 自签，零成本）：待审批申请总条数上限，
-    // 超限直接 503 卸载；单个 token 字节上限。改动需重启服务。
-    // 注意 config.json 是**浅合并**：config.json 里已有 cwt 块时，这里新增的键
-    // 不会自动生效，需在 config.json 的 cwt 块里显式写（服务端对缺失值有兜底）。
-    maxPending: 500,
-    maxTokenBytes: 8192,
+  // ---- v1.4 凭证体系（2026-10-19）：DID 普通凭证 / CWT 解除凭证，一地址一条互斥 ----
+  credential: {
+    enabled: true,
+    // relay：公共档案读（免签）+ 档案写（multipart，带用户插件的文件签）
+    relayBaseURL: 'https://ipfsserver.ccda.ooo',
+    apiBase: '/v0/api/ipfs',
+    chain: 'swtc',
+    profileProbeTimeoutMs: 8000, // 实测 resolve 冷启动 2.7s 级常态，3s 会误判"没档案"
+    profileProbeCacheMs: 900000,
+    // 平台签发钥与公共档案：VC proof 用 @jccdex/did SDK 真签（EcdsaSecp256k1Signature2019）
+    keyFile: 'data/keys/issuer.key',
+    profileFile: 'data/keys/issuer-profile.json',
+    contextFile: 'data/keys/secp256k1-2019-v1.json',
+    // 无 DID 档案时的用户指引（务必提醒核对地址）
+    didGenUrl: 'https://app.ccda.ooo/#/',
+    // 旧版 CWT registry（解除限制白名单）：命中=直接签发 CWT 凭证
+    legacyFile: 'data/legacy-cwt.json',
+    exemptCacheMs: 60000,
+    vcNamespace: 'urn:dshm-test:credential',
   },
   skills: {
     autoInvoke: false, // 市场技能默认禁止模型自动调用（P0-4：安装到用户卷时强制
@@ -212,4 +221,17 @@ export function getTierLimits(tier) {
 }
 
 export const CONFIG = loadConfig()
+
+// ★存储护栏（2026-10-16 生产事故根修）：测试进程读本地 config.json（provider=mongodb），
+// 凡未 mock storage 的测试就会拿 fixture 内存对生产库做 fanoutOps —— $unset 凭证账本、
+// deleteMany 多行；服务端再加载被污染快照并反向固化，对账器把真卡当无主摘架。
+// 6 处 provider 分叉拦不住漏网之鱼，在唯一出口整体降档：测试进程永不碰生产库。
+if (
+  (process.env.VITEST === 'true' || process.env.NODE_ENV === 'test') &&
+  CONFIG.storage?.provider === 'mongodb'
+) {
+  CONFIG.storage = { ...(CONFIG.storage || {}), provider: 'json' }
+  // eslint-disable-next-line no-console
+  console.warn('[config] 测试进程护栏：storage 已由 mongodb 降档为 json（生产库保护）')
+}
 export { ROOT, CONFIG_FILE }

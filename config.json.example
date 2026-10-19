@@ -5,9 +5,7 @@
     "comment": "服务端口和对外主机名（局域网请填 192.168.x.x）"
   },
   "admin": {
-    "addresses": [
-      "your-admin-address-here"
-    ],
+    "addresses": ["your-admin-address-here"],
     "refreshIntervalMs": 15000,
     "usersCacheTtlMs": 3000,
     "comment": "管理员地址列表（小写），只有这些地址可以访问管理页面；refreshIntervalMs: 管理端列表页自动刷新间隔（毫秒），只在前台可见时轮询（切后台/切走标签页会停，回前台与切 tab 都会立即刷一次），默认 15000（15 秒），想更省可填 300000（5 分钟），此时用顶栏「刷新」按钮补实时性；usersCacheTtlMs: 列表接口的服务端短缓存（毫秒），多个管理员/标签页共享一次 docker 采样，任何状态写入都会立即失效它，默认 3000"
@@ -68,6 +66,33 @@
       "cpus": "4.0",
       "pids": 1024
     }
+  },
+  "issuer": {
+    "keyPath": "data/keys/issuer.key",
+    "vcTtlDays": 365,
+    "legacyKids": [],
+    "comment": "DID/VC 签发侧（did-vc-runbook）：keyPath 部署者提供（程序零生成钥），文件缺失=发卡哑火、登录等一切照常；legacyKids 换钥后旧 kid 只验不签"
+  },
+  "shelf": {
+    "rpcBaseURL": "https://ipfsserver.ccda.ooo",
+    "chain": "swtc",
+    "comment": "凭证货架所在 wodecards 实例——实例选择=公示范围选择：prod 写入即 app.ccda.ooo 查询页全网可查；联调/灰度改 https://wodecards.wh.jccdex.cn:8550（dev）。chain 一经使用不可改（ADR-18）"
+  },
+  "vc": {
+    "tiers": {
+      "1": {
+        "dailyMinutes": 120
+      },
+      "2": {
+        "dailyMinutes": null
+      }
+    },
+    "upgradePolicy": "hybrid",
+    "shelfSync": true,
+    "namespace": "dsh",
+    "presentMode": "registry",
+    "reconcileIntervalMs": 900000,
+    "comment": "发卡档位→服务参数查表（区别于上方 tiers=容器资源规格）；upgradePolicy: l1-auto | manual | hybrid（升级闸门，ADR-16）；shelfSync: true=发卡同步上平台货架做对外公示（false=纯账本+用户持有）；presentMode: registry|off（出示信道口）；reconcileIntervalMs: 货架对账周期（0=关）"
   },
   "docker": {
     "image": "dsh-multitenant:latest",

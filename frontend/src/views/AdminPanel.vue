@@ -531,269 +531,6 @@
           </div>
         </div>
 
-        <!-- ════════ CWT 授权 ════════ -->
-        <div v-else-if="activeTab === 'cwt'" class="tab-content">
-          <div class="tab-head">
-            <div class="tab-head-text">
-              <h4>{{ $t('admin.tabCwt') }}</h4>
-              <p class="tab-hint">{{ $t('admin.cwtManageHint') }}</p>
-            </div>
-            <div class="tab-head-actions">
-              <span class="refresh-hint">{{
-                $t('admin.refreshAuto', { n: Math.round(refreshIntervalMs / 1000) })
-              }}</span>
-              <button class="btn btn-small" :disabled="loading" @click="refreshNow(true)">
-                {{ loading ? $t('admin.loading') : $t('admin.refresh') }}
-              </button>
-            </div>
-          </div>
-
-          <div v-if="cwtLoading" class="config-loading">
-            <span>{{ $t('admin.cwtLoading') }}</span>
-          </div>
-
-          <div class="sub-section">
-            <div class="cwt-list-head">
-              <h4>{{ $t('admin.cwtPending') }}</h4>
-              <label class="cwt-filter">
-                <span>{{ $t('admin.cwtFilterLabel') }}</span>
-                <select v-model="cwtStatusFilter" @change="onCwtFilterChange">
-                  <option value="all">{{ $t('admin.cwtFilterAll') }}</option>
-                  <option value="pending">{{ $t('admin.cwtFilterPending') }}</option>
-                  <option value="approved">{{ $t('admin.cwtFilterApproved') }}</option>
-                  <option value="rejected">{{ $t('admin.cwtFilterRejected') }}</option>
-                </select>
-              </label>
-            </div>
-            <table v-if="cwtApplications.length">
-              <thead>
-                <tr>
-                  <th>{{ $t('admin.colUsr') }}</th>
-                  <th>{{ $t('admin.colAddress') }}</th>
-                  <th>{{ $t('admin.colAlg') }}</th>
-                  <th>{{ $t('admin.colSubmitted') }}</th>
-                  <th>{{ $t('admin.colVerify') }}</th>
-                  <th>{{ $t('admin.colOps') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="app in cwtApplications" :key="app.id">
-                  <td>{{ app.parsed?.usr || '-' }}</td>
-                  <td class="cwt-mono addr-tip" :data-full="app.parsed?.address">
-                    {{ shortAddr(app.parsed?.address) }}
-                  </td>
-                  <td>{{ app.parsed?.alg || '-' }}</td>
-                  <td>{{ fmtTime(app.submittedAt) }}</td>
-                  <td>
-                    <span class="badge" :class="app.sigOk ? 'badge-success' : 'badge-danger'">
-                      {{ app.sigOk ? $t('admin.sigOk') : $t('admin.sigFail') }}
-                    </span>
-                  </td>
-                  <td>
-                    <template v-if="app.status === 'pending'">
-                      <button
-                        class="btn btn-small btn-success"
-                        :disabled="cwtBusy"
-                        @click="approveCwt(app.id)"
-                      >
-                        {{ $t('admin.approve') }}
-                      </button>
-                      <button
-                        class="btn btn-small btn-danger"
-                        :disabled="cwtBusy"
-                        @click="rejectCwt(app.id)"
-                      >
-                        {{ $t('admin.reject') }}
-                      </button>
-                    </template>
-                    <span
-                      v-else
-                      class="badge"
-                      :class="app.status === 'approved' ? 'badge-success' : 'badge-info'"
-                    >
-                      {{ app.status }}
-                    </span>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-            <div v-else class="cwt-empty">{{ $t('admin.cwtPageEmpty') }}</div>
-
-            <!-- 分页控件（后端分页：limit/offset/total） -->
-            <div v-if="cwtTotal > 0" class="cwt-pager">
-              <span class="cwt-page-info">
-                {{
-                  $t('admin.cwtPageInfo', {
-                    from: cwtOffset + 1,
-                    to: Math.min(cwtOffset + cwtLimit, cwtTotal),
-                    total: cwtTotal,
-                  })
-                }}
-              </span>
-              <div class="cwt-page-btns">
-                <button
-                  class="btn btn-small"
-                  :disabled="cwtOffset <= 0 || cwtLoading"
-                  @click="cwtPrevPage"
-                >
-                  {{ $t('admin.cwtPagePrev') }}
-                </button>
-                <button
-                  class="btn btn-small"
-                  :disabled="!cwtHasMore || cwtLoading"
-                  @click="cwtNextPage"
-                >
-                  {{ $t('admin.cwtPageNext') }}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div class="sub-section">
-            <h4>{{ $t('admin.cwtRegistry') }}</h4>
-            <table v-if="cwtRegistry.length">
-              <thead>
-                <tr>
-                  <th>{{ $t('admin.colUsr') }}</th>
-                  <th>{{ $t('admin.colAddress') }}</th>
-                  <th>{{ $t('admin.colStatus') }}</th>
-                  <th>{{ $t('admin.colApprovedAt') }}</th>
-                  <th>{{ $t('admin.colOps') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="entry in cwtRegistry" :key="entry.address">
-                  <td>{{ entry.usr }}</td>
-                  <td class="cwt-mono addr-tip" :data-full="entry.address">
-                    {{ shortAddr(entry.address) }}
-                  </td>
-                  <td>
-                    <span
-                      class="badge"
-                      :class="entry.status === 'approved' ? 'badge-success' : 'badge-danger'"
-                    >
-                      {{ entry.status }}
-                    </span>
-                  </td>
-                  <td>{{ fmtTime(entry.approvedAt) }}</td>
-                  <td>
-                    <button
-                      v-if="entry.status === 'approved'"
-                      class="btn btn-small btn-danger"
-                      :disabled="cwtBusy"
-                      @click="revokeCwt(entry.address)"
-                    >
-                      {{ $t('admin.revoke') }}
-                    </button>
-                    <span v-else-if="entry.revokedAt"
-                      >{{ fmtTime(entry.revokedAt) }} {{ $t('admin.revokedSuffix') }}</span
-                    >
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-            <div v-else class="cwt-empty">{{ $t('admin.noRegistry') }}</div>
-
-            <!-- 分页控件（后端分页：limit/offset/total） -->
-            <div v-if="cwtRegTotal > 0" class="cwt-pager">
-              <span class="cwt-page-info">
-                {{
-                  $t('admin.cwtPageInfo', {
-                    from: cwtRegOffset + 1,
-                    to: Math.min(cwtRegOffset + cwtRegLimit, cwtRegTotal),
-                    total: cwtRegTotal,
-                  })
-                }}
-              </span>
-              <div class="cwt-page-btns">
-                <button
-                  class="btn btn-small"
-                  :disabled="cwtRegOffset <= 0 || cwtLoading"
-                  @click="cwtRegistryPrevPage"
-                >
-                  {{ $t('admin.cwtPagePrev') }}
-                </button>
-                <button
-                  class="btn btn-small"
-                  :disabled="!cwtRegHasMore || cwtLoading"
-                  @click="cwtRegistryNextPage"
-                >
-                  {{ $t('admin.cwtPageNext') }}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div class="sub-section">
-            <h4>{{ $t('admin.cwtRecords') }}</h4>
-            <table v-if="cwtRecords.length">
-              <thead>
-                <tr>
-                  <th>{{ $t('admin.colAction') }}</th>
-                  <th>{{ $t('admin.colUsr') }}</th>
-                  <th>{{ $t('admin.colAddress') }}</th>
-                  <th>{{ $t('admin.colTime') }}</th>
-                  <th>{{ $t('admin.colBy') }}</th>
-                  <th>{{ $t('admin.colToken') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(rec, i) in cwtRecords" :key="i">
-                  <td>
-                    <span class="badge" :class="actionBadge(rec.action)">{{ rec.action }}</span>
-                  </td>
-                  <td>{{ rec.usr || '-' }}</td>
-                  <td class="cwt-mono addr-tip" :data-full="rec.address">
-                    {{ shortAddr(rec.address) }}
-                  </td>
-                  <td>{{ fmtTime(rec.at) }}</td>
-                  <td class="cwt-mono addr-tip" :data-full="rec.by">{{ shortAddr(rec.by) }}</td>
-                  <td>
-                    <button v-if="rec.token" class="btn btn-small" @click="toggleToken(i)">
-                      {{ expandedToken === i ? $t('admin.collapse') : $t('admin.view') }}
-                    </button>
-                    <div v-if="expandedToken === i" class="cwt-token-preview">
-                      {{ rec.token }}
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-            <div v-else class="cwt-empty">{{ $t('admin.noRecords') }}</div>
-
-            <!-- 分页控件（后端尾部读取分页；无 total，按 hasMore 判断） -->
-            <div v-if="cwtRecords.length || cwtRecOffset > 0" class="cwt-pager">
-              <span class="cwt-page-info">
-                {{
-                  $t('admin.cwtRecPageInfo', {
-                    from: cwtRecOffset + 1,
-                    to: cwtRecOffset + cwtRecords.length,
-                  })
-                }}
-                <span v-if="cwtRecHasMore" class="cwt-more-hint">
-                  · {{ $t('admin.cwtRecHasMore') }}</span
-                >
-              </span>
-              <div class="cwt-page-btns">
-                <button
-                  class="btn btn-small"
-                  :disabled="cwtRecOffset <= 0 || cwtLoading"
-                  @click="cwtRecordsPrevPage"
-                >
-                  {{ $t('admin.cwtPagePrev') }}
-                </button>
-                <button
-                  class="btn btn-small"
-                  :disabled="!cwtRecHasMore || cwtLoading"
-                  @click="cwtRecordsNextPage"
-                >
-                  {{ $t('admin.cwtPageNext') }}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
         <!-- ════════ DSH 版本管理 ════════ -->
         <div v-else-if="activeTab === 'dsh'" class="tab-content">
           <div class="tab-head">
@@ -1316,6 +1053,184 @@
             <p class="dsh-history-hint">{{ $t('admin.dshPruneHint') }}</p>
           </div>
         </div>
+
+        <!-- ════ v1.4 CWT 解除限制申请审批 ════ -->
+        <div v-else-if="activeTab === 'cred'" class="tab-content">
+          <div class="tab-head">
+            <h4>{{ $t('admin.credTabTitle') }}</h4>
+            <p class="tab-hint">{{ $t('admin.credTabHint') }}</p>
+          </div>
+          <div class="filter-row">
+            <button
+              v-for="s in ['pending', 'approved', 'rejected']"
+              :key="s"
+              class="btn btn-small"
+              :class="cwtStatusFilter === s ? 'btn-primary' : 'btn-secondary'"
+              @click="setCwtStatus(s)"
+            >
+              {{ $t('admin.credStatus_' + s) }}
+            </button>
+            <span class="badge badge-info">{{ $t('admin.credTotal', { n: cwtTotal }) }}</span>
+            <button class="btn btn-small" :disabled="cwtLoading" @click="loadCwtApps">
+              {{ $t('admin.refresh') }}
+            </button>
+          </div>
+          <div v-if="cwtLoading" class="loading">{{ $t('admin.loading') }}</div>
+          <table v-else>
+            <thead>
+              <tr>
+                <th>{{ $t('admin.colAddress') }}</th>
+                <th>{{ $t('admin.credColSubmitted') }}</th>
+                <th>{{ $t('admin.credColStatus') }}</th>
+                <th>{{ $t('admin.colOps') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="!cwtApps.length">
+                <td colspan="4">{{ $t('admin.credEmpty') }}</td>
+              </tr>
+              <tr v-for="app in cwtApps" :key="app._id">
+                <td>
+                  <span class="address addr-tip" :data-full="app.addressDisplay || app.address"
+                    >{{ (app.addressDisplay || app.address).slice(0, 10) }}...</span
+                  >
+                </td>
+                <td>{{ fmtTime(app.submittedAt) }}</td>
+                <td>
+                  <span
+                    class="badge"
+                    :class="
+                      app.status === 'pending'
+                        ? 'badge-warning'
+                        : app.status === 'approved'
+                          ? 'badge-success'
+                          : 'badge-info'
+                    "
+                    >{{ $t('admin.credStatus_' + app.status) }}</span
+                  >
+                  <span v-if="app.decidedAt" class="dsh-ver-unknown">{{
+                    fmtTime(app.decidedAt)
+                  }}</span>
+                </td>
+                <td>
+                  <div v-if="app.status === 'pending'" class="ops-cell">
+                    <button class="btn btn-success" :disabled="!!cwtBusy" @click="approveCwt(app)">
+                      {{ $t('admin.credApprove') }}
+                    </button>
+                    <button class="btn" :disabled="!!cwtBusy" @click="rejectCwt(app)">
+                      {{ $t('admin.credReject') }}
+                    </button>
+                  </div>
+                  <span v-else>-</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="ops-cell" style="margin-top: 0.75rem">
+            <button class="btn btn-small" :disabled="cwtOffset === 0" @click="cwtPage(-1)">
+              {{ $t('admin.credPrev') }}
+            </button>
+            <button
+              class="btn btn-small"
+              :disabled="cwtOffset + 10 >= cwtTotal"
+              @click="cwtPage(1)"
+            >
+              {{ $t('admin.credNext') }}
+            </button>
+          </div>
+
+          <div class="tab-head" style="margin-top: 1.75rem">
+            <h4>{{ $t('admin.ledgerTitle') }}</h4>
+            <p class="tab-hint">{{ $t('admin.ledgerHint') }}</p>
+          </div>
+          <div class="filter-row">
+            <button
+              v-for="k in ['all', 'did', 'cwt']"
+              :key="k"
+              class="btn btn-small"
+              :class="credKind === k ? 'btn-primary' : 'btn-secondary'"
+              @click="setCredKind(k)"
+            >
+              {{ $t('admin.ledgerKind_' + k) }}
+            </button>
+            <input
+              v-model="credQ"
+              class="input input-small"
+              :placeholder="$t('admin.ledgerSearchPh')"
+              style="width: 12rem"
+              @keyup.enter="setCredKind(credKind)"
+            />
+            <span class="badge badge-info">{{ $t('admin.credTotal', { n: credTotal }) }}</span>
+            <button class="btn btn-small" :disabled="credLoading" @click="loadCredRows">
+              {{ $t('admin.refresh') }}
+            </button>
+          </div>
+          <div v-if="credLoading" class="loading">{{ $t('admin.loading') }}</div>
+          <table v-else>
+            <thead>
+              <tr>
+                <th>{{ $t('admin.colAddress') }}</th>
+                <th>{{ $t('admin.ledgerColKind') }}</th>
+                <th>{{ $t('admin.ledgerColState') }}</th>
+                <th>{{ $t('admin.ledgerColSource') }}</th>
+                <th>{{ $t('admin.ledgerColIssued') }}</th>
+                <th>{{ $t('admin.ledgerColVc') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="!credRows.length">
+                <td colspan="6">{{ $t('admin.ledgerEmpty') }}</td>
+              </tr>
+              <tr v-for="c in credRows" :key="c.address">
+                <td>
+                  <span class="address addr-tip" :data-full="c.addressDisplay || c.address"
+                    >{{ (c.addressDisplay || c.address).slice(0, 10) }}...</span
+                  >
+                </td>
+                <td>
+                  <span class="badge" :class="c.kind === 'cwt' ? 'badge-success' : 'badge-info'">{{
+                    $t('admin.ledgerCard_' + c.kind)
+                  }}</span>
+                </td>
+                <td>
+                  <span
+                    class="badge"
+                    :class="c.state === 'claimed' ? 'badge-success' : 'badge-warning'"
+                    >{{ $t('admin.ledgerState_' + c.state) }}</span
+                  >
+                </td>
+                <td>{{ $t('admin.ledgerSrc_' + c.source) }}</td>
+                <td>
+                  {{ fmtTime(c.issuedAt) }}
+                  <span v-if="c.claimedAt" class="dsh-ver-unknown"
+                    >{{ $t('admin.ledgerClaimedAt') }} {{ fmtTime(c.claimedAt) }}</span
+                  >
+                  <span v-if="c.expiresAt" class="dsh-ver-unknown"
+                    >{{ $t('admin.ledgerExpiresAt') }} {{ fmtTime(c.expiresAt) }}</span
+                  >
+                </td>
+                <td>
+                  <span v-if="c.vcId" class="addr-tip" :data-full="c.vcId">{{
+                    '#' + (c.vcId.split('#')[1] || c.vcId)
+                  }}</span>
+                  <span v-else>-</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="ops-cell" style="margin-top: 0.75rem">
+            <button class="btn btn-small" :disabled="credOffset === 0" @click="credPage(-1)">
+              {{ $t('admin.credPrev') }}
+            </button>
+            <button
+              class="btn btn-small"
+              :disabled="credOffset + 10 >= credTotal"
+              @click="credPage(1)"
+            >
+              {{ $t('admin.credNext') }}
+            </button>
+          </div>
+        </div>
       </section>
     </div>
 
@@ -1389,14 +1304,14 @@ const adminTabs = [
     icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
   },
   {
-    key: 'cwt',
-    label: t('admin.tabCwt'),
-    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
-  },
-  {
     key: 'dsh',
     label: t('admin.tabDsh'),
     icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>',
+  },
+  {
+    key: 'cred',
+    label: t('admin.tabCred'),
+    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>',
   },
 ]
 
@@ -1413,29 +1328,6 @@ const hasCCDAO = ref(false)
 const currentAdminAddress = ref(null)
 const currentAddress = ref(null)
 const dockerAvailable = ref(false)
-// CWT 授权管理（M1）
-const cwtApplications = ref([])
-// CWT 申请列表：后端分页（limit/offset/total/hasMore）+ 状态筛选
-const cwtLimit = ref(10)
-const cwtOffset = ref(0)
-const cwtTotal = ref(0)
-const cwtHasMore = ref(false)
-const cwtStatusFilter = ref('all')
-const cwtRegistry = ref([])
-// 授权注册表：后端分页（limit/offset/total/hasMore）
-const cwtRegLimit = ref(10)
-const cwtRegOffset = ref(0)
-const cwtRegTotal = ref(0)
-const cwtRegHasMore = ref(false)
-const cwtRecords = ref([])
-// 审计记录：后端分页（尾部读取 + hasMore；日志 append-only，不提供 total）
-const cwtRecLimit = ref(10)
-const cwtRecOffset = ref(0)
-const cwtRecHasMore = ref(false)
-const cwtLoading = ref(false)
-const cwtBusy = ref(false)
-const diskScanning = ref(false)
-
 // ---- DSH 版本管理 ----
 const dshStatus = ref({
   image: null,
@@ -1661,7 +1553,6 @@ const tierRows = computed(() =>
     .map(([tier, limits]) => ({ tier: Number(tier), limits }))
     .sort((a, b) => a.tier - b.tier),
 )
-const expandedToken = ref(null)
 let dataRefreshInterval = null
 /** 上次拉取时间：切 tab 时做 1 秒节流，避免狂点 tab 打爆后端 */
 let lastFetchAt = 0
@@ -1901,9 +1792,135 @@ const signAdminOperation = async (operation, payload) => {
   }
 }
 
+// ---- v1.4 CWT 解除限制申请审批 ----
+const cwtApps = ref([])
+const cwtTotal = ref(0)
+const cwtOffset = ref(0)
+const cwtStatusFilter = ref('pending')
+const cwtLoading = ref(false)
+const cwtBusy = ref('')
+
+const loadCwtApps = async () => {
+  cwtLoading.value = true
+  try {
+    const res = await axios.get('/api/admin/cwt-applications', {
+      params: { status: cwtStatusFilter.value, limit: 10, offset: cwtOffset.value },
+    })
+    cwtApps.value = res.data.applications || []
+    cwtTotal.value = res.data.total || 0
+  } catch (err) {
+    toast(t('admin.credOpFail', { err: err?.response?.data?.error || err.message }))
+  } finally {
+    cwtLoading.value = false
+  }
+}
+
+const setCwtStatus = (s) => {
+  cwtStatusFilter.value = s
+  cwtOffset.value = 0
+  loadCwtApps()
+}
+
+const cwtPage = (delta) => {
+  cwtOffset.value = Math.max(0, cwtOffset.value + delta * 10)
+  loadCwtApps()
+}
+
+/* ── 凭证台账：谁持有什么卡（浏览，只读） ── */
+const credRows = ref([])
+const credTotal = ref(0)
+const credOffset = ref(0)
+const credKind = ref('all')
+const credQ = ref('')
+const credLoading = ref(false)
+
+const loadCredRows = async () => {
+  credLoading.value = true
+  try {
+    const res = await axios.get('/api/admin/credentials', {
+      params: { kind: credKind.value, q: credQ.value.trim(), limit: 10, offset: credOffset.value },
+    })
+    credRows.value = res.data.credentials || []
+    credTotal.value = res.data.total || 0
+  } catch (err) {
+    toast(t('admin.credOpFail', { err: err?.response?.data?.error || err.message }))
+  } finally {
+    credLoading.value = false
+  }
+}
+
+const setCredKind = (k) => {
+  credKind.value = k
+  credOffset.value = 0
+  loadCredRows()
+}
+
+const credPage = (delta) => {
+  credOffset.value = Math.max(0, credOffset.value + delta * 10)
+  loadCredRows()
+}
+
+const approveCwt = async (app) => {
+  await askConfirm({
+    message: t('admin.credConfirmApprove', { addr: app.addressDisplay || app.address }),
+    confirmLabel: t('admin.credApprove'),
+    run: async () => {
+      cwtBusy.value = app._id
+      try {
+        const headers = await signAdminOperation('cwt/approve', {
+          id: app._id,
+          address: app.address,
+        })
+        await axios.post(
+          `/api/admin/cwt-applications/${encodeURIComponent(app._id)}/approve`,
+          {},
+          { headers },
+        )
+        toast(t('admin.credApproved'))
+        await loadCwtApps()
+        loadCredRows().catch(() => {})
+      } catch (err) {
+        toast(t('admin.credOpFail', { err: err?.response?.data?.error || err.message }))
+        throw err
+      } finally {
+        cwtBusy.value = ''
+      }
+    },
+  })
+}
+
+const rejectCwt = async (app) => {
+  await askConfirm({
+    message: t('admin.credConfirmReject', { addr: app.addressDisplay || app.address }),
+    confirmLabel: t('admin.credReject'),
+    danger: true,
+    run: async () => {
+      cwtBusy.value = app._id
+      try {
+        const headers = await signAdminOperation('cwt/reject', {
+          id: app._id,
+          address: app.address,
+        })
+        await axios.post(
+          `/api/admin/cwt-applications/${encodeURIComponent(app._id)}/reject`,
+          {},
+          { headers },
+        )
+        toast(t('admin.credRejected'))
+        await loadCwtApps()
+        loadCredRows().catch(() => {})
+      } catch (err) {
+        toast(t('admin.credOpFail', { err: err?.response?.data?.error || err.message }))
+        throw err
+      } finally {
+        cwtBusy.value = ''
+      }
+    },
+  })
+}
+
 const adminLogin = async () => {
   if (!hasCCDAO.value) return
-
   logging.value = true
   loginError.value = null
   try {
@@ -2030,8 +2047,6 @@ const fetchData = async (force = false) => {
   } finally {
     loading.value = false
   }
-  // CWT 数据跟随主刷新（登录成功、定时刷新、操作后刷新均自动带上）
-  fetchCwtData()
 }
 
 /** 手动触发精确扫描：du 实测每个租户卷真实占用（O(n)，管理员按需调用） */
@@ -2054,171 +2069,8 @@ const runDiskScan = async () => {
   }
 }
 
-// ---------- CWT 授权管理（M1） ----------
-
 const shortAddr = (a) => (a ? `${a.slice(0, 8)}…${a.slice(-4)}` : '-')
 const fmtTime = (t) => (t ? new Date(t).toLocaleString() : '-')
-const actionBadge = (action) =>
-  ({ approve: 'badge-success', reject: 'badge-warning', revoke: 'badge-danger' })[action] ||
-  'badge-info'
-const toggleToken = (i) => {
-  expandedToken.value = expandedToken.value === i ? null : i
-}
-
-const fetchCwtData = async () => {
-  try {
-    cwtLoading.value = true
-    const [apps, reg, recs] = await Promise.all([
-      axios.get('/api/admin/cwt/applications', {
-        params: {
-          limit: cwtLimit.value,
-          offset: cwtOffset.value,
-          status: cwtStatusFilter.value,
-        },
-      }),
-      axios.get('/api/admin/cwt/registry', {
-        params: { limit: cwtRegLimit.value, offset: cwtRegOffset.value },
-      }),
-      axios.get('/api/admin/cwt/records', {
-        params: { limit: cwtRecLimit.value, offset: cwtRecOffset.value },
-      }),
-    ])
-    cwtApplications.value = apps.data.applications || []
-    cwtTotal.value = apps.data.total ?? cwtApplications.value.length
-    cwtHasMore.value = Boolean(apps.data.hasMore)
-    // 服务端可能钳制了参数（如 limit 上限），以响应为准
-    if (apps.data.limit) cwtLimit.value = apps.data.limit
-
-    // 页越界回退：审批/拒绝后 total 变小，当前页可能已空 → 自动退到上一页
-    if (cwtApplications.value.length === 0 && cwtOffset.value > 0 && cwtTotal.value > 0) {
-      cwtOffset.value = Math.max(0, cwtOffset.value - cwtLimit.value)
-      return await fetchCwtData()
-    }
-    cwtRegistry.value = reg.data.registry || []
-    cwtRegTotal.value = reg.data.total ?? cwtRegistry.value.length
-    cwtRegHasMore.value = Boolean(reg.data.hasMore)
-    if (reg.data.limit) cwtRegLimit.value = reg.data.limit
-    // 页越界回退：撤销授权后 total 变小，当前页可能已空 → 自动退到上一页
-    if (cwtRegistry.value.length === 0 && cwtRegOffset.value > 0 && cwtRegTotal.value > 0) {
-      cwtRegOffset.value = Math.max(0, cwtRegOffset.value - cwtRegLimit.value)
-      return await fetchCwtData()
-    }
-    cwtRecords.value = recs.data.records || []
-    cwtRecHasMore.value = Boolean(recs.data.hasMore)
-    if (recs.data.limit) cwtRecLimit.value = recs.data.limit
-    // 页越界回退：日志轮转后更早的记录消失，当前页可能已空 → 自动退到上一页
-    if (cwtRecords.value.length === 0 && cwtRecOffset.value > 0) {
-      cwtRecOffset.value = Math.max(0, cwtRecOffset.value - cwtRecLimit.value)
-      return await fetchCwtData()
-    }
-  } catch (err) {
-    console.error('加载 CWT 数据失败:', err)
-  } finally {
-    cwtLoading.value = false
-  }
-}
-
-/** 翻页：offset 越界时回退（如末页数据被处理致 total 变小） */
-const cwtPrevPage = () => {
-  cwtOffset.value = Math.max(0, cwtOffset.value - cwtLimit.value)
-  fetchCwtData()
-}
-
-const cwtNextPage = () => {
-  if (!cwtHasMore.value) return
-  cwtOffset.value += cwtLimit.value
-  fetchCwtData()
-}
-
-/** 切换状态筛选：回到第一页再查询（否则可能落在空页） */
-const onCwtFilterChange = () => {
-  cwtOffset.value = 0
-  fetchCwtData()
-}
-
-/** 授权注册表翻页 */
-const cwtRegistryPrevPage = () => {
-  cwtRegOffset.value = Math.max(0, cwtRegOffset.value - cwtRegLimit.value)
-  fetchCwtData()
-}
-
-const cwtRegistryNextPage = () => {
-  if (!cwtRegHasMore.value) return
-  cwtRegOffset.value += cwtRegLimit.value
-  fetchCwtData()
-}
-
-/** 审计记录翻页（无 total，仅按 hasMore 判断是否还有更早记录） */
-const cwtRecordsPrevPage = () => {
-  cwtRecOffset.value = Math.max(0, cwtRecOffset.value - cwtRecLimit.value)
-  fetchCwtData()
-}
-
-const cwtRecordsNextPage = () => {
-  if (!cwtRecHasMore.value) return
-  cwtRecOffset.value += cwtRecLimit.value
-  fetchCwtData()
-}
-
-const approveCwt = async (id) => {
-  await askConfirm({
-    message: t('admin.confirmApprove'),
-    run: async () => {
-      cwtBusy.value = true
-      try {
-        // 发放豁免＝提权级操作 → 当场签名，绑申请 id
-        const headers = await signAdminOperation('cwt/approve', { id })
-        await axios.post(`/api/admin/cwt/applications/${id}/approve`, null, { headers })
-        toast(t('admin.approvedOk'))
-        await fetchData()
-      } catch (err) {
-        toast(t('admin.approveFail', { err: err.response?.data?.error || err.message }))
-      } finally {
-        cwtBusy.value = false
-      }
-    },
-  })
-}
-
-const rejectCwt = async (id) => {
-  await askConfirm({
-    message: t('admin.confirmReject'),
-    run: async () => {
-      cwtBusy.value = true
-      try {
-        const headers = await signAdminOperation('cwt/reject', { id })
-        await axios.post(`/api/admin/cwt/applications/${id}/reject`, null, { headers })
-        toast(t('admin.rejectedOk'))
-        await fetchData()
-      } catch (err) {
-        toast(t('admin.rejectFail', { err: err.response?.data?.error || err.message }))
-      } finally {
-        cwtBusy.value = false
-      }
-    },
-  })
-}
-
-const revokeCwt = async (address) => {
-  await askConfirm({
-    message: t('admin.confirmRevoke', { addr: `${address.slice(0, 8)}…` }),
-    run: async () => {
-      cwtBusy.value = true
-      try {
-        // 撤销授权会让用户跌回每日时限 → 当场签名，绑目标地址
-        const headers = await signAdminOperation('cwt/revoke', { address })
-        await axios.post(`/api/admin/cwt/registry/${address}/revoke`, null, { headers })
-        toast(t('admin.revokedOk'))
-        await fetchData()
-      } catch (err) {
-        toast(t('admin.revokeFail', { err: err.response?.data?.error || err.message }))
-      } finally {
-        cwtBusy.value = false
-      }
-    },
-  })
-}
-
 const upgradeUser = async (address, tier) => {
   if (tier > maxTier.value) return
   try {
@@ -2801,6 +2653,10 @@ watch(activeTab, () => {
   if (activeTab.value === 'dsh') {
     loadDshStatus().catch(() => {})
     loadDshImages().catch(() => {})
+  }
+  if (activeTab.value === 'cred') {
+    loadCwtApps().catch(() => {})
+    loadCredRows().catch(() => {})
   }
 })
 
@@ -3937,6 +3793,11 @@ table {
   position: relative;
   cursor: help;
 }
+/* 提示 ::after 是子节点：任何 overflow:hidden 祖先（含自身省略号）都会裁掉它 */
+.addr-tip[data-full] {
+  overflow: visible;
+  text-overflow: clip;
+}
 .addr-tip[data-full]:hover::after {
   content: attr(data-full);
   position: absolute;
@@ -3960,5 +3821,14 @@ table {
   word-break: break-all;
   text-align: left;
   pointer-events: none;
+}
+
+/* v1.4 CWT 审批 tab */
+.filter-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
 }
 </style>

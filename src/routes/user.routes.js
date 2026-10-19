@@ -6,15 +6,21 @@ import { CONFIG, isAdmin } from '../config/config.js'
 import { userService } from '../services/user.service.js'
 import { dataService } from '../services/data.service.js'
 import { resourceExhaustedPayload } from '../utils/resource-exhausted.js'
-import { tenantConfigService, SIGN_PURPOSE } from '../services/tenant-config.service.js'
-import { cwtAdminService } from '../services/cwt-admin.service.js'
-import { cwtService } from '../services/cwt.service.js'
-import { cwtStore } from '../services/cwt.store.js'
+import {
+  tenantConfigService,
+  SIGN_PURPOSE,
+  buildSignedMessage,
+} from '../services/tenant-config.service.js'
 import { userSessionStore } from '../middleware/user-auth.middleware.js'
-import { rateLimit } from '../middleware/rate-limit.middleware.js'
-import { getAdminSession, getRequestAddress } from '../middleware/auth.middleware.js'
-import { validateSwtcAddress } from '../middleware/validate.middleware.js'
 import { normalizeAddress } from '../utils/address.js'
+import { rateLimit } from '../middleware/rate-limit.middleware.js'
+import {
+  getAdminSession,
+  getRequestAddress,
+  getSessionAddress,
+} from '../middleware/auth.middleware.js'
+import { credentialService } from '../services/credential.service.js'
+import { validateSwtcAddress } from '../middleware/validate.middleware.js'
 import { NotFoundError, ForbiddenError, handleError } from '../utils/errors.js'
 import { parseBody, parseJsonBody } from '../utils/parse-body.js'
 import { tenantGateway } from '../services/tenant-proxy.service.js'
@@ -25,39 +31,75 @@ import { tenantGateway } from '../services/tenant-proxy.service.js'
 export async function handleUserRoutes(req, res, path) {
   // ---- 租户密钥配置（钱包签名验证身份）----
 
-  // POST /api/user/cwt/apply - 提交 CWT 授权申请（token 即凭证，服务端解析+预验签）
-  if (path === '/api/user/cwt/apply' && req.method === 'POST') {
-    // 未认证端点（token 自签、零成本）→ 按 IP 限流，防洪泛刷队列/撑磁盘。
-    // 真正的硬边界在 cwtAdminService 的 pending 总条数上限（超限 503）。
-    if (!rateLimit(req, res, { max: 10, keyPrefix: 'cwt-apply' })) return true
-    const body = await parseJsonBody(req, res)
-    if (!body) return true
+  // ── 用户中心钱包签名登录（2026-10 补门）：user_session 此前只在"进入工作区
+  // 网关"(/connect)时签发，普通用户不点进容器就永远没有会话——数字身份 tab 的
+  // connect-status 全走非本人隐私分支（"暂无凭证"假象）。此端点给用户中心一扇
+  // 正门：与 admin 登录同构（LOGIN 用途挑战→验签→一次性→发会话 cookie），
+  // 只证明钱包地址归属，不创建/触碰容器。
+  if (path === '/api/user/wallet-login-challenge' && req.method === 'POST') {
+    if (!rateLimit(req, res, { max: 20, keyPrefix: 'wallet-login' })) return true
+    const body = await parseBody(req)
+    let address
     try {
-      const result = await cwtAdminService.submitApplication(body.token)
-      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify(result))
-    } catch (err) {
-      const status = err.statusCode || (err.code ? 400 : 500)
-      if (!res.headersSent) {
-        res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ error: err.message, code: err.code || 'INTERNAL_ERROR' }))
-      }
+      address = JSON.parse(body || '{}').address
+    } catch {
+      address = null
     }
+    if (!validateSwtcAddress(address, res)) return true
+    const addrLower = normalizeAddress(address)
+    if (!userService.state.swtcUsers?.[addrLower]) {
+      res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(
+        JSON.stringify({ error: '账号不存在（先用钱包连接进入一次平台）', code: 'NO_ACCOUNT' }),
+      )
+      return true
+    }
+    const challenge = tenantConfigService.issueChallenge(addrLower, SIGN_PURPOSE.LOGIN)
+    if (!challenge) {
+      res.writeHead(503, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '挑战发放过载，请稍后重试', code: 'OVERLOAD' }))
+      return true
+    }
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+    res.end(JSON.stringify({ ok: true, nonce: challenge.nonce, message: challenge.message }))
     return true
   }
 
-  // GET /api/user/cwt/status - 我的注册状态 / 申请进度（地址公开可查，无敏感信息）
-  if (path === '/api/user/cwt/status' && req.method === 'GET') {
-    const url = new URL(req.url, `http://${req.headers.host}`)
-    const address = url.searchParams.get('address')
+  // POST /api/user/wallet-login - 完成登录：{address, nonce, signature, publicKey}
+  if (path === '/api/user/wallet-login' && req.method === 'POST') {
+    if (!rateLimit(req, res, { max: 20, keyPrefix: 'wallet-login' })) return true
+    const body = await parseBody(req)
+    const { address, nonce, signature, publicKey } = JSON.parse(body || '{}')
     if (!validateSwtcAddress(address, res)) return true
-    try {
-      const status = cwtAdminService.getStatus(address)
-      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ ok: true, ...status }))
-    } catch (err) {
-      handleError(err, res)
+    const addrLower = normalizeAddress(address)
+    if (
+      !tenantConfigService.verifySignature(
+        addrLower,
+        buildSignedMessage(SIGN_PURPOSE.LOGIN, addrLower, nonce),
+        signature,
+        publicKey,
+      )
+    ) {
+      res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '签名验证失败', code: 'FORBIDDEN' }))
+      return true
     }
+    if (!tenantConfigService.consumeChallenge(addrLower, nonce, SIGN_PURPOSE.LOGIN)) {
+      res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '挑战已失效，请重新获取', code: 'FORBIDDEN' }))
+      return true
+    }
+    if (!userService.state.swtcUsers?.[addrLower]) {
+      res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '账号不存在', code: 'NO_ACCOUNT' }))
+      return true
+    }
+    const sessionToken = userSessionStore.create(addrLower, 2 * 60 * 60 * 1000)
+    res.writeHead(200, {
+      'content-type': 'application/json; charset=utf-8',
+      'set-cookie': `user_session=${sessionToken}; path=/; max-age=43200; httponly; samesite=strict`,
+    })
+    res.end(JSON.stringify({ ok: true, address: addrLower }))
     return true
   }
 
@@ -93,79 +135,131 @@ export async function handleUserRoutes(req, res, path) {
     return true
   }
 
-  // POST /api/cwt/gateway-enter - 凭 CWT 出示入场（网关门禁凭证）
-  // CWT 出示 = 验签（token 由该地址私钥在新鲜度窗口内签发）+ registry approved
-  // 通过 → 换取 user_session cookie（12h，与钱包签名同一执行链，仅准入协议不同）
-  // 防滥用：token 5 分钟新鲜窗口（不可长期分享）；expectedAddress 必须 == token 推导地址
-  if (path === '/api/cwt/gateway-enter' && req.method === 'POST') {
+  // ════════════ v1.4 凭证体系（DID 普通凭证 / CWT 解限凭证，互斥单记录）════════════
+  // 会话地址即用户身份（钱包签名登录建立的 user_session），全部端点要求登录态。
+
+  const credSession = () => getSessionAddress(req)
+
+  // GET /api/user/credential-status - 进入用户中心的判定钩子：
+  // 有凭证→原样；无→自动分配（legacy CWT 名单命中=直接发 CWT 解限凭证，否则 DID 普通待领取）。
+  // popup=true → 前端弹窗提醒领取；profileHit=false → 领取会撞"无 DID"指引（顺带回给前端做提示条）
+  if (path === '/api/user/credential-status' && req.method === 'GET') {
+    const addr = credSession()
+    if (!addr) {
+      res.writeHead(401, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '需要登录（钱包签名会话）', code: 'UNAUTHORIZED' }))
+      return true
+    }
+    try {
+      const st = await credentialService.enter(addr)
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ ok: true, address: addr, ...st }))
+    } catch (err) {
+      handleError(err, res)
+    }
+    return true
+  }
+
+  // GET /api/user/credential-vc - 凭证本体（从用户档案读回平台签发的那张卡，JSON 可复制）
+  if (path === '/api/user/credential-vc' && req.method === 'GET') {
+    const addr = credSession()
+    if (!addr) {
+      res.writeHead(401, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '需要登录（钱包签名会话）', code: 'UNAUTHORIZED' }))
+      return true
+    }
+    try {
+      const r = await credentialService.getClaimedCredential(addr)
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ ok: true, credential: r.credential, consistent: r.consistent }))
+    } catch (err) {
+      handleError(err, res)
+    }
+    return true
+  }
+
+  // POST /api/user/credential-scaffold - 领取第一步：平台签 VC 组装目标档案文档
+  // body {canonicalAddress}：插件 requestAccounts 的原始大小写地址（DID 文件名承载它）
+  if (path === '/api/user/credential-scaffold' && req.method === 'POST') {
+    const addr = credSession()
+    if (!addr) {
+      res.writeHead(401, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '需要登录（钱包签名会话）', code: 'UNAUTHORIZED' }))
+      return true
+    }
     const body = await parseJsonBody(req, res)
     if (!body) return true
-    let address = body.address
-    if (!validateSwtcAddress(address, res)) return true
-    address = normalizeAddress(address)
-    const token = String(body.token || '').trim()
-    if (!token) {
-      res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ error: '缺少 CWT token', code: 'BAD_REQUEST' }))
-      return true
-    }
-
-    // 验签 + 注册表授权判定（CWT 出示的核心：必须是"验签通过"的 token，不能只查 registry）
-    const result = await cwtService.verifyForAccess(token, {
-      registry: cwtStore.getRegistry(),
-      expectedAddress: address,
-    })
-    if (!result.ok || !result.valid || !result.authorized) {
-      res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(
-        JSON.stringify({
-          error: result.error || 'CWT 出示验证失败',
-          code: 'FORBIDDEN',
-        }),
-      )
-      return true
-    }
-
-    // 确保容器存在（CWT 用户与钱包签名用户走同一条创建/进入链）
-    let port
+    if (!validateSwtcAddress(body.canonicalAddress, res)) return true
     try {
-      port = await userService.ensureContainer(address)
+      const scf = await credentialService.buildClaimDocument(addr, body.canonicalAddress)
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ ok: true, ...scf }))
     } catch (err) {
-      if (err.code === 'RESOURCE_EXHAUSTED') {
-        // F1：把"缺了什么"透给前端（failedResources）并拼进文案——
-        // 「资源不足」不再是一句无信息的空话。组装与 /connect 单源共用。
-        res.writeHead(202, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify(resourceExhaustedPayload(err)))
-        return true
-      }
-      if (err.code === 'USAGE_LIMIT_REACHED') {
-        res.writeHead(202, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(
-          JSON.stringify({
-            error: err.message,
-            code: 'USAGE_LIMIT_REACHED',
-            message: `今日使用时长已达上限，请明日再试`,
-          }),
-        )
-        return true
-      }
-      throw err
+      handleError(err, res)
     }
+    return true
+  }
 
-    // 出示成功 → 换发正式会话（一次性换取：token 不再参与后续请求；CWT 入场短钥匙 30min，
-    // 过期后需重新出示 CWT，避免"切钱包后旧 URL 仍可进"）
-    const sessionToken = userSessionStore.create(address, 30 * 60 * 1000)
-    const PUBLIC_HOST = process.env.PUBLIC_HOST || CONFIG.server.publicHost
-    // 进入 URL 附带一次性 ticket：官网进入路径经网关时直接放行（平台已验证过身份），
-    // 复制 URL 直访则在 ticket 失效后走签名校验页
-    const gwTicket = tenantGateway.issueTicket(address)
-    const enterUrl =
-      `http://${PUBLIC_HOST}:${port}/` + (gwTicket ? `?gateway_ticket=${gwTicket}` : '')
-    res.writeHead(200, {
-      'content-type': 'application/json; charset=utf-8',
-      'set-cookie': `user_session=${sessionToken}; path=/; max-age=43200; httponly; samesite=strict`,
-    })
-    res.end(JSON.stringify({ ok: true, url: enterUrl, address, port }))
+  // POST /api/user/credential-upload - 领取第二步：用户插件文件签 → 验签 → relay 写 → 台账 claimed
+  // body {document, fileName, publicKey, signature}（signature=插件对 document 字节的文件签 DER hex）
+  if (path === '/api/user/credential-upload' && req.method === 'POST') {
+    const addr = credSession()
+    if (!addr) {
+      res.writeHead(401, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '需要登录（钱包签名会话）', code: 'UNAUTHORIZED' }))
+      return true
+    }
+    const body = await parseJsonBody(req, res)
+    if (!body) return true
+    try {
+      const out = await credentialService.claimUpload(addr, body)
+      dataService.logOperation('credential_claim', {
+        address: addr,
+        kind: body.document?.credentials?.slice(-1)[0]?.type?.[1] || '',
+      })
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify(out))
+    } catch (err) {
+      handleError(err, res)
+    }
+    return true
+  }
+
+  // POST /api/user/cwt-apply - 申请解除限制（必须已领取 DID 普通凭证）
+  if (path === '/api/user/cwt-apply' && req.method === 'POST') {
+    const addr = credSession()
+    if (!addr) {
+      res.writeHead(401, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '需要登录（钱包签名会话）', code: 'UNAUTHORIZED' }))
+      return true
+    }
+    const body = (await parseJsonBody(req, res)) || {}
+    try {
+      const out = await credentialService.applyCwt(addr, body)
+      dataService.logOperation('cwt_apply', { address: addr, id: out.id })
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify(out))
+    } catch (err) {
+      handleError(err, res)
+    }
+    return true
+  }
+
+  // GET /api/user/cwt-application - 本人最近一次 CWT 申请状态（账户详情展示）
+  if (path === '/api/user/cwt-application' && req.method === 'GET') {
+    const addr = credSession()
+    if (!addr) {
+      res.writeHead(401, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '需要登录（钱包签名会话）', code: 'UNAUTHORIZED' }))
+      return true
+    }
+    try {
+      const app = await credentialService.myApplication(addr)
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ ok: true, application: app }))
+    } catch (err) {
+      handleError(err, res)
+    }
     return true
   }
 

@@ -45,12 +45,6 @@ const fx = () => ({
     h3: { address: 'jaaa', expiresAt: 333 },
   },
   admin: { addresses: ['jaaa'], history: [{ action: 'add', address: 'jaaa' }], updatedAt: 9 },
-  cwtRegistry: {
-    jaaa: { usr: 'u', wallet: 'jbbb', approvedAt: 777, approvedBy: 'jccc', status: 'approved' },
-    jbbb: { usr: 'u2', wallet: 'jddd', status: 'revoked', revokedAt: 888 },
-  },
-  cwtApplications: [{ id: 'app1', status: 'pending', parsed: { address: 'jbbb' } }],
-  cwtRecords: [{ address: 'jbbb', action: 'approve', at: 555, by: 'jaaa' }],
   opsLog: [{ timestamp: 666, operation: 'admin_login', details: { address: 'jaaa' } }],
   skillsIndex: { entries: [{ name: 'sk1', version: 2 }] },
   installs: { jaaa: [{ name: 'sk1', source: 'market', contentHash: 'x'.repeat(64) }] },
@@ -59,15 +53,13 @@ const fx = () => ({
 })
 
 describe('A 组·迁移形状合同（无 DB 恒跑）', () => {
-  it('users：profile 并入 + cwtVerifiedAt 只认 approved + 缺字段归 null', () => {
+  it('users：profile 并入 + pinnedImage 保留 + 缺字段归 null', () => {
     const { users } = buildCollections(fx())
     expect(users).toHaveLength(2)
     const a = users.find((u) => u._id === 'jaaa')
-    expect(a.cwtVerifiedAt).toBe(777) // approved 的 approvedAt 冗余
     expect(a.profile).toEqual({ nickname: 'me' })
     expect(a.pinnedImage).toBe('img:1')
     const b = users.find((u) => u._id === 'jbbb')
-    expect(b.cwtVerifiedAt).toBe(null) // revoked 不算
     expect(b.tier).toBe(null) // 源缺字段 → null，不留 undefined
   })
 
@@ -81,16 +73,14 @@ describe('A 组·迁移形状合同（无 DB 恒跑）', () => {
     expect(Number(h1.expiresAt)).toBe(111)
   })
 
-  it('audit：双日志合一，时间归 at（Date，ttl_90d 生效前提），ops 拉平 actor（P6）', () => {
+  it('audit：ops 日志入表，时间归 at（Date，ttl_90d 生效前提），拉平 actor（P6）', () => {
     const { audit } = buildCollections(fx())
-    expect(audit).toHaveLength(2)
+    expect(audit).toHaveLength(1)
     const ops = audit.find((a) => a.kind === 'ops')
     expect(Number(ops.at)).toBe(666)
     expect(ops.at).toBeInstanceOf(Date)
     expect(ops.action).toBe('admin_login')
     expect(ops.actor).toBe('jaaa')
-    const cwt = audit.find((a) => a.kind === 'cwt')
-    expect(Number(cwt.at)).toBe(555)
   })
 
   it('usage：复合主键 {address,date}（P5）', () => {
@@ -104,10 +94,10 @@ describe('A 组·迁移形状合同（无 DB 恒跑）', () => {
     expect(meta.find((m) => m._id === 'admin').addresses).toEqual(['jaaa'])
   })
 
-  it('expectedCounts 覆盖 9 集合并求和', () => {
+  it('expectedCounts 覆盖 7 集合并求和', () => {
     const counts = expectedCounts(buildCollections(fx()))
-    expect(Object.keys(counts)).toHaveLength(9)
-    expect(Object.values(counts).reduce((a, b) => a + b, 0)).toBe(2 + 4 + 3 + 2 + 1 + 2 + 1 + 1 + 1)
+    expect(Object.keys(counts)).toHaveLength(7)
+    expect(Object.values(counts).reduce((a, b) => a + b, 0)).toBe(2 + 4 + 3 + 1 + 1 + 1 + 1)
   })
 
   it('readSources：空目录全部缺省为空态，不炸（仅 meta 恒有 4 单例）', () => {
@@ -118,8 +108,6 @@ describe('A 组·迁移形状合同（无 DB 恒跑）', () => {
         users: 0,
         meta: 4,
         sessions: 0,
-        cwt_registry: 0,
-        cwt_applications: 0,
         audit: 0,
         usage: 0,
         skills: 0,
@@ -133,15 +121,13 @@ describe('A 组·迁移形状合同（无 DB 恒跑）', () => {
   it('readSources：真实文件按形状读入', () => {
     const dir = mkdtempSync(join(tmpdir(), 'mig-fx-'))
     try {
-      mkdirSync(join(dir, 'data', 'cwt'), { recursive: true })
       writeFileSync(
         join(dir, 'state.json'),
         JSON.stringify({ swtcUsers: { ja1: { port: 1 } }, nextPort: 2 }),
       )
-      writeFileSync(join(dir, 'data', 'cwt', 'records.log'), '{"address":"ja1","at":7}\n坏行不炸\n')
       const c = buildCollections(readSources(dir))
       expect(c.users[0]._id).toBe('ja1')
-      expect(c.audit).toHaveLength(1)
+      expect(c.audit).toHaveLength(0)
       expect(c.meta.find((m) => m._id === 'ports').nextPort).toBe(2)
     } finally {
       rmSync(dir, { recursive: true, force: true })
@@ -190,13 +176,12 @@ describe('B 组·三态幂等与原子性', () => {
     expect(r.status).toBe('migrated')
     expect(r.stats.users).toBe(2)
     expect(r.stats.sessions).toBe(3)
-    expect(r.stats.audit).toBe(2)
+    expect(r.stats.audit).toBe(1)
     const schema = await store.col('meta').findOne({ _id: 'schema' })
     expect(schema.version).toBe(1)
-    expect(schema.sourceStats.cwt_registry).toBe(2)
     // 落库形状抽查（合同在库里的实体）
     const a = await store.col('users').findOne({ _id: 'jaaa' })
-    expect(a.cwtVerifiedAt).toBe(777)
+    expect(a.profile).toEqual({ nickname: 'me' })
     expect((await store.col('audit').findOne({ kind: 'ops' })).actor).toBe('jaaa')
     // 索引随迁移就位
     const idx = await store.col('sessions').indexes()
@@ -216,13 +201,15 @@ describe('B 组·三态幂等与原子性', () => {
     if (!skip(ctx)) return
     await resetDb()
     const broken = fx()
-    broken.cwtApplications = [
-      { id: 'dup', status: 'pending' },
-      { id: 'dup', status: 'pending' },
-    ]
+    broken.skillsIndex = {
+      entries: [
+        { name: 'dup', version: 1 },
+        { name: 'dup', version: 2 },
+      ],
+    }
     await expect(store.runMigration({ sources: broken })).rejects.toThrow()
     // 全部或无：任何集合都不该留有痕迹
-    for (const name of ['users', 'sessions', 'audit', 'cwt_applications', 'meta']) {
+    for (const name of ['users', 'sessions', 'audit', 'skills', 'meta']) {
       expect(await store.col(name).countDocuments({})).toBe(0)
     }
     const r = await store.runMigration({ sources: fx() })

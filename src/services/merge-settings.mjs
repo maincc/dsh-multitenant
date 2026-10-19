@@ -200,7 +200,10 @@ const rootJs = doc.toJS()
 const secJs = rootJs?.[section]
 const isEmpty =
   secJs === undefined ||
-  (typeof secJs === 'object' && secJs !== null && !Array.isArray(secJs) && Object.keys(secJs).length === 0)
+  (typeof secJs === 'object' &&
+    secJs !== null &&
+    !Array.isArray(secJs) &&
+    Object.keys(secJs).length === 0)
 if (isEmpty && secJs !== undefined) doc.deleteIn(path)
 
 writeDoc(doc)

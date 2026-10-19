@@ -53,7 +53,7 @@ class UserSessionStore {
 
   /** 签发会话，返回明文 token（只把 sha256 存入存储）
    *  @param {string} address 绑定的 SWTC 地址
-   *  @param {number} [ttlMs] 会话时长（默认 12h；CWT 入场等场景可传更短值） */
+   *  @param {number} [ttlMs] 会话时长（默认 12h；短时效场景可传更短值） */
   create(address, ttlMs = SESSION_TTL_MS) {
     const token = randomBytes(32).toString('hex')
     this.sessions[sha256(token)] = {

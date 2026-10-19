@@ -40,6 +40,26 @@ export async function signMessage(pluginAddress, message) {
   })
 }
 
+/**
+ * 文件签名（wodecards 文件接口专用，**IPFS 口径**）：传 `utf8(sha256(文件).hex)`
+ * 的**消息字节**（官方 @jccdex/ipfs-rpc-client 拆包定样），插件内部做前缀+哈希+DER 签。
+ * 与 swtc_signMessage（ripple 口径）不通用：wodecards ipfs-service 只认这一种。
+ */
+export async function signFileBytes(pluginAddress, bytes) {
+  return window.ccdao.request({
+    method: 'ipfs_personalSign',
+    params: [bytes, pluginAddress],
+  })
+}
+
+/** IPFS 口径配套公钥（did_DApp 与写接口同一调用；个别旧版插件无此方法时可回退 swtc_getPublicKey） */
+export async function getIpfsPublicKey(pluginAddress) {
+  return window.ccdao.request({
+    method: 'ipfs_getPublicKey',
+    params: [pluginAddress],
+  })
+}
+
 /** 取插件账户公钥（address 必须为原始大小写插件地址） */
 export async function getPublicKey(pluginAddress) {
   return window.ccdao.request({
