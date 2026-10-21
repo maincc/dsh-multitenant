@@ -210,7 +210,11 @@ async function relayRead(canonicalAddr) {
   } catch {
     return { status: 'probe-fail', doc: null }
   }
-  if (!r.ok) return { status: 'absent', doc: null }
+  // ⚠️ 事故复盘（2026-10 审计）：此前把所有非 2xx 都归 absent——relay/反代 500/502/429
+  // 被当成"档案不存在"，验真落假 missing、scaffold 误导用户去重新生成 DID。
+  // 语义按 :198 文档对齐：absent=relay 明确说没有；服务端故障/未知状态=probe-fail，
+  // 消费方（onChainVerify/buildClaimDocument/getClaimedCredential）已有保守分支接住。
+  if (!r.ok) return { status: r.status === 404 ? 'absent' : 'probe-fail', doc: null }
   try {
     const doc = JSON.parse(await r.text())
     return doc && doc.id ? { status: 'ok', doc } : { status: 'absent', doc: null }
@@ -244,11 +248,14 @@ async function relayWrite({ document, fileName, publicKeyHex, signatureDerHex, c
   } catch {
     body = null
   }
-  if (body && body.code !== 0) {
+  // ⚠️ 事故复盘（2026-10 审计）：此前 `if (body && body.code !== 0)`——body 解析
+  // 失败（网关 200+HTML/空体）时 body=null，直接放行=假成功：台账置 claimed
+  // 而档案里根本没有卡，用户永远读不到本体。成功唯一形态=可解析 JSON 且 code===0。
+  if (!body || body.code !== 0) {
     const err = new InternalError(
-      `档案写入被 relay 拒绝: ${String(body.message || body.code).slice(0, 200)}`,
+      `档案写入 relay 未确认成功（${text ? String(body?.message ?? body?.code) : '响应体不可解析'}）: ${text.slice(0, 120)}`,
     )
-    err.relayBodyCode = body.code
+    if (body) err.relayBodyCode = body.code
     throw err
   }
   return true
@@ -331,6 +338,17 @@ async function shelfCredential(vc) {
       `did:swtc:${p.did.replace(/^did:swtc:/, '')}.json`,
     )
     const read = await relayRead(canonical)
+    // ⚠️ 事故复盘（2026-10 审计）：此前 absent 与 probe-fail 合并兜底到本地快照
+    // p.profile——一次读档抖动就会用"快照+这张新卡"整篇覆写线上平台登记册，
+    // 抹掉其他所有已签发卡的登记。铁律：读失败绝不写。probe-fail 直接放弃本次
+    // 挂架（fire-and-forget 语义天然容忍：下次登录/resyncShelf 自然补登）；
+    // 只有"档案确实不存在"（absent，首次建档）才允许用本地快照起步。
+    if (read.status === 'probe-fail') {
+      console.warn(
+        `[shelf] 平台档案读档失败（网络/relay 故障），本次挂架放弃：${String(vc?.id).slice(-24)} 待下次补登`,
+      )
+      return false
+    }
     const base = read.status === 'ok' && read.doc ? read.doc : p.profile
     const subj = cardSubject({ credential: vc })
     const list = (base.credentials || [])
@@ -732,6 +750,7 @@ class CredentialService {
       renewedAt: new Date().toISOString(),
     })
     if (cred.kind === KINDS.CWT) this._markExempt(addrLower)
+    _vcCache.delete(addrLower) // 续发换卡：本体缓存随之作废（同 claimUpload，审计 #7）
     // 平台册换卡异步：不拖慢登录响应；失败不影响台账（下次登录会再试）
     shelfCredential(vc).catch(() => {})
     return {
@@ -973,6 +992,9 @@ class CredentialService {
       onChain: null, // 新卡刚落档：链上验真状态重开（登录链路会异步补验）
     })
     if (last && isDshCard(last)) await shelfCredential(last)
+    // 台账换了新卡：凭证本体缓存立即失效（否则「同步」后 60s 内展开查看仍是旧卡，
+    // 2026-10 审计 #7；此前 _vcCache.delete 全项目零调用点）
+    _vcCache.delete(addrLower)
     return { ok: true, credential: this._public(patched) }
   }
 

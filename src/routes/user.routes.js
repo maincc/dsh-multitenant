@@ -14,11 +14,7 @@ import {
 import { userSessionStore } from '../middleware/user-auth.middleware.js'
 import { normalizeAddress } from '../utils/address.js'
 import { rateLimit } from '../middleware/rate-limit.middleware.js'
-import {
-  getAdminSession,
-  getRequestAddress,
-  getSessionAddress,
-} from '../middleware/auth.middleware.js'
+import { getAdminSession, getRequestAddress } from '../middleware/auth.middleware.js'
 import { credentialService } from '../services/credential.service.js'
 import { validateSwtcAddress } from '../middleware/validate.middleware.js'
 import { NotFoundError, ForbiddenError, handleError } from '../utils/errors.js'
@@ -137,8 +133,11 @@ export async function handleUserRoutes(req, res, path) {
 
   // ════════════ v1.4 凭证体系（DID 普通凭证 / CWT 解限凭证，互斥单记录）════════════
   // 会话地址即用户身份（钱包签名登录建立的 user_session），全部端点要求登录态。
-
-  const credSession = () => getSessionAddress(req)
+  // ⚠️ 事故复盘（2026-10 审计）：这里曾误用 getSessionAddress——那是 admin_session 专用
+  // （auth.middleware.js:124），导致真实普通用户（只有 user_session）六个凭证端点整体 401，
+  // 而管理员自测因浏览器双会话全通过、service 层测试零 HTTP 用例把断链掩盖成 740 全绿。
+  // tenant.routes.js:364 曾踩过同款坑。用 getRequestAddress（admin 优先，其次 user_session）。
+  const credSession = () => getRequestAddress(req)
 
   // GET /api/user/credential-status - 进入用户中心的判定钩子：
   // 有凭证→原样；无→自动分配（legacy CWT 名单命中=直接发 CWT 解限凭证，否则 DID 普通待领取）。

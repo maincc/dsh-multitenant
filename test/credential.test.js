@@ -798,3 +798,115 @@ describe('豁免快照（usage 热路径同步判据）', () => {
     expect(credentialService.isExemptSync(OTHER)).toBe(true)
   })
 })
+
+describe('失败三态化（2026-10 全面审计回归位）', () => {
+  // 钉死三条契约：①读故障绝不折叠成"档案不存在"；②读失败绝不写平台登记册；
+  // ③relay 响应不可解析=写失败（假成功曾把台账置 claimed 而档案无卡）；
+  // ④换卡后凭证本体缓存立即作废（_vcCache.delete 此前全项目零调用点）。
+  const mkDoc = (id) => ({
+    id: `did:swtc:${CANON}`,
+    credentials: [
+      {
+        id,
+        type: ['VerifiableCredential', 'DshMemberCredential'],
+        issuer: 'did:swtc:jplatform',
+        credentialSubject: { id: `did:swtc:${ADDR}` },
+      },
+    ],
+  })
+  const uploadArgs = (id) => ({
+    document: mkDoc(id),
+    fileName: `did:swtc:${CANON}.json`,
+    publicKey: 'pub-of-test',
+    signature: '3044020',
+  })
+
+  it('relay 读 500/502 → probe-fail：验真保留上次结论，不写假 missing', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    b.creds.set(ADDR, {
+      _id: ADDR,
+      kind: 'cwt',
+      state: 'claimed',
+      source: 'approval',
+      profileDid: `did:swtc:${CANON}`,
+      vcId: 'vc-live',
+      expiresAt: new Date(Date.now() + 864e5).toISOString(),
+      onChain: { status: 'ok', checkedAt: '2026-10-01T00:00:00Z' },
+    })
+    fetchStub.mockResolvedValue({ ok: false, status: 502, text: async () => 'bad gateway' })
+    const r = await credentialService.onChainVerify(ADDR, { force: true })
+    expect(r.status).toBe('ok')
+    expect(b.creds.get(ADDR).onChain.status).toBe('ok')
+  })
+
+  it('relay 读 404 → 仍判 absent → missing 落台账（明确没有=可下结论）', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    b.creds.set(ADDR, {
+      _id: ADDR,
+      kind: 'cwt',
+      state: 'claimed',
+      source: 'approval',
+      profileDid: `did:swtc:${CANON}`,
+      vcId: 'vc-live',
+      expiresAt: new Date(Date.now() + 864e5).toISOString(),
+      onChain: { status: 'ok', checkedAt: '2026-10-01T00:00:00Z' },
+    })
+    fetchStub.mockResolvedValue({ ok: false, status: 404, text: async () => '' })
+    const r = await credentialService.onChainVerify(ADDR, { force: true })
+    expect(r.status).toBe('missing')
+    expect(b.creds.get(ADDR).onChain.status).toBe('missing')
+  })
+
+  it('领取时用户档案写入 200+HTML（不可解析）→ 抛错且台账保持 assigned（假成功回归位）', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    await credentialService.enter(ADDR)
+    fetchStub.mockResolvedValue({ ok: true, status: 200, text: async () => '<html>502</html>' })
+    await expect(credentialService.claimUpload(ADDR, uploadArgs('plat-vc'))).rejects.toThrow(
+      /未确认成功/,
+    )
+    expect(b.creds.get(ADDR).state).toBe('assigned')
+  })
+
+  it('领取成功但平台册读档 500 → 挂架放弃不写（此前用本地快照整篇覆写登记册）', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    await credentialService.enter(ADDR)
+    fetchStub.mockImplementation(async (url) => {
+      if (String(url).includes('/files/write'))
+        return { ok: true, status: 201, text: async () => '{"code":0}' }
+      return { ok: false, status: 500, text: async () => 'gateway down' } // 读=故障
+    })
+    const out = await credentialService.claimUpload(ADDR, uploadArgs('plat-vc-1'))
+    expect(out.ok).toBe(true) // 用户档案写成功，领取本身不受平台册故障拖累
+    expect(b.creds.get(ADDR).state).toBe('claimed')
+    const writes = fetchStub.mock.calls.filter((c) => String(c[0]).includes('/files/write'))
+    expect(writes).toHaveLength(1) // 仅用户档案一笔；平台册 probe-fail 未写
+  })
+
+  it('同步（再次领取）成功 → getClaimedCredential 不吃 60s 旧缓存（审计 #7）', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    await credentialService.enter(ADDR)
+    okRelay(mkDoc('plat-vc-1'))
+    await credentialService.claimUpload(ADDR, uploadArgs('plat-vc-1'))
+    const readCount = () =>
+      fetchStub.mock.calls.filter((c) => String(c[0]).includes('/files/read')).length
+    const v1 = await credentialService.getClaimedCredential(ADDR)
+    expect(v1.credential.id).toBe('plat-vc-1')
+    const n = readCount()
+    await credentialService.getClaimedCredential(ADDR)
+    expect(readCount()).toBe(n) // 60s 内命中缓存，不再读档
+    okRelay(mkDoc('plat-vc-2'))
+    await credentialService.claimUpload(ADDR, uploadArgs('plat-vc-2')) // 同步换新卡
+    const v2 = await credentialService.getClaimedCredential(ADDR)
+    expect(v2.credential.id).toBe('plat-vc-2') // 缓存未失效则返回 plat-vc-1
+  })
+})
