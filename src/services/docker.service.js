@@ -12,6 +12,143 @@ const IMAGE = process.env.DSH_TENANT_IMAGE || CONFIG.docker.image
 const STARTUP_TIMEOUT_MS = Number(process.env.STARTUP_TIMEOUT_MS || CONFIG.docker.startupTimeoutMs)
 
 /**
+ * 租户隔离网络（2026-10 全面审计 CRITICAL 修复）。
+ *
+ * 修复前所有租户容器都落在 default bridge：端口虽以 127.0.0.1 回环发布（只挡
+ * 外部，不挡桥内），租户容器自带 shell，`nc 172.17.x.x 3080` 即可直连其他租户的
+ * DSH 进程，绕过网关全部会话门禁（老镜像无 token 门禁=跨租户完全沦陷）。
+ * 方案：共享一张 enable_icc=false 的自定义 bridge——容器间数据面被 daemon 的
+ * iptables 规则丢弃，而宿主↔容器的回环映射走 docker-proxy 不受影响
+ * （2026-10-20 已 scratch 实测：宿主映射收发正常、容器互访 ICC_BLOCKED）。
+ *
+ * 存量容器随下一次重建自动迁入（restart 漂移重建/版本应用/销毁重建路径都走
+ * createContainer）；平台自己的 helper 容器用 --network container: 共享租户
+ * netns，天然继承隔离网络，不需改。
+ */
+const TENANT_NETWORK =
+  process.env.DSH_TENANT_NETWORK || CONFIG.docker.tenantNetwork || 'dsh-tenant-net'
+let _tenantNetDisabled = false
+let _tenantNet = null // Promise<void>：幂等建网，进程内只探测/创建一次
+
+/** test-only：重置建网缓存（同 setSecurityModeForTest 的隔离语义） */
+export function setTenantNetworkForTest() {
+  _tenantNet = null
+  _tenantNetDisabled = false
+}
+
+/**
+ * 启动时主动建隔离网（server 启动链调用）。不这样做的事故形态：本进程
+ * 从未供应过新容器时 lazy 建网不触发，存量容器（default bridge，容器间
+ * 互通）可被"重启容器"原样复活——修复只覆盖新容器等于没修。
+ */
+export function primeTenantNetwork() {
+  return ensureTenantNetwork()
+}
+
+/**
+ * 存量容器迁入隔离网（2026-10 审计 CRITICAL 的存量轨）。
+ * 纯网络层操作（disconnect default bridge → connect icc=false 网），
+ * 容器/卷/端口映射都不动；stop→start 之间调用，数据零丢失。
+ * 已在隔离网/他网/建网降级态一律 no-op；失败只 warn（下次重启再试）。
+ */
+export async function migrateContainerToTenantNetwork(name) {
+  try {
+    const out = await sh('docker', [
+      'inspect',
+      '--format',
+      '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}',
+      name,
+    ])
+    const nets = String(out || '')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+    if (nets.includes(TENANT_NETWORK)) return 'already'
+    if (!nets.includes('bridge')) return 'skip' // host/其他自定义网：不冒动
+    await ensureTenantNetwork()
+    if (_tenantNetDisabled) return 'skip' // 降级态不迁（目标网不存在，摘了更糟）
+    await sh('docker', ['network', 'disconnect', 'bridge', name])
+    await sh('docker', ['network', 'connect', TENANT_NETWORK, name])
+    console.log(`[docker] 存量容器已迁入隔离网：${name}（bridge → ${TENANT_NETWORK}）`)
+    return 'migrated'
+  } catch (err) {
+    console.warn(`[docker] ${name} 迁入隔离网失败（下次启动重试）:`, err.message)
+    return 'failed'
+  }
+}
+
+/**
+ * 全量迁移存量租户容器（server 启动链，primeTenantNetwork 之后调）。
+ * disconnect/connect 对 stopped/exited 容器同样有效（docker 标准热迁），
+ * 不 stop 不 rm 不动卷——存量租户在下一次平台重启即静默完成隔离。
+ */
+export async function migrateExistingContainers() {
+  let names = []
+  try {
+    const out = await sh('docker', [
+      'ps',
+      '-a',
+      '--filter',
+      'name=dsh-swtc-',
+      '--format',
+      '{{.Names}}',
+    ])
+    names = String(out || '')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+  } catch (err) {
+    console.warn('[docker] 存量容器枚举失败（跳过迁移）:', err.message)
+    return { total: 0, migrated: 0, failed: 0 }
+  }
+  let migrated = 0
+  let failed = 0
+  for (const n of names) {
+    const r = await migrateContainerToTenantNetwork(n)
+    if (r === 'migrated') migrated++
+    else if (r === 'failed') failed++
+  }
+  if (migrated || failed)
+    console.log(`[docker] 存量隔离迁移：迁入 ${migrated}，失败 ${failed}，共 ${names.length}`)
+  return { total: names.length, migrated, failed }
+}
+function ensureTenantNetwork() {
+  if (!_tenantNet) {
+    _tenantNet = (async () => {
+      try {
+        await sh('docker', [
+          'network',
+          'create',
+          '-o',
+          'com.docker.network.bridge.enable_icc=false',
+          '--label',
+          'dsh-managed=1',
+          TENANT_NETWORK,
+        ])
+        _tenantNetDisabled = false
+        console.log(`[docker] 租户隔离网络已建立：${TENANT_NETWORK}（icc=false）`)
+      } catch (err) {
+        if (/already exists|Existing network/i.test(String(err?.message || err))) {
+          _tenantNetDisabled = false
+          return
+        }
+        // 建网失败（daemon 抖动/不支持 bridge option）：本轮降级保住供应可用，
+        // 隔离缺失打在日志最亮处；失败不缓存死，下轮供应自动重试
+        console.error(
+          `[docker] ⚠️ 租户隔离网络创建失败（${String(err?.message || err).slice(0, 120)}）——` +
+            `本轮供应退回 default bridge（容器间互通，隔离降级）！下次供应自动重试；` +
+            '持续出现请检查 docker daemon 对 com.docker.network.bridge.enable_icc=false 的支持',
+        )
+        _tenantNet = null // 失败不缓存：下一轮 createContainer 重试建网
+        _tenantNetDisabled = true // 本轮 run 不带网络参数（网络不存在时带了必失败）
+        return
+      }
+    })()
+  }
+  return _tenantNet
+}
+
+/**
  * imageCapability 缓存的兜底存活时间。
  * 正常路径由 clearCapabilityCache() 显式失效（平台重建镜像后），
  * 这个 TTL 只兜"镜像被平台之外的方式换掉了"。
@@ -436,11 +573,17 @@ export class DockerService {
     // 安全参数组（auto 会在首次调用时探测，见文件头"安全参数组"注释）
     const { securityArgs, allowSecFallback } = await this._resolveSecurityArgs()
 
+    // 租户隔离网络（2026-10 审计 CRITICAL：default bridge 容器互访绕过网关）
+    await ensureTenantNetwork()
+
     const buildArgs = (secArgs, withQuota) => [
       'run',
       '-d',
       '--name',
       name,
+      // icc=false 隔离网（详见 TENANT_NETWORK 注释）；建网失败降级时不带，
+      // 由 ensureTenantNetwork 的错误日志兜底可见性
+      ...(_tenantNetDisabled ? [] : ['--network', TENANT_NETWORK]),
       '--restart',
       'unless-stopped',
       // 安全参数组说明见"安全参数组"注释块：strict = SYS_ADMIN 保留 +

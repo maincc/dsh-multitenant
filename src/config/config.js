@@ -66,6 +66,10 @@ const DEFAULTS = {
     basePort: 31000,
     maxPort: 65535,
     startupTimeoutMs: 120000,
+    // 租户隔离网络（2026-10 审计 CRITICAL）：所有租户容器落这张
+    // enable_icc=false 的自定义 bridge——容器间数据面丢弃、宿主回环映射
+    // 不受影响（default bridge 上租户 shell 可直连他人 3080 绕过网关）。
+    tenantNetwork: 'dsh-tenant-net',
     // 租户容器安全参数档位（P1-6 降权第一阶段，2026-09）：
     //   auto   默认。首次供应容器前用 strict 参数跑一次 DSH 同款 bwrap 探测：
     //          通过 → 全租户用 strict；失败 → 回落 compat 并告警（结果缓存，

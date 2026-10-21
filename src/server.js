@@ -26,6 +26,7 @@ import { fileURLToPath } from 'node:url'
 
 import { CONFIG } from './config/config.js'
 import { userService } from './services/user.service.js'
+import { primeTenantNetwork, migrateExistingContainers } from './services/docker.service.js'
 import { dataService } from './services/data.service.js'
 import { adminSessionStore } from './middleware/auth.middleware.js'
 import { userSessionStore } from './middleware/user-auth.middleware.js'
@@ -342,6 +343,16 @@ server.listen(PORT, '0.0.0.0', async () => {
   } catch (err) {
     console.error('[startup] 存储态水合失败，拒绝启动：', err.message)
     process.exit(1)
+  }
+  // 租户隔离网络（2026-10 审计 CRITICAL）：先建 icc=false 网，再把存量
+  // default bridge 容器热迁进去（disconnect/connect，不停容器不动卷）。
+  // 必须在 restoreFromDocker 之前——否则本进程"重启"存量容器时网还不对。
+  // 失败不拦启动（供应路径有 lazy 重试 + 显式告警兜底）。
+  try {
+    await primeTenantNetwork()
+    await migrateExistingContainers()
+  } catch (err) {
+    console.error('[startup] 租户隔离网络初始化失败（供应时将自动重试）：', err.message)
   }
   try {
     await userService.restoreFromDocker()

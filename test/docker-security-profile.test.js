@@ -24,6 +24,7 @@ import {
   securityArgsFor,
   setSecurityModeForTest,
   setStorageOptSupportedForTest,
+  setTenantNetworkForTest,
 } from '../src/services/docker.service.js'
 
 const calls = () => execFile.mock.calls.map((c) => c[1])
@@ -62,6 +63,7 @@ beforeEach(() => {
   // 模块级缓存逐条重置：安全档位回到"未探测"，配额支持状态清空
   setSecurityModeForTest(null)
   setStorageOptSupportedForTest(null)
+  setTenantNetworkForTest()
   delete process.env.DSH_PRIVILEGE_PROFILE
 })
 
@@ -103,12 +105,40 @@ describe('参数组形状', () => {
   })
 })
 
+describe('租户隔离网络（2026-10 全面审计 CRITICAL 回归位）', () => {
+  // default bridge 事故形态：租户容器自带 shell，可 nc 直连其他租户
+  // 172.17.x.x:3080 绕过网关全部会话门禁。修复=所有租户容器落
+  // enable_icc=false 的自定义 bridge；helper 容器（--network container:）不受影响。
+  it('createContainer 的 run 带 --network dsh-tenant-net', async () => {
+    mockDocker({ probeOk: true })
+    await dockerService.createContainer('c1', 40001, 'vol1', '/tmp/p.yml', base)
+    const run = calls().find(isRun)
+    const i = run.indexOf('--network')
+    expect(i).toBeGreaterThan(-1)
+    expect(run[i + 1]).toBe('dsh-tenant-net')
+  })
+
+  it('建网幂等：首次供应建一次（带 icc=false 桥选项），后续供应不重发', async () => {
+    mockDocker({ probeOk: true })
+    await dockerService.createContainer('c1', 40001, 'v1', '/tmp/p.yml', base)
+    const netCreates = calls().filter((a) => a[0] === 'network' && a[1] === 'create')
+    expect(netCreates).toHaveLength(1)
+    expect(netCreates[0]).toContain('com.docker.network.bridge.enable_icc=false')
+    expect(netCreates[0]).toContain('dsh-tenant-net')
+    await dockerService.createContainer('c2', 40002, 'v2', '/tmp/p.yml', base)
+    expect(calls().filter((a) => a[0] === 'network' && a[1] === 'create')).toHaveLength(1)
+  })
+})
+
 describe('auto：探测与选档', () => {
   it('首次供应先探测；探测命令 = run --rm + strict 参数 + entrypoint bwrap', async () => {
     mockDocker({ probeOk: true })
     await dockerService.createContainer('c1', 40001, 'vol1', '/tmp/p.yml', base)
 
-    const [probe, run] = calls()
+    // 用 filter 取（不再按下标解构）：createContainer 前置还有幂等
+    // network create（2026-10 icc=false 隔离网），调用序列会增长
+    const probe = calls().find(isProbe)
+    const run = calls().find(isRun)
     expect(isProbe(probe)).toBe(true)
     expect(probe).toEqual(expect.arrayContaining(['--entrypoint', 'bwrap']))
     expect(probe.slice(-BWRAP_PROBE_ARGS.length)).toEqual(BWRAP_PROBE_ARGS)
