@@ -14,10 +14,18 @@
  *   - 入仓前 frontmatter 全量校验（validateSkill），非法内容拒绝进入市场
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 
 import { tenantConfigService, SIGN_PURPOSE, buildSignedMessage } from './tenant-config.service.js'
 import { dataService } from './data.service.js'
@@ -195,9 +203,19 @@ export class SkillService {
     const dir = join(this.storeDir, name)
     mkdirSync(dir, { recursive: true })
     const file = join(dir, 'SKILL.md')
-    const tmp = `${file}.tmp.${process.pid}`
-    writeFileSync(tmp, text, 'utf8')
-    renameSync(tmp, file)
+    // tmp 名必须每写唯一（2026-10 审计）：旧版用 process.pid——租户容器内
+    // PID 恒同，同一用户并发安装同名技能时两条流共写同一 tmp 互相截断，
+    // rename 过去就是**半篇内容当完整技能落地**（pid 还会撞）。
+    const tmp = `${file}.tmp.${randomBytes(6).toString('hex')}`
+    try {
+      writeFileSync(tmp, text, 'utf8')
+      renameSync(tmp, file)
+    } catch (err) {
+      try {
+        unlinkSync(tmp)
+      } catch {} // 失败不留孤儿 tmp 污染目录
+      throw err
+    }
   }
 
   // ---------------------------------------------------------------------------
