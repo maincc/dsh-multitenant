@@ -350,8 +350,18 @@ export async function handleUserRoutes(req, res, path) {
     const url = new URL(req.url, `http://${req.headers.host}`)
     const address = url.searchParams.get('address')
     if (!validateSwtcAddress(address, res)) return true
+    // 2026-10 全面审计：此前匿名+任意地址可读——任何人可枚举任意租户的
+    // baseURL/模型清单/Provider 拓扑（侦察面 + 用户私有配置）。模型配置是
+    // 本人数据：仅本人（会话地址===目标）或管理员可读；另加 IP 限流兜底。
+    const session = getRequestAddress(req)
+    if (!rateLimit(req, res, { max: 30, keyPrefix: 'tcfg' })) return true
+    const addrLower = normalizeAddress(address)
+    if (session !== addrLower && !(session && isAdmin(session))) {
+      handleError(new ForbiddenError('只能查看自己的租户配置', 'FORBIDDEN'), res)
+      return true
+    }
     try {
-      const status = await tenantConfigService.getStatus(address)
+      const status = await tenantConfigService.getStatus(addrLower)
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(
         JSON.stringify({

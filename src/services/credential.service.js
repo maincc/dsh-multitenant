@@ -188,6 +188,32 @@ function cfgDailyMinutes() {
   return Number.isFinite(u.dailyMinutes) && u.dailyMinutes > 0 ? u.dailyMinutes : 120
 }
 
+/**
+ * claimUpload 的防假卡判据：末项卡必须 ①id 是平台 DID 签发格式 ②subject=本地址
+ * ③平台真签（SDK 验签走 DID 解析的 secp256k1 公钥）。
+ * 任何异常（含 context 拉取失败）返回 false——对"无法确认"写操作必须关门
+ * （探测失败铁律：拒绝可重试的上传，绝不让假卡进台账）。
+ */
+async function isPlatformMinted(vc, subjectAddrLower) {
+  const p = platform()
+  if (!vc || typeof vc !== 'object') return false
+  if (!String(vc.id || '').startsWith(`${p.did}#credential-`)) return false
+  if (
+    normalizeAddress(String(vc.credentialSubject?.id || '').replace(/^did:swtc:/, '')) !==
+    subjectAddrLower
+  )
+    return false
+  try {
+    const { verifyCredential, createDocumentLoader } = sdk()
+    createDocLoader() // secp256k1-2019 context 注册（与 onChainVerify 同一条路）
+    const loader = createDocumentLoader({ resolver: getSwtcResolver() })
+    const v = await verifyCredential(vc, { documentLoader: loader, compactProof: true })
+    return v?.verified === true
+  } catch {
+    return false
+  }
+}
+
 /* ───────────────────────── relay 档案读写 ───────────────────────── */
 
 export function profilePath(canonicalAddr) {
@@ -974,6 +1000,22 @@ class CredentialService {
     }
     const cred = await backend().get(addrLower)
     if (!cred) throw new BadRequestError('尚未分配凭证')
+
+    // 防假卡（2026-10 全面审计）：document 的"末项卡"是客户端组装的，文件签名
+    // 只证明"这只钱包签了这份文件"，**不证明里面有平台真签的卡**——不校验的话，
+    // 自制一张假 DshMemberCredential 追加上传，台账就会 scaffold 假卡的 id/expiresAt，
+    // 后续 onChain 验真全对假卡做。判据：末项必须是平台 DID 真签（SDK 验签）、
+    // subject=本地址、id 为平台签发格式。验签本身失败（context 拉取等）按探测失败
+    // 处理：拒绝本次上传（可重试），绝不让"无法确认"折叠成"确认合法"。
+    const lastCard = Array.isArray(document.credentials)
+      ? document.credentials[document.credentials.length - 1]
+      : null
+    if (!(await isPlatformMinted(lastCard, addrLower))) {
+      throw new BadRequestError(
+        '档案末项不是平台为本地址签发的有效凭证（请点击「存入我的数字档案」获取最新档案后原样上传；如反复失败请稍后重试）',
+      )
+    }
+
     await relayWrite({
       document,
       fileName,

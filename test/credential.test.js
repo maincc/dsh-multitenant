@@ -99,6 +99,7 @@ function fakeBackend() {
 /* SDK/平台注入：mintVC 与文件签验证的 mock 面 */
 let verifyCalls = []
 let verifyReturn = true
+let verifySdkReturn = true // SDK 卡片验签独立开关（文件签名走 verifyReturn；卡片真签=verified 额外 && 此开关）
 function installMocks(backend) {
   verifyCalls = []
   const fakeVC = (kind) => ({
@@ -127,7 +128,7 @@ function installMocks(backend) {
         proof: { type: 'EcdsaSecp256k1Signature2019', jws: 'a.b.c' },
       }),
       verifyCredential: async () => ({
-        verified: verifyReturn,
+        verified: verifyReturn && verifySdkReturn,
         errors: verifyReturn ? undefined : ['fake-bad-sig'],
       }),
       Secp256k1Keypair: class {},
@@ -154,6 +155,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', fetchStub)
   vi.mocked(l1ProfileHit).mockReset().mockResolvedValue(true)
   verifyReturn = true
+  verifySdkReturn = true
 })
 
 function okRelay(doc) {
@@ -311,7 +313,7 @@ describe('领取链路（scaffold → upload）', () => {
       id: `did:swtc:${CANON}`,
       credentials: [
         {
-          id: 'plat-vc',
+          id: 'did:swtc:jplatform#credential-t1',
           type: ['VerifiableCredential', 'DshMemberCredential'],
           issuer: 'did:swtc:jplatform',
           credentialSubject: { id: `did:swtc:${ADDR}` },
@@ -326,7 +328,7 @@ describe('领取链路（scaffold → upload）', () => {
     })
     expect(out.ok).toBe(true)
     expect(out.credential.state).toBe('claimed')
-    expect(out.credential.vcId).toBe('plat-vc') // 凭证号回写台账（前端/管理端可展示）
+    expect(out.credential.vcId).toBe('did:swtc:jplatform#credential-t1') // 凭证号回写台账（前端/管理端可展示）
     expect(out.credential.profileDid).toBe(`did:swtc:${CANON}`)
     expect(b.creds.get(ADDR).state).toBe('claimed')
     expect(b.creds.get(ADDR).profileDid).toBe(`did:swtc:${CANON}`) // 领取留档原始大小写
@@ -867,9 +869,51 @@ describe('失败三态化（2026-10 全面审计回归位）', () => {
     _resetForTest({ legacy: new Map() })
     await credentialService.enter(ADDR)
     fetchStub.mockResolvedValue({ ok: true, status: 200, text: async () => '<html>502</html>' })
-    await expect(credentialService.claimUpload(ADDR, uploadArgs('plat-vc'))).rejects.toThrow(
-      /未确认成功/,
-    )
+    await expect(
+      credentialService.claimUpload(ADDR, uploadArgs('did:swtc:jplatform#credential-t1')),
+    ).rejects.toThrow(/未确认成功/)
+    expect(b.creds.get(ADDR).state).toBe('assigned')
+  })
+
+  it('假卡上传（自制"平台凭证"）→ 拒绝：relay 一笔不写、台账保持 assigned（防假卡审计回归位）', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    await credentialService.enter(ADDR)
+    // 文档整体由攻击者钱包签（文件签名门拦不住"内容造假"——真签名+假卡片）
+    const forgedDoc = {
+      id: `did:swtc:${CANON}`,
+      credentials: [
+        {
+          id: 'did:swtc:attacker#credential-t1-forged', // 门①：id 非平台签发形态
+          type: ['VerifiableCredential', 'DshMemberCredential'],
+          issuer: 'did:swtc:jplatform',
+          credentialSubject: { id: `did:swtc:${ADDR}` },
+        },
+      ],
+    }
+    await expect(
+      credentialService.claimUpload(ADDR, {
+        document: forgedDoc,
+        fileName: `did:swtc:${CANON}.json`,
+        publicKey: 'pub-of-test',
+        signature: '3044020',
+      }),
+    ).rejects.toThrow(/平台为本地址签发的有效凭证/)
+    const writes = fetchStub.mock.calls.filter((c) => String(c[0]).includes('/files/write'))
+    expect(writes).toHaveLength(0) // 验卡门在 relayWrite 之前：假卡连 relay 都碰不到
+    expect(b.creds.get(ADDR).state).toBe('assigned')
+  })
+
+  it('平台形态 id 但 SDK 验签不过（无法确认真签）→ 同样拒绝（fail-closed）', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    await credentialService.enter(ADDR)
+    verifySdkReturn = false // 仅 SDK 卡片验签失败（文件签名仍通过——两道门要分开演）
+    await expect(
+      credentialService.claimUpload(ADDR, uploadArgs('did:swtc:jplatform#credential-t1-x')),
+    ).rejects.toThrow(/平台为本地址签发的有效凭证/)
     expect(b.creds.get(ADDR).state).toBe('assigned')
   })
 
@@ -883,7 +927,10 @@ describe('失败三态化（2026-10 全面审计回归位）', () => {
         return { ok: true, status: 201, text: async () => '{"code":0}' }
       return { ok: false, status: 500, text: async () => 'gateway down' } // 读=故障
     })
-    const out = await credentialService.claimUpload(ADDR, uploadArgs('plat-vc-1'))
+    const out = await credentialService.claimUpload(
+      ADDR,
+      uploadArgs('did:swtc:jplatform#credential-t1-1'),
+    )
     expect(out.ok).toBe(true) // 用户档案写成功，领取本身不受平台册故障拖累
     expect(b.creds.get(ADDR).state).toBe('claimed')
     const writes = fetchStub.mock.calls.filter((c) => String(c[0]).includes('/files/write'))
@@ -895,18 +942,18 @@ describe('失败三态化（2026-10 全面审计回归位）', () => {
     installMocks(b)
     _resetForTest({ legacy: new Map() })
     await credentialService.enter(ADDR)
-    okRelay(mkDoc('plat-vc-1'))
-    await credentialService.claimUpload(ADDR, uploadArgs('plat-vc-1'))
+    okRelay(mkDoc('did:swtc:jplatform#credential-t1-1'))
+    await credentialService.claimUpload(ADDR, uploadArgs('did:swtc:jplatform#credential-t1-1'))
     const readCount = () =>
       fetchStub.mock.calls.filter((c) => String(c[0]).includes('/files/read')).length
     const v1 = await credentialService.getClaimedCredential(ADDR)
-    expect(v1.credential.id).toBe('plat-vc-1')
+    expect(v1.credential.id).toBe('did:swtc:jplatform#credential-t1-1')
     const n = readCount()
     await credentialService.getClaimedCredential(ADDR)
     expect(readCount()).toBe(n) // 60s 内命中缓存，不再读档
-    okRelay(mkDoc('plat-vc-2'))
-    await credentialService.claimUpload(ADDR, uploadArgs('plat-vc-2')) // 同步换新卡
+    okRelay(mkDoc('did:swtc:jplatform#credential-t1-2'))
+    await credentialService.claimUpload(ADDR, uploadArgs('did:swtc:jplatform#credential-t1-2')) // 同步换新卡
     const v2 = await credentialService.getClaimedCredential(ADDR)
-    expect(v2.credential.id).toBe('plat-vc-2') // 缓存未失效则返回 plat-vc-1
+    expect(v2.credential.id).toBe('did:swtc:jplatform#credential-t1-2') // 缓存未失效则返回 plat-vc-1
   })
 })

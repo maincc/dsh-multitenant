@@ -568,13 +568,18 @@ describe('user.routes.js 模型配置端点', () => {
     vi.clearAllMocks()
   })
 
-  it('GET /api/user/tenant-config 返回扩展状态（key + baseURL + models，不回显 key）', async () => {
+  it('GET /api/user/tenant-config 本人会话返回扩展状态（key + baseURL + models，不回显 key）', async () => {
     tenantConfigService.getStatus.mockResolvedValue({
       apiKeyConfigured: true,
       baseURL: 'https://gw.example.com',
       models: [{ id: 'm1', name: 'M1' }],
     })
-    const req = makeReq({ method: 'GET', url: `/api/user/tenant-config?address=${TARGET_ADDR}` })
+    const token = userSessionStore.create(TARGET_ADDR, 3600_000)
+    const req = makeReq({
+      method: 'GET',
+      url: `/api/user/tenant-config?address=${TARGET_ADDR}`,
+      cookie: `user_session=${token}`,
+    })
     const res = makeRes()
 
     const handled = await handleUserRoutes(req, res, '/api/user/tenant-config')
@@ -586,6 +591,48 @@ describe('user.routes.js 模型配置端点', () => {
     expect(body.baseURL).toBe('https://gw.example.com')
     expect(body.models).toEqual([{ id: 'm1', name: 'M1' }])
     expect(JSON.stringify(body)).not.toContain('sk-')
+  })
+
+  it('GET /api/user/tenant-config 匿名/窥他人 → 403（2026-10 审计 owner-gate 回归位）', async () => {
+    // 匿名：任何人可枚举任意租户的 baseURL/模型/Provider 拓扑
+    const anonRes = makeRes()
+    await handleUserRoutes(
+      makeReq({ method: 'GET', url: `/api/user/tenant-config?address=${TARGET_ADDR}` }),
+      anonRes,
+      '/api/user/tenant-config',
+    )
+    expect(anonRes.statusCode).toBe(403)
+    expect(tenantConfigService.getStatus).not.toHaveBeenCalled()
+
+    // 别的登录用户窥探：同样 403
+    const other = 'jotheruseraaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    const token = userSessionStore.create(other, 3600_000)
+    const spyRes = makeRes()
+    await handleUserRoutes(
+      makeReq({
+        method: 'GET',
+        url: `/api/user/tenant-config?address=${TARGET_ADDR}`,
+        cookie: `user_session=${token}`,
+      }),
+      spyRes,
+      '/api/user/tenant-config',
+    )
+    expect(spyRes.statusCode).toBe(403)
+    expect(tenantConfigService.getStatus).not.toHaveBeenCalled()
+
+    // 管理员可读（运维排查路径保留）
+    tenantConfigService.getStatus.mockResolvedValue({ apiKeyConfigured: false })
+    const adminRes = makeRes()
+    await handleUserRoutes(
+      makeReq({
+        method: 'GET',
+        url: `/api/user/tenant-config?address=${TARGET_ADDR}`,
+        cookie: `admin_session=${ADMIN_TOKEN}`,
+      }),
+      adminRes,
+      '/api/user/tenant-config',
+    )
+    expect(adminRes.statusCode).toBe(200)
   })
 
   it('POST /api/user/tenant-config 透传 apiKey + baseURL + models 到 service', async () => {
