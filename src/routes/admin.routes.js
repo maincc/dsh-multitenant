@@ -26,6 +26,7 @@ import {
   requireAdminSignature,
 } from '../middleware/admin-signature.middleware.js'
 import { validateSwtcAddress } from '../middleware/validate.middleware.js'
+import { rateLimit } from '../middleware/rate-limit.middleware.js'
 import { normalizeAddress } from '../utils/address.js'
 import { BadRequestError, NotFoundError, handleError } from '../utils/errors.js'
 import { parseBody } from '../utils/parse-body.js'
@@ -241,6 +242,9 @@ export async function handleAdminRoutes(req, res, path, url) {
 
   // GET /api/admin/check - 检查管理员权限
   if (path === '/api/admin/check') {
+    // 匿名可达有正当成因（登录前预检"当前钱包是不是管理员"），但必须限流——
+    // 2026-10 审计点名它是无界的管理员名单枚举面（2026-10 审计 #5）
+    if (!rateLimit(req, res, { max: 20, keyPrefix: 'admincheck' })) return true
     const session = getAdminSession(req)
     const queryAddress = url.searchParams.get('address')
 
@@ -295,6 +299,9 @@ export async function handleAdminRoutes(req, res, path, url) {
 
   // GET /api/docker/status - 检查 Docker 状态
   if (path === '/api/docker/status') {
+    // 2026-10 审计：匿名探测 Docker 可用性（基础设施指纹）收紧为管理员专用。
+    // 前端 onMounted 首查在登录前——403 走 catch 显示"不可用"，不影响正确性。
+    if (!requireAdmin(req, res)) return true
     try {
       const available = await dockerService.isDockerAvailable()
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
@@ -1053,6 +1060,13 @@ export async function handleAdminRoutes(req, res, path, url) {
       const version = String(body.version ?? '').trim()
       if (!version) throw new BadRequestError('缺少 version')
       if (body.refreshVersions) dshVersionService.clearCache()
+
+      // 2026-10 审计修复：构建产物直接夺平台默认镜像 tag（buildImage -t IMAGE），
+      // 决定之后所有新租户用什么镜像——比已签名的 dsh/select 更重的权限此前免签。
+      // 现在当场签名，version 进绑定（"签 0.1.5 执行 0.9.9"的偷换面关掉）。
+      if (!requireAdminSignature(req, res, 'dsh/build-image', { version }, getAdminSession(req))) {
+        return true
+      }
 
       const check = await dshVersionService.isInstallable(version)
       if (!check.ok) throw new BadRequestError(check.error)

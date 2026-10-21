@@ -1503,6 +1503,11 @@ const formatBytes = (n) => {
 const pruneImages = async () => {
   const ids = [...selectedImageIds.value]
   if (!ids.length) return
+  // 2026-10 审计：不可逆删镜像（zh.js 自己警告"带 tag 旧版本删掉无法回滚"）此前零确认
+  if (
+    !(await askConfirm({ message: t('admin.confirmPruneImages', { n: ids.length }), danger: true }))
+  )
+    return
   dshPrune.value = { running: true, message: '' }
   try {
     const headers = await signAdminOperation('dsh/prune-images', { ids })
@@ -2091,15 +2096,25 @@ const runDiskScan = async () => {
 
 const shortAddr = (a) => (a ? `${a.slice(0, 8)}…${a.slice(-4)}` : '-')
 const fmtTime = (t) => (t ? new Date(t).toLocaleString() : '-')
+// 2026-10 审计：调配额会当场 stop→update→start 该租户容器（别人正在用的会话被断）。
+// 此前既无确认也无签名——后端已收进签名白名单（binding=address:tier），
+// 这里补危险确认，动作进 run 由弹窗 busy 锁防连点。
 const upgradeUser = async (address, tier) => {
   if (tier > maxTier.value) return
-  try {
-    await axios.post(`/api/upgrade/${address}`, { tier })
-    await fetchData()
-    toast(t('admin.upgradeOk'))
-  } catch (err) {
-    toast(t('admin.upgradeFail', { err: err.response?.data?.error || err.message }))
-  }
+  await askConfirm({
+    message: t('admin.confirmTierChange', { addr: `${address.slice(0, 10)}…`, tier }),
+    danger: true,
+    run: async () => {
+      try {
+        const headers = await signAdminOperation('user-upgrade', { address, tier })
+        await axios.post(`/api/upgrade/${address}`, { tier }, { headers })
+        await fetchData()
+        toast(t('admin.upgradeOk'))
+      } catch (err) {
+        toast(t('admin.upgradeFail', { err: err.response?.data?.error || err.message }))
+      }
+    },
+  })
 }
 
 const downgradeUser = async (address, tier) => {
@@ -2490,11 +2505,22 @@ const startDshPolling = () => {
   }, 2000)
 }
 
-/** 构建指定 DSH 版本的新镜像 */
+/** 构建指定 DSH 版本的新镜像
+ *  2026-10 审计：构建产物直接成为平台默认镜像（决定之后所有新租户），
+ *  后端已要求当场签名（version 进绑定）——这里补危险确认 + 签名头 */
 const startImageUpgrade = async () => {
   if (!dshSelectedVersion.value) return
+  const version = dshSelectedVersion.value
+  if (
+    !(await askConfirm({
+      message: t('admin.confirmBuildImage', { v: version }),
+      danger: true,
+    }))
+  )
+    return
   try {
-    await axios.post('/api/admin/dsh/image', { version: dshSelectedVersion.value })
+    const headers = await signAdminOperation('dsh/build-image', { version })
+    await axios.post('/api/admin/dsh/image', { version }, { headers })
     dshBuild.value = {
       running: true,
       version: dshSelectedVersion.value,
@@ -2572,8 +2598,16 @@ const previewApplyAll = async () => {
   }
 }
 
-/** 应用当前镜像到单个租户（重建容器，保留数据卷） */
+/** 应用当前镜像到单个租户（重建容器，保留数据卷）
+ *  2026-10 审计：补危险确认（重建=该租户会话中断；签名已在） */
 const applyOne = async (address) => {
+  if (
+    !(await askConfirm({
+      message: t('admin.confirmApplyOne', { addr: `${address.slice(0, 10)}…` }),
+      danger: true,
+    }))
+  )
+    return
   dshApplyResults.value = []
   // 同步请求（后端重建完才返回），必须给用户明确的"正在执行"反馈。
   // phase 显示**目标版本**（这次要装上的），不是租户当前版本 —— 免得被读成
@@ -2597,25 +2631,33 @@ const applyOne = async (address) => {
   }
 }
 
-/** 批量应用（后台跑，轮询进度） */
+/** 批量应用（后台跑，轮询进度）
+ *  2026-10 审计：重建全部租户容器（在用会话全断）只有签名没有确认——补危险
+ *  确认；zh.js 文案自己写着"建议先预览"，预览/执行必须有两道不同的动作 */
 const applyAllStale = async () => {
-  dshApplyResults.value = []
-  try {
-    const headers = await signAdminOperation('dsh/apply', { all: true })
-    const res = await axios.post('/api/admin/dsh/apply', { all: true }, { headers })
-    dshApply.value = {
-      running: true,
-      total: res.data.total || 0,
-      completed: 0,
-      results: [],
-      finishedAt: null,
-    }
-    // 批量在服务端后台跑，遮罩持续到轮询发现任务结束
-    dshUpdate.value = { kind: 'batch', address: '', phase: '' }
-    startDshPolling()
-  } catch (err) {
-    error.value = friendlyPluginError(err)
-  }
+  await askConfirm({
+    message: t('admin.confirmApplyAllStale', { n: dshStatus.value?.staleTenants ?? 0 }),
+    danger: true,
+    run: async () => {
+      dshApplyResults.value = []
+      try {
+        const headers = await signAdminOperation('dsh/apply', { all: true })
+        const res = await axios.post('/api/admin/dsh/apply', { all: true }, { headers })
+        dshApply.value = {
+          running: true,
+          total: res.data.total || 0,
+          completed: 0,
+          results: [],
+          finishedAt: null,
+        }
+        // 批量在服务端后台跑，遮罩持续到轮询发现任务结束
+        dshUpdate.value = { kind: 'batch', address: '', phase: '' }
+        startDshPolling()
+      } catch (err) {
+        error.value = friendlyPluginError(err)
+      }
+    },
+  })
 }
 
 onMounted(async () => {

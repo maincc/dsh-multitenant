@@ -50,6 +50,16 @@ export const ADMIN_SIGNED_OPERATIONS = Object.freeze([
   // v1.4 凭证体系：批准=签发 CWT 解除凭证（改变用户限制语义），签目标地址绑定
   'cwt/approve',
   'cwt/reject',
+  // 2026-10 全面审计：补齐"代他人"的破坏性/打扰型操作。
+  // 治理原则=对称性：remove/force-stop 要签名，而更重的 leave（销毁他人容器）、
+  // 夺默认镜像的 dsh/image、停他人服务的 upgrade/downgrade/restart/stop 却免签——
+  // 白名单覆盖不完整时，攻击面恰好挑走最重的那几个（同站 CSRF 场景浏览器可代发）。
+  'leave',
+  'restart',
+  'stop',
+  'user-upgrade',
+  'user-downgrade',
+  'dsh/build-image',
 ])
 
 /** 待执行的管理操作挑战（地址 → 记录）。与 tenantConfigService 的挑战池同样是一次性 */
@@ -83,6 +93,27 @@ export function buildBinding(operation, payload = {}) {
     case 'delete-volume':
     case 'reset':
       return addr ? `${operation}:address=${addr}` : null
+    // 2026-10 审计补：代他人操作的容器控制（仅"管理员对他人"路径要求签名，
+    // 本人对自己的操作在路由层直接放行，不到这里）
+    case 'leave':
+    case 'restart':
+    case 'stop':
+      return addr ? `${operation}:address=${addr}` : null
+    case 'user-upgrade':
+    case 'user-downgrade': {
+      // tier 决定"重启成什么配额"，不签进去就成了"签 1 档执行 3 档"的偷换面
+      const tier =
+        p.tier !== undefined && p.tier !== null && String(p.tier).trim()
+          ? String(p.tier).trim()
+          : ''
+      return addr && tier ? `${operation}:address=${addr}:tier=${tier}` : null
+    }
+    case 'dsh/build-image': {
+      // 构建产物直接夺平台默认镜像 tag（影响之后所有新租户）——version 必须签进去。
+      // 与 dshVersionService.isInstallable 同口径：这里只做字符面收敛，语义校验在路由。
+      const v = p.version ? String(p.version).trim() : ''
+      return v && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(v) ? `dsh/build-image:version=${v}` : null
+    }
     case 'remove':
       // keepVolume 会改变"数据卷是否保留"这一破坏性语义，必须签进去
       return addr ? `remove:address=${addr}:keepVolume=${p.keepVolume === true ? '1' : '0'}` : null

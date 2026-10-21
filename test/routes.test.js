@@ -57,6 +57,7 @@ vi.mock('../src/services/user.service.js', () => ({
     destroyContainer: vi.fn(),
     restartContainer: vi.fn(),
     resetContainer: vi.fn(),
+    upgradeContainer: vi.fn(), // 2026-10 审计：/api/upgrade 加签名门后需要的 spy
     getUserInfo: vi.fn(),
     getAllUsers: vi.fn(),
     state: { swtcUsers: {} },
@@ -169,7 +170,9 @@ async function makeSignedReq(base, operation, payload) {
   const { nonce, message } = JSON.parse(chalRes.body)
   return makeReq({
     ...base,
-    body: undefined,
+    // 默认不带 body（force-stop/remove 等不读体的端点用签名头即可）；
+    // 需要请求体的端点（如 upgrade 的 tier）由调用方在 base 里传 body 保留
+    body: base.body,
     // 签名材料走请求头（与前端一致）
     'x-admin-nonce': nonce,
     'x-admin-signature': `sig:${message}`,
@@ -495,11 +498,16 @@ describe('tenant.routes.js remove / restart 错误码', () => {
     userService.restartContainer.mockRejectedValue(
       new NotFoundError(`Container dsh-swtc-${TARGET_ADDR} not found`),
     )
-    const req = makeReq({
-      method: 'POST',
-      url: `/api/user/${TARGET_ADDR}/restart`,
-      cookie: `admin_session=${ADMIN_TOKEN}`,
-    })
+    // 管理员代他人重启 → 2026-10 审计起需当场签名（与 force-stop 对称）
+    const req = await makeSignedReq(
+      {
+        method: 'POST',
+        url: `/api/user/${TARGET_ADDR}/restart`,
+        cookie: `admin_session=${ADMIN_TOKEN}`,
+      },
+      'restart',
+      { address: TARGET_ADDR },
+    )
     const res = makeRes()
 
     const handled = await handleTenantRoutes(
@@ -515,11 +523,15 @@ describe('tenant.routes.js remove / restart 错误码', () => {
 
   it('restart 成功返回 200', async () => {
     userService.restartContainer.mockResolvedValue({ ok: true, status: 'restarted' })
-    const req = makeReq({
-      method: 'POST',
-      url: `/api/user/${TARGET_ADDR}/restart`,
-      cookie: `admin_session=${ADMIN_TOKEN}`,
-    })
+    const req = await makeSignedReq(
+      {
+        method: 'POST',
+        url: `/api/user/${TARGET_ADDR}/restart`,
+        cookie: `admin_session=${ADMIN_TOKEN}`,
+      },
+      'restart',
+      { address: TARGET_ADDR },
+    )
     const res = makeRes()
 
     const handled = await handleTenantRoutes(
@@ -767,5 +779,180 @@ describe('网关门禁会话（TTL 分权 + logout 吊销）', () => {
     )
     expect(handled).toBe(true)
     expect(JSON.parse(res.body).address).toBeNull()
+  })
+})
+
+describe('容器控制签名对称性（2026-10 全面审计回归位）', () => {
+  // 事故形态：remove/force-stop 要签名，而更重的 /leave（GET 即销毁他人容器）与
+  // restart/stop/upgrade 免签免留痕——同站 CSRF（租户页驱动管理员浏览器）可成串停/毁。
+  // 钉三条契约：代他人必签、本人免签（日常流不弹窗）、免签必 403 不落服务层。
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockChallengeFlow()
+  })
+
+  it('管理员免签 restart 他人 → 403 SIGNATURE_REQUIRED，不触服务层', async () => {
+    const req = makeReq({
+      method: 'POST',
+      url: `/api/user/${TARGET_ADDR}/restart`,
+      cookie: `admin_session=${ADMIN_TOKEN}`,
+    })
+    const res = makeRes()
+    await handleTenantRoutes(
+      req,
+      res,
+      `/api/user/${TARGET_ADDR}/restart`,
+      new URL(`http://127.0.0.1:8090/api/user/${TARGET_ADDR}/restart`),
+    )
+    expect(res.statusCode).toBe(403)
+    expect(JSON.parse(res.body).code).toBe('SIGNATURE_REQUIRED')
+    expect(userService.restartContainer).not.toHaveBeenCalled()
+  })
+
+  it('管理员带签 restart 他人 → 200 + 审计留痕', async () => {
+    userService.restartContainer.mockResolvedValue({ ok: true })
+    const req = await makeSignedReq(
+      {
+        method: 'POST',
+        url: `/api/user/${TARGET_ADDR}/restart`,
+        cookie: `admin_session=${ADMIN_TOKEN}`,
+      },
+      'restart',
+      { address: TARGET_ADDR },
+    )
+    const res = makeRes()
+    await handleTenantRoutes(
+      req,
+      res,
+      `/api/user/${TARGET_ADDR}/restart`,
+      new URL(`http://127.0.0.1:8090/api/user/${TARGET_ADDR}/restart`),
+    )
+    expect(res.statusCode).toBe(200)
+    expect(dataService.logOperation).toHaveBeenCalledWith(
+      'admin_restart_user',
+      expect.objectContaining({ address: TARGET_ADDR }),
+    )
+  })
+
+  it('本人 user_session restart 自己 → 免签直达（防未来过度签名）', async () => {
+    const token = userSessionStore.create(TARGET_ADDR, 3600_000)
+    userService.restartContainer.mockResolvedValue({ ok: true })
+    const req = makeReq({
+      method: 'POST',
+      url: `/api/user/${TARGET_ADDR}/restart`,
+      cookie: `user_session=${token}`,
+    })
+    const res = makeRes()
+    await handleTenantRoutes(
+      req,
+      res,
+      `/api/user/${TARGET_ADDR}/restart`,
+      new URL(`http://127.0.0.1:8090/api/user/${TARGET_ADDR}/restart`),
+    )
+    expect(res.statusCode).toBe(200)
+    expect(dataService.logOperation).toHaveBeenCalledWith(
+      'user_restart',
+      expect.objectContaining({ address: TARGET_ADDR }),
+    )
+  })
+
+  it('免签 GET /leave/他人（CSRF 头号入口）→ 403，容器没被毁', async () => {
+    const req = makeReq({
+      url: `/leave/${TARGET_ADDR}`,
+      cookie: `admin_session=${ADMIN_TOKEN}`,
+    })
+    const res = makeRes()
+    const handled = await handleTenantRoutes(
+      req,
+      res,
+      `/leave/${TARGET_ADDR}`,
+      new URL(`http://127.0.0.1:8090/leave/${TARGET_ADDR}`),
+    )
+    expect(handled).toBe(true)
+    expect(res.statusCode).toBe(403)
+    expect(JSON.parse(res.body).code).toBe('SIGNATURE_REQUIRED')
+    expect(userService.destroyContainer).not.toHaveBeenCalled()
+  })
+
+  it('带签 GET /leave/他人 → 200 + admin_leave_user 留痕', async () => {
+    userService.destroyContainer.mockResolvedValue({ ok: true })
+    const req = await makeSignedReq(
+      { url: `/leave/${TARGET_ADDR}`, cookie: `admin_session=${ADMIN_TOKEN}` },
+      'leave',
+      { address: TARGET_ADDR },
+    )
+    const res = makeRes()
+    await handleTenantRoutes(
+      req,
+      res,
+      `/leave/${TARGET_ADDR}`,
+      new URL(`http://127.0.0.1:8090/leave/${TARGET_ADDR}`),
+    )
+    expect(res.statusCode).toBe(200)
+    expect(userService.destroyContainer).toHaveBeenCalledWith(TARGET_ADDR)
+    expect(dataService.logOperation).toHaveBeenCalledWith(
+      'admin_leave_user',
+      expect.objectContaining({ address: TARGET_ADDR }),
+    )
+  })
+
+  it('免签 POST /api/upgrade/他人 → 403（tier 变更当场重启他人容器，必签）', async () => {
+    // swtcUsers 里有目标用户（走到签名门）
+    userService.state.swtcUsers = { [TARGET_ADDR]: { tier: 1 } }
+    const req = makeReq({
+      method: 'POST',
+      url: `/api/upgrade/${TARGET_ADDR}`,
+      cookie: `admin_session=${ADMIN_TOKEN}`,
+      body: { tier: 2 },
+    })
+    const res = makeRes()
+    await handleUserRoutes(req, res, `/api/upgrade/${TARGET_ADDR}`)
+    expect(res.statusCode).toBe(403)
+    expect(JSON.parse(res.body).code).toBe('SIGNATURE_REQUIRED')
+    expect(userService.upgradeContainer).not.toHaveBeenCalled()
+    delete userService.state.swtcUsers
+  })
+
+  it('带签 /api/upgrade/他人 tier=2 → 200 + admin_tier_change 留痕', async () => {
+    userService.state.swtcUsers = { [TARGET_ADDR]: { tier: 1 } }
+    userService.upgradeContainer.mockResolvedValue({ ok: true, tier: 2 })
+    const req = await makeSignedReq(
+      {
+        method: 'POST',
+        url: `/api/upgrade/${TARGET_ADDR}`,
+        cookie: `admin_session=${ADMIN_TOKEN}`,
+        body: { tier: 2 },
+      },
+      'user-upgrade',
+      { address: TARGET_ADDR, tier: 2 },
+    )
+    const res = makeRes()
+    await handleUserRoutes(req, res, `/api/upgrade/${TARGET_ADDR}`)
+    expect(res.statusCode).toBe(200)
+    expect(dataService.logOperation).toHaveBeenCalledWith(
+      'admin_tier_change',
+      expect.objectContaining({ address: TARGET_ADDR, tier: '2' }),
+    )
+    delete userService.state.swtcUsers
+  })
+
+  it('签 1 档执行 3 档 → binding 不一致拒签（偷换回归位）', async () => {
+    userService.state.swtcUsers = { [TARGET_ADDR]: { tier: 1 } }
+    const signedFor1 = await makeSignedReq(
+      {
+        method: 'POST',
+        url: `/api/upgrade/${TARGET_ADDR}`,
+        cookie: `admin_session=${ADMIN_TOKEN}`,
+        body: { tier: 3 },
+      },
+      'user-upgrade',
+      { address: TARGET_ADDR, tier: 1 },
+    )
+    const res = makeRes()
+    await handleUserRoutes(signedFor1, res, `/api/upgrade/${TARGET_ADDR}`)
+    expect(res.statusCode).toBe(403)
+    expect(JSON.parse(res.body).code).toBe('SIGNATURE_MISMATCH')
+    expect(userService.upgradeContainer).not.toHaveBeenCalled()
+    delete userService.state.swtcUsers
   })
 })

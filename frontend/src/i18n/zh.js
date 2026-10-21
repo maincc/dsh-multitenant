@@ -568,6 +568,15 @@ export default {
     //      ('admin.refreshAuto')，键此前缺失导致 UI 直接显示裸键名） ----
     refresh: '🔄 刷新',
     refreshAuto: '每 {n} 秒自动刷新（可在 config.json 的 admin.refreshIntervalMs 调整）',
+    // ---- 危险操作确认文案（2026-10 审计补齐：重操作此前无模态确认） ----
+    confirmBuildImage:
+      '构建 {v} 为新的默认租户镜像？此后所有**新租户**都跑在这个镜像上（存量租户不受影响，直到重建）。需要钱包当场签名。',
+    confirmTierChange:
+      '把 {addr} 的配额调整到 {tier} 档？该租户容器会**立即重启**（正在使用的会话会中断）。需要钱包当场签名。',
+    confirmApplyAllStale:
+      '批量重建 {n} 个租户的容器以应用新镜像？所有**在用会话都会中断**；建议先用「预览」逐个确认影响面。',
+    confirmApplyOne: '重建 {addr} 的容器（应用所选镜像）？该租户正在使用的会话会中断。',
+    confirmPruneImages: '彻底删除选中的 {n} 个镜像？删除不可逆，带标签的旧版本删掉后无法回滚。',
     // ---- 系统管理侧栏（与 React 原型稿一致） ----
     tabOverview: '系统概览',
     tabUsers: '用户管理',

@@ -528,6 +528,8 @@ describe('POST /api/admin/dsh/image', () => {
         url: '/api/admin/dsh/image',
         cookie: adminCookie(),
         body: { version: '9.9.9' },
+        // 2026-10 审计：构建夺默认镜像 → 当场签名（version 进 binding）
+        headers: await adminSignatureHeaders('dsh/build-image', { version: '9.9.9' }),
       }),
       res,
       '/api/admin/dsh/image',
@@ -535,6 +537,23 @@ describe('POST /api/admin/dsh/image', () => {
 
     expect(res.statusCode).toBe(400)
     expect(json(res).error).toMatch(/不存在/)
+    expect(dockerService.buildImage).not.toHaveBeenCalled()
+  })
+
+  it('免签构建 → 403 SIGNATURE_REQUIRED（2026-10 审计白名单补齐回归位）', async () => {
+    const res = makeRes()
+    await handleAdminRoutes(
+      makeReq({
+        method: 'POST',
+        url: '/api/admin/dsh/image',
+        cookie: adminCookie(),
+        body: { version: '0.1.6-alpha.1' },
+      }),
+      res,
+      '/api/admin/dsh/image',
+    )
+    expect(res.statusCode).toBe(403)
+    expect(json(res).code).toBe('SIGNATURE_REQUIRED')
     expect(dockerService.buildImage).not.toHaveBeenCalled()
   })
 
@@ -550,6 +569,7 @@ describe('POST /api/admin/dsh/image', () => {
           url: '/api/admin/dsh/image',
           cookie: adminCookie(),
           body: { version: '0.1.6-alpha.1' },
+          headers: await adminSignatureHeaders('dsh/build-image', { version: '0.1.6-alpha.1' }),
         }),
         res,
         '/api/admin/dsh/image',
@@ -571,6 +591,7 @@ describe('POST /api/admin/dsh/image', () => {
         url: '/api/admin/dsh/image',
         cookie: adminCookie(),
         body: { version: '0.1.6-alpha.1' },
+        headers: await adminSignatureHeaders('dsh/build-image', { version: '0.1.6-alpha.1' }),
       }),
       res,
       '/api/admin/dsh/image',

@@ -241,7 +241,7 @@ export async function handleTenantRoutes(req, res, path, url) {
   // GET /leave/<address>：显式销毁指定 SWTC 用户的容器
   // （security-hardening-plan P0-2：本人或管理员；前端当前无调用方，不影响 UX）
   if (path.startsWith('/leave/')) {
-    const { getRequestAddress } = await import('../middleware/auth.middleware.js')
+    const { getRequestAddress, getAdminSession } = await import('../middleware/auth.middleware.js')
     const session = getRequestAddress(req)
     const isAdminUser = session && isAdmin(session)
 
@@ -257,8 +257,26 @@ export async function handleTenantRoutes(req, res, path, url) {
       return true
     }
 
+    // 2026-10 审计修复：GET 即销毁 + 免签 + 无留痕 三合一曾是同站 CSRF 的头号
+    // 入口（恶意租户页可对管理员浏览器发一次 GET 就毁掉任意他人容器）。
+    // 本人销毁自己的容器维持免签（自己的数据自己的会话，历史契约）；
+    // **管理员代他人销毁必须当场钱包签名**（与 remove/force-stop 对称，
+    // 钱包弹窗无法被页面 JS 伪造，同站驱动就此失效）。全部路径进审计。
+    if (session !== address) {
+      const { requireAdminSignature, attachAdminSignature } =
+        await import('../middleware/admin-signature.middleware.js')
+      attachAdminSignature(req)
+      if (!requireAdminSignature(req, res, 'leave', { address }, getAdminSession(req))) {
+        return true
+      }
+    }
+
     try {
       const result = await userService.destroyContainer(address)
+      dataService.logOperation(session === address ? 'user_leave' : 'admin_leave_user', {
+        address,
+        operator: session,
+      })
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify(result))
     } catch (err) {
@@ -300,8 +318,25 @@ export async function handleTenantRoutes(req, res, path, url) {
       return true
     }
 
+    // 2026-10 审计：管理员**代他人**重启要当场签名（与 force-stop 对称——
+    // 同源能力不能一个要签一个免签；同站 CSRF 场景重启=断他人会话）。
+    // 本人重启自己的容器维持免签（插件装完重启是日常流，弹窗不可接受）。留痕补齐。
+    if (session !== address) {
+      const { requireAdminSignature, attachAdminSignature } =
+        await import('../middleware/admin-signature.middleware.js')
+      const { getAdminSession } = await import('../middleware/auth.middleware.js')
+      attachAdminSignature(req)
+      if (!requireAdminSignature(req, res, 'restart', { address }, getAdminSession(req))) {
+        return true
+      }
+    }
+
     try {
       const result = await userService.restartContainer(address)
+      dataService.logOperation(session === address ? 'user_restart' : 'admin_restart_user', {
+        address,
+        operator: session,
+      })
       if (!res.headersSent) {
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify(result))
@@ -343,8 +378,23 @@ export async function handleTenantRoutes(req, res, path, url) {
       return true
     }
 
+    // 2026-10 审计：同 restart——管理员代他人停止（在用租户被断）需当场签名；本人免签。
+    if (session !== address) {
+      const { requireAdminSignature, attachAdminSignature } =
+        await import('../middleware/admin-signature.middleware.js')
+      const { getAdminSession } = await import('../middleware/auth.middleware.js')
+      attachAdminSignature(req)
+      if (!requireAdminSignature(req, res, 'stop', { address }, getAdminSession(req))) {
+        return true
+      }
+    }
+
     try {
       const result = await userService.stopContainerForUser(address)
+      dataService.logOperation(session === address ? 'user_stop' : 'admin_stop_user', {
+        address,
+        operator: session,
+      })
       if (!res.headersSent) {
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify(result))

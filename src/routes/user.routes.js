@@ -423,9 +423,9 @@ export async function handleUserRoutes(req, res, path) {
     return true
   }
 
-  // POST /api/upgrade/:address - 升级用户配额
+  // POST /api/upgrade/:address - 调整用户配额（升/降双向；立即 stop→update→start 目标容器）
   if (path.startsWith('/api/upgrade/') && req.method === 'POST') {
-    const { requireAdmin } = await import('../middleware/auth.middleware.js')
+    const { requireAdmin, getAdminSession } = await import('../middleware/auth.middleware.js')
     if (!requireAdmin(req, res)) return
 
     let address = path.slice('/api/upgrade/'.length)
@@ -450,7 +450,24 @@ export async function handleUserRoutes(req, res, path) {
         return true
       }
 
+      // 2026-10 全面审计修复：本端点会**当场重启他人正在用的容器**（危害=force-stop
+      // 同级），此前既无确认弹窗也无当场签名，是 CSRF/误触面上最重的漏网端点。
+      // 签名绑定 address:tier——防"签 1 档执行 3 档"偷换；操作进审计。
+      const { requireAdminSignature, attachAdminSignature } =
+        await import('../middleware/admin-signature.middleware.js')
+      attachAdminSignature(req)
+      if (
+        !requireAdminSignature(req, res, 'user-upgrade', { address, tier }, getAdminSession(req))
+      ) {
+        return true
+      }
+
       const result = await userService.upgradeContainer(address, tier)
+      dataService.logOperation('admin_tier_change', {
+        address,
+        operator: getAdminSession(req),
+        tier: String(tier),
+      })
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify({ ok: true, ...result }))
     } catch (err) {
