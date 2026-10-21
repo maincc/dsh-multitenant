@@ -1573,9 +1573,16 @@ let lastFetchAt = 0
  *  想改成 5 分钟只需改 config.json 的 admin.refreshIntervalMs 并重启服务。 */
 const refreshIntervalMs = ref(15000)
 
-/** 停止轮询 */
+/** 停止轮询
+ *  ⚠️ 事故复盘（2026-10 审计 P0）：这里曾写成 `stopPolling()`（调用自身、
+ *  没有 clearInterval）——源码运行是无限递归 RangeError（onMounted 被 catch 吞掉后
+ *  把合法管理员误判成"无权限"页）；生产 bundle 被压缩器折叠成空函数，登出/切账户/
+ *  离开页面都停不掉 15 秒轮询，且每次 startPolling 叠加一个新定时器。 */
 const stopPolling = () => {
-  stopPolling()
+  if (dataRefreshInterval) {
+    clearInterval(dataRefreshInterval)
+    dataRefreshInterval = null
+  }
 }
 
 /**

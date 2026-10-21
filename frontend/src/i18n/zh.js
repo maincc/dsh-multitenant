@@ -130,6 +130,7 @@ export default {
   // ---------- 以下视图文案为后续滚动迁移目标 ----------
   user: {
     // ---- 用户中心侧栏（与 React 原型稿一致） ----
+    loading: '加载中…', // 2026-10 审计补键：凭证 JSON 展开时引用，此前显示裸键名
     tabAccount: '账户信息',
     tabModel: '模型配置',
     tabContainer: '容器管理',
@@ -563,6 +564,10 @@ export default {
   },
 
   admin: {
+    // ---- 刷新控件（2026-10 审计补键：模板 15 处引用 $t('admin.refresh') /
+    //      ('admin.refreshAuto')，键此前缺失导致 UI 直接显示裸键名） ----
+    refresh: '🔄 刷新',
+    refreshAuto: '每 {n} 秒自动刷新（可在 config.json 的 admin.refreshIntervalMs 调整）',
     // ---- 系统管理侧栏（与 React 原型稿一致） ----
     tabOverview: '系统概览',
     tabUsers: '用户管理',
