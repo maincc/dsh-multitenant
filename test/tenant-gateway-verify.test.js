@@ -320,14 +320,30 @@ describe('tenantGateway.listen：绑定结果可见性', () => {
     }
   })
 
-  it('同端口重复 listen → 幂等成功（重启/重绑场景）', async () => {
+  it('同端口同租户重复 listen → 幂等成功（重启/重绑场景）', async () => {
     const port = 39600 + Math.floor(Math.random() * 300)
-    const other = 'jga9j9tkqtbcuohe2zqhvffbguved6o9or'
 
     await tenantGateway.listen(port, 39950, OWNER)
     expect(tenantGateway.ownerOf(port)).toBe(OWNER)
 
-    // listen 内部会 close(port) 再重绑，因此同端口应成功并换主
+    await expect(tenantGateway.listen(port, 39951, OWNER)).resolves.toBeUndefined()
+    expect(tenantGateway.ownerOf(port)).toBe(OWNER)
+  })
+
+  it('同端口异租户 listen → 拒绝抢占，原监听保持服务（2026-10 审计 owner 门）', async () => {
+    // 旧契约是"换主成功"——那正是跨租户劫持：B 的重绑静默关掉 A 的监听，
+    // A 的用户流量被转到 B 的容器上。现在端口归属必须显式移交（先 close）。
+    const port = 39600 + Math.floor(Math.random() * 300)
+    const other = 'jother000tenant000000000000000000' // 必须 ≠ OWNER：同主是幂等重绑，异主才走拒绝
+
+    await tenantGateway.listen(port, 39950, OWNER)
+    await expect(tenantGateway.listen(port, 39951, other)).rejects.toMatchObject({
+      code: 'PORT_TAKEN',
+    })
+    expect(tenantGateway.ownerOf(port)).toBe(OWNER) // 原主未被撼动
+
+    // 显式移交后（destroy/close 语义）新主才能上
+    tenantGateway.close(port)
     await expect(tenantGateway.listen(port, 39951, other)).resolves.toBeUndefined()
     expect(tenantGateway.ownerOf(port)).toBe(other)
   })

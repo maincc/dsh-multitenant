@@ -184,6 +184,101 @@ describe('finalizeTenant：网关 bind 失败 → 保留容器但标记 stopped'
     expect(rec.internalPort).toBe(INTERNAL_PORT)
     expect(dataService.saveState).toHaveBeenCalled()
   })
+
+  it('PORT_TAKEN（另一租户在服务该端口）→ 同样 stopped，但必须弃号（留号=重连永撞）', async () => {
+    injectUser()
+
+    const taken = new Error('端口正为另一租户服务')
+    taken.code = 'PORT_TAKEN'
+    tenantGateway.listen.mockRejectedValue(taken)
+
+    await expect(userService.finalizeTenant(ADDR, NAME, PORT, INTERNAL_PORT)).rejects.toThrow(
+      /另一租户/,
+    )
+
+    const rec = userService.state.swtcUsers[ADDR]
+    expect(rec.containerStatus).toBe('stopped')
+    expect(rec.port).toBeNull() // 弃号：下一次 ensureContainer 领新端口
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 2026-10 全面审计：端口**领号即预占**（nextPort 同步推进）。
+// 此前只在 createContainer 成功后才推进——并发开通的两个租户读到同一个号，
+// 各自建容器都成功，撞点后移到网关 listen（旧 listen 无条件 close 抢占，
+// 即跨租户劫持）。预占让发放本身原子。
+// ---------------------------------------------------------------------------
+describe('ensureContainer：nextPort 领号即预占', () => {
+  function injectFresh(addr) {
+    userService.state.swtcUsers[addr] = {
+      tier: 1,
+      createdAt: Date.now(),
+      lastSeenAt: Date.now(),
+      containerStatus: 'destroyed',
+    }
+    return userService.state.swtcUsers[addr]
+  }
+  function mockCreatePaths() {
+    vi.spyOn(dockerService, 'containerInfo').mockResolvedValue({ exists: false })
+    vi.spyOn(dockerService, 'publishedPort').mockResolvedValue(INTERNAL_PORT)
+    vi.spyOn(userService, 'allocateInternalPort').mockReturnValue(INTERNAL_PORT)
+    vi.spyOn(dockerService, 'createContainer').mockResolvedValue(undefined)
+    userService.state.availablePorts = []
+  }
+
+  it('create 挂起期间 nextPort 已推进（第二个领号者拿不到同号）', async () => {
+    userService.state.nextPort = 31050
+    injectFresh(ADDR)
+    mockCreatePaths()
+    let nextDuringCreate = null
+    dockerService.createContainer.mockImplementation(async () => {
+      nextDuringCreate = userService.state.nextPort // create 还没返回时观察
+    })
+    vi.spyOn(userService, 'finalizeTenant').mockResolvedValue(PORT)
+
+    await userService.ensureContainer(ADDR, true)
+
+    expect(nextDuringCreate).toBe(31051)
+    expect(userService.state.nextPort).toBe(31051)
+  })
+
+  it('两个地址并发开通 → 领到的对外端口互不相同（劫持竞态的正面钉死）', async () => {
+    const ADDR_B = 'jga9j9tkqtbcuohe2zqhvffbguved6o9or'
+    userService.state.nextPort = 31060
+    injectFresh(ADDR)
+    injectFresh(ADDR_B)
+    mockCreatePaths()
+    // 让两次 create 真并发交叠（都会 await 过同一拍事件循环）
+    dockerService.createContainer.mockImplementation(() => new Promise((r) => setTimeout(r, 5)))
+    const fin = vi.spyOn(userService, 'finalizeTenant').mockResolvedValue(PORT)
+
+    await Promise.all([
+      userService.ensureContainer(ADDR, true),
+      userService.ensureContainer(ADDR_B, true),
+    ])
+
+    const ports = fin.mock.calls.map((c) => c[2])
+    expect(new Set(ports).size).toBe(2)
+    delete userService.state.swtcUsers[ADDR_B]
+  })
+
+  it('复用原端口（own 存在）不推进 nextPort；回收池端口同样不推进', async () => {
+    userService.state.nextPort = 31070
+    injectFresh(ADDR)
+    userService.state.swtcUsers[ADDR].port = 31009 // 老租户回归
+    mockCreatePaths()
+    vi.spyOn(userService, 'finalizeTenant').mockResolvedValue(PORT)
+
+    await userService.ensureContainer(ADDR, true)
+    expect(userService.state.nextPort).toBe(31070) // 领号路径都没走
+
+    // 回收池分支
+    userService.state.swtcUsers[ADDR].port = null
+    userService.state.availablePorts = [31001]
+    await userService.ensureContainer(ADDR, true)
+    expect(userService.state.nextPort).toBe(31070) // 回收号不占新池
+    userService.state.availablePorts = []
+  })
 })
 // ---------------------------------------------------------------------------
 // 租户镜像选择的关键断言：钉住的镜像必须在**重建时真的用上**

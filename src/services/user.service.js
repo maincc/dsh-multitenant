@@ -549,7 +549,22 @@ export class UserService {
         await this.resolveTenantCapability(address),
       )
     } catch (err) {
-      throw new Error(`restart 后网关端口 ${port} 绑定失败：${err.message}`)
+      // bind 失败不能把状态留在 running（2026-10 审计：与创建路径同纪律，
+      // 假绿=网关没人监听而面板/门禁都当活着）。PORT_TAKEN 额外弃端口：
+      // 那是"另一租户在服务这个号"，留着重连会永远撞同一占位。
+      const takenByOther = err?.code === 'PORT_TAKEN'
+      const rec = this.state.swtcUsers?.[address]
+      if (rec) {
+        rec.containerStatus = 'stopped'
+        rec.stoppedAt = Date.now()
+        if (takenByOther) rec.port = null
+        await this._saveState()
+      }
+      throw new Error(
+        takenByOther
+          ? `restart 后对外端口 ${port} 正为另一租户服务（已弃号，重连将分配新端口）：${err.message}`
+          : `restart 后网关端口 ${port} 绑定失败：${err.message}`,
+      )
     }
 
     console.log(
@@ -1445,7 +1460,14 @@ export class UserService {
       port = this.state.availablePorts.shift() // 取出最小的可用端口
       console.log(`[port] using recycled port ${port} for ${address}`)
     } else {
-      port = this.state.swtcUsers?.[address]?.port ?? this.state.nextPort ?? CONFIG.docker.basePort
+      const own = this.state.swtcUsers?.[address]?.port ?? null
+      port = own ?? this.state.nextPort ?? CONFIG.docker.basePort
+      // 2026-10 审计：领号即推进 nextPort（同步原子，两个 await 之间不插队）。
+      // 此前只在 createContainer 成功后才推进——并发开通的两个租户读到同一个
+      // nextPort，各自建容器都成功，撞点在网关 listen（见 tenant-proxy 的
+      // owner 门）：第二个会关掉第一个的监听=跨租户劫持。预推进让端口发放
+      // 本身就是原子的；创建失败多跳的号作废不用回收（跳号无害，重排有洞）。
+      if (!own) this.state.nextPort = port + 1
       // 端口即将耗尽：把「容器已销毁（destroyed）、记录还占着端口」的闲置端口
       // 一次性征用进回收池，供新用户使用（被征用者下次连接时重新分配新端口，内部透明）
       if (port > CONFIG.docker.maxPort && (await this.reclaimDestroyedPorts(address)) > 0) {
@@ -1459,7 +1481,11 @@ export class UserService {
     const excludedInternal = new Set() // 本次创建已尝试过的内部端口（冲突时换新）
 
     for (let attempt = 0; attempt < 64; attempt++) {
-      if (attempt > 0) port = port + 1
+      if (attempt > 0) {
+        port = port + 1
+        // 跳号重试同样先占后建（与领号处同一纪律，见上方注释）
+        if (port >= (this.state.nextPort ?? 0)) this.state.nextPort = port + 1
+      }
       if (port > CONFIG.docker.maxPort) {
         throw new Error(`exhausted host port range for SWTC tenant ${address}`)
       }
@@ -1682,11 +1708,15 @@ export class UserService {
         tokenAuthSince: cap.tokenAuthSince,
       })
     } catch (err) {
+      // PORT_TAKEN（2026-10 审计）：端口正在为**另一租户**服务——把号留在记录里
+      // 会让重连永远撞同一个占位（restart 路径也照记录 port 重绑），必须弃号，
+      // 下次重连经 ensureContainer 领新号。其余失败（宿主程序占用等）保号重试。
+      const takenByOther = err?.code === 'PORT_TAKEN'
       // 容器本身是好的，只是对外端口绑不上：保留容器与卷，标记 stopped，
       // 端口留在记录里供下次重连复用（listen 是幂等的，会先 close 再重绑）。
       this.state.swtcUsers[address] = {
         ...prev,
-        port,
+        port: takenByOther ? null : port,
         internalPort,
         tier,
         createdAt: prev.createdAt ?? Date.now(),
@@ -1697,7 +1727,11 @@ export class UserService {
         ...healFields,
       }
       await this._saveState()
-      throw new Error(`网关端口 ${port} 绑定失败（该端口可能被宿主其他程序占用）：${err.message}`)
+      throw new Error(
+        takenByOther
+          ? `对外端口 ${port} 正被另一租户服务（状态竞态已自愈：稍后重连将自动分配新端口）`
+          : `网关端口 ${port} 绑定失败（该端口可能被宿主其他程序占用）：${err.message}`,
+      )
     }
 
     // ③ 就绪 + 门禁都通了，才对外宣告 running

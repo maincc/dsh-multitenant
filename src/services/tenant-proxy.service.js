@@ -575,7 +575,19 @@ class TenantGateway {
    * @returns {Promise<void>}
    */
   listen(publicPort, internalPort, address, capability = null) {
-    this.close(publicPort) // 幂等：先关旧监听（重启/端口重绑场景）
+    // 2026-10 全面审计：owner 门。此前无条件先 close 再绑——端口分配一旦竞态
+    // （两个租户拿到同一个对外端口），后来者会**静默关掉前一个租户的监听**，
+    // 把前者的用户流量转到自己的容器上 = 跨租户数据泄露。同一租户重启/换镜像
+    // 的重绑照旧幂等（address 相同才 close）；不同租户一律拒绝。
+    const existing = this.routes.get(publicPort)
+    if (existing && existing.address !== address) {
+      const err = new Error(
+        `端口 ${publicPort} 正在为另一租户服务（${String(existing.address).slice(0, 8)}…），拒绝抢占`,
+      )
+      err.code = 'PORT_TAKEN'
+      return Promise.reject(err)
+    }
+    this.close(publicPort) // 幂等：同租户旧监听（重启/端口重绑场景）
 
     const server = createServer(async (req, res) => {
       // async 事件回调里抛出的异常不会有人接住 → 会变成 unhandled rejection，
