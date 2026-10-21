@@ -189,6 +189,21 @@ function todayStr() {
   return `${d.getFullYear()}-${m}-${day}`
 }
 
+/** 今日本地 00:00 的毫秒时间戳（跨午夜运行段的截断点，2026-10 审计 #配额精度） */
+function dayStartMs() {
+  const d = new Date()
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+}
+
+/**
+ * usages 记录 → 毫秒累计。
+ * 新格式 {date, ms, minutes} 直取 ms；旧格式 {date, minutes}（历史落盘/测试夹具）
+ * 折算 minutes*60000——下次 settle 写回即自然完成迁移，无需启动期批量改写。
+ */
+function usageRecMs(rec) {
+  return typeof rec.ms === 'number' ? rec.ms : (rec.minutes || 0) * 60000
+}
+
 export class UserService {
   /** 管理端列表的短 TTL 缓存：{ at, data }；由 _saveState 失效 */
   _usersCache = { at: 0, data: null }
@@ -731,20 +746,32 @@ export class UserService {
   /**
    * 结算一段运行时长：把 usageStartedAt 累计进当日 usages，然后清零起点。
    * 所有"容器停止"路径都要调用，保证挂机时间也被准确结算。
-   * @returns {number} 本次结算的分钟数
+   *
+   * 2026-10 全面审计三处精度修复（原实现在免费额度语义上是可绕过的）：
+   * ① 尾差：原先每段 `Math.floor(段/60000)`，<60s 的段整段记 0——反复"起 59s 停一次"
+   *    当日额度几乎不掉，限时形同虚设。现按**毫秒**累计（usages[].ms），
+   *    minutes 字段照旧双写供展示/旧读方使用，只有视图层才 floor。
+   * ② 跨午夜：容器 23:50 起、00:10 结算时，原先把 20 分钟全记进"今天"——
+   *    新的一天被昨天开的段白白吃掉。现段起点截到今日 00:00（昨日槽本就归零，
+   *    跨日部分丢弃即是正确语义）。
+   * ③ 锚点：settledAt 由调用方在 **docker stop 成功之后**传入（默认现在），
+   *    与"先停再结"的顺序纪律配套（见各停止路径）。
+   * @returns {number} 本次结算的分钟数（视图口径）
    */
-  settleUsage(address) {
+  settleUsage(address, settledAt = Date.now()) {
     const user = this.state.swtcUsers?.[address]
     const startedAt = user?.usageStartedAt
     if (!startedAt) return 0
     const today = todayStr()
     const rec = this.state.usages[address] || {}
-    const prev = rec.date === today ? rec.minutes || 0 : 0
-    const minutes = Math.floor((Date.now() - startedAt) / 60000)
+    const baseMs = rec.date === today ? usageRecMs(rec) : 0
+    const effStart = Math.max(startedAt, dayStartMs())
+    const segMs = Math.max(0, settledAt - effStart)
     // P7 顺序纪律：先清表针再累计——若颠倒，中间任何失败会让下一段重复计费
     delete user.usageStartedAt
-    this.state.usages[address] = { date: today, minutes: prev + minutes }
-    return minutes
+    const ms = baseMs + segMs
+    this.state.usages[address] = { date: today, ms, minutes: Math.floor(ms / 60000) }
+    return Math.floor(segMs / 60000)
   }
 
   /**
@@ -753,12 +780,13 @@ export class UserService {
   getUsedMinutes(address) {
     const today = todayStr()
     const rec = this.state.usages[address]
-    let minutes = rec && rec.date === today ? rec.minutes || 0 : 0
+    let ms = rec && rec.date === today ? usageRecMs(rec) : 0
     const user = this.state.swtcUsers?.[address]
     if (user?.usageStartedAt) {
-      minutes += Math.floor((Date.now() - user.usageStartedAt) / 60000)
+      // 与 settleUsage 同口径：跨午夜的段只计今日部分
+      ms += Math.max(0, Date.now() - Math.max(user.usageStartedAt, dayStartMs()))
     }
-    return minutes
+    return Math.floor(ms / 60000)
   }
 
   /**
@@ -840,8 +868,9 @@ export class UserService {
         if (user.containerStatus !== 'running') continue
         if (credentialService.isExemptSync(address)) continue
         if (this.getUsedMinutes(address) < limit) continue
-        // 超限：先结算本次运行段，再优雅停止
-        this.settleUsage(address)
+        // 2026-10 审计：原先"先结算后停止"——若 stop 失败（continue 走人），
+        // 表针已被清掉而容器还在跑，此后一分钟都不计费 = 免费无限运行。
+        // 现在停成功才结算（锚点=此刻，容器实际已停）。
         const name = swtcContainerName(address)
         try {
           await dockerService.stopContainer(name, grace)
@@ -849,6 +878,7 @@ export class UserService {
           console.error(`[usage-limit] failed to stop ${name}:`, err.message)
           continue
         }
+        this.settleUsage(address)
         user.containerStatus = 'stopped'
         user.stoppedAt = Date.now()
         changed = true
@@ -1051,13 +1081,16 @@ export class UserService {
       return { ok: true, address, status: 'already_stopped' }
     }
 
-    // 结算当前运行段：时间停在停止时刻，剩余额度保全
-    this.settleUsage(address)
-
+    // 2026-10 审计：停成功才结算——先结算后停止若失败抛 500，表针已清而容器
+    // 照常运行，用户后续使用全部免计（额度保全反被绕过）。
     if (info.status === 'running') {
       const grace =
         this.state.cleanupPolicy?.stopGraceSeconds ?? CONFIG.cleanup.stopGraceSeconds ?? 60
       await dockerService.stopContainer(name, grace)
+      this.settleUsage(address)
+    } else {
+      // 存在但未在跑（paused/exited）：残段就地结算（容器没有"未来"可计费）
+      this.settleUsage(address)
     }
 
     const user = this.state.swtcUsers?.[address]
@@ -2073,10 +2106,11 @@ export class UserService {
       return { tier, limits, deferredToNextCreate: true }
     }
 
-    // 先结算当前运行段，再停止容器
+    // 2026-10 审计：停成功再结算——stop 抛错则整体失败、表针保留（容器还在跑，
+    // 计费不断档）；update/start 阶段的中断不再制造"已清表针的免费运行段"
     if (info.status === 'running') {
-      this.settleUsage(address)
       await dockerService.stopContainer(name)
+      this.settleUsage(address)
     }
 
     // 更新容器配置
@@ -2591,8 +2625,10 @@ export class UserService {
         try {
           const grace =
             this.state.cleanupPolicy.stopGraceSeconds ?? CONFIG.cleanup.stopGraceSeconds ?? 60
-          this.settleUsage(address) // 结算本次运行段（空闲停止同样累计当日时长）
+          // 2026-10 审计：停成功才结算（与限时/用户停止路径同一顺序纪律；
+          // 原"先结后停"在 stop 抛错时留下"在跑却无表针"的免计费窗口）
           await dockerService.stopContainer(name, grace)
+          this.settleUsage(address) // 结算本次运行段（空闲停止同样累计当日时长）
           user.containerStatus = 'stopped'
           user.stoppedAt = now
           // 清理不相关字段

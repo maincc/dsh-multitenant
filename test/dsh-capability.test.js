@@ -385,6 +385,22 @@ describe('租户网关：按 DSH 版本能力分岔', () => {
   /** 端口池：同一文件内多个网关用例各自独占，避免 TIME_WAIT 复用 */
   // 38xxx：未被其它测试文件占用，且低于 macOS 临时端口段（49152 起）
   let internalPort = 38100
+
+  /**
+   * 把上游 server 绑到"端口池当前值"并逐段递增（2026-10 审计根治 flaky）：
+   * ① 同端口反复 close→listen 会因 TIME_WAIT 偶发 EADDRINUSE / "绑得上但不
+   *    服务"（此前只有"cookie 以平台为准"describe 自己逐用例 bump，本文件
+   *    其余用例仍共用固定 38100，全量并行时必红）；
+   * ② listen 缺 error 监听时绑定失败抛 uncaught exception，用例不是快速
+   *    失败而是挂死到超时（15s）。逐段递增 + reject 双管齐下。
+   */
+  function listenUp(server) {
+    internalPort += 1
+    return new Promise((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(internalPort, '127.0.0.1', resolve)
+    })
+  }
   const OLD_CAP = { requiresToken: false, version: '0.1.1-rc.2' }
   const NEW_CAP = { requiresToken: true, version: '0.1.5-rc.1', tokenAuthSince: '0.1.2-alpha.2' }
 
@@ -399,7 +415,7 @@ describe('租户网关：按 DSH 版本能力分岔', () => {
       res.writeHead(200, { 'content-type': 'text/plain' })
       res.end('upstream-ok')
     })
-    await new Promise((r) => up.listen(internalPort, '127.0.0.1', r))
+    await listenUp(up)
     return up
   }
 
@@ -473,7 +489,7 @@ describe('租户网关：按 DSH 版本能力分岔', () => {
       res.writeHead(200, { 'content-type': 'text/plain' })
       res.end('upstream-ok-authenticated')
     })
-    await new Promise((r) => up.listen(internalPort, '127.0.0.1', r))
+    await listenUp(up)
 
     // token 只存在于容器日志里 → mock docker logs 的输出
     dshAuth.setTokenReader(async () => TOKEN)
@@ -543,7 +559,7 @@ describe('租户网关：按 DSH 版本能力分岔', () => {
       res.writeHead(200, { 'content-type': 'text/plain' })
       res.end('ok')
     })
-    await new Promise((r) => up.listen(internalPort, '127.0.0.1', r))
+    await listenUp(up)
     dshAuth.setTokenReader(async () => 'TOKEN_multi')
     authCookieCache.clear()
 
@@ -593,7 +609,7 @@ describe('租户网关：按 DSH 版本能力分岔', () => {
       res.writeHead(200, { 'content-type': 'text/plain' })
       res.end('ok')
     })
-    await new Promise((r) => up.listen(internalPort, '127.0.0.1', r))
+    await listenUp(up)
     let reads = 0
     dshAuth.setTokenReader(async () => {
       reads++
@@ -767,7 +783,7 @@ describe('租户网关：按 DSH 版本能力分岔', () => {
         res.writeHead(401, { 'content-type': 'text/plain' })
         res.end('dsh web authentication required; reopen the URL printed by dsh web.')
       })
-      await new Promise((r) => sharedUp.listen(internalPort, '127.0.0.1', r))
+      await listenUp(sharedUp)
     })
     afterEach(async () => {
       if (sharedUp) await new Promise((r) => sharedUp.close(r))
@@ -842,6 +858,16 @@ describe('代激活 cookie 失效后的自愈（回归）', () => {
   let publicPort
   let internalPort
 
+  // 同 describe1 的根治版（本 describe 由 beforeEach 按 portSeq 重置基准，
+  // helper 在基准上再 +1，保证"每次 listen 都是全新端口"）
+  function listenUp(server) {
+    internalPort += 1
+    return new Promise((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(internalPort, '127.0.0.1', resolve)
+    })
+  }
+
   const sessionCookie = () => `user_session=${userSessionStore.create(OWNER, 3600_000)}`
 
   // connection: close：网关重启监听会替换 server，若复用连接池里指向旧 server
@@ -887,7 +913,7 @@ describe('代激活 cookie 失效后的自愈（回归）', () => {
       res.writeHead(200, { 'content-type': 'text/plain' })
       res.end('upstream-ok')
     })
-    await new Promise((r) => up.listen(internalPort, '127.0.0.1', r))
+    await listenUp(up)
     dshAuth.setTokenReader(async () => 'T')
 
     try {
@@ -930,7 +956,7 @@ describe('代激活 cookie 失效后的自愈（回归）', () => {
       res.writeHead(200, { 'content-type': 'text/plain' })
       res.end('upstream-ok')
     })
-    await new Promise((r) => up.listen(internalPort, '127.0.0.1', r))
+    await listenUp(up)
     dshAuth.setTokenReader(async () => 'T')
 
     try {
@@ -960,7 +986,7 @@ describe('代激活 cookie 失效后的自愈（回归）', () => {
       res.writeHead(401, { 'content-type': 'text/plain' })
       res.end('dsh web authentication required; reopen the URL printed by dsh web.')
     })
-    await new Promise((r) => up.listen(internalPort, '127.0.0.1', r))
+    await listenUp(up)
     dshAuth.setTokenReader(async () => 'T')
 
     try {
