@@ -342,6 +342,26 @@ describe('applyImageVersion：失败处理', () => {
   })
 })
 
+// 2026-10 审计：结算从"重建动作前"挪到"旧容器确认离场后"——
+// 半途失败（remove 不掉、旧容器可能还在跑）不再清表针造成免费运行，
+// 也不会重复结算。
+describe('applyImageVersion：结算时机（settle-after-removal 回归位）', () => {
+  it('remove 失败中止 → 不结算（表针保留，计费不断档）', async () => {
+    injectTenant()
+    dockerService.removeContainer.mockRejectedValue(new Error('device busy'))
+
+    await expect(userService.applyImageVersion(TENANT)).rejects.toThrow(/移除旧容器失败/)
+    expect(userService.settleUsage).not.toHaveBeenCalled()
+  })
+
+  it('旧容器确认离场 → 结算恰好一次', async () => {
+    injectTenant()
+    await userService.applyImageVersion(TENANT)
+    expect(userService.settleUsage).toHaveBeenCalledTimes(1)
+    expect(userService.settleUsage).toHaveBeenCalledWith(TENANT)
+  })
+})
+
 describe('applyImageVersion：dryRun', () => {
   it('只报告计划，不碰容器、不备份', async () => {
     injectTenant()

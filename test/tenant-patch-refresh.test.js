@@ -76,6 +76,11 @@ beforeEach(() => {
   dockerService.publishedPort.mockResolvedValue(45377)
   dockerService.containerInfo.mockResolvedValue({ exists: true, status: 'running' })
   dockerService.restartContainer.mockResolvedValue(undefined)
+  // clearAllMocks 不清实现——用例里 mockRejectedValue 过 start/stop 的话会
+  // 泄漏给后续（2026-10 审计新用例踩过），每轮统一复位
+  dockerService.stopContainer.mockResolvedValue(undefined)
+  dockerService.startContainer.mockResolvedValue(undefined)
+  dockerService.updateContainer.mockResolvedValue(undefined)
   dockerService.waitReady.mockResolvedValue(true)
   dockerService.imageCapability.mockResolvedValue({ requiresToken: false })
   userService.state = { swtcUsers: { [ADDR]: { port: PORT, internalPort: 45377 } } }
@@ -338,6 +343,28 @@ describe('其余操作的漂移语义（容器不存在时）', () => {
     expect(dockerService.updateContainer).not.toHaveBeenCalled()
     expect(dockerService.stopContainer).not.toHaveBeenCalled()
     expect(dockerService.startContainer).not.toHaveBeenCalled()
+  })
+
+  it('upgradeContainer：update/start 失败 → 状态对齐 stopped 再上抛（2026-10 审计 bind-fail 回归位）', async () => {
+    // 旧行为：容器已 stop 后 update/start 抛错就裸奔——state 仍标 running，
+    // 网关把用户往死容器上转、面板假绿、表针清着，要等下一轮 restore 才自愈。
+    dockerService.containerInfo.mockResolvedValue({ exists: true, status: 'running' })
+    dockerService.stopContainer.mockResolvedValue(undefined)
+    dockerService.startContainer.mockRejectedValue(new Error('quota conflict'))
+    userService.state.swtcUsers[ADDR] = {
+      tier: 1,
+      port: 31016,
+      containerStatus: 'running',
+      usageStartedAt: Date.now() - 5 * 60000,
+    }
+
+    await expect(userService.upgradeContainer(ADDR, 2)).rejects.toThrow('quota conflict')
+
+    const u = userService.state.swtcUsers[ADDR]
+    expect(u.containerStatus).toBe('stopped') // 对齐真实世界
+    expect(u.tier).toBe(1) // update 可能没生效——tier 不落新值，下次重试
+    expect(u.usageStartedAt).toBeUndefined() // 停止段已结算（settle-after-stop）
+    expect(userService.state.usages?.[ADDR]).toBeTruthy()
   })
 })
 

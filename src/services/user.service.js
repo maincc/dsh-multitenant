@@ -1997,8 +1997,9 @@ export class UserService {
       }
     }
 
-    // ② 结算当前运行段，避免租户被按停机时间或重建时间计费
-    this.settleUsage(address)
+    // ② 结算当前运行段（2026-10 审计：挪到"旧容器确认离场"之后——原顺序在
+    // stop 失败被吞 + remove 失败中止时清掉表针，旧容器还活着从此不计费；
+    // 也不会在半途失败时重复结算。rm 成功 = 运行段确定终结，此刻结最准）
 
     // ③ 保护对外端口：重建窗口内不能被回收池分给别的租户（否则 URL 会变）
     const keptPort = user.port ?? null
@@ -2014,6 +2015,7 @@ export class UserService {
     } catch (err) {
       throw new Error(`移除旧容器失败，已中止：${err.message}`)
     }
+    this.settleUsage(address)
 
     if (keptPort !== null && Array.isArray(this.state.availablePorts)) {
       this.state.availablePorts = this.state.availablePorts.filter((p) => p !== keptPort)
@@ -2113,11 +2115,22 @@ export class UserService {
       this.settleUsage(address)
     }
 
-    // 更新容器配置
-    await dockerService.updateContainer(name, limits)
-
-    // 重新启动容器
-    await dockerService.startContainer(name)
+    // 更新容器配置 + 重启（2026-10 审计：此前任一步抛错就裸奔——容器已停、
+    // 状态却仍标 running：网关继续把用户往死容器上转、管理面板假绿、额度
+    // 表针也清着，要等下一轮 restore 对账才自愈。现先对齐 stopped 再上抛；
+    // tier 不写（update 可能失败，写新值会与容器实况不符——下次升级重试）
+    try {
+      await dockerService.updateContainer(name, limits)
+      await dockerService.startContainer(name)
+    } catch (err) {
+      const u = this.state.swtcUsers?.[address]
+      if (u && u.containerStatus !== 'destroyed') {
+        u.containerStatus = 'stopped'
+        u.stoppedAt = Date.now()
+        await this._saveState()
+      }
+      throw err
+    }
 
     // 更新状态
     if (!this.state.swtcUsers) this.state.swtcUsers = {}
@@ -2555,15 +2568,25 @@ export class UserService {
         { networkContainer: name },
       )
       const parsed = JSON.parse(out)
+      const sessions = parsed?.runningSessions
       diag.rpc = {
         ok: parsed?.ok === true,
-        runningSessions: parsed?.runningSessions ?? 0,
-        active: parsed?.ok === true && parsed.runningSessions > 0,
+        runningSessions: typeof sessions === 'number' ? sessions : null,
+        active: parsed?.ok === true && typeof sessions === 'number' && sessions > 0,
         // 401 = 认证没带上/失效。**绝不能因此判空闲**：那会停掉正在跑任务的容器。
         // 认证问题应当"保守地认为可能活跃"，让上游走别的判据。
         authRequired: parsed?.authRequired === true,
       }
       if (diag.rpc.active) return true
+      // 2026-10 审计·形状漂移三态：RPC 应答成功（ok:true）却拿不到数值化的
+      // runningSessions（字段被镜像升级改掉/丢失）——"读不到"不等于"没有"。
+      // 此前 `?? 0` 把未知折叠成空闲，会误停正在跑任务的容器。保守判活跃。
+      if (parsed?.ok === true && typeof sessions !== 'number') {
+        console.warn(
+          `[cleanup] ${address} check-rpc 应答缺少 runningSessions 数值（脚本/镜像形状漂移）：无法确认无任务，保守判活跃`,
+        )
+        return true
+      }
       if (diag.rpc.authRequired) {
         console.warn(
           `[cleanup] ${address} check-rpc 认证失败（HTTP 401）：已保守跳过 RPC 判据，避免误停正在跑任务的容器`,
@@ -2572,6 +2595,17 @@ export class UserService {
       }
     } catch (err) {
       diag.rpc = { error: err.message }
+      // 2026-10 审计·探测失败铁律：超时/exec 失败/输出非 JSON = **未知**，
+      // 不是"没有任务"——DSH 忙到没回包恰恰是最不该停的时刻。容器确在运行
+      // 时保守判活跃；容器其实已不在（状态漂移的僵尸）才放行下游判据，
+      // 以免僵尸容器因"永远保守"而清不掉、白占端口。
+      const info = await dockerService.containerInfo(name)
+      if (info?.exists && info.status === 'running') {
+        console.warn(
+          `[cleanup] ${address} check-rpc 探测失败（${err.message}）：容器在运行，无法确认无任务，保守判活跃`,
+        )
+        return true
+      }
     }
 
     // 全部安静：记录诊断，便于排查"为何判空闲"

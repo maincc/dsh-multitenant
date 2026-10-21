@@ -154,16 +154,9 @@ describe('merge-settings.mjs', () => {
     }
   })
 
-  it('set：损坏的 null 根文档按空文档处理（不崩溃）', () => {
-    const { dir, file } = tmpHome()
-    try {
-      writeFileSync(file, 'null\n')
-      run('set', file, JSON.stringify({ baseURL: 'https://fix.com' }))
-      expect(JSON.parse(run('get', file)).baseURL).toBe('https://fix.com')
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
-  })
+  // （旧契约"损坏的 null 根按空文档处理（不崩溃）"已被 2026-10 审计证伪：
+  //   伪装空文档 = 下一次 set 整篇覆盖、用户全部配置丢失。新契约见文件尾
+  //   "标量根→拒绝"回归位。）
 
   it('set：段内部分字段删除保留其他字段', () => {
     const { dir, file } = tmpHome()
@@ -198,6 +191,42 @@ describe('merge-settings.mjs', () => {
       const parsed = JSON.parse(run('get', file, 'llm-pi-ai'))
       expect(Object.keys(parsed.providers)).toEqual(['gw2'])
       expect(parsed.providers.gw2.displayName).toBe('B')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  // 2026-10 审计回归位：坏 YAML 此前被伪装成"空文档"继续加工——下一次
+  // set/del 写回即整篇覆盖，用户全部配置（含别的 section）凭空丢失。
+  // 现在一律 fail closed（exit≠0 + 文件一个字节不动），由上游处理损坏。
+  it('语法错误的 YAML → 拒绝继续，文件原样不动（不以空文档覆盖全文）', () => {
+    const { dir, file } = tmpHome()
+    const BAD = 'llm-deepseek:\n  baseURL: [unclosed\n'
+    try {
+      writeFileSync(file, BAD)
+      expect(() =>
+        run('set', file, JSON.stringify({ baseURL: 'https://evil.example.com/v1' })),
+      ).toThrow()
+      expect(readFileSync(file, 'utf8')).toBe(BAD)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('标量根（旧版误写的 null）→ 同样拒绝；0 字节空文件仍合法可写', () => {
+    const { dir, file } = tmpHome()
+    try {
+      writeFileSync(file, 'null\n')
+      expect(() => run('set', file, JSON.stringify({ baseURL: 'https://x.example/v1' }))).toThrow()
+
+      const { dir: d2, file: f2 } = tmpHome()
+      try {
+        writeFileSync(f2, '') // 0 字节：首次写入前的合法空态
+        run('set', f2, JSON.stringify({ baseURL: 'https://ok.example/v1' }))
+        expect(readFileSync(f2, 'utf8')).toContain('ok.example')
+      } finally {
+        rmSync(d2, { recursive: true, force: true })
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

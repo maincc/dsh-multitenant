@@ -127,6 +127,20 @@ describe('B 组·mongodb 扇出', () => {
     expect(await store.col('users').findOne({ _id: 'jb' })).toBe(null)
   })
 
+  it('空缓存护栏：swtcUsers={} 的写回不清库（2026-10 审计防整表清库回归位）', async (ctx) => {
+    // 水合失败/连接抖动窗口的空快照若走 `$nin: []` 对账 = deleteMany 全表——
+    // 用户域全灭且被反向固化。业务上"全体用户同时消失"不存在，空缓存只能是
+    // 异常态：护栏跳过对账删除，孤儿行留着可恢复。
+    if (!skip(ctx)) return
+    await store._db.dropDatabase()
+    await repo.save(fixtureState()) // 种 2 个用户
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await repo.save({ swtcUsers: {}, nextPort: 31003, availablePorts: [], usages: {} })
+    expect(await store.col('users').countDocuments({})).toBe(2)
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('跳过'))
+    errSpy.mockRestore()
+  })
+
   it('usage 历史保全：扇出只 upsert 现行行，旧日期不动；load 取最新', async (ctx) => {
     if (!skip(ctx)) return
     await store.col('usage').insertOne({ _id: { address: 'ja', date: '2026-01-01' }, minutes: 99 })

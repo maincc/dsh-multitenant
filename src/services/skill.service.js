@@ -164,7 +164,10 @@ export class SkillService {
     const addrs = Object.keys(all)
     await store.withTransaction(async (session) => {
       const c = store.col('skill_installs')
-      await c.deleteMany({ _id: { $nin: addrs } }, { session })
+      // 2026-10 审计护栏（与 state.store 同款）：空缓存时 $nin:[] 会删掉全体
+      // 用户的安装记录；"所有人同时失去技能记录"只可能是异常态。跳过对账。
+      if (addrs.length) await c.deleteMany({ _id: { $nin: addrs } }, { session })
+      else console.error('[skill] 安装记录缓存为空：跳过 $nin 对账删除（防整表清库）')
       if (addrs.length) {
         await c.bulkWrite(
           addrs.map((a) => ({

@@ -494,3 +494,42 @@ describe('merge-credentials.mjs：无 refs 块（DSH 空凭据文件）', () => 
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// 2026-10 审计"双扫描器"回归位：顶层重复 refs: 头时，编辑侧永远只改**第一块**，
+// 而 YAML 运行时消费是 last-wins 用第二块——del 会"删了个寂寞"，凭据残留。
+// 这类文件必须 fail closed 拒写，而不是继续加工。
+// ---------------------------------------------------------------------------
+describe('merge-credentials.mjs：顶层重复结构拒写', () => {
+  const DUPED = 'version: 1\nrefs:\n  DEEPSEEK_API_KEY: "sk-1"\nrefs:\n  DEEPSEEK_API_KEY: "sk-2"\n'
+
+  it('del 顶层重复 refs 文件 → 非零退出且原样不动（绝不"只删第一块"留残钥）', () => {
+    const { dir, file } = tmpFile()
+    try {
+      writeFileSync(file, DUPED)
+      expect(() => run('del', file, 'DEEPSEEK_API_KEY')).toThrow()
+      expect(readFileSync(file, 'utf8')).toBe(DUPED)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('顶层 version: 重复同样拒写；健康文件（version/refs/records 各一次）不误伤', () => {
+    const { dir, file } = tmpFile()
+    try {
+      writeFileSync(file, 'version: 1\nversion: 1\nrefs:\n  A_KEY: "sk-a"\n')
+      expect(() => run('set', file, 'B_KEY', 'sk-b')).toThrow()
+
+      const { dir: d2, file: f2 } = tmpFile()
+      try {
+        writeFileSync(f2, 'version: 1\nrefs:\n  A_KEY: "sk-a"\nrecords:\n  x: 1\n')
+        run('set', f2, 'B_KEY', 'sk-b') // 不抛 = 通过
+        expect(readFileSync(f2, 'utf8')).toContain('B_KEY')
+      } finally {
+        rmSync(d2, { recursive: true, force: true })
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})

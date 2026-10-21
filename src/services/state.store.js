@@ -132,8 +132,18 @@ async function fanoutOps(store, state, session) {
       { upsert: true, session },
     )
   }
-  // 缓存是权威：不在缓存里的用户文档删除（对齐文件模式整写覆盖语义）
-  await users.deleteMany(addrs.length ? { _id: { $nin: addrs } } : {}, { session })
+  // 缓存是权威：不在缓存里的用户文档删除（对齐文件模式整写覆盖语义）。
+  // 2026-10 审计护栏：addrs 为空时 `$nin: []` 会匹配**全部**文档——水合失败/
+  // 连接抖动窗口的空快照一旦被写回，等价于清库级事故。业务上不存在"全体用户
+  // 一次性消失"（reset/销毁都逐条、销毁后仍留 destroyed 记录），所以空缓存
+  // 只可能是异常态：跳过对账删除并显式告警，宁可留下孤儿行也不能删活数据。
+  if (addrs.length) {
+    await users.deleteMany({ _id: { $nin: addrs } }, { session })
+  } else {
+    console.error(
+      '[state.store] swtcUsers 缓存为空：跳过 $nin 对账删除（防整表清库；若这是真实状态请人工核对 users 集合）',
+    )
+  }
 
   const meta = store.col('meta')
   await meta.updateOne(

@@ -79,10 +79,25 @@ if (!/^[a-z0-9-]+$/.test(section)) {
 
 function readDoc() {
   if (!existsSync(file)) return parseDocument('')
-  const doc = parseDocument(readFileSync(file, 'utf8'))
+  const raw = readFileSync(file, 'utf8')
+  if (raw.trim() === '') return parseDocument('') // 空文件=合法空态（首次写入前）
+  const doc = parseDocument(raw)
+  // 2026-10 审计（fail closed，对齐 merge-credentials 的纪律）：此前语法错误被
+  // 容忍、坏根（标量/数组/null）被伪装成"空文档"——下一次 set/del 写回即
+  // **整篇覆盖**：用户的全部配置（含其它 section、别的模型键）凭空丢失。
+  // 现在拒绝在坏文件上继续加工，把错误交给上游处理。
+  if (doc.errors && doc.errors.length) {
+    console.error(
+      'merge-settings: 配置文件存在 YAML 语法错误，拒绝继续（继续写会以部分解析结果覆盖全文）：' +
+        String(doc.errors[0]?.message || doc.errors[0]).slice(0, 120),
+    )
+    process.exit(4)
+  }
   const root = doc.toJS()
-  // 损坏/标量根（如旧版误写的 `null`）按空文档处理，避免 setIn 崩溃
-  if (root === null || typeof root !== 'object' || Array.isArray(root)) return parseDocument('')
+  if (root === null || typeof root !== 'object' || Array.isArray(root)) {
+    console.error('merge-settings: 配置文件根节点不是映射，拒绝继续（避免以空文档覆盖）')
+    process.exit(4)
+  }
   return doc
 }
 

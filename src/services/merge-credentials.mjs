@@ -182,6 +182,20 @@ function assertWellFormed(lines) {
   const refsIdx = lines.findIndex((l) => indentOf(l) === '' && REFS_HEADER_RE.test(l))
   if (refsIdx === -1) return ['找不到顶层 refs:']
 
+  // 2026-10 审计：顶层重复头是"双扫描器"盲区——编辑侧（本工具）永远只改
+  // **第一个** refs 块，而 YAML 运行时消费是 last-wins 用第二块：del 操作
+  // "删掉了"第一块的键，第二块原样保留 → **凭据残留**（安全类，不只是格式）。
+  // 因此任何顶层键出现 >1 次一律拒绝合并，让上游按"文件已损坏"处理。
+  const topCount = new Map()
+  for (const line of lines) {
+    if (line.trim() === '' || indentOf(line) !== '') continue
+    const km = line.match(/^([A-Za-z0-9_-]+):/)
+    if (km) topCount.set(km[1], (topCount.get(km[1]) || 0) + 1)
+  }
+  for (const [key, n] of topCount) {
+    if (n > 1) problems.push(`顶层键 ${key}: 出现 ${n} 次（重复结构，合并只会加深损坏）`)
+  }
+
   const seen = new Set()
   let entryIndent = null
   let i = refsIdx + 1
