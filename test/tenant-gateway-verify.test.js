@@ -15,7 +15,7 @@
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { createHash } from 'node:crypto'
-import { createServer } from 'node:http'
+import http, { createServer } from 'node:http'
 
 vi.mock('../src/services/data.service.js', async (importOriginal) => {
   const mod = await importOriginal()
@@ -139,6 +139,41 @@ describe('租户网关门禁：顶层导航一致性校验（插件地址 vs 会
     expect(await r.json()).toEqual({ ok: true, address: OWNER })
     r = await fetch(`http://127.0.0.1:${publicPort}/__gw__/session-info`)
     expect(await r.json()).toEqual({ ok: true, address: null })
+  })
+
+  it('恶意 Host 头的校验页投毒被封死（2026-10 审计：Host 原样拼进 HTML）', async () => {
+    const token = userSessionStore.create(OWNER)
+    // undici 的 fetch 会剥掉自定义 host 头（按 URL authority 重写），够不着
+    // 这条攻击面——必须用原生 http.client 发真实 Host。
+    const pageFor = (host) =>
+      new Promise((resolve, reject) => {
+        http
+          .get(
+            `http://127.0.0.1:${publicPort}/`,
+            {
+              headers: {
+                host,
+                'sec-fetch-mode': 'navigate',
+                accept: 'text/html',
+                cookie: `user_session=${token}`,
+              },
+            },
+            (res) => {
+              let buf = ''
+              res.on('data', (d) => (buf += d))
+              res.on('end', () => resolve(buf))
+            },
+          )
+          .on('error', reject)
+      })
+
+    const evil = await pageFor('evil.com"><script>alert(1)</script>')
+    expect(evil).toContain('/user') // 仍是校验页
+    expect(evil).not.toContain('evil.com') // 投毒串被白名单拦下
+    expect(evil).not.toContain('<script>alert(1)</script>')
+    // 合法形态的 Host 照旧跟随（用户从 LAN IP 进来要能对回 LAN IP）
+    const lan = await pageFor('192.168.77.121:31000')
+    expect(lan).toContain('http://192.168.77.121:')
   })
 
   it('/__gw__/logout 吊销会话并下发清 cookie', async () => {
