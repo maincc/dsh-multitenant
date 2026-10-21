@@ -28,7 +28,7 @@ vi.mock('../src/services/data.service.js', async (importOriginal) => {
   return { dataService: { ...mod.dataService, ...empty } }
 })
 
-import { tenantGateway } from '../src/services/tenant-proxy.service.js'
+import { tenantGateway, gwOkToken } from '../src/services/tenant-proxy.service.js'
 import { userSessionStore } from '../src/middleware/user-auth.middleware.js'
 import { tenantConfigService, SIGN_PURPOSE } from '../src/services/tenant-config.service.js'
 import { Keypairs } from '@swtc/keypairs'
@@ -80,17 +80,39 @@ describe('租户网关门禁：顶层导航一致性校验（插件地址 vs 会
     expect(body).toContain('正在校验访问身份')
   })
 
-  it('有会话 + gw_ok=1 → 跳过校验页，直接转发（上游不可达 → 502）', async () => {
+  it('有会话 + 本租户本端口的 gw_ok → 跳过校验页，直接转发（上游不可达 → 502）', async () => {
     const token = userSessionStore.create(OWNER)
     const res = await fetch(`http://127.0.0.1:${publicPort}/`, {
       headers: {
         'sec-fetch-mode': 'navigate',
         accept: 'text/html',
-        cookie: `user_session=${token}; gw_ok=1`,
+        cookie: `user_session=${token}; gw_ok=${gwOkToken(OWNER, publicPort)}`,
       },
     })
     expect(res.status).toBe(502) // forward 到未监听的内部口
     expect(await res.text()).toContain('gateway: upstream unreachable')
+  })
+
+  it('gw_ok 串门防御：别的端口派生的 token / 旧常量 "1" 都换不来本端口放行（2026-10 审计）', async () => {
+    const token = userSessionStore.create(OWNER)
+    // 旧契约里 gw_ok=1 是全局常量：先进租户 A 过校验的用户访问租户 B 时，
+    // 浏览器照带 "1" 就跳过 B 的签名校验——cookie 按 host 共享、不分端口。
+    // 现在值按 (address, port) 派生，别的端口/旧值一律回校验页。
+    for (const stale of [
+      '1',
+      gwOkToken(OWNER, publicPort + 1),
+      gwOkToken('jothertenant0000000000000000000000000', publicPort),
+    ]) {
+      const res = await fetch(`http://127.0.0.1:${publicPort}/`, {
+        headers: {
+          'sec-fetch-mode': 'navigate',
+          accept: 'text/html',
+          cookie: `user_session=${token}; gw_ok=${stale}`,
+        },
+      })
+      expect(res.status).toBe(200)
+      expect(await res.text()).toContain('__gw__/session-info') // 校验页，而非放行
+    }
   })
 
   it('非导航子资源（js/css/fetch）→ 走原始门禁，不返回校验页', async () => {

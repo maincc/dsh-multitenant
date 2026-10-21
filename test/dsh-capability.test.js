@@ -42,6 +42,7 @@ import {
 import { dockerService, DockerService } from '../src/services/docker.service.js'
 import {
   tenantGateway,
+  gwOkToken,
   _setDshAuthCookieModeForTest,
 } from '../src/services/tenant-proxy.service.js'
 import { userService } from '../src/services/user.service.js'
@@ -447,7 +448,11 @@ describe('租户网关：按 DSH 版本能力分岔', () => {
     // 语义），复用指向旧 server 的 keep-alive 连接会偶发 ECONNRESET，表现为
     // 该文件在全量并行跑时随机挂一条（长期存在的 flake）。
     const res = await fetch(`http://127.0.0.1:${publicPort}/`, {
-      headers: { cookie: `${sessionCookie()}; gw_ok=1`, accept: 'text/html', connection: 'close' },
+      headers: {
+        cookie: `${sessionCookie()}; gw_ok=${gwOkToken(OWNER, publicPort)}`,
+        accept: 'text/html',
+        connection: 'close',
+      },
     })
     const body = await res.text()
     return { status: res.status, body }
@@ -797,7 +802,7 @@ describe('租户网关：按 DSH 版本能力分岔', () => {
         _setDshAuthCookieModeForTest('legacy')
         const res = await fetch(`http://127.0.0.1:${publicPort}/`, {
           headers: {
-            cookie: `${sessionCookie()}; gw_ok=1; dsh-auth-STALE=v1.broken.sig`,
+            cookie: `${sessionCookie()}; gw_ok=${gwOkToken(OWNER, publicPort)}; dsh-auth-STALE=v1.broken.sig`,
             accept: 'text/html',
           },
         })
@@ -816,7 +821,7 @@ describe('租户网关：按 DSH 版本能力分岔', () => {
         _setDshAuthCookieModeForTest('replace')
         const res = await fetch(`http://127.0.0.1:${publicPort}/`, {
           headers: {
-            cookie: `${sessionCookie()}; gw_ok=1; dsh-auth-STALE=v1.broken.sig`,
+            cookie: `${sessionCookie()}; gw_ok=${gwOkToken(OWNER, publicPort)}; dsh-auth-STALE=v1.broken.sig`,
             accept: 'text/html',
           },
         })
@@ -875,7 +880,11 @@ describe('代激活 cookie 失效后的自愈（回归）', () => {
   // 同源）。测试要的是确定性，故每次新建连接。
   const hit = (path = '/') =>
     fetch(`http://127.0.0.1:${publicPort}${path}`, {
-      headers: { cookie: `${sessionCookie()}; gw_ok=1`, accept: 'text/html', connection: 'close' },
+      headers: {
+        cookie: `${sessionCookie()}; gw_ok=${gwOkToken(OWNER, publicPort)}`,
+        accept: 'text/html',
+        connection: 'close',
+      },
     })
 
   // 端口必须同时满足：① 不与并行执行的其它测试文件撞车（本文件其它 describe

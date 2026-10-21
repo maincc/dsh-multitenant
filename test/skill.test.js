@@ -202,6 +202,29 @@ describe('SkillService', () => {
     expect(detail.body).toContain('# 正文')
   })
 
+  it('发布：提交前复核——入口检查过后名字被抢占 → 拒绝且不落孤儿 body（TOCTOU 回归位）', async () => {
+    const { svc, dir } = makeService()
+    mockExtract(svc, skillText('pub-skill'))
+    const real = svc.readIndex.bind(svc)
+    let calls = 0
+    vi.spyOn(svc, 'readIndex').mockImplementation(() => {
+      calls += 1
+      // 第 2 次=提交复核：返回"别人已占同名"的最新索引；第 1 次入口检查放行
+      if (calls === 2)
+        return [
+          { name: 'pub-skill', sharer: 'jother0000000000000000000000000000', status: 'active' },
+        ]
+      return real()
+    })
+
+    await expect(svc.publish('jabcdef1234567890abcdef1234567890abc', 'pub-skill')).rejects.toThrow(
+      /已被共享/,
+    )
+    expect(svc.readIndex).toHaveBeenCalledTimes(2)
+    // 复核在入仓之前：市场目录里不该出现本次的 body 文件（孤儿）
+    expect(existsSync(join(dir, 'store', 'pub-skill'))).toBe(false)
+  })
+
   it('发布：frontmatter 非法被拒（不入仓）', async () => {
     const { svc } = makeService()
     mockExtract(svc, '---\nname: bad\ndescription:\n---\nbody')

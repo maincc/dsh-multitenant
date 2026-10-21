@@ -323,7 +323,7 @@ export class SkillService {
         ? assertSkillName(String(renameTo).trim())
         : sourceName
 
-    const entries = this.readIndex()
+    let entries = this.readIndex()
     const existing = entries.find((e) => e.name === shareName && e.status === 'active')
     if (existing) {
       const isOwnUpdate = existing.sharer === address && shareName === sourceName
@@ -372,7 +372,25 @@ export class SkillService {
       throw new BadRequestError(`技能 frontmatter 非法: ${err.message}`)
     }
 
-    // 3) 入仓
+    // 3) 提交前复核（2026-10 审计 TOCTOU 修复）：入口的"同名占位/上限"检查与
+    //    这里之间隔着容器提取的长 await——并发同名 publish 会双双通过入口检查，
+    //    后写覆盖前写。写索引必须以**当下索引**为准重新判互斥与上限，并在最新
+    //    副本上合并（窗口期别人新上架的条目不能被我方旧快照抹掉）。复核放在
+    //    入仓**之前**：被拒不留孤儿 body。
+    const fresh = this.readIndex()
+    const clash = fresh.find((e) => e.name === shareName && e.status === 'active')
+    if (clash && !(clash.sharer === address && shareName === sourceName)) {
+      throw new ConflictError(`技能名 "${shareName}" 已被共享，共享名必须唯一，请改名后再共享`)
+    }
+    const activeBySharerNow = fresh.filter(
+      (e) => e.sharer === address && e.status === 'active' && e.name !== shareName,
+    ).length
+    if (activeBySharerNow >= MAX_ACTIVE_PUBLISHED) {
+      throw new BadRequestError(`每个地址最多共享 ${MAX_ACTIVE_PUBLISHED} 个技能`)
+    }
+    entries = fresh
+
+    // 4) 入仓
     this.writeEntryBody(shareName, finalText)
     const now = new Date().toISOString()
     const entry = {
@@ -388,6 +406,7 @@ export class SkillService {
       bodyBytes: valid.bodyBytes,
       status: 'active',
     }
+
     const idx = entries.findIndex((e) => e.name === shareName)
     if (idx === -1) entries.push(entry)
     else entries[idx] = entry

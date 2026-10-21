@@ -128,6 +128,9 @@ export function _resetForTest(inj = {}) {
   credentialService._resetCache()
 }
 
+/** 挂架入口（串行包装后）暴露给测试：并发顺序合并语义的回归位用 */
+export const _shelfCredentialForTest = shelfCredential
+
 /* ───────────────────────── VC 签发 ───────────────────────── */
 
 /** 平台真签一张 VC（kind: did|cwt），subject = 用户 DID（小写规范形态） */
@@ -317,7 +320,6 @@ function verifyFileSignature(document, signatureDerHex, publicKeyHex, expectedAd
  * =撤旧卡——与台账互斥同构。登记是**展示副本**：失败只告警，绝不回滚领取/
  * 批准（台账才是真源；用户自己档案里的卡不受此处影响）。
  */
-let _platformShelfAt = 0
 const _vcCache = new Map() // addrLower → {at, vc}：凭证本体读回缓存（60s）
 function isDshCard(c) {
   const vc = c?.credential || c
@@ -355,7 +357,21 @@ function signWithPlatformKey(bytes) {
   const b = typeof s.toDERRawBytes === 'function' ? s.toDERRawBytes() : s.toDER()
   return Buffer.from(b).toString('hex')
 }
-async function shelfCredential(vc) {
+// 挂架是"读档→改→写档"的复合动作，两个 await 之间可被并发插队：两张卡同时
+// 挂架会交叉丢更新（后写覆盖前写）。平台登记册只有本进程一个写者，
+// 进程级 Promise 队列就是精确解（2026-10 审计）。
+let _shelfChain = Promise.resolve()
+function shelfCredential(vc) {
+  const step = () => _shelfStep(vc)
+  const result = _shelfChain.then(step, step)
+  // 链条永不 reject（失败语义已在 _shelfStep 内吞成 false），防断链
+  _shelfChain = result.then(
+    () => {},
+    () => {},
+  )
+  return result
+}
+async function _shelfStep(vc) {
   try {
     const p = platform()
     if (!p.priv) throw new Error('平台私钥未加载')
@@ -390,7 +406,6 @@ async function shelfCredential(vc) {
       signatureDerHex: signature,
       chain: cfg().chain,
     })
-    _platformShelfAt = Date.now()
     return true
   } catch (err) {
     console.warn(
@@ -674,11 +689,13 @@ let _injectedBackend = null
 class CredentialService {
   constructor() {
     this._cwtSet = new Set() // 解除限制地址快照（usage 热路径同步查，init 水合+周期刷新）
+    this._cwtPending = new Set() // 刷新 fetch 窗口内的即时豁免（replace 时并入，防被旧快照吞掉）
     this._hydrateAt = 0
     this._refreshTimer = null
   }
   _resetCache() {
     this._cwtSet.clear()
+    this._cwtPending.clear()
     this._hydrateAt = 0
   }
   async init() {
@@ -706,7 +723,13 @@ class CredentialService {
   async refreshExemptSet() {
     try {
       const addrs = await backend().listCwtAddresses()
-      this._cwtSet = new Set(addrs)
+      const next = new Set(addrs)
+      // 2026-10 审计：listCwtAddresses 是 await——期间 _markExempt（批准/签发
+      // 即时豁免）插入的地址会被这份**旧快照**整替吞掉，刚批的用户被误限时
+      // 直到下个刷新周期。把 fetch 窗口内的即时 add 并入新集再原子替换。
+      for (const a of this._cwtPending) next.add(a)
+      this._cwtSet = next
+      this._cwtPending.clear()
       this._hydrateAt = Date.now()
     } catch {
       /* 存储抖动保旧集（上活错误方向：保豁免=可能多豁免 vs 清集=全体误限时；取保旧） */
@@ -721,6 +744,8 @@ class CredentialService {
 
   _markExempt(addrLower) {
     this._cwtSet.add(addrLower)
+    // 若有一轮刷新正在 fetch 途中，本地址必须在该轮 replace 时保留（见 refreshExemptSet）
+    this._cwtPending.add(addrLower)
     this._hydrateAt = Date.now()
   }
 

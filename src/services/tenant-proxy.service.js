@@ -17,7 +17,7 @@
 import { createServer } from 'node:http'
 import { request as httpRequest } from 'node:http'
 import { connect as netConnect } from 'node:net'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, createHash } from 'node:crypto'
 import { getUserSession, userSessionStore } from '../middleware/user-auth.middleware.js'
 import { getAdminSession } from '../middleware/auth.middleware.js'
 import { isAdmin } from '../config/config.js'
@@ -346,7 +346,7 @@ const VERIFY_PAGE_TEMPLATE = `<!doctype html>
     } catch (e) { valid = false }
     if (valid) {
       // 签名证明通过：5 分钟放行窗口（期间刷新/重进不再弹签名）
-      document.cookie = 'gw_ok=1; path=/; max-age=300'
+      document.cookie = 'gw_ok=__GWOK_TOKEN__; path=/; max-age=300'
       location.replace(location.href)
     } else {
       show('身份验证未通过，已注销本次访问',
@@ -366,16 +366,32 @@ function isNavigationRequest(req) {
   return method === 'GET' && accept.includes('text/html') && !req.headers['x-requested-with']
 }
 
+/**
+ * 放行凭证与"租户+端口"绑定（2026-10 全面审计）。
+ * 旧值是常量 "1"：cookie 按 host 共享、**不分端口**——在同宿主先进租户 A
+ * 过校验的用户，访问租户 B 时浏览器照带 gw_ok=1，B 的签名校验被整体跳过
+ * （插件地址一致性防线对"串门"用户失效）。按 (address, port) 派生后，
+ * A 的放行只解 A 的门。
+ */
+export function gwOkToken(address, publicPort) {
+  return createHash('sha256').update(`gw-ok|${address}|${publicPort}`).digest('hex').slice(0, 32)
+}
+
 /** 校验放行 cookie：5 秒窗口（校验页跳回后的本次页面加载），不足则重新校验 */
-function hasGwOk(req) {
-  return /(^|;\s*)gw_ok=1(;|$)/.test(req.headers.cookie || '')
+function hasGwOk(req, token) {
+  if (!token) return false
+  const m = /(^|;\s*)gw_ok=([^;]*)/.exec(req.headers.cookie || '')
+  return !!m && m[2] === token
 }
 
 /** 组装校验页（平台 URL 跟随请求 Host 推导：310xx → :8090/user） */
-function buildVerifyPage(req) {
+function buildVerifyPage(req, gwToken) {
   const hostname = (req.headers.host || '').replace(/:\d+$/, '')
   const platformUrl = `http://${hostname}:8090/user`
-  return VERIFY_PAGE_TEMPLATE.replaceAll('__PLATFORM_URL__', platformUrl)
+  return VERIFY_PAGE_TEMPLATE.replaceAll('__PLATFORM_URL__', platformUrl).replaceAll(
+    '__GWOK_TOKEN__',
+    String(gwToken || ''),
+  )
 }
 
 class TenantGateway {
@@ -818,14 +834,17 @@ class TenantGateway {
     // 优先级：①有会话 → URL 带一次性 ticket（平台「进入」/ 管理员代开）直接放行
     //              → 否则返回签名校验页（外部粘贴 URL：插件实时签名证明身份）
     //         ②无会话 → ticket → 403
-    if (isNavigationRequest(req) && !hasGwOk(req)) {
+    // 放行凭证按 (租户, 端口) 派生：A 的 gw_ok 解不开 B 的门（审计串门绕过）
+    const navRoute = this.routes.get(publicPort)
+    const gwToken = navRoute ? gwOkToken(navRoute.address, publicPort) : null
+    if (isNavigationRequest(req) && !hasGwOk(req, gwToken)) {
       if (this.authorize(req, publicPort)) {
         // 有会话：先消费一次性 ticket（官网「进入」URL 携带），命中即放行
         if (!this.tryTicket(req, res, publicPort)) {
           // 无 ticket → 签名校验页（插件在容器域读到的账户不可靠，
           // 改为"插件对会话地址签名"证明：能签出来 = 身份一致，才放行）
           res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-          res.end(buildVerifyPage(req))
+          res.end(buildVerifyPage(req, gwToken))
           return
         }
       } else if (!this.tryTicket(req, res, publicPort)) {
@@ -933,6 +952,17 @@ class TenantGateway {
         res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' })
       }
       res.end('gateway: upstream unreachable')
+    })
+    // 2026-10 审计（流生命周期泄漏，两端各堵）：
+    // ① 上游挂起（DSH 卡死/慢读取）时旧实现无超时——浏览器连接与上游 socket
+    //    双双永久占用，租户级卡死会拖垮网关连接数。60s 无响应即拆链（502）。
+    // ② 浏览器断开（关页/AbortController）时旧实现不碰上游——请求继续发进
+    //    容器、响应无人认领直到 DSH 侧超时。res close 即销毁上游请求。
+    upstream.setTimeout(60_000, () => {
+      upstream.destroy(new Error('gateway: upstream timeout'))
+    })
+    res.on('close', () => {
+      if (!res.writableEnded) upstream.destroy()
     })
     req.pipe(upstream)
   }

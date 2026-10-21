@@ -14,6 +14,7 @@ import { l1ProfileHit } from '../src/services/did.service.js'
 import {
   credentialService,
   _resetForTest,
+  _shelfCredentialForTest,
   profilePath,
   KINDS,
 } from '../src/services/credential.service.js'
@@ -955,5 +956,55 @@ describe('失败三态化（2026-10 全面审计回归位）', () => {
     await credentialService.claimUpload(ADDR, uploadArgs('did:swtc:jplatform#credential-t1-2')) // 同步换新卡
     const v2 = await credentialService.getClaimedCredential(ADDR)
     expect(v2.credential.id).toBe('did:swtc:jplatform#credential-t1-2') // 缓存未失效则返回 plat-vc-1
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 并发语义（2026-10 全面审计回归位）：
+// ① 挂架"读档→改→写档"必须串行——否则两张卡交叉丢更新（后写覆盖前写）。
+// ② 豁免集刷新在 fetch 窗口被 _markExempt 插入——整替不得吞掉刚批的地址。
+// ---------------------------------------------------------------------------
+describe('并发语义（挂架串行 / 豁免刷新窗口）', () => {
+  it('并发挂两张卡 → 平台登记册两张都在（串行读改写，丢更新回归位）', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    // relay 状态机：read 返回当前档案；write 以 FormData 的 file 字段整体提交
+    let doc = { id: 'did:swtc:jplatform', credentials: [] }
+    fetchStub.mockImplementation(async (url, opts) => {
+      const u = String(url)
+      if (u.includes('/files/write')) {
+        const raw = opts.body.get('file')
+        doc = JSON.parse(await raw.text())
+        return { ok: true, status: 201, text: async () => '{"code":0}' }
+      }
+      return { ok: true, status: 200, text: async () => JSON.stringify(doc) }
+    })
+    const mkVc = (tag) => ({
+      id: `did:swtc:jplatform#credential-t1-${tag}`,
+      type: ['VerifiableCredential', 'DshMemberCredential'],
+      issuer: 'did:swtc:jplatform',
+      credentialSubject: { id: `did:swtc:jtag${tag}000000000000000000000000000` },
+    })
+    const vcA = mkVc('aa')
+    const vcB = mkVc('bb')
+
+    const rs = await Promise.all([_shelfCredentialForTest(vcA), _shelfCredentialForTest(vcB)])
+
+    expect(rs.every((r) => r === true)).toBe(true)
+    const ids = doc.credentials.map((c) => c.credential?.id ?? c.id)
+    expect(ids).toEqual(expect.arrayContaining([vcA.id, vcB.id])) // 两张都在：串行合并而非互相覆盖
+  })
+
+  it('刷新的 fetch 窗口内 _markExempt → 旧快照整替后仍保留（刚批准不被误限时）', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    let release
+    b.listCwtAddresses = () => new Promise((r) => (release = () => r([]))) // 空快照=不含 ADDR 的"旧"结果
+    const p = credentialService.refreshExemptSet() // 刷新在途
+    credentialService._markExempt(ADDR) // 批准/签发即时豁免插队
+    release()
+    await p
+    expect(credentialService.isExemptSync(ADDR)).toBe(true)
   })
 })
