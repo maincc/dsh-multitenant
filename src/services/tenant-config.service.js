@@ -146,12 +146,16 @@ function sh(cmd, args, opts = {}) {
     execFile(
       cmd,
       args,
-      { maxBuffer: 16 * 1024 * 1024, ...opts, timeout },
+      // 2026-10 审计：execFile 超时默认只发 SIGTERM——`docker run` 的本地 CLI
+      // 收到 TERM 就退出，但**不通知 daemon 侧已建容器**：被杀的只是客户端，
+      // 容器继续带着用户卷跑 = 幽灵执行 + 卷被占（后续合并脚本全挂）。
+      // SIGKILL 硬杀 CLI，触发 daemon 回收其子进程容器。
+      { maxBuffer: 16 * 1024 * 1024, ...opts, timeout, killSignal: 'SIGKILL' },
       (err, stdout, stderr) => {
         if (err) {
           err.stdout = String(stdout ?? '')
           err.stderr = String(stderr ?? '')
-          if (err.killed || err.signal === 'SIGTERM') {
+          if (err.killed || err.signal === 'SIGTERM' || err.signal === 'SIGKILL') {
             err.code = err.code ?? 'ETIMEDOUT'
             err.timedOut = true
             err.stderr = `${err.stderr}\n[docker-cli] timed out after ${timeout}ms`.trim()

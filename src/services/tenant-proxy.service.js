@@ -20,7 +20,7 @@ import { connect as netConnect } from 'node:net'
 import { randomBytes, createHash } from 'node:crypto'
 import { getUserSession, userSessionStore } from '../middleware/user-auth.middleware.js'
 import { getAdminSession } from '../middleware/auth.middleware.js'
-import { isAdmin } from '../config/config.js'
+import { isAdmin, CONFIG } from '../config/config.js'
 import { tenantConfigService, SIGN_PURPOSE, buildSignedMessage } from './tenant-config.service.js'
 // 只取纯函数 requiresToken（dsh-version.service 仅依赖 config，不成环）。
 // 用于区分"容器落后于平台镜像"与"平台镜像本身就需要认证"这两种拒绝原因。
@@ -386,8 +386,16 @@ function hasGwOk(req, token) {
 
 /** 组装校验页（平台 URL 跟随请求 Host 推导：310xx → :8090/user） */
 function buildVerifyPage(req, gwToken) {
-  const hostname = (req.headers.host || '').replace(/:\d+$/, '')
-  const platformUrl = `http://${hostname}:8090/user`
+  // 2026-10 审计：Host 是攻击者可控头，此前原样拼进 HTML/跳转链接——
+  // 恶意 Host 可把校验页的"返回平台"投毒成任意域。只收 [A-Za-z0-9._-]
+  // 形态的主机名（IPv4/域名足够），其余一律回退 publicHost；端口取配置，
+  // 不再用硬编码 8090 猜。
+  const raw = (req.headers.host || '').replace(/:\d+$/, '')
+  const hostname = /^[A-Za-z0-9._-]{1,253}$/.test(raw)
+    ? raw
+    : String(CONFIG.server.publicHost || '127.0.0.1')
+  const port = Number.isFinite(CONFIG.server.port) ? CONFIG.server.port : 8090
+  const platformUrl = `http://${hostname}:${port}/user`
   return VERIFY_PAGE_TEMPLATE.replaceAll('__PLATFORM_URL__', platformUrl).replaceAll(
     '__GWOK_TOKEN__',
     String(gwToken || ''),
@@ -410,8 +418,13 @@ class TenantGateway {
   issueTicket(address) {
     const route = [...this.routes.values()].find((r) => r.address === address)
     if (!route) return null
+    // 2026-10 审计：开了没被消费的票此前**永留 Map**（tryTicket 只在校验时判
+    // 过期，过期票不删除）——管理员代开/用户放弃进入每漏一张就永久占内存。
+    // 开票顺带扫一遍过期票（票量级极小，O(n) 无害）。
+    const now = Date.now()
+    for (const [t, rec] of this.tickets) if (rec.expiresAt <= now) this.tickets.delete(t)
     const token = randomBytes(24).toString('hex')
-    this.tickets.set(token, { address, expiresAt: Date.now() + 60_000 })
+    this.tickets.set(token, { address, expiresAt: now + 60_000 })
     return token
   }
 

@@ -1055,18 +1055,36 @@ export class DockerService {
       return { ...hit.value, cached: true }
     }
 
-    const imageId = await this.imageId(image)
-    const version = await this.imageDshVersion(image)
-    const value = {
-      version,
-      // null = 无法判定（版本缺失/无法解析），调用方须按"未知"保守处理
-      requiresToken: requiresToken(version),
-      imageId,
-      tokenAuthSince: DSH_TOKEN_AUTH_SINCE,
-      cached: false,
+    // 2026-10 审计（inflight 合并）：缓存未命中窗口里同名并发查询会各跑一遍
+    // docker inspect。restore/批量对账时一次就有几十个租户同像并发——白白翻倍
+    // 的 daemon 负载。同名共享同一条进行中的探测 Promise。
+    if (!this._capInflight) this._capInflight = new Map()
+    const pending = this._capInflight.get(image)
+    if (pending) {
+      const v = await pending
+      return { ...v, cached: true }
     }
-    this._capCache.set(image, { at: now, imageId, value })
-    return value
+
+    const entry = (async () => {
+      const imageId = await this.imageId(image)
+      const version = await this.imageDshVersion(image)
+      const value = {
+        version,
+        // null = 无法判定（版本缺失/无法解析），调用方须按"未知"保守处理
+        requiresToken: requiresToken(version),
+        imageId,
+        tokenAuthSince: DSH_TOKEN_AUTH_SINCE,
+        cached: false,
+      }
+      this._capCache.set(image, { at: Date.now(), imageId, value })
+      return value
+    })()
+    entry.finally(() => {
+      // 身份比对：clearCapabilityCache 后新一轮 inflight 同名键不能被旧探测删除
+      if (this._capInflight.get(image) === entry) this._capInflight.delete(image)
+    })
+    this._capInflight.set(image, entry)
+    return entry
   }
 
   /**
@@ -1076,6 +1094,9 @@ export class DockerService {
    */
   clearCapabilityCache() {
     this._capCache.clear()
+    // 在途探测同样作废：换镜像后让旧 inspect 的迟到结果回写缓存=拿旧像能力
+    // 判新像（构建完成时必调本方法，正是最可能出现"在途未回"的窗口）。
+    if (this._capInflight) this._capInflight.clear()
     clearDshVersionCache()
     if (configuredPrivilegeProfile() === 'auto') {
       securityMode = null
@@ -1381,7 +1402,10 @@ export class DockerService {
     let lastAliveCheck = 0
     while (Date.now() < deadline) {
       try {
-        const res = await fetch(`http://127.0.0.1:${port}/`)
+        // 2026-10 审计：fetch 无超时会吃掉整个等待预算——进程 accept 了 TCP
+        // 但 web 层挂起（不响应）时，这一笔 fetch 永久 pending，waitReady 的
+        // deadline/容器存活检查全被卡死，用户干等无任何反馈。单次探测 3s 硬超时。
+        const res = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(3000) })
         const s = res.status
         // 判据不能是"任何状态码"（早期实现用 res.status > 0）——那会把
         // "进程已监听但 web 接口还没挂载"误判成就绪。实测冷启动状态序列：

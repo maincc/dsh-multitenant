@@ -683,12 +683,20 @@ export class UserService {
       try {
         await dockerService.stopContainer(name)
       } catch {
-        // ignore
+        // stop 失败不阻塞：rm 才是终结判定（已停/无响应都直接摘除）
       }
       try {
         await dockerService.removeContainer(name)
-      } catch {
-        // ignore
+      } catch (err) {
+        // 2026-10 审计：旧实现把 rm 失败整个吞掉——旧容器还活着却继续删记录、
+        // 回收端口，结果容器成孤儿（占着数据卷，后续 removeVolume 必失败），
+        // 用户界面"重置成功"实为假动作。删不掉就中止抛错（可重试），
+        // "已经没了"则放行。
+        if (!/no such container|not found/i.test(String(err?.message || err))) {
+          throw new Error(
+            `reset 中止：无法移除旧容器（${String(err?.message || err).slice(0, 120)}），请稍后重试`,
+          )
+        }
       }
     }
 
@@ -696,8 +704,13 @@ export class UserService {
     try {
       await dockerService.removeVolume(volume)
       console.log(`[reset] Volume ${volume} deleted`)
-    } catch {
-      // 卷可能不存在，忽略
+    } catch (err) {
+      const msg = String(err?.message || err)
+      // "卷不存在"合法（从未建卷/已清）；其它失败必须中止——卷没删成而记录被删，
+      // 下次重建会原样挂回旧卷：用户以为重置了，实际拿到旧数据（重置语义破产）。
+      if (!/not found|does not exist|no such volume/i.test(msg)) {
+        throw new Error(`reset 中止：无法删除数据卷（${msg.slice(0, 120)}），请稍后重试`)
+      }
     }
 
     // 3. 删除用户记录（保留端口分配）
@@ -2195,18 +2208,31 @@ export class UserService {
     if (!user) throw new NotFoundError('User not found')
 
     const name = swtcContainerName(address)
+    // 2026-10 审计两处纠偏：
+    // ① settle-after-stop 纪律（与 checkUsageLimit/stop/apply 同款）：旧代码先
+    //    结算再 stop——stop/rm 全失败被吞时容器还活着但表针已清，记录又被删除，
+    //    孤儿容器从此**免费运行**且没人认领。
+    // ② rm 失败不再吞：容器删不掉而记录照删 = 孤儿。中止抛错、记录保留，
+    //    管理员可重试（"容器已不在"则正常放行）。
     try {
-      // 容器可能还在运行：先结算本次运行段（销毁也计入当日时长）
-      this.settleUsage(address)
       await dockerService.stopContainer(name)
-    } catch {
-      // ignore
+    } catch (err) {
+      // 停不下来继续尝试 rm（rm -f 语义由 removeContainer 的 force 承担）
+      console.warn(
+        `[destroy] ${address} stop 失败，继续 rm:`,
+        String(err?.message || err).slice(0, 120),
+      )
     }
     try {
       await dockerService.removeContainer(name)
-    } catch {
-      // ignore
+    } catch (err) {
+      const msg = String(err?.message || err)
+      if (!/no such container|not found/i.test(msg)) {
+        throw new Error(`销毁中止：无法移除容器（${msg.slice(0, 120)}），记录已保留，请稍后重试`)
+      }
     }
+    // 容器确认离场（删除成功/本就不在）才清表针：此刻运行段才真正终结
+    this.settleUsage(address)
 
     if (removeRecord) {
       const keepVolume = Boolean(options?.keepVolume)
@@ -2222,8 +2248,19 @@ export class UserService {
           await dockerService.removeVolume(swtcVolumeName(address))
           volumeStatus = 'deleted'
           console.log(`[destroy] volume ${swtcVolumeName(address)} deleted (${address})`)
-        } catch {
-          // 卷可能不存在，忽略
+        } catch (err) {
+          const msg = String(err?.message || err)
+          // 卷不存在合法；其它失败**可见化**（2026-10 审计：旧版全吞，管理员以为
+          // 删净了，磁盘上留着含用户数据的孤儿卷）。记录清理仍继续——卷可事后
+          // 用「孤儿扫描」补删，回滚整个销毁反而把已消失的租户卡死。
+          volumeStatus = /not found|does not exist|no such volume/i.test(msg)
+            ? 'absent'
+            : `failed: ${msg.slice(0, 100)}`
+          if (volumeStatus !== 'absent') {
+            console.error(
+              `[destroy] ${address} 数据卷删除失败（将进孤儿扫描补删）: ${msg.slice(0, 140)}`,
+            )
+          }
         }
       }
 

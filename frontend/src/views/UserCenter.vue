@@ -1334,6 +1334,9 @@ const saveConfig = async () => {
 /** 探测某个自定义端点的模型列表（优先用输入框 key，否则用该端点已存 key） */
 const discoverItem = async (idx) => {
   if (!currentAddress()) return toast(t('user.errConnectFirst'))
+  // 串行互斥（2026-10 审计）：discovering 只记一个下标，点了 A 再点 B 会让
+  // A 的"探测中"态被顶掉且两笔并发——签名挑战/限流都会交叠。一次只探一个。
+  if (discovering.value !== null) return
   const item = items.value[idx]
   if (!item?.baseURL?.trim()) return toast(t('user.errNeedBaseUrl'))
   discovering.value = idx
@@ -1544,6 +1547,13 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
     userInfo.value = {}
     connected.value = false
     usageInfo.value = null
+    // 2026-10 审计补：凭证与模型配置也是**按地址**的数据——切钱包瞬间把上一个
+    // 地址的卡片/申请状态/模型条目留在屏上，既是误导（新地址显示"已领取"），
+    // 也有把旧配置原样保存到新地址的串写风险。
+    credInfo.value = null
+    credVc.value = null
+    credApp.value = null
+    items.value = []
   }
 
   try {
@@ -1570,10 +1580,12 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
       hideLoading()
       localStorage.setItem('swtc_address', newAddress)
       // 关键修复：额度用完 ≠ 没连上钱包。这里必须进入「已连接」态并直接切到
-      // CWT 验证页 —— 否则页面停在「连接钱包」卡片，而解除限时的 CWT 入口又在
+      // 账户页 —— 否则页面停在「连接钱包」卡片，而解除限时的 CWT 入口又在
       // 已连接界面里，点了弹限时、弹完还是连接钱包，形成死循环（用户实测反馈）
       await establishConnected(newAddress)
-      activeTab.value = 'cwt'
+      // v1.4 无独立 cwt tab（CWT 入口并入「账户」）：写 'cwt' 等于切到不存在的
+      // key，四个 tab 面板全不渲染——用户卡在空白页找不到解限入口（2026-10 审计）
+      activeTab.value = 'account'
       if (!isInitialLoad) {
         toast(lastConnect202Message || t('user.usageLimitReached'))
       }
@@ -1945,6 +1957,14 @@ const fetchUserInfo = async (address) => {
     // 403（会话无效/他人地址）：不打断、不弹错——签名连接后自动解锁
     if (err.response?.status === 403) {
       console.warn('[UserCenter] 用户信息需完成签名连接后解锁（403），请点击「进入 DSH」')
+      return
+    }
+
+    // 401（2026-10 审计补）：user_session 过期/被吊销。吞进"重试"会把界面
+    // 停在半连接的假象——明确回到未连接态，提示一键重连。
+    if (err.response?.status === 401) {
+      connected.value = false
+      toast(t('user.sessionExpired'))
       return
     }
 
@@ -2388,6 +2408,12 @@ const doShare = async () => {
 }
 
 onUnmounted(() => {
+  // 排队轮询是全局 interval：不随组件卸载停止的话，切走页面的用户仍在后台
+  // 空转打接口（僵尸组件 setState），重挂载后新旧两条轮询并行（2026-10 审计）。
+  if (queuePollingTimer) {
+    clearInterval(queuePollingTimer)
+    queuePollingTimer = null
+  }
   // 解绑账户监听，避免组件重挂载后重复监听
   unbindAccounts?.()
   unbindAccounts = null

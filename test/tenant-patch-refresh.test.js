@@ -29,6 +29,8 @@ vi.mock('../src/services/docker.service.js', () => ({
     removeContainer: vi.fn(),
     stopContainer: vi.fn(),
     updateContainer: vi.fn(),
+    // 重置/销毁路径（2026-10 fail-closed 回归位）
+    removeVolume: vi.fn(),
     // 启动自愈路径会用到（凭据文件损坏 → 隔离 + 重启一次）
     containerDiagnostics: vi.fn(),
     quarantineVolumeFile: vi.fn(),
@@ -399,5 +401,74 @@ describe('restartContainer：凭据文件损坏时自愈', () => {
     await expect(userService.restartContainer(ADDR)).rejects.toThrow(/did not become ready/)
 
     expect(dockerService.quarantineVolumeFile).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 重置/销毁的失败语义（2026-10 审计）：此前 rm/卷删除失败整个吞掉——记录照删、
+// 端口照回收，容器成孤儿（占卷、免费运行、没人认领），界面"成功"实为假动作。
+// 现 rm 失败中止保记录；卷失败可见化（degraded 上报）；settle-after-rm 纪律。
+// ---------------------------------------------------------------------------
+describe('reset/destroy 失败中止（fail-closed 回归位）', () => {
+  beforeEach(() => {
+    userService.state.usages = {}
+    userService.state.availablePorts = []
+    dockerService.containerInfo.mockResolvedValue({ exists: true, status: 'running' })
+    dockerService.stopContainer.mockResolvedValue(undefined)
+    dockerService.removeContainer.mockResolvedValue(undefined)
+    dockerService.removeVolume.mockResolvedValue(undefined)
+  })
+
+  it('reset：旧容器删不掉 → 中止，记录/表针原样保留', async () => {
+    userService.state.swtcUsers[ADDR] = {
+      port: PORT,
+      internalPort: 45377,
+      containerStatus: 'running',
+      usageStartedAt: Date.now() - 60_000,
+    }
+    userService.state.usages[ADDR] = { date: 'x', ms: 1000, minutes: 1 }
+    dockerService.removeContainer.mockRejectedValue(new Error('device is busy'))
+
+    await expect(userService.resetContainer(ADDR)).rejects.toThrow(/reset 中止/)
+
+    const rec = userService.state.swtcUsers[ADDR]
+    expect(rec).toBeTruthy() // 记录还在（管理员可重试）
+    expect(rec.usageStartedAt).toBeTruthy() // 没结算——容器还活着，计费不能断档
+    expect(dockerService.removeVolume).not.toHaveBeenCalled() // 中止在删卷之前
+  })
+
+  it('reset：数据卷删除失败（非"不存在"）→ 中止，记录保留', async () => {
+    userService.state.swtcUsers[ADDR] = { port: PORT, containerStatus: 'running' }
+    dockerService.removeVolume.mockRejectedValue(new Error('volume is in use'))
+
+    await expect(userService.resetContainer(ADDR)).rejects.toThrow(/无法删除数据卷/)
+    expect(userService.state.swtcUsers[ADDR]).toBeTruthy()
+  })
+
+  it('destroy：rm 失败 → 抛错保记录、不结算（表针留给重试）', async () => {
+    userService.state.swtcUsers[ADDR] = {
+      port: PORT,
+      containerStatus: 'running',
+      usageStartedAt: Date.now() - 60_000,
+    }
+    dockerService.removeContainer.mockRejectedValue(new Error('daemon unreachable'))
+
+    await expect(userService.destroyContainer(ADDR, true, {})).rejects.toThrow(/销毁中止/)
+
+    expect(userService.state.swtcUsers[ADDR]).toBeTruthy()
+    expect(userService.state.usages[ADDR]).toBeUndefined() // settle 没跑=运行段未终结
+    expect(dockerService.removeVolume).not.toHaveBeenCalled()
+  })
+
+  it('destroy：卷删除失败 → 记录清理继续但 volume 状态可见化', async () => {
+    userService.state.swtcUsers[ADDR] = { port: PORT, containerStatus: 'running' }
+    dockerService.removeVolume.mockRejectedValue(new Error('permission denied'))
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const out = await userService.destroyContainer(ADDR, true, {})
+
+    expect(out.volume).toMatch(/^failed: permission denied/) // 不再是无声的 kept/deleted
+    expect(userService.state.swtcUsers[ADDR]).toBeUndefined() // 记录清理是销毁主目的，继续
+    spy.mockRestore()
   })
 })

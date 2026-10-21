@@ -247,6 +247,7 @@ export default {
     enterDshFail: '进入失败：{err}',
     connecting: '正在连接…',
     usageLimitReached: '今日免费时长已用完，请明日再试，或完成 CWT 验证解锁',
+    sessionExpired: '登录会话已过期，请重新连接钱包',
     busy: '操作进行中，请稍候…',
     // ---- 模型配置 ----
     modelConfig: '🔑 模型配置',
@@ -577,6 +578,7 @@ export default {
       '批量重建 {n} 个租户的容器以应用新镜像？所有**在用会话都会中断**；建议先用「预览」逐个确认影响面。',
     confirmApplyOne: '重建 {addr} 的容器（应用所选镜像）？该租户正在使用的会话会中断。',
     confirmPruneImages: '彻底删除选中的 {n} 个镜像？删除不可逆，带标签的旧版本删掉后无法回滚。',
+    applyFail: '应用失败：{err}',
     // ---- 系统管理侧栏（与 React 原型稿一致） ----
     tabOverview: '系统概览',
     tabUsers: '用户管理',

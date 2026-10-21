@@ -180,9 +180,9 @@
             <tbody>
               <tr v-for="user in users" :key="user.address">
                 <td>
-                  <span class="address addr-tip" :data-full="user.address"
-                    >{{ user.address.slice(0, 10) }}...</span
-                  >
+                  <span class="address addr-tip" :data-full="user.address">{{
+                    shortAddress(user.address)
+                  }}</span>
                 </td>
                 <td>{{ user.port }}</td>
                 <td>
@@ -547,6 +547,11 @@
               </button>
             </div>
           </div>
+
+          <!-- 2026-10 审计：读失败必须在本 tab 内可见。此前写进全局 error，
+               而横幅只挂在 users tab——dsh 表读挂了既看不见，还会串到别的
+               tab 冒出不相关的错误 -->
+          <div v-if="dshError" class="error">{{ dshError }}</div>
 
           <!-- 两层模型说明：镜像层 vs 租户层 -->
           <div class="dsh-model-card">
@@ -1353,6 +1358,8 @@ const dshStatus = ref({
   note: null,
 })
 const dshStatusLoading = ref(false)
+// dsh tab 专属读错状态（2026-10 审计：不再写跨 tab 的全局 error）
+const dshError = ref('')
 const dshVersions = ref({
   latest: null,
   stable: [],
@@ -1863,7 +1870,14 @@ const loadCredRows = async () => {
   credLoading.value = true
   try {
     const res = await axios.get('/api/admin/credentials', {
-      params: { kind: credKind.value, q: credQ.value.trim(), limit: 10, offset: credOffset.value },
+      params: {
+        kind: credKind.value,
+        // 台账主键/档案 DID 一律小写形态存储：把用户粘贴的规范大小写地址
+        // 原样传 q 会精确匹配空手而归（2026-10 审计）。查询前先归一。
+        q: credQ.value.trim().toLowerCase(),
+        limit: 10,
+        offset: credOffset.value,
+      },
     })
     credRows.value = res.data.credentials || []
     credTotal.value = res.data.total || 0
@@ -2319,6 +2333,10 @@ const volumeSize = (address) => {
 
 /** 磁盘占用进度条宽度：该卷占所有租户卷最大者的百分比（最小 4% 保证可见） */
 const formatIdle = (ms) => {
+  // 2026-10 审计：idle 可为 null/undefined（无启动记录/状态漂移）。undefined
+  // 与数字比较全为 false，会一路落到最后一行渲染出 "NaN天"；null 则被
+  // null<60000=true 误显示成 "0秒"（看起来像刚活跃）。非有限值一律占位。
+  if (!Number.isFinite(ms)) return '—'
   if (ms < 60000) return `${Math.floor(ms / 1000)}${t('admin.secUnit')}`
   if (ms < 3600000) return `${Math.floor(ms / 60000)}${t('admin.minUnit')}`
   if (ms < 86400000) return `${(ms / 3600000).toFixed(1)}${t('admin.hourUnit')}`
@@ -2350,9 +2368,13 @@ const loadDshStatus = async () => {
     }
     const res = await axios.get('/api/admin/dsh/status')
     dshStatus.value = res.data
+    dshError.value = ''
   } catch (err) {
     console.error('[AdminPanel] 读取 DSH 镜像状态失败:', err)
-    error.value = err.response?.data?.error || err.message
+    // 写本 tab 的横幅（此前写全局 error：横幅在 users tab，看不见且会串tab）
+    dshError.value = t('admin.loadFail', {
+      err: err.response?.data?.error || err.message,
+    })
   } finally {
     dshStatusLoading.value = false
   }
@@ -2484,6 +2506,8 @@ const startDshPolling = () => {
         if (!res.data.running && sawApplyRunning) {
           // 批量结束：把逐租户结果落到明细列表（含失败原因）
           dshApplyResults.value = res.data.results || []
+          // 全部待选目标作废：批量已把陈旧租户刷到最新，下拉框回到实际钉像
+          dshTargetImage.value = {}
           await loadDshStatus()
           finishBatchUpdate()
         } else if (!sawApplyRunning && pollTicks >= 30) {
@@ -2594,7 +2618,7 @@ const previewApplyAll = async () => {
     const res = await axios.post('/api/admin/dsh/apply', { all: true, dryRun: true }, { headers })
     dshApplyResults.value = res.data.results || []
   } catch (err) {
-    error.value = friendlyPluginError(err)
+    toast(t('admin.applyFail', { err: friendlyPluginError(err) }))
   }
 }
 
@@ -2622,6 +2646,11 @@ const applyOne = async (address) => {
     const headers = await signAdminOperation('dsh/apply', { address, image })
     const res = await axios.post('/api/admin/dsh/apply', { address, image }, { headers })
     dshApplyResults.value = res.data.results || []
+    // 应用成功 → 撤销本地待选目标：下拉框回到"实际钉住的镜像"（loadDshStatus
+    // 刷新出的 pinnedImage）。留着陈旧 key 会在别处换钉后仍显示旧目标（2026-10 审计）
+    const rest = { ...dshTargetImage.value }
+    delete rest[address]
+    dshTargetImage.value = rest
     await loadDshStatus()
   } catch (err) {
     dshApplyResults.value = [{ address, ok: false, error: friendlyPluginError(err) }]
@@ -2654,7 +2683,7 @@ const applyAllStale = async () => {
         dshUpdate.value = { kind: 'batch', address: '', phase: '' }
         startDshPolling()
       } catch (err) {
-        error.value = friendlyPluginError(err)
+        toast(t('admin.applyFail', { err: friendlyPluginError(err) }))
       }
     },
   })

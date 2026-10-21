@@ -151,12 +151,29 @@ const DEFAULTS = {
   },
 }
 
+/**
+ * 递归深合并（2026-10 审计）：旧实现 `{ ...DEFAULTS, ...config }` 是**浅**合并——
+ * config.json 只要写 `usageLimit: { enabled: true }`，DEFAULTS.usageLimit 整段
+ * （dailyMinutes/checkIntervalMs…）就被替换蒸发，功能随"半个配置"悄悄失灵
+ * （privilegeProfile/minFreeBytes 等同理）。深合并让"部分覆盖"回归直觉：
+ * 用户没写的子键保留默认。数组按整体替换（宿主列表等语义本就显式）。
+ */
+function deepMerge(base, over) {
+  if (over === undefined) return base
+  if (Array.isArray(over)) return over.slice()
+  if (over === null || typeof over !== 'object') return over
+  if (base === null || typeof base !== 'object' || Array.isArray(base)) return deepMerge({}, over)
+  const out = { ...base }
+  for (const [k, v] of Object.entries(over)) out[k] = deepMerge(base[k], v)
+  return out
+}
+
 export function loadConfig() {
   let merged = DEFAULTS
   try {
     if (existsSync(CONFIG_FILE)) {
       const config = JSON.parse(readFileSync(CONFIG_FILE, 'utf8'))
-      merged = { ...DEFAULTS, ...config }
+      merged = deepMerge(DEFAULTS, config)
     }
   } catch (err) {
     console.error(`[config] Failed to load config.json: ${err.message}, using defaults`)
@@ -238,4 +255,4 @@ if (
   // eslint-disable-next-line no-console
   console.warn('[config] 测试进程护栏：storage 已由 mongodb 降档为 json（生产库保护）')
 }
-export { ROOT, CONFIG_FILE }
+export { ROOT, CONFIG_FILE, deepMerge as _deepMergeForTest }

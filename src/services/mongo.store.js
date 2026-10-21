@@ -79,21 +79,32 @@ export class MongoStore {
   /** 惰性连接；幂等。连上后探一次拓扑（副本集=事务可用）。 */
   async connect() {
     if (this._client) return this._client
-    const client = new MongoClient(this.uri, {
-      serverSelectionTimeoutMS: this.connectTimeoutMs,
-      retryWrites: true,
-    })
-    await client.connect()
-    this._client = client
-    this._db = client.db(this.dbName)
-    this._topology = await this._probeTopology()
-    if (this._topology !== 'replset') {
-      // 不抛——读写仍可用；只是事务不可用。由 withTransaction 处守门。
-      console.warn(
-        `[mongo.store] 拓扑=${this._topology}（非副本集）：多文档事务将不可用，见 storage-design §5.2 R1`,
-      )
-    }
-    return client
+    // 2026-10 审计：单飞锁——client.connect() 是长 await，此前并发调用各自
+    // new MongoClient 各连一份：连接翻倍、后写覆盖 this._client，先连上的
+    // 句柄泄漏（没人 close）。后来者复用同一条 connect Promise；失败解锁可重试。
+    if (this._connecting) return this._connecting
+    this._connecting = (async () => {
+      const client = new MongoClient(this.uri, {
+        serverSelectionTimeoutMS: this.connectTimeoutMs,
+        retryWrites: true,
+      })
+      try {
+        await client.connect()
+        this._client = client
+        this._db = client.db(this.dbName)
+        this._topology = await this._probeTopology()
+        if (this._topology !== 'replset') {
+          // 不抛——读写仍可用；只是事务不可用。由 withTransaction 处守门。
+          console.warn(
+            `[mongo.store] 拓扑=${this._topology}（非副本集）：多文档事务将不可用，见 storage-design §5.2 R1`,
+          )
+        }
+        return client
+      } finally {
+        this._connecting = null
+      }
+    })()
+    return this._connecting
   }
 
   async _probeTopology() {

@@ -1,7 +1,7 @@
 /**
  * L1 档案判定件单测（did-vc-runbook 步骤5 验收：mock 三态）
  */
-import { describe, expect, it, beforeEach } from 'vitest'
+import { describe, expect, it, beforeEach, vi } from 'vitest'
 import { l1ProfileHit, isL1ProfileDoc, _clearL1Cache } from '../src/services/did.service.js'
 
 const ADDR = 'jL1testUserAAAAAAAAAAAAAAAAAAAAAAAAAAA'
@@ -42,10 +42,18 @@ describe('l1ProfileHit 三态', () => {
   })
 
   it('③ 超时：慢 resolver → timeoutMs 内静默 false', async () => {
-    const slow = { resolve: () => new Promise((r) => setTimeout(() => r(goodDoc), 200)) }
-    const t0 = Date.now()
-    expect(await l1ProfileHit(ADDR, { resolver: slow, timeoutMs: 50 })).toBe(false)
-    expect(Date.now() - t0).toBeLessThan(150)
+    // 2026-10 审计刀4 根治 flaky：原实现用真实 200ms resolver + "<150ms" 墙钟
+    // 断言，全量并行把事件循环压满时 timer 漂移直接破线（solo 必绿、并行偶挂）。
+    // fake timers 让"判定在预算内收敛"成为确定性事实。
+    vi.useFakeTimers()
+    try {
+      const slow = { resolve: () => new Promise((r) => setTimeout(() => r(goodDoc), 5000)) }
+      const p = l1ProfileHit(ADDR, { resolver: slow, timeoutMs: 50 })
+      await vi.advanceTimersByTimeAsync(200) // 远超预算：判定必须已收敛
+      expect(await p).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('③b 一次超时不下缺席结论：重试成功=hit（2026-10-19 档案误判事故回归位）', async () => {
