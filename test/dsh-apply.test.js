@@ -166,6 +166,7 @@ let backupDir = null
 
 beforeEach(() => {
   vi.restoreAllMocks()
+  vi.clearAllMocks() // vitest4: 模块级vi.mock工厂的fn不被restore覆盖，需显式清调用历史
   isAdmin.mockReturnValue(true)
   adminSessionStore.sessions = {}
   userService.state.swtcUsers = {}
