@@ -330,6 +330,21 @@
               }}</span>
             </div>
           </div>
+
+          <!-- 凭证区占位态（用户反馈"凭证在哪"的兜底）：读取失败不再让整块静默消失——
+               永远可见"发生了什么 + 一键重试"，与 credInfo 有值时的卡面互斥（v-if/v-else） -->
+          <div v-else class="cred-card">
+            <div class="cred-head">
+              <span class="cred-title">{{ $t('user.credTitle') }}</span>
+              <span class="badge badge-warning">{{ $t('user.credNotLoaded') }}</span>
+            </div>
+            <p class="tab-hint">{{ $t('user.credNotLoadedHint') }}</p>
+            <div class="action-buttons">
+              <button class="btn btn-secondary" :disabled="!connected" @click="retryCredential">
+                {{ $t('user.credRetry') }}
+              </button>
+            </div>
+          </div>
         </div>
 
         <!-- ════════ 模型配置 ════════ -->
@@ -1063,9 +1078,18 @@ const loadCredentialStatus = async (address) => {
         run: () => claimCredential(),
       })
     }
-  } catch {
+  } catch (err) {
+    // 凭证卡走占位态（可见+可重试），并把失败原因留痕——不再静默吞掉
     credInfo.value = null
+    console.error('[UserCenter] credential-status 加载失败:', err?.response?.status, err?.message)
   }
+}
+
+// 占位态的"重试"：重新拉 credential-status（登录已确立会话时通常一次即恢复）
+const retryCredential = async () => {
+  const address = currentAddress()
+  if (!address) return
+  await loadCredentialStatus(address)
 }
 
 const sha256Hex = async (bytes) => {
@@ -1682,7 +1706,14 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
     // 保存地址（即使是相同的地址也要保存，确保格式正确）
     localStorage.setItem('swtc_address', newAddress)
 
-    // 身份已确立 → 进入已连接态（establishConnected 内部 fetchUserInfo 拉全量+凭证+角色）
+    // ★凭证/角色是"登录"这一动作的直接结论，不寄生在用户信息接口的分支里：
+    //   先拉 credential-status（账户信息的凭证卡 + 管理 tab 判权），再补业务数据。
+    //   （历史坑：fetchUserInfo 走 403/401 分支时早退，loadCredentialStatus 没被调，
+    //   credInfo 空置 → 凭证卡整块"消失"——用户实测反馈即此。）
+    await loadCredentialStatus(newAddress)
+
+    // 身份已确立 → 进入已连接态（establishConnected 内部 fetchUserInfo 拉全量；
+    // 其内部再调一次 loadCredentialStatus 属幂等刷新，无副作用）
     showLoading(t('user.loadingFetchInfo'), t('user.loadingAccountData'), 70)
     await establishConnected(newAddress)
     hideLoading()

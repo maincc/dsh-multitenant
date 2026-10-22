@@ -498,6 +498,10 @@ export default {
     credSrc_connect: '插件直连配发',
     credSrc_demoted: '撤销降格重签',
     credClaimBtn: '存入我的数字档案',
+    credNotLoaded: '未读取到',
+    credNotLoadedHint:
+      '凭证卡加载失败（会话过期或网络异常）。凭证本身仍在平台台账，点下方重试即可恢复。',
+    credRetry: '重试加载凭证',
     credClaiming: '写入档案中…',
     credClaimed: '已存入您的数字档案（链上生效，稍后自动核验真伪）',
     credClaimFail: '存入失败：{msg}',
