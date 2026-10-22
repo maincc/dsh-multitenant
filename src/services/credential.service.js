@@ -9,7 +9,12 @@
  *  - 想解除限制：必须领取 DID 普通凭证 → 提交 CWT 申请 → 管理员批准 → 签发 CWT 凭证
  *    （批准即解除限制；DID 普通凭证从台账移除——两凭证不可共存）。
  *  - 限制判据 = 是否持有 CWT 凭证（kind==='cwt'），与领取状态无关。
- *  - 暂不做撤销（拍板）。
+ *  - 撤销/降权（v1.5 刀5A，推翻旧"暂不做撤销"拍板）：撤=台账重签降格（批准史决定回纯 cwt
+ *    还是 did）+ 登记册摘除旧卡（unshelfCredential）；旧卡验签永真但已不是台账当前卡，
+ *    判权读结论快照（当秒摘除），重放无门（claim 门禁校验卡型/roles 与台账一致）。
+ *  - 管理员（v1.5）：任命=重签 cwt 卡带 roles:['admin']（admin-auto，免申请免自审，
+ *    免时限复用 cwt 豁免链天然生效）；判权 isAdmSync 读台账签发结论快照 _admSet，
+ *    config∪admin.json 名册只是配发/撤销的策略输入。
  *
  * 密码学链路（spike 实证 verified:true 的配方，见 scripts/vc-spike.cjs）：
  *  - VC proof：@jccdex/did SDK issueCredential（EcdsaSecp256k1Signature2019，JCS 规范化）
@@ -26,7 +31,7 @@ import { createRequire } from 'node:module'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 
-import { CONFIG, ROOT } from '../config/config.js'
+import { CONFIG, ROOT, getAdminAddresses, isAdmin } from '../config/config.js'
 import { getStore } from './mongo.store.js'
 import { normalizeAddress } from '../utils/address.js'
 import { l1ProfileHit, getSwtcResolver } from './did.service.js'
@@ -122,6 +127,7 @@ export function _resetForTest(inj = {}) {
   if (inj.platform !== undefined) _platform = inj.platform
   if (inj.loader !== undefined) _loader = inj.loader
   if (inj.backend !== undefined) _injectedBackend = inj.backend
+  _rosterOverride = inj.roster === undefined ? null : inj.roster
   if (inj.legacy !== undefined)
     _legacy = inj.legacy instanceof Map ? inj.legacy : new Map(Object.entries(inj.legacy))
   _vcCache.clear()
@@ -134,7 +140,7 @@ export const _shelfCredentialForTest = shelfCredential
 /* ───────────────────────── VC 签发 ───────────────────────── */
 
 /** 平台真签一张 VC（kind: did|cwt），subject = 用户 DID（小写规范形态） */
-async function mintVC(kind, subjectAddrLower) {
+async function mintVC(kind, subjectAddrLower, roles = []) {
   const p = platform()
   const c = cfg()
   const ns = c.vcNamespace || 'urn:dshm-test:credential'
@@ -150,6 +156,7 @@ async function mintVC(kind, subjectAddrLower) {
         verifiedVia: `${ns}#verifiedVia`,
         dailyMinutes: `${ns}#dailyMinutes`,
         cwtGrant: `${ns}#cwtGrant`,
+        roles: `${ns}#roles`,
       },
     ],
     id: `${p.did}#credential-${kind === 'did' ? 't1' : 'cwt'}-${now.getTime().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
@@ -170,6 +177,7 @@ async function mintVC(kind, subjectAddrLower) {
             tier: 1,
             cwtGrant: `${ns}:approved`,
             verifiedVia: `${ns}:cwt`,
+            ...(Array.isArray(roles) && roles.length ? { roles } : {}),
           },
   }
   const vc = await sdk().issueCredential(
@@ -415,6 +423,54 @@ async function _shelfStep(vc) {
   }
 }
 
+/**
+ * 从平台登记册摘除某地址的 Dsh 卡（v1.5 撤销链）。读档失败绝不写（probe-fail 铁律，
+ * 同 _shelfStep）；确属缺席/网络失败返回 false 不炸调用方（降格路径里这是尽力轨：
+ * 判权即时性由台账+_unmark 保证，摘册是对外一致性复核）。
+ */
+function unshelfCredential(addrLower) {
+  const step = () => _unshelfStep(addrLower)
+  const result = _shelfChain.then(step, step)
+  _shelfChain = result.then(
+    () => {},
+    () => {},
+  )
+  return result
+}
+async function _unshelfStep(addrLower) {
+  try {
+    const p = platform()
+    if (!p.priv) throw new Error('平台私钥未加载')
+    const canonical = normalizeToCanonical(
+      p.did.replace(/^did:swtc:/, ''),
+      `did:swtc:${p.did.replace(/^did:swtc:/, '')}.json`,
+    )
+    const read = await relayRead(canonical)
+    if (read.status === 'probe-fail') return false // 读不到绝不动册（防把整篇登记册写没）
+    if (read.status !== 'ok' || !read.doc) return true // 本就没有登记册=无需摘
+    const before = (read.doc.credentials || []).length
+    const list = (read.doc.credentials || []).filter(
+      (c) => !isDshCard(c) || cardSubject(c) !== `did:swtc:${addrLower}`,
+    )
+    if (list.length === before) return true // 该地址在册无卡：幂等
+    const doc = { ...read.doc, credentials: list, updated: new Date().toISOString() }
+    const signature = signWithPlatformKey(Buffer.from(JSON.stringify(doc), 'utf8'))
+    await relayWrite({
+      document: doc,
+      fileName: `did:swtc:${canonical}.json`,
+      publicKeyHex: platformSignKey(),
+      signatureDerHex: signature,
+      chain: cfg().chain,
+    })
+    return true
+  } catch (err) {
+    console.warn(
+      `[credential-unshelf] 登记册摘除失败（台账判权已即时生效，不影响撤销）: ${String(err?.message || err).slice(0, 140)}`,
+    )
+    return false
+  }
+}
+
 /* ───────────────────────── legacy CWT 白名单 ───────────────────────── */
 
 let _legacy = null
@@ -448,6 +504,14 @@ function legacySet() {
 }
 export function legacyHit(address) {
   return legacySet().get(normalizeAddress(address)) || null
+}
+
+/* ───────────────────────── 管理员名册（配发/撤销的策略输入，v1.5） ───────────────────────── */
+
+let _rosterOverride = null // 测试注入缝；生产=null → getAdminAddresses()（config ∪ admin.json/meta）
+function rosterAddresses() {
+  if (!_rosterOverride) return getAdminAddresses()
+  return new Set([..._rosterOverride].map((a) => String(a).toLowerCase()))
 }
 
 /* ───────────────────────── 存储适配器（mongo/json 双轨） ───────────────────────── */
@@ -495,6 +559,10 @@ class MongoCredentialBackend {
   }
   /** 批准签发：整条替换为 cwt（did 凭证不复存在——两凭证不共存的台账侧强制） */
   async grantCwt(addrLower, doc) {
+    return this.putRow(addrLower, doc)
+  }
+  /** v1.5 通用整条替换（admin-auto 升签/降权重签都走它——互斥台账语义不变） */
+  async putRow(addrLower, doc) {
     await this._col().replaceOne({ _id: addrLower }, { _id: addrLower, ...doc }, { upsert: true })
     return this.get(addrLower)
   }
@@ -551,6 +619,18 @@ class MongoCredentialBackend {
         .find({ kind: 'cwt' }, { projection: { _id: 1 } })
         .toArray()
     ).map((d) => d._id)
+  }
+  /** v1.5 管理员快照源：kind=cwt ∧ roles 含 admin 的行（带 expiresAt 供过期过滤） */
+  async listAdminAddresses() {
+    return (
+      await this._col()
+        .find({ kind: 'cwt', roles: 'admin' }, { projection: { _id: 1, expiresAt: 1 } })
+        .toArray()
+    ).map((d) => ({ _id: d._id, expiresAt: d.expiresAt || null }))
+  }
+  /** 批准史查询（撤销降格判定依据）：存在本人获批工单 */
+  async hasApprovedApp(addrLower) {
+    return Boolean(await this._apps().findOne({ address: addrLower, status: 'approved' }))
   }
   async listClaimed() {
     return (
@@ -611,6 +691,10 @@ class JsonCredentialBackend {
     return all[addrLower]
   }
   async grantCwt(addrLower, doc) {
+    return this.putRow(addrLower, doc)
+  }
+  /** v1.5 通用整条替换（admin-auto 升签/降权重签都走它——互斥台账语义不变） */
+  async putRow(addrLower, doc) {
     const all = this._load(this._fileCred) || {}
     all[addrLower] = { _id: addrLower, ...doc }
     this._save(this._fileCred, all)
@@ -667,6 +751,19 @@ class JsonCredentialBackend {
       .filter(([, d]) => d && d.kind === 'cwt')
       .map(([a]) => a)
   }
+  /** v1.5 管理员快照源：kind=cwt ∧ roles 含 admin */
+  async listAdminAddresses() {
+    const all = this._load(this._fileCred) || {}
+    return Object.entries(all)
+      .filter(([, d]) => d && d.kind === 'cwt' && (d.roles || []).includes('admin'))
+      .map(([a, d]) => ({ _id: a, expiresAt: d.expiresAt || null }))
+  }
+  /** 批准史查询（撤销降格判定依据）：存在本人获批工单 */
+  async hasApprovedApp(addrLower) {
+    return (this._load(this._fileApps) || []).some(
+      (a) => a.address === addrLower && a.status === 'approved',
+    )
+  }
   async listClaimed() {
     const all = this._load(this._fileCred) || {}
     return Object.values(all)
@@ -690,13 +787,23 @@ class CredentialService {
   constructor() {
     this._cwtSet = new Set() // 解除限制地址快照（usage 热路径同步查，init 水合+周期刷新）
     this._cwtPending = new Set() // 刷新 fetch 窗口内的即时豁免（replace 时并入，防被旧快照吞掉）
+    this._cwtUnmark = new Set() // v1.5 fetch 窗口内的即时收回（replace 时剔除，防被旧快照复活）
+    this._admSet = new Set() // v1.5 管理员判权快照（kind=cwt ∧ roles∋admin ∧ 未过期的台账结论）
+    this._admPending = new Set() // 同上：admin 即时授予/摘除的窗口保护对
+    this._admUnmark = new Set()
     this._hydrateAt = 0
     this._refreshTimer = null
+    this._provisioned = false // 首次配发对账完成前，isAdmSync 走名册兜底（绝不上锁）
   }
   _resetCache() {
     this._cwtSet.clear()
     this._cwtPending.clear()
+    this._cwtUnmark.clear()
+    this._admSet.clear()
+    this._admPending.clear()
+    this._admUnmark.clear()
     this._hydrateAt = 0
+    this._provisioned = false // 判权门面回到名册兜底态（与 _admSet 清空保持一致，测试/重启同构）
   }
   async init() {
     _mongoBackend = _mongoBackend || new MongoCredentialBackend()
@@ -708,9 +815,19 @@ class CredentialService {
         .catch(() => {})
     }
     await this.refreshExemptSet()
+    // v1.5：名册→凭证双向对账（纯本地台账写；挂册异步尽力）。失败不抛——
+    // _provisioned 保持 false，isAdmSync 落名册兜底，管理面绝不因对账抖动上锁
+    await this.syncAdminProvisioning().catch((err) => {
+      console.warn(
+        `[credential] 管理员配发对账失败（走名册兜底）: ${String(err?.message || err).slice(0, 140)}`,
+      )
+    })
     if (!this._refreshTimer) {
       // 5 分钟兜底水合（外部直改库/多写入窗口）；unref 绝不误拖测试进程
-      this._refreshTimer = setInterval(() => this.refreshExemptSet().catch(() => {}), 300000)
+      this._refreshTimer = setInterval(() => {
+        this.refreshExemptSet().catch(() => {})
+        this.syncAdminProvisioning().catch(() => {})
+      }, 300000)
       this._refreshTimer.unref()
     }
   }
@@ -719,17 +836,37 @@ class CredentialService {
     return cfg().enabled !== false
   }
 
-  /** 水合/刷新解除限制快照（mongo 全量 cwt 地址；json 直读文件）。approve/签发路径也会即时补集 */
+  /** 水合/刷新豁免+管理员快照（v1.5 双集）。approve/签发/任命路径也会即时补集，撤销即时摘 */
   async refreshExemptSet() {
     try {
-      const addrs = await backend().listCwtAddresses()
+      const b = backend()
+      const [addrs, adminRows] = await Promise.all([
+        b.listCwtAddresses(),
+        typeof b.listAdminAddresses === 'function'
+          ? b.listAdminAddresses().catch(() => null)
+          : Promise.resolve(null),
+      ])
       const next = new Set(addrs)
-      // 2026-10 审计：listCwtAddresses 是 await——期间 _markExempt（批准/签发
-      // 即时豁免）插入的地址会被这份**旧快照**整替吞掉，刚批的用户被误限时
-      // 直到下个刷新周期。把 fetch 窗口内的即时 add 并入新集再原子替换。
+      // 2026-10 审计：fetch 窗口内的即时增/减都要在原子替换时保全
+      // （刀3 修的是"新批被旧快照吞"；v1.5 撤销引入对称面"刚撤被旧快照复活"）
       for (const a of this._cwtPending) next.add(a)
+      for (const a of this._cwtUnmark) next.delete(a)
       this._cwtSet = next
+      if (adminRows) {
+        // v1.5 判权快照=台账签发结论 ∧ 未过期（过期行等登录续发重铸，先出集——fail-safe）
+        const adm = new Set(
+          adminRows
+            .filter((r) => !r.expiresAt || new Date(r.expiresAt).getTime() > Date.now())
+            .map((r) => r._id),
+        )
+        for (const a of this._admPending) adm.add(a)
+        for (const a of this._admUnmark) adm.delete(a)
+        this._admSet = adm
+      }
       this._cwtPending.clear()
+      this._cwtUnmark.clear()
+      this._admPending.clear()
+      this._admUnmark.clear()
       this._hydrateAt = Date.now()
     } catch {
       /* 存储抖动保旧集（上活错误方向：保豁免=可能多豁免 vs 清集=全体误限时；取保旧） */
@@ -745,8 +882,40 @@ class CredentialService {
   _markExempt(addrLower) {
     this._cwtSet.add(addrLower)
     // 若有一轮刷新正在 fetch 途中，本地址必须在该轮 replace 时保留（见 refreshExemptSet）
+    this._cwtUnmark.delete(addrLower) // 后到者胜：先撤销后重新签发=豁免
     this._cwtPending.add(addrLower)
     this._hydrateAt = Date.now()
+  }
+
+  /** v1.5 收回免时限即时摘除（撤销/降格 did 时调用；fetch 窗口内的对称保护） */
+  _unmarkExempt(addrLower) {
+    this._cwtSet.delete(addrLower)
+    this._cwtPending.delete(addrLower)
+    this._cwtUnmark.add(addrLower)
+  }
+
+  /**
+   * v1.5 管理员判权热路径（同步零 I/O）：读台账签发结论快照。
+   * 兜底铁律：凭证体系停用 或 首次对账未完成 → 落 config∪admin.json 名册
+   * （升级/异常期绝不上锁管理员门面）；对账完成后快照即名册的凭证化投影。
+   */
+  isAdmSync(address) {
+    if (!this.enabled || !this._provisioned) return isAdmin(address)
+    return this._admSet.has(normalizeAddress(address))
+  }
+
+  _markAdmin(addrLower) {
+    this._admSet.add(addrLower)
+    this._admUnmark.delete(addrLower) // 后到者胜：撤销后重新任命=管理员
+    this._admPending.add(addrLower)
+    this._hydrateAt = Date.now()
+  }
+
+  /** v1.5 撤 admin 当秒摘除判权（官网摘册/重签由 demoteAdmin 编排） */
+  _unmarkAdmin(addrLower) {
+    this._admSet.delete(addrLower)
+    this._admPending.delete(addrLower)
+    this._admUnmark.add(addrLower)
   }
 
   /**
@@ -763,14 +932,30 @@ class CredentialService {
         await b.grantCwt(addrLower, this._cwtDoc(addrLower, 'legacy', lg))
         cred = await b.get(addrLower)
         this._markExempt(addrLower)
+        // 名册地址（v1.5）：legacy 直发之上再升 admin-auto 卡——任命生效免申请免自审
+        if (this.enabled && rosterAddresses().has(addrLower)) {
+          await this.provisionAdmin(addrLower, 'enter')
+          cred = (await b.get(addrLower)) || cred
+        }
         return {
           credential: this._public(cred),
           popup: true,
+          role: this.isAdmSync(addrLower),
           legacy: { approvedAt: lg.approvedAt || null },
         }
       }
       const r = await b.assignIfAbsent(addrLower, this._didDoc(addrLower, 'auto'))
       cred = r.doc
+    }
+    // v1.5：名册在册但台账无有效 admin 卡 → admin-auto 补签（下次弹窗自然引导领新卡；
+    // 幂等：已是 cwt+admin 的行原样保留）
+    if (
+      this.enabled &&
+      !(cred?.roles || []).includes('admin') &&
+      rosterAddresses().has(addrLower)
+    ) {
+      await this.provisionAdmin(addrLower, 'enter')
+      cred = (await b.get(addrLower)) || cred
     }
     // 登录即续发：已领取卡到期 → 当场重铸新卡换台账+异步换平台册（豁免无缝衔接）
     const renewed = await this._renewIfExpired(cred, addrLower)
@@ -779,6 +964,7 @@ class CredentialService {
     return {
       credential: this._public(renewed.cred),
       popup: renewed.cred.state === 'assigned',
+      role: this.isAdmSync(addrLower),
       legacy: null,
       renewed: renewed.renewed,
     }
@@ -794,7 +980,7 @@ class CredentialService {
   async _renewIfExpired(cred, addrLower) {
     if (!cred?.vcId || !cred.expiresAt) return { cred, renewed: false }
     if (new Date(cred.expiresAt).getTime() > Date.now()) return { cred, renewed: false }
-    const vc = await mintVC(cred.kind, addrLower)
+    const vc = await mintVC(cred.kind, addrLower, cred.roles || [])
     const patched = await backend().patch(addrLower, {
       vcId: vc.id,
       expiresAt: vc.expirationDate || null,
@@ -874,6 +1060,10 @@ class CredentialService {
       }
     }
     await b.patch(addrLower, { onChain: next })
+    // v1.5 判权联动：档案实卡验签【确凿】失效（invalid=被伪造/覆盖）→ 当秒摘 admin 热闸。
+    // 只认 invalid——stale/missing 是"未领取/换了新卡"的常态形态，误伤在岗管理员
+    if (next?.status === 'invalid' && Array.isArray(cred.roles) && cred.roles.includes('admin'))
+      this._unmarkAdmin(addrLower)
     return next
   }
 
@@ -883,6 +1073,7 @@ class CredentialService {
       kind: KINDS.DID,
       state: 'assigned',
       source,
+      roles: [],
       vcId: null,
       expiresAt: null,
       issuedAt: now,
@@ -895,6 +1086,7 @@ class CredentialService {
       kind: KINDS.CWT,
       state: 'assigned',
       source,
+      roles: Array.isArray(extra.roles) ? extra.roles : [],
       vcId: extra.vcId || null,
       expiresAt: extra.expiresAt || null,
       issuedAt: now,
@@ -909,6 +1101,8 @@ class CredentialService {
       kind: doc.kind,
       state: doc.state,
       source: doc.source,
+      roles: doc.roles || [],
+      isAdmin: (doc.roles || []).includes('admin'),
       issuedAt: doc.issuedAt,
       claimedAt: doc.claimedAt || null,
       vcId: doc.vcId || null,
@@ -957,7 +1151,7 @@ class CredentialService {
         expectedAddress: canonicalAddr,
       }
     }
-    const vc = await mintVC(cred.kind, addrLower)
+    const vc = await mintVC(cred.kind, addrLower, cred.roles || [])
     // 互斥在档案侧的落实：先摘掉平台签发的 Dsh 凭证（含历史信封形态），再放当前这张
     const doc = {
       ...read.doc,
@@ -1038,6 +1232,16 @@ class CredentialService {
     if (!(await isPlatformMinted(lastCard, addrLower))) {
       throw new BadRequestError(
         '档案末项不是平台为本地址签发的有效凭证（请点击「存入我的数字档案」获取最新档案后原样上传；如反复失败请稍后重试）',
+      )
+    }
+    // v1.5 卡型/roles 必须与台账当前态一致：撤销/任命都重签了降格/升格卡，
+    // 拿旧态的真卡（验签永远真）回存档案=展示误导——拒，引导重领当前新卡
+    const expectType = VC_TYPES[cred.kind]
+    const cardAdmin = (lastCard?.credentialSubject?.roles || []).includes('admin')
+    const rowAdmin = (cred.roles || []).includes('admin')
+    if (!expectType || !(lastCard?.type || []).includes(expectType) || cardAdmin !== rowAdmin) {
+      throw new BadRequestError(
+        '凭证与台账当前状态不一致（任命/撤销后已换发新卡），请重新点「存入我的数字档案」领取',
       )
     }
 
@@ -1129,7 +1333,13 @@ class CredentialService {
     if (!app) throw new BadRequestError('申请不存在')
     if (app.status !== 'pending') throw new BadRequestError(`申请已是 ${app.status} 状态`)
     const lg = legacyHit(app.address) || {}
-    const doc = this._cwtDoc(app.address, 'approval', { approvedAt: lg.approvedAt })
+    // v1.5：保留既有 roles（名册管理员的申请通道批准不得悄悄摘掉 admin 标记——
+    // 摘除只走 demote 链；这里互斥替换仍成立）
+    const cur = await b.get(app.address)
+    const doc = this._cwtDoc(app.address, 'approval', {
+      approvedAt: lg.approvedAt,
+      roles: cur?.roles || [],
+    })
     const cred = await b.grantCwt(app.address, doc)
     await b.patchApp(appId, {
       status: 'approved',
@@ -1152,6 +1362,101 @@ class CredentialService {
       reason: String(reason || '').slice(0, 300),
     })
     return { ok: true }
+  }
+
+  /* ---- v1.5 管理员凭证编排（任命/撤销/对账） ---- */
+
+  /**
+   * 任命生效=台账升签 cwt + roles:['admin']（admin-auto：免申请免自审——管理员不自己批自己，
+   * 任命权在名册操作门禁）。免时限复用 cwt 豁免链天然生效，无特例代码。
+   * 换卡重置 state=assigned：新 admin 卡需本人领取（弹窗闭环），vcId 领取时才落。
+   * 幂等：已是 cwt+admin 的行原样保留（重复任命/重启对账都不重签）。
+   */
+  async provisionAdmin(address, operator = 'system') {
+    const addrLower = normalizeAddress(address)
+    const b = backend()
+    const row = await b.get(addrLower)
+    if (row && row.kind === KINDS.CWT && (row.roles || []).includes('admin')) {
+      this._markAdmin(addrLower)
+      this._markExempt(addrLower)
+      return { ok: true, already: true, credential: this._public(row) }
+    }
+    const lg = legacyHit(addrLower) || {}
+    const doc = this._cwtDoc(addrLower, 'admin-auto', {
+      roles: ['admin'],
+      approvedAt: lg.approvedAt,
+    })
+    const cred = await b.putRow(addrLower, doc)
+    this._markAdmin(addrLower)
+    this._markExempt(addrLower)
+    return { ok: true, issued: true, credential: this._public(cred) }
+  }
+
+  /**
+   * 撤销=没收管理凭证并重签降格（卡不可编辑，"没收"只能换卡）。去向按批准史：
+   *  本人有独立 cwt 批准史（获批工单/legacy 白名单）→ 重签纯 cwt 卡（不限时凭自己的本权）；
+   *  admin 卡是解限唯一来源 → 重签 did 卡（回限时普通持牌人）。
+   * 即时性：台账替换 + 快照当秒摘除；登记册摘除旧卡为尽力轨（异步串行链，
+   * 判权不依赖其完成——旧卡即便仍在册，台账 vcId 已换代，claim 门禁校验卡型/roles 一致）。
+   */
+  async demoteAdmin(address, operator = 'system') {
+    const addrLower = normalizeAddress(address)
+    const b = backend()
+    const row = await b.get(addrLower)
+    if (!row || !(row.roles || []).includes('admin')) return { ok: true, noop: true }
+    const hasOwn =
+      (typeof b.hasApprovedApp === 'function' && (await b.hasApprovedApp(addrLower))) ||
+      Boolean(legacyHit(addrLower))
+    const lg = legacyHit(addrLower) || {}
+    const target = hasOwn
+      ? this._cwtDoc(addrLower, legacyHit(addrLower) ? 'legacy' : 'approval', {
+          approvedAt: lg.approvedAt,
+        })
+      : this._didDoc(addrLower, 'demoted')
+    const cred = await b.putRow(addrLower, target)
+    this._unmarkAdmin(addrLower)
+    if (target.kind === KINDS.DID) this._unmarkExempt(addrLower)
+    unshelfCredential(addrLower).catch(() => {})
+    return { ok: true, to: target.kind, credential: this._public(cred) }
+  }
+
+  /**
+   * 双向对账（启动+5 分钟周期，幂等）：名册→缺卡补签/有卡保集；名册外→悬空 admin 结论降格。
+   * 纯台账+内存操作（挂册异步尽力），完成置 _provisioned（isAdmSync 从名册兜底切到快照）。
+   */
+  async syncAdminProvisioning() {
+    if (!this.enabled) return { promoted: [], demoted: [] }
+    const b = backend()
+    const roster = rosterAddresses()
+    const promoted = []
+    const demoted = []
+    const adminRows =
+      typeof b.listAdminAddresses === 'function' ? await b.listAdminAddresses().catch(() => []) : []
+    const byId = new Map(adminRows.map((r) => [r._id, r]))
+    for (const a of roster) {
+      const r = byId.get(a)
+      const expired = r && r.expiresAt && new Date(r.expiresAt).getTime() <= Date.now()
+      if (!r || expired) {
+        await this.provisionAdmin(a, 'sync') // 内部再查行判 already（幂等）
+        promoted.push(a)
+      } else {
+        this._markAdmin(a)
+        this._markExempt(a)
+      }
+    }
+    for (const r of adminRows) {
+      if (!roster.has(r._id)) {
+        await this.demoteAdmin(r._id, 'sync')
+        demoted.push(r._id)
+      }
+    }
+    this._provisioned = true
+    return { promoted, demoted }
+  }
+
+  /** tab 判权字段（credential-status 的 role）：读结论快照；徽章面另见 onChain 字段 */
+  roleFor(address) {
+    return this.isAdmSync(address) ? 'admin' : 'user'
   }
 
   /* ---- 豁免判定（usage 限制接线）：内存快照 + 周期水合，热路径零 I/O ---- */

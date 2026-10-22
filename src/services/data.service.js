@@ -368,6 +368,28 @@ export class DataService {
   }
 
   /**
+   * 移除管理员（v1.5 撤销链，与 addAdmin 对偶）。注意 getAdminAddresses 还会并入
+   * config.admin.addresses 种子——种子地址走此路只能移出运行时名册；要彻底收回
+   * 需同步编辑 config.json（防"界面点一下把部署期名册悄悄改写"的意外语义）。
+   * 判权即时性由调用方（/api/admin/demote → credentialService.demoteAdmin 快照摘除）保证。
+   */
+  async removeAdmin(address, operator = 'system') {
+    const config = this.getAdminConfig()
+    const i = config.addresses.indexOf(address)
+    if (i < 0) return false
+    config.addresses.splice(i, 1)
+    if (!config.history) config.history = []
+    config.history.push({
+      action: 'remove',
+      address,
+      timestamp: Date.now(),
+      operator,
+    })
+    await this.saveAdminConfig(config)
+    return true
+  }
+
+  /**
    * 记录操作日志（ops 审计：admin_login / admin_promote / 钉版 等）。
    *
    * provider 分流——mongodb 落 audit 集合（多域同表，靠 kind 区分），

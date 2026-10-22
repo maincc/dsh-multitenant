@@ -13,7 +13,7 @@
  */
 
 import { createHash, randomBytes } from 'node:crypto'
-import { isAdmin } from '../config/config.js'
+import { credentialService } from '../services/credential.service.js'
 import { dataService } from '../services/data.service.js'
 import { getUserSession } from './user-auth.middleware.js'
 import { SessionMirror } from '../services/session.store.js'
@@ -105,12 +105,13 @@ export function getAdminSession(req) {
 }
 
 /**
- * 管理员权限守卫
+ * 管理员权限守卫（v1.5：判权走凭证结论快照 isAdmSync——对账完成前/凭证停用自动落
+ * config∪admin.json 名册兜底，升级期绝不上锁）
  * 返回 true 表示有权限，false 表示无权限（已发送响应）
  */
 export function requireAdmin(req, res) {
   const session = getAdminSession(req)
-  if (!session || !isAdmin(session)) {
+  if (!session || !credentialService.isAdmSync(session)) {
     res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
     res.end(JSON.stringify({ error: '需要管理员权限', code: 'FORBIDDEN' }))
     return false

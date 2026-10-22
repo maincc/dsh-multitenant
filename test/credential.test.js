@@ -47,6 +47,18 @@ function fakeBackend() {
       creds.set(a, { _id: a, ...doc })
       return creds.get(a)
     },
+    async putRow(a, doc) {
+      creds.set(a, { _id: a, ...doc })
+      return creds.get(a)
+    },
+    async listAdminAddresses() {
+      return [...creds.entries()]
+        .filter(([, d]) => d.kind === 'cwt' && (d.roles || []).includes('admin'))
+        .map(([a, d]) => ({ _id: a, expiresAt: d.expiresAt || null }))
+    },
+    async hasApprovedApp(a) {
+      return apps.some((x) => x.address === a && x.status === 'approved')
+    },
     async countByKind() {
       const all = [...creds.values()]
       return {
@@ -1006,5 +1018,185 @@ describe('并发语义（挂架串行 / 豁免刷新窗口）', () => {
     release()
     await p
     expect(credentialService.isExemptSync(ADDR)).toBe(true)
+  })
+
+  it('刷新的 fetch 窗口内 _unmarkExempt → 旧快照整替后仍剔除（刚撤销不被复活，v1.5 对称保护）', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    await b.grantCwt(ADDR, { kind: 'cwt', state: 'claimed', source: 'approval', roles: [] })
+    await credentialService.refreshExemptSet()
+    expect(credentialService.isExemptSync(ADDR)).toBe(true)
+    let release
+    b.listCwtAddresses = () => new Promise((r) => (release = () => r([ADDR]))) // "旧"快照仍含 ADDR
+    const p = credentialService.refreshExemptSet()
+    credentialService._unmarkExempt(ADDR) // 撤销在 fetch 窗口内插队
+    release()
+    await p
+    expect(credentialService.isExemptSync(ADDR)).toBe(false)
+  })
+})
+
+describe('v1.5 管理员凭证编排（任命/撤销/对账/判权）', () => {
+  const A2 = 'jadmin2000000000000000000000000000'
+
+  it('provisionAdmin：新签 cwt+roles[admin]，即时豁免+admin 标记，幂等', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    const r = await credentialService.provisionAdmin(ADDR)
+    expect(r.issued).toBe(true)
+    const row = b.creds.get(ADDR)
+    expect(row.kind).toBe('cwt')
+    expect(row.roles).toEqual(['admin'])
+    expect(row.source).toBe('admin-auto')
+    expect(credentialService.isExemptSync(ADDR)).toBe(true) // 免时限随 cwt 链天然生效
+    const r2 = await credentialService.provisionAdmin(ADDR)
+    expect(r2.already).toBe(true) // 重复任命不重签
+  })
+
+  it('demoteAdmin：有批准史 → 重签纯 cwt（保豁免、摘 admin、卡无 roles）', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    await credentialService.provisionAdmin(ADDR)
+    b.apps.push({ _id: 'app1', address: ADDR, status: 'approved' })
+    const r = await credentialService.demoteAdmin(ADDR)
+    expect(r.to).toBe('cwt')
+    const row = b.creds.get(ADDR)
+    expect(row.kind).toBe('cwt')
+    expect(row.roles || []).not.toContain('admin') // 独立本权保留但不再是管理员
+    expect(credentialService.isExemptSync(ADDR)).toBe(true) // 回"是 cwt"：不限时保住的
+    expect(credentialService._admSet.has(ADDR)).toBe(false) // admin 当秒摘
+  })
+
+  it('demoteAdmin：cwt 仅源自任命（无批准史）→ 重签 did（回限时）', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    await credentialService.provisionAdmin(ADDR)
+    const r = await credentialService.demoteAdmin(ADDR)
+    expect(r.to).toBe('did')
+    expect(b.creds.get(ADDR).kind).toBe('did')
+    expect(credentialService.isExemptSync(ADDR)).toBe(false) // 收回免时限
+    expect(credentialService._admSet.has(ADDR)).toBe(false)
+  })
+
+  it('demoteAdmin：非管理员行 noop（幂等，绝不误降普通人）', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    await b.grantCwt(ADDR, { kind: 'cwt', state: 'claimed', source: 'approval', roles: [] })
+    await credentialService.refreshExemptSet() // 独立 cwt 行进豁免快照（grantCwt 直写不经审批同步路径，水合是合同内步调）
+    const r = await credentialService.demoteAdmin(ADDR)
+    expect(r.noop).toBe(true)
+    expect(b.creds.get(ADDR).roles).toEqual([]) // 原样未动
+    expect(credentialService.isExemptSync(ADDR)).toBe(true) // 独立 cwt 未被误伤
+  })
+
+  it('enter：名册在册地址自动升签 admin 卡（免申请免自审）', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map(), roster: [ADDR] })
+    const r = await credentialService.enter(ADDR)
+    expect(r.credential.kind).toBe('cwt')
+    expect(r.credential.roles).toContain('admin')
+    expect(r.popup).toBe(true) // 新 admin 卡待领取 → 弹窗闭环
+  })
+
+  it('scaffold：admin 行领取铸造的卡本体带 roles（对外出示面自证）', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    await credentialService.provisionAdmin(ADDR)
+    okRelay({ id: `did:swtc:${CANON}` })
+    const scf = await credentialService.buildClaimDocument(ADDR, CANON)
+    const card = scf.document.credentials.at(-1)
+    expect(card.type).toContain('DshCwtCredential')
+    expect(card.credentialSubject.roles).toEqual(['admin'])
+  })
+
+  it('isAdmSync：对账前落名册兜底（绝不上锁），对账后读凭证快照', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map(), roster: [ADDR] })
+    expect(credentialService.isAdmSync(ADDR)).toBe(false) // 未 _provisioned 且 config 空 → 名册兜底=roster 但走 isAdmin 分支=false
+    credentialService._markAdmin(ADDR)
+    expect(credentialService.isAdmSync(ADDR)).toBe(false) // 快照有值但 _provisioned=false → 仍走名册兜底
+    await credentialService.syncAdminProvisioning() // 置 _provisioned=true
+    expect(credentialService.isAdmSync(ADDR)).toBe(true) // 现在读凭证结论快照
+    credentialService._unmarkAdmin(ADDR)
+    expect(credentialService.isAdmSync(ADDR)).toBe(false) // 撤销当秒摘除
+  })
+
+  it('syncAdminProvisioning：名册缺卡补签 + 名册外悬空 admin 降格（双向对账）', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map(), roster: [ADDR] })
+    await b.grantCwt(A2, { kind: 'cwt', state: 'claimed', source: 'admin-auto', roles: ['admin'] })
+    const r = await credentialService.syncAdminProvisioning()
+    expect(r.promoted).toContain(ADDR) // 名册在册无卡 → 补签
+    expect(r.demoted).toContain(A2) // 名册外的 admin 结论 → 降格（A2 无批准史 → 回 did）
+    expect(b.creds.get(ADDR).roles).toContain('admin')
+    expect(b.creds.get(A2).kind).toBe('did')
+    expect(credentialService._provisioned).toBe(true)
+  })
+
+  it('claimUpload：任命后台账 cwt+admin，传旧 did 卡 → 卡型不符拒（防越级领取）', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    await credentialService.provisionAdmin(ADDR) // 台账=cwt+admin
+    okRelay({ id: `did:swtc:${CANON}` })
+    const didDoc = {
+      id: `did:swtc:${CANON}`,
+      credentials: [
+        {
+          id: 'did:swtc:jplatform#credential-t1',
+          type: ['VerifiableCredential', 'DshMemberCredential'], // 旧 did 卡
+          issuer: 'did:swtc:jplatform',
+          credentialSubject: { id: `did:swtc:${ADDR}` },
+        },
+      ],
+    }
+    await expect(
+      credentialService.claimUpload(ADDR, {
+        document: didDoc,
+        fileName: `did:swtc:${CANON}.json`,
+        publicKey: 'pub-of-test',
+        signature: '3044020',
+      }),
+    ).rejects.toThrow(/不一致/)
+    expect(b.creds.get(ADDR).state).toBe('assigned') // 未被假卡落档
+  })
+
+  it('onChainVerify 确凿 invalid + admin 行 → 当秒摘 admin 热闸（stale/missing 不误伤）', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    await credentialService.provisionAdmin(ADDR)
+    await b.patch(ADDR, {
+      state: 'claimed',
+      profileDid: `did:swtc:${CANON}`,
+      vcId: 'did:swtc:jplatform#credential-cwt-admin',
+      claimedAt: '2000-01-01',
+    })
+    credentialService._provisioned = true
+    expect(credentialService.isAdmSync(ADDR)).toBe(true)
+    // 档案里确有这张卡（id 匹配），但 SDK 验签失败 = 确凿 invalid（伪造/被覆盖）
+    okRelay({
+      id: `did:swtc:${CANON}`,
+      credentials: [
+        {
+          id: 'did:swtc:jplatform#credential-cwt-admin',
+          type: ['VerifiableCredential', 'DshCwtCredential'],
+          issuer: 'did:swtc:jplatform',
+          credentialSubject: { id: `did:swtc:${ADDR}`, roles: ['admin'] },
+        },
+      ],
+    })
+    verifySdkReturn = false // 实卡验签失败=伪造/被覆盖
+    await credentialService.onChainVerify(ADDR, { force: true })
+    expect(credentialService.isAdmSync(ADDR)).toBe(false) // invalid 才摘
   })
 })

@@ -2,7 +2,7 @@
  * 管理路由模块
  */
 
-import { CONFIG, isAdmin } from '../config/config.js'
+import { CONFIG, getAdminAddresses } from '../config/config.js'
 import { userService } from '../services/user.service.js'
 import { dataService } from '../services/data.service.js'
 import { dockerService } from '../services/docker.service.js'
@@ -195,8 +195,8 @@ export async function handleAdminRoutes(req, res, path, url) {
         res.end(JSON.stringify({ error: '挑战已失效，请重新获取', code: 'FORBIDDEN' }))
         return true
       }
-      // ③ 必须是管理员地址
-      if (!isAdmin(addrLower)) {
+      // ③ 必须是管理员地址（v1.5：凭证结论快照，名册兜底见 isAdmSync）
+      if (!credentialService.isAdmSync(addrLower)) {
         res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify({ error: '不是管理员地址', code: 'FORBIDDEN' }))
         return true
@@ -251,14 +251,14 @@ export async function handleAdminRoutes(req, res, path, url) {
     // 如果传入了 address 参数，检查该地址是否是管理员
     if (queryAddress) {
       const addrLower = normalizeAddress(queryAddress)
-      const isAdm = isAdmin(addrLower)
+      const isAdm = credentialService.isAdmSync(addrLower)
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify({ isAdmin: isAdm, address: addrLower, checkedAddress: addrLower }))
       return true
     }
 
     // 否则检查 cookie 中的 session
-    const isAdm = session && isAdmin(session)
+    const isAdm = session && credentialService.isAdmSync(session)
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
     res.end(JSON.stringify({ isAdmin: isAdm, address: session || null }))
     return true
@@ -428,8 +428,84 @@ export async function handleAdminRoutes(req, res, path, url) {
       dataService.logOperation('admin_promote', { address, operator: getAdminSession(req) })
     }
 
+    // v1.5 任命联动凭证：admin-auto 升签 cwt+roles:['admin']（免申请免自审，
+    // 对方下次登录 popup 引导领新卡；免时限随 cwt 链天然生效）。幂等——重复任命不重签。
+    let credential = null
+    try {
+      credential = (
+        await credentialService.provisionAdmin(address, getAdminSession(req) || 'system')
+      ).credential
+    } catch (err) {
+      // 台账写失败不回滚名册（下次登录/对账自愈），但如实告知
+      console.warn(
+        `[admin] promote 凭证配发失败（名册已生效，对账自愈）: ${String(err?.message || err).slice(0, 140)}`,
+      )
+    }
+
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-    res.end(JSON.stringify({ ok: true, address, promoted: added }))
+    res.end(JSON.stringify({ ok: true, address, promoted: added, credential }))
+    return true
+  }
+
+  // POST /api/admin/demote/:address - 撤销管理员（没收管理凭证并重签降格，v1.5）
+  // 破坏性 + 持久化 → 会话之外当场钱包签名（同 promote 双门禁）
+  if (path.startsWith('/api/admin/demote/') && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return true
+
+    let address = path.slice('/api/admin/demote/'.length)
+    if (!validateSwtcAddress(address, res)) return
+
+    address = normalizeAddress(address)
+
+    if (!requireAdminSignature(req, res, 'demote', { address }, getAdminSession(req))) {
+      return true
+    }
+
+    // 防锁死：名册（config ∪ 运行时）里不能只剩这一个人
+    const remaining = [...getAdminAddresses()].filter((a) => a !== address)
+    if (remaining.length === 0) {
+      res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(
+        JSON.stringify({ error: '这是最后一个管理员地址，撤销会把平台锁死', code: 'LAST_ADMIN' }),
+      )
+      return true
+    }
+
+    const removed = await dataService.removeAdmin(address, getAdminSession(req) || 'system')
+    const demote = await credentialService.demoteAdmin(address, getAdminSession(req) || 'system')
+    if (removed) {
+      console.log(`[admin] demoted ${address} (credential → ${demote.to || 'noop'})`)
+      dataService.logOperation('admin_demote', {
+        address,
+        operator: getAdminSession(req),
+        to: demote.to || null,
+      })
+    }
+
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+    res.end(
+      JSON.stringify({
+        ok: true,
+        address,
+        removed,
+        demotedTo: demote.to || null,
+        credential: demote.credential || null,
+      }),
+    )
+    return true
+  }
+
+  // GET /api/admin/admins - 管理名册与任免录像（v1.5，前端"系统管理→管理员任免"数据面）
+  if (path === '/api/admin/admins' && req.method === 'GET') {
+    if (!requireAdmin(req, res)) return true
+    const cfg = dataService.getAdminConfig()
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+    res.end(
+      JSON.stringify({
+        addresses: [...getAdminAddresses()],
+        history: (cfg.history || []).slice(-50).reverse(),
+      }),
+    )
     return true
   }
 

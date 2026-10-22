@@ -12,7 +12,7 @@ import { skillService } from '../services/skill.service.js'
 import { tenantConfigService, SIGN_PURPOSE } from '../services/tenant-config.service.js'
 import { requireAdmin, getAdminSession } from '../middleware/auth.middleware.js'
 import { validateSwtcAddress } from '../middleware/validate.middleware.js'
-import { isAdmin } from '../config/config.js'
+import { credentialService } from '../services/credential.service.js'
 import { handleError } from '../utils/errors.js'
 import { parseBody, parseJsonBody } from '../utils/parse-body.js'
 
@@ -184,7 +184,7 @@ export async function handleSkillRoutes(req, res, path) {
     // DELETE /api/skills/:name - 取消共享（作者签名 或 管理员 cookie）
     if (segs.length === 1 && req.method === 'DELETE') {
       const session = getAdminSession(req)
-      const adm = Boolean(session) && isAdmin(session)
+      const adm = Boolean(session) && credentialService.isAdmSync(session)
       let operator = null
       if (adm) {
         operator = session

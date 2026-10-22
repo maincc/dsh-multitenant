@@ -2,7 +2,7 @@
  * 用户路由模块
  */
 
-import { CONFIG, isAdmin } from '../config/config.js'
+import { CONFIG } from '../config/config.js'
 import { userService } from '../services/user.service.js'
 import { dataService } from '../services/data.service.js'
 import { resourceExhaustedPayload } from '../utils/resource-exhausted.js'
@@ -356,7 +356,7 @@ export async function handleUserRoutes(req, res, path) {
     const session = getRequestAddress(req)
     if (!rateLimit(req, res, { max: 30, keyPrefix: 'tcfg' })) return true
     const addrLower = normalizeAddress(address)
-    if (session !== addrLower && !(session && isAdmin(session))) {
+    if (session !== addrLower && !(session && credentialService.isAdmSync(session))) {
       handleError(new ForbiddenError('只能查看自己的租户配置', 'FORBIDDEN'), res)
       return true
     }
@@ -398,7 +398,7 @@ export async function handleUserRoutes(req, res, path) {
     // 无会话 → 只回"脱敏存在性"（不含 port/tier/用量，地址保密不破，首屏可正常加载）；
     // 已登录但非本人 → 403
     const session = getRequestAddress(req)
-    const isAdm = session && isAdmin(session)
+    const isAdm = session && credentialService.isAdmSync(session)
     if (session && session !== address && !isAdm) {
       res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify({ error: '无权查看其他用户信息', code: 'FORBIDDEN' }))

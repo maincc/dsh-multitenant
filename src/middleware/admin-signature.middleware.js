@@ -39,6 +39,8 @@ import {
 /** 允许签名的操作名（白名单；未知操作一律拒绝，不做兜底） */
 export const ADMIN_SIGNED_OPERATIONS = Object.freeze([
   'promote',
+  // v1.5：撤销管理员=没收凭证+重签降格（持久化权限动作，与 promote 对称必须当场签名）
+  'demote',
   'force-stop',
   'remove',
   'delete-volume',
@@ -89,6 +91,7 @@ export function buildBinding(operation, payload = {}) {
   const addr = typeof p.address === 'string' ? p.address.toLowerCase() : ''
   switch (operation) {
     case 'promote':
+    case 'demote':
     case 'force-stop':
     case 'delete-volume':
     case 'reset':

@@ -16,7 +16,7 @@ import {
 import { fileURLToPath } from 'node:url'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { CONFIG, getTierLimits, isAdmin } from '../config/config.js'
+import { CONFIG, getTierLimits } from '../config/config.js'
 import { credentialService } from './credential.service.js'
 import { dockerService } from './docker.service.js'
 import { dataService } from './data.service.js'
@@ -1261,7 +1261,7 @@ export class UserService {
       createdAt: user.createdAt,
       lastSeenAt: user.lastSeenAt,
       idle: Date.now() - user.lastSeenAt,
-      isAdmin: isAdmin(address),
+      isAdmin: credentialService.isAdmSync(address),
       stats: stats
         ? {
             cpu: stats.cpu,
@@ -1378,7 +1378,7 @@ export class UserService {
           lastSeenAt: user.lastSeenAt,
           lastAutoUpgradeAt: user.lastAutoUpgradeAt ?? null,
           idle: Date.now() - user.lastSeenAt,
-          isAdmin: isAdmin(address),
+          isAdmin: credentialService.isAdmSync(address),
           stats: stats
             ? {
                 cpu: stats.cpu,

@@ -2,7 +2,7 @@
  * 租户路由模块
  */
 
-import { CONFIG, isAdmin } from '../config/config.js'
+import { CONFIG } from '../config/config.js'
 import { userService } from '../services/user.service.js'
 import { credentialService } from '../services/credential.service.js'
 import { dataService } from '../services/data.service.js'
@@ -188,7 +188,7 @@ export async function handleTenantRoutes(req, res, path, url) {
     // 端口即"地址保密"的最后一道侦察口，必须会话化）
     const { getRequestAddress } = await import('../middleware/auth.middleware.js')
     const viewer = getRequestAddress(req)
-    const isViewer = viewer === address || (viewer && isAdmin(viewer))
+    const isViewer = viewer === address || (viewer && credentialService.isAdmSync(viewer))
     if (!isViewer) {
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(
@@ -243,7 +243,7 @@ export async function handleTenantRoutes(req, res, path, url) {
   if (path.startsWith('/leave/')) {
     const { getRequestAddress, getAdminSession } = await import('../middleware/auth.middleware.js')
     const session = getRequestAddress(req)
-    const isAdminUser = session && isAdmin(session)
+    const isAdminUser = session && credentialService.isAdmSync(session)
 
     let address = decodeURIComponent(path.slice('/leave/'.length))
     if (!validateSwtcAddress(address, res)) return true
@@ -295,7 +295,7 @@ export async function handleTenantRoutes(req, res, path, url) {
   if (path.startsWith('/api/user/') && path.endsWith('/restart') && req.method === 'POST') {
     const { getRequestAddress, requireAdmin } = await import('../middleware/auth.middleware.js')
     const session = getRequestAddress(req)
-    const isAdminUser = session && isAdmin(session)
+    const isAdminUser = session && credentialService.isAdmSync(session)
 
     // 提取地址：/api/user/<address>/restart
     const match = path.match(/^\/api\/user\/(.+)\/restart$/)
@@ -355,7 +355,7 @@ export async function handleTenantRoutes(req, res, path, url) {
   if (path.startsWith('/api/user/') && path.endsWith('/stop') && req.method === 'POST') {
     const { getRequestAddress } = await import('../middleware/auth.middleware.js')
     const session = getRequestAddress(req)
-    const isAdminUser = session && isAdmin(session)
+    const isAdminUser = session && credentialService.isAdmSync(session)
 
     // 提取地址：/api/user/<address>/stop
     const match = path.match(/^\/api\/user\/(.+)\/stop$/)
@@ -418,7 +418,7 @@ export async function handleTenantRoutes(req, res, path, url) {
     // getRequestAddress，只有这里漏改。
     const { getRequestAddress } = await import('../middleware/auth.middleware.js')
     const session = getRequestAddress(req)
-    const isAdminUser = session && isAdmin(session)
+    const isAdminUser = session && credentialService.isAdmSync(session)
 
     // 提取地址：/api/user/<address>/reset
     const match = path.match(/^\/api\/user\/(.+)\/reset$/)

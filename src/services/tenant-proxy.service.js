@@ -20,7 +20,8 @@ import { connect as netConnect } from 'node:net'
 import { randomBytes, createHash } from 'node:crypto'
 import { getUserSession, userSessionStore } from '../middleware/user-auth.middleware.js'
 import { getAdminSession } from '../middleware/auth.middleware.js'
-import { isAdmin, CONFIG } from '../config/config.js'
+import { CONFIG } from '../config/config.js'
+import { credentialService } from './credential.service.js'
 import { tenantConfigService, SIGN_PURPOSE, buildSignedMessage } from './tenant-config.service.js'
 // 只取纯函数 requiresToken（dsh-version.service 仅依赖 config，不成环）。
 // 用于区分"容器落后于平台镜像"与"平台镜像本身就需要认证"这两种拒绝原因。
@@ -467,7 +468,7 @@ class TenantGateway {
     const userAddr = getUserSession(req)
     if (userAddr === owner) return true
     const adminAddr = getAdminSession(req)
-    return Boolean(adminAddr && isAdmin(adminAddr))
+    return Boolean(adminAddr && credentialService.isAdmSync(adminAddr))
   }
 
   /**

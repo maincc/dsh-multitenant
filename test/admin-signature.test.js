@@ -29,7 +29,10 @@ import { buildBinding } from '../src/middleware/admin-signature.middleware.js'
 import { handleAdminRoutes } from '../src/routes/admin.routes.js'
 import { handleTenantRoutes } from '../src/routes/tenant.routes.js'
 import { userService } from '../src/services/user.service.js'
+import { dataService } from '../src/services/data.service.js'
 import { dockerService } from '../src/services/docker.service.js'
+import { credentialService } from '../src/services/credential.service.js'
+import { getAdminAddresses } from '../src/config/config.js'
 
 const ADMIN_ADDR = 'jndwretndumoqbt2uauclmfmx7xbqjykva'
 const OTHER_ADDR = 'jga9j9tkqtbcuohe2zqhvffbguved6o9or'
@@ -62,6 +65,7 @@ vi.mock('../src/services/data.service.js', async (importOriginal) => {
       saveUserSessions: vi.fn(() => {}),
       saveSessions: vi.fn(() => {}),
       addAdmin: vi.fn(() => true),
+      removeAdmin: vi.fn(() => true),
       logOperation: vi.fn(),
       getAdminConfig: vi.fn(() => ({ addresses: [], history: [] })),
       saveAdminConfig: vi.fn(),
@@ -77,9 +81,27 @@ vi.mock('../src/services/docker.service.js', () => ({
 }))
 vi.mock('../src/services/tenant-proxy.service.js', () => ({ tenantGateway: {} }))
 vi.mock('../src/services/dsh-version.service.js', () => ({ dshVersionService: {} }))
+// v1.5 编排面替换、isAdmSync 保真实（它的"对账前落 config.isAdmin 名册兜底"正被本文件
+// 的 isAdmin mock 覆盖——判权改道的这条兜底链路要在真实代码上回归）
+vi.mock('../src/services/credential.service.js', async (importOriginal) => {
+  const mod = await importOriginal()
+  const real = mod.credentialService
+  return {
+    ...mod,
+    // 原型代理保 isAdmSync 等真实方法（对象展开只拷自有属性、类方法在原型上会全丢）
+    credentialService: Object.assign(Object.create(real), real, {
+      provisionAdmin: vi.fn(async () => ({ ok: true, issued: true, credential: null })),
+      demoteAdmin: vi.fn(async () => ({ ok: true, to: 'did', credential: null })),
+    }),
+  }
+})
 vi.mock('../src/config/config.js', async (importOriginal) => ({
   ...(await importOriginal()),
   isAdmin: vi.fn(() => true),
+  // 字面量=ADMIN_ADDR/TENANT 值（vi.mock 工厂先于测试体内 const 执行，引用会 TDZ 崩）
+  getAdminAddresses: vi.fn(
+    () => new Set(['jndwretndumoqbt2uauclmfmx7xbqjykva', 'jga9j9tkqtbcuohe2zqhvffbguved6o9or']),
+  ),
 }))
 
 class MockReq extends EventEmitter {
@@ -467,5 +489,68 @@ describe('收口：孤儿卷清理要求当场签名', () => {
     expect(res.statusCode).toBe(403)
     expect(json(res).code).toBe('SIGNATURE_MISMATCH')
     expect(dockerService.removeVolume).not.toHaveBeenCalled()
+  })
+})
+
+describe('v1.5 撤销管理员（demote）：签名门禁 + 防锁死 + 凭证联动', () => {
+  async function callDemote(headers, address = TENANT) {
+    const res = makeRes()
+    await handleAdminRoutes(
+      makeReq({
+        method: 'POST',
+        url: `/api/admin/demote/${address}`,
+        cookie: adminCookie(),
+        ...headers,
+      }),
+      res,
+      `/api/admin/demote/${address}`,
+    )
+    return res
+  }
+
+  it('promote 联动 provisionAdmin（任命即配发 admin 凭证）', async () => {
+    const { data } = await issueChallenge('promote', { address: TENANT })
+    const res = await callPromote(headersFor(data))
+    expect(res.statusCode).toBe(200)
+    expect(credentialService.provisionAdmin).toHaveBeenCalledWith(TENANT, ADMIN_ADDR)
+  })
+
+  it('demote 无签名 → SIGNATURE_REQUIRED（cookie 单独不够）', async () => {
+    const res = await callDemote({})
+    expect(res.statusCode).toBe(403)
+    expect(json(res).code).toBe('SIGNATURE_REQUIRED')
+    expect(credentialService.demoteAdmin).not.toHaveBeenCalled()
+  })
+
+  it('demote 签名正确 → 名册移除 + 凭证降格编排', async () => {
+    const { data } = await issueChallenge('demote', { address: TENANT })
+    const res = await callDemote(headersFor(data))
+    expect(res.statusCode).toBe(200)
+    expect(json(res).demotedTo).toBe('did')
+    expect(dataService.removeAdmin).toHaveBeenCalledWith(TENANT, ADMIN_ADDR)
+    expect(credentialService.demoteAdmin).toHaveBeenCalledWith(TENANT, ADMIN_ADDR)
+  })
+
+  it('promote 挑战去 demote → SIGNATURE_MISMATCH（撤销复用任命签名=死路）', async () => {
+    const { data } = await issueChallenge('promote', { address: TENANT })
+    const res = await callDemote(headersFor(data))
+    expect(res.statusCode).toBe(403)
+    expect(json(res).code).toBe('SIGNATURE_MISMATCH')
+    expect(credentialService.demoteAdmin).not.toHaveBeenCalled()
+  })
+
+  it('名册只剩目标一人 → LAST_ADMIN 拒（防平台锁死，且不动任何状态）', async () => {
+    vi.mocked(getAdminAddresses).mockReturnValueOnce(new Set([TENANT]))
+    const { data } = await issueChallenge('demote', { address: TENANT })
+    const res = await callDemote(headersFor(data))
+    expect(res.statusCode).toBe(400)
+    expect(json(res).code).toBe('LAST_ADMIN')
+    expect(dataService.removeAdmin).not.toHaveBeenCalled()
+    expect(credentialService.demoteAdmin).not.toHaveBeenCalled()
+  })
+
+  it('demote 绑定串含操作名（签 demote 才执行 demote）', async () => {
+    const { data } = await issueChallenge('demote', { address: TENANT })
+    expect(data.binding).toBe(`demote:address=${TENANT}`)
   })
 })
