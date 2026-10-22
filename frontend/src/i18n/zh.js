@@ -137,6 +137,9 @@ export default {
     tabIdentity: '数字身份',
     tabCwt: 'CWT 验证',
     tabSkills: '我的技能',
+    tabSystem: '系统管理', // v1.5：按活验证 role='admin' 装配，普通用户数据面就没有这一项
+    systemHint:
+      '平台官网活验证管理凭证属实 → 才见此 tab（判权随凭证不随地址）；面板内操作仍需管理员会话与钱包当场签名。',
     // ---- 连接钱包 ----
     connectTitle: '🔌 连接钱包',
     connectHint: '通过 CCDAO 插件连接您的 SWTC 钱包，自动分配专属 DSH 容器',
@@ -502,6 +505,8 @@ export default {
       '平台已给您的账户签发「普通用户凭证」（待存入状态）。点「存入我的数字档案」，卡片就放进您自己的链上档案，之后可随时对外出示（只需签名一次）。现在存入吗？',
     credPopupCwt:
       '解限凭证已生效，每日使用不限时（获批时普通凭证已自动升级，旧卡收回属正常）。建议点「存入我的数字档案」把卡放进您的链上档案，方便对外出示。现在存入吗？',
+    credPopupAdmin:
+      '检测到「管理员凭证」（待存入状态）。点「存入我的数字档案」把管理凭证放进您自己的链上档案，之后可对外出示管理员身份（只需签名一次）。现在存入吗？',
   },
 
   skills: {
@@ -935,6 +940,23 @@ export default {
     // ── v1.4 CWT 解限申请审批 ──
     tabCred: '凭证审批',
     credTabTitle: 'CWT 解限申请',
+    // ---- v1.5 管理员任免（名册=配发政策面；判权骑 admin 凭证） ----
+    rosterTitle: '管理员任免',
+    rosterHint:
+      '任命=免申请直发管理凭证（对方下次进入用户中心弹窗发卡可领）；撤销=没收管理凭证并重签降格（有独立批准史回纯 CWT 不限时，否则回普通限时卡）。任免均需钱包当场签名，最后一个管理员不可撤销（防锁死）。',
+    rosterPh: '要任命的地址（j…）',
+    rosterPromote: '任命管理员',
+    rosterDemote: '撤销',
+    rosterEmpty: '名册暂无成员',
+    rosterHistoryTitle: '任免录像',
+    rosterPromoted: '已任命：{addr} 的管理凭证已配发（进用户中心即可领取）',
+    rosterPromotedSync: '已入名册：{addr}（凭证配发将由周期对账自动补齐）',
+    rosterDemoted: '已撤销：{addr} 重签降格为 {to} 卡',
+    rosterDemoteConfirm:
+      '撤销 {addr} 的管理员身份？将没收其管理凭证并重签降格：有独立 CWT 批准史回纯 CWT 卡（不限时），否则回普通限时卡（120 分钟/日）。',
+    rosterAct_add: '任命',
+    rosterAct_remove: '撤销',
+    rosterAct_fix: '名册修复',
     credTabHint:
       '批准后即为该地址签发解限凭证（CWT）并立即生效（不再受每日限时），用户稍后自行「存入我的数字档案」。审批操作需钱包当场签名。',
     credStatus_pending: '待审批',

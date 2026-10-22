@@ -1,5 +1,5 @@
 <template>
-  <div class="admin-panel">
+  <div class="admin-panel" :class="{ embedded }">
     <!-- 无权限页面 -->
     <div v-if="notAdmin" class="state-card">
       <h2>{{ $t('admin.noAccess') }}</h2>
@@ -1248,6 +1248,69 @@
               {{ $t('admin.credNext') }}
             </button>
           </div>
+
+          <div class="tab-head" style="margin-top: 1.75rem">
+            <h4>{{ $t('admin.rosterTitle') }}</h4>
+            <p class="tab-hint">{{ $t('admin.rosterHint') }}</p>
+          </div>
+          <div class="filter-row">
+            <input
+              v-model="rosterAddr"
+              class="addr-input"
+              :placeholder="$t('admin.rosterPh')"
+              @keyup.enter="promoteAdmin"
+            />
+            <button
+              class="btn btn-small btn-primary"
+              :disabled="rosterBusy || !rosterAddr.trim()"
+              @click="promoteAdmin"
+            >
+              {{ $t('admin.rosterPromote') }}
+            </button>
+            <button class="btn btn-small" :disabled="rosterLoading" @click="loadRoster">
+              {{ $t('admin.refresh') }}
+            </button>
+          </div>
+          <div v-if="rosterLoading" class="loading">{{ $t('admin.loading') }}</div>
+          <table v-else>
+            <thead>
+              <tr>
+                <th>{{ $t('admin.colAddress') }}</th>
+                <th>{{ $t('admin.colOps') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="!rosterAddrs.length">
+                <td colspan="2">{{ $t('admin.rosterEmpty') }}</td>
+              </tr>
+              <tr v-for="a in rosterAddrs" :key="a">
+                <td>
+                  <span class="address addr-tip" :data-full="a"
+                    >{{ a.slice(0, 12) }}…{{ a.slice(-4) }}</span
+                  >
+                </td>
+                <td>
+                  <button
+                    class="btn btn-small btn-danger"
+                    :disabled="rosterBusy"
+                    @click="demoteAdmin(a)"
+                  >
+                    {{ $t('admin.rosterDemote') }}
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-if="rosterHistory.length" style="margin-top: 0.75rem">
+            <p class="hint">{{ $t('admin.rosterHistoryTitle') }}</p>
+            <div v-for="(h, i) in rosterHistory.slice(0, 8)" :key="i" class="hint">
+              {{ fmtTime(h.timestamp) }} · {{ $t('admin.rosterAct_' + h.action) }}
+              <span v-if="h.address" class="addr-tip" :data-full="h.address"
+                >{{ h.address.slice(0, 12) }}…</span
+              >
+              <span v-if="h.operator">（by {{ h.operator.slice(0, 10) }}…）</span>
+            </div>
+          </div>
         </div>
       </section>
     </div>
@@ -1297,6 +1360,13 @@ import {
 } from '../api/wallet.js'
 
 const { t } = useI18n()
+
+// v1.5 刀5C：可被用户中心「系统管理」tab 内嵌挂载（源码不合并，同一组件两用）。
+// embedded=true 时外层不再撑满整页高度，其余行为与独立页一致——admin_session
+// 的钱包签名登录**照旧要**（刀2B 安全模型一字不松：tab 可见=凭证判权，可操作=会话）。
+const props = defineProps({
+  embedded: { type: Boolean, default: false },
+})
 
 // ---- 侧栏导航（与 React 原型稿一致） ----
 const activeTab = ref('overview')
@@ -1897,6 +1967,73 @@ const setCredKind = (k) => {
 const credPage = (delta) => {
   credOffset.value = Math.max(0, credOffset.value + delta * 10)
   loadCredRows()
+}
+
+/* ── v1.5 管理员任免（名册=配发政策面；判权骑 admin 凭证，5A 后端编排） ── */
+const rosterAddr = ref('')
+const rosterAddrs = ref([])
+const rosterHistory = ref([])
+const rosterLoading = ref(false)
+const rosterBusy = ref('')
+
+const loadRoster = async () => {
+  rosterLoading.value = true
+  try {
+    const res = await axios.get('/api/admin/admins')
+    rosterAddrs.value = res.data.addresses || []
+    rosterHistory.value = res.data.history || []
+  } catch (err) {
+    toast(t('admin.credOpFail', { err: err?.response?.data?.error || err.message }))
+  } finally {
+    rosterLoading.value = false
+  }
+}
+
+const promoteAdmin = async () => {
+  const addr = rosterAddr.value.trim().toLowerCase()
+  if (!addr || rosterBusy.value) return
+  try {
+    rosterBusy.value = 'promote'
+    const headers = await signAdminOperation('promote', { address: addr })
+    const res = await axios.post(`/api/admin/promote/${addr}`, {}, { headers })
+    if (res.data.credential) {
+      toast(t('admin.rosterPromoted', { addr: addr.slice(0, 10) + '…' }))
+    } else {
+      // 名册已记入；admin 卡配发将由对账兜底完成（签发失败只降级为提示）
+      toast(t('admin.rosterPromotedSync', { addr: addr.slice(0, 10) + '…' }))
+    }
+    rosterAddr.value = ''
+    await loadRoster()
+  } catch (err) {
+    toast(t('admin.credOpFail', { err: err?.response?.data?.error || err.message }))
+  } finally {
+    rosterBusy.value = ''
+  }
+}
+
+const demoteAdmin = async (addr) => {
+  if (rosterBusy.value) return
+  if (
+    !(await askConfirm({
+      message: t('admin.rosterDemoteConfirm', { addr: addr.slice(0, 10) + '…' }),
+      danger: true,
+    }))
+  )
+    return
+  try {
+    rosterBusy.value = 'demote'
+    const headers = await signAdminOperation('demote', { address: addr })
+    const res = await axios.post(`/api/admin/demote/${addr}`, {}, { headers })
+    toast(
+      t('admin.rosterDemoted', { addr: addr.slice(0, 10) + '…', to: res.data.demotedTo || '?' }),
+    )
+    await loadRoster()
+  } catch (err) {
+    // LAST_ADMIN 等人话错误直出（后端已把防锁死语义写在 error 里）
+    toast(t('admin.credOpFail', { err: err?.response?.data?.error || err.message }))
+  } finally {
+    rosterBusy.value = ''
+  }
 }
 
 const approveCwt = async (app) => {
@@ -2748,6 +2885,7 @@ watch(activeTab, () => {
   if (activeTab.value === 'cred') {
     loadCwtApps().catch(() => {})
     loadCredRows().catch(() => {})
+    loadRoster().catch(() => {})
   }
 })
 
@@ -2775,6 +2913,11 @@ onUnmounted(() => {
   height: 100%;
   display: flex;
   animation: fadeIn 0.3s;
+}
+/* 内嵌态（v1.5 系统管理 tab）：不撑满整页高度，随内容生长 */
+.admin-panel.embedded {
+  height: auto;
+  min-height: 480px;
 }
 
 /* ─── 磁盘扫描（租户卷区块） ─── */

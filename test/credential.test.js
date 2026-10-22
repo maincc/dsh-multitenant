@@ -1111,6 +1111,9 @@ describe('v1.5 管理员凭证编排（任命/撤销/对账/判权）', () => {
     expect(r.credential.kind).toBe('cwt')
     expect(r.credential.roles).toContain('admin')
     expect(r.popup).toBe(true) // 新 admin 卡待领取 → 弹窗闭环
+    expect(r.role).toBe('user') // 对账前判权落名册兜底（config 空）——升级期不误显 tab
+    await credentialService.syncAdminProvisioning()
+    expect((await credentialService.enter(ADDR)).role).toBe('admin') // 对账后=凭证化快照投影
   })
 
   it('scaffold：admin 行领取铸造的卡本体带 roles（对外出示面自证）', async () => {

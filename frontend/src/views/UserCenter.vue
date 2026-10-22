@@ -619,6 +619,17 @@
         </div>
 
         <!-- ════════ 我的技能 ════════ -->
+        <div v-else-if="activeTab === 'system'" class="tab-content">
+          <!-- v1.5 系统管理：仅 role='admin'（活验证管理凭证属实）时 tab 才在注册表里。
+               内嵌复用独立版 AdminPanel（源码不合并，同一组件两用）；操作仍要 admin_session
+               当场签名——tab 可见=凭证判权，可操作=会话+钱包双门禁 -->
+          <div class="tab-head">
+            <h3>{{ $t('user.tabSystem') }}</h3>
+            <p class="tab-hint">{{ $t('user.systemHint') }}</p>
+          </div>
+          <AdminPanel embedded />
+        </div>
+
         <div v-else class="tab-content">
           <div class="tab-head">
             <h4>{{ $t('user.mySkills') }}</h4>
@@ -779,7 +790,9 @@ import { askConfirm, toast } from '../composables/useDialog'
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import axios from 'axios'
 import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
 import { skillsApi } from '../api/skills.js'
+import AdminPanel from './AdminPanel.vue'
 import {
   requestAccounts,
   signMessage,
@@ -790,33 +803,48 @@ import {
 } from '../api/wallet.js'
 
 const { t } = useI18n()
+const route = useRoute()
 
 // ---- 侧栏导航（与 React 原型稿一致） ----
 // 落地页 = 容器管理：多数操作（进入 DSH、启停、资源查看）都发生在这里，
 // 账户信息只剩地址一项，不该默认挡在前面。
 const activeTab = ref('container')
-const sidebarTabs = [
-  {
-    key: 'account',
-    label: t('user.tabAccount'),
-    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>',
-  },
-  {
-    key: 'model',
-    label: t('user.tabModel'),
-    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="7" cy="17" r="4"/><path d="M10.6 13.4L21 3"/><path d="M19 5l2 2"/><path d="M15 9l2 2"/></svg>',
-  },
-  {
-    key: 'container',
-    label: t('user.tabContainer'),
-    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41m11.32-11.32 1.41-1.41"/></svg>',
-  },
-  {
-    key: 'skills',
-    label: t('user.tabSkills'),
-    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>',
-  },
-]
+// v1.5 刀5C：判权面（credential-status 的 role，服务端活验证 admin 凭证属实才为 'admin'）。
+// tab 注册表按 role 装配——普通用户看不见"系统管理"，不是隐藏样式而是数据面就没有这一项。
+const role = ref('user')
+const sidebarTabs = computed(() => {
+  const tabs = [
+    {
+      key: 'account',
+      label: t('user.tabAccount'),
+      icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>',
+    },
+    {
+      key: 'model',
+      label: t('user.tabModel'),
+      icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="7" cy="17" r="4"/><path d="M10.6 13.4L21 3"/><path d="M19 5l2 2"/><path d="M15 9l2 2"/></svg>',
+    },
+    {
+      key: 'container',
+      label: t('user.tabContainer'),
+      icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41m11.32-11.32 1.41-1.41"/></svg>',
+    },
+    {
+      key: 'skills',
+      label: t('user.tabSkills'),
+      icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>',
+    },
+  ]
+  if (role.value === 'admin') {
+    tabs.push({
+      key: 'system',
+      label: t('user.tabSystem'),
+      icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>',
+    })
+  }
+  return tabs
+})
+let initialTabApplied = false
 
 const shortAddrText = computed(() => {
   const a = displayAddr.value
@@ -960,6 +988,13 @@ const loadCredentialStatus = async (address) => {
     const res = await axios.get('/api/user/credential-status', { params: { address } })
     const data = res.data || {}
     credInfo.value = data.credential || null
+    // v1.5 判权面：role='admin' 才装配「系统管理」tab（服务端活验证凭证属实）
+    role.value = data.role === 'admin' ? 'admin' : 'user'
+    if (role.value === 'admin' && !initialTabApplied.value) {
+      initialTabApplied.value = true
+      if (route.query.tab === 'system') activeTab.value = 'system' // /admin 重定向落地入口
+    }
+    if (role.value !== 'admin' && activeTab.value === 'system') activeTab.value = 'container'
     if (data.renewed) {
       // 平台按台账 cwt/did 记录自动续发了新凭证（链上登记册同步换卡）
       credVc.value = null
@@ -979,7 +1014,12 @@ const loadCredentialStatus = async (address) => {
     if (data.popup && credInfo.value && credPopupShown.value !== address) {
       credPopupShown.value = address
       await askConfirm({
-        message: credInfo.value.kind === 'cwt' ? t('user.credPopupCwt') : t('user.credPopupDid'),
+        message:
+          credInfo.value.kind === 'cwt' && (credInfo.value.roles || []).includes('admin')
+            ? t('user.credPopupAdmin') // v1.5：管理凭证到位（领取后即可见「系统管理」）
+            : credInfo.value.kind === 'cwt'
+              ? t('user.credPopupCwt')
+              : t('user.credPopupDid'),
         confirmLabel: t('user.credClaimBtn'),
         run: () => claimCredential(),
       })

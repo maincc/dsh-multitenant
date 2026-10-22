@@ -1054,7 +1054,7 @@ class CredentialService {
         return {
           credential: this._public(cred),
           popup: true,
-          role: this.isAdmSync(addrLower),
+          role: this.roleFor(addrLower),
           legacy: { approvedAt: lg.approvedAt || null },
         }
       }
@@ -1079,7 +1079,7 @@ class CredentialService {
     return {
       credential: this._public(renewed.cred),
       popup: renewed.cred.state === 'assigned',
-      role: this.isAdmSync(addrLower),
+      role: this.roleFor(addrLower),
       legacy: null,
       renewed: renewed.renewed,
     }
