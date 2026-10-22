@@ -137,12 +137,16 @@ export default {
     tabIdentity: '数字身份',
     tabCwt: 'CWT 验证',
     tabSkills: '我的技能',
-    tabSystem: '系统管理', // v1.5：按活验证 role='admin' 装配，普通用户数据面就没有这一项
-    systemHint:
-      '平台官网活验证管理凭证属实 → 才见此 tab（判权随凭证不随地址）；面板内操作仍需管理员会话与钱包当场签名。',
+    // v1.5 验收反馈①：管理页签并入用户侧栏（不再有独立"系统管理"tab/页）
+    adminGroup: '管理',
+    // v1.5 验收反馈③：账号详情区分角色
+    roleLabel: '角色',
+    roleAdmin: '管理员',
+    roleUser: '普通用户',
     // ---- 连接钱包 ----
     connectTitle: '🔌 连接钱包',
-    connectHint: '通过 CCDAO 插件连接您的 SWTC 钱包，自动分配专属 DSH 容器',
+    connectHint:
+      '通过 CCDAO 插件连接您的 SWTC 钱包登录用户中心；容器不会自动创建，可在「容器管理」点「启动容器」',
     noCcdao: '❌ 未检测到 CCDAO 插件',
     installCcdao: '点击安装 CCDAO Connector',
     connectBtn: '连接 CCDAO 钱包',
@@ -346,6 +350,8 @@ export default {
     loadingAccountData: '加载账户数据...',
     loadingPleaseWait: '请稍候...',
     loadingStarting: '正在启动容器',
+    loadingLogin: '正在登录',
+    loginFail: '登录失败：{err}',
     loadingRestarting: '正在重启 DSH 服务',
     loadingResetting: '正在重置容器',
     loadingDeleteRebuild: '删除数据和重建容器...',
@@ -375,6 +381,7 @@ export default {
     statusRunning: '运行中',
     statusStopped: '已停止',
     statusDestroyed: '已销毁',
+    statusNone: '未创建',
     // ---- 容器管理 ----
     containerManage: '⚙️ 容器管理',
 
@@ -445,12 +452,15 @@ export default {
     credTitle: '我的凭证',
     credKindDid: '普通用户凭证（DID）',
     credKindCwt: '解限凭证（CWT）',
+    credKindAdmin: '管理员凭证',
     credStateAssigned: '待存入',
     credStateClaimed: '已存入',
     credHintDid:
       '点「存入我的数字档案」，这张平台签好的身份卡就放进您自己的链上档案（只有您能写，签名一次即可）。想解除每日限时，存入后即可申请。',
     credHintCwt:
       '您已持有解限凭证，不受每日限时。「一人一证」：获批时普通凭证已自动升级为本证、旧卡收回——不是被吞掉。存入数字档案仅供对外出示，不存也不影响豁免。',
+    credHintAdmin:
+      '这是平台签发的管理员凭证：不限时，并赋予用户中心「管理」页签（判权随本凭证的官网活验证）。任免/台账等写操作仍需钱包当场签名；撤销任命时本凭证即被没收重签。存入数字档案仅供对外出示。',
     credDVCId: '凭证编号',
     credDExpires: '到期日',
     credExpLeft: '剩 {n} 天',
@@ -484,6 +494,9 @@ export default {
     credSrc_auto: '自动签发（登录）',
     credSrc_legacy: '历史白名单迁移',
     credSrc_approval: '管理员审批',
+    'credSrc_admin-auto': '任命自动配发',
+    credSrc_connect: '插件直连配发',
+    credSrc_demoted: '撤销降格重签',
     credClaimBtn: '存入我的数字档案',
     credClaiming: '写入档案中…',
     credClaimed: '已存入您的数字档案（链上生效，稍后自动核验真伪）',
@@ -994,6 +1007,9 @@ export default {
     ledgerSrc_auto: '自动',
     ledgerSrc_legacy: '迁移',
     ledgerSrc_approval: '审批',
+    'ledgerSrc_admin-auto': '任命配发',
+    ledgerSrc_connect: '直连配发',
+    ledgerSrc_demoted: '降格重签',
     ledgerClaimedAt: '领取',
     ledgerExpiresAt: '到期',
   },

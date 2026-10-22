@@ -78,18 +78,20 @@
             <span class="wallet-label">{{ $t('user.connected') }}</span>
             <code class="wallet-short addr-tip" :data-full="displayAddr">{{ shortAddrText }}</code>
           </div>
-          <!-- 导航项 -->
+          <!-- 导航项（v1.5：管理员页签与用户页签同侧栏并列，中间一条"管理"分组线） -->
           <nav class="sidebar-nav">
-            <button
-              v-for="tab in sidebarTabs"
-              :key="tab.key"
-              class="sidebar-item"
-              :class="{ active: activeTab === tab.key }"
-              @click="activeTab = tab.key"
-            >
-              <span class="sidebar-icon" v-html="tab.icon"></span>
-              <span>{{ tab.label }}</span>
-            </button>
+            <template v-for="tab in sidebarTabs" :key="tab.key || 'div-' + tab.label">
+              <div v-if="tab.divider" class="sidebar-divider">{{ tab.label }}</div>
+              <button
+                v-else
+                class="sidebar-item"
+                :class="{ active: activeTab === tab.key }"
+                @click="activeTab = tab.key"
+              >
+                <span class="sidebar-icon" v-html="tab.icon"></span>
+                <span>{{ tab.label }}</span>
+              </button>
+            </template>
           </nav>
         </div>
       </aside>
@@ -109,14 +111,40 @@
                 shortAddrText
               }}</code>
             </div>
+            <!-- v1.5 验收反馈③：账号详情区分管理员/普通用户（判权来自服务端活验证 role） -->
+            <div class="stat-row">
+              <span class="stat-label">{{ $t('user.roleLabel') }}</span>
+              <span
+                class="badge"
+                :class="role === 'admin' ? 'badge-danger' : 'badge-info'"
+                style="align-self: center"
+              >
+                {{ role === 'admin' ? $t('user.roleAdmin') : $t('user.roleUser') }}
+              </span>
+            </div>
           </div>
 
-          <!-- ════ v1.4 凭证体系（DID 普通凭证 / CWT 解除限制凭证，互斥） ════ -->
+          <!-- ════ v1.4 凭证体系（v1.5 三分：DID 普通 / CWT 解限 / 管理凭证，互斥单卡） ════ -->
           <div v-if="credInfo" class="cred-card">
             <div class="cred-head">
               <span class="cred-title">{{ $t('user.credTitle') }}</span>
-              <span class="badge" :class="credInfo.kind === 'cwt' ? 'badge-success' : 'badge-info'">
-                {{ credInfo.kind === 'cwt' ? $t('user.credKindCwt') : $t('user.credKindDid') }}
+              <span
+                class="badge"
+                :class="
+                  credInfo.isAdmin
+                    ? 'badge-danger'
+                    : credInfo.kind === 'cwt'
+                      ? 'badge-success'
+                      : 'badge-info'
+                "
+              >
+                {{
+                  credInfo.isAdmin
+                    ? $t('user.credKindAdmin')
+                    : credInfo.kind === 'cwt'
+                      ? $t('user.credKindCwt')
+                      : $t('user.credKindDid')
+                }}
               </span>
               <span
                 class="badge"
@@ -130,7 +158,13 @@
               </span>
             </div>
             <p class="tab-hint">
-              {{ credInfo.kind === 'cwt' ? $t('user.credHintCwt') : $t('user.credHintDid') }}
+              {{
+                credInfo.isAdmin
+                  ? $t('user.credHintAdmin')
+                  : credInfo.kind === 'cwt'
+                    ? $t('user.credHintCwt')
+                    : $t('user.credHintDid')
+              }}
             </p>
 
             <!-- 凭证明细：这张卡的关键字段（与平台档案登记册一致） -->
@@ -619,15 +653,12 @@
         </div>
 
         <!-- ════════ 我的技能 ════════ -->
-        <div v-else-if="activeTab === 'system'" class="tab-content">
-          <!-- v1.5 系统管理：仅 role='admin'（活验证管理凭证属实）时 tab 才在注册表里。
-               内嵌复用独立版 AdminPanel（源码不合并，同一组件两用）；操作仍要 admin_session
-               当场签名——tab 可见=凭证判权，可操作=会话+钱包双门禁 -->
-          <div class="tab-head">
-            <h3>{{ $t('user.tabSystem') }}</h3>
-            <p class="tab-hint">{{ $t('user.systemHint') }}</p>
-          </div>
-          <AdminPanel embedded />
+        <!-- ════════ v1.5 管理员页签（验收反馈①：与用户页签平级并列，无嵌套壳）════════
+             role='admin'（官网活验证属实）才装配；内嵌复用独立版 AdminPanel（源码不合并，
+             同一组件两用：externalTab 驱动子页、自带侧栏隐藏）。操作仍要 admin_session 当场
+             签名——tab 可见=凭证判权，可操作=会话+钱包双门禁（刀2B 模型一字不松） -->
+        <div v-else-if="isSystemTab" class="tab-content admin-embed">
+          <AdminPanel embedded :external-tab="systemSubTab" />
         </div>
 
         <div v-else class="tab-content">
@@ -793,6 +824,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { skillsApi } from '../api/skills.js'
 import AdminPanel from './AdminPanel.vue'
+import { buildAdminTabs } from '../admin-tabs'
 import {
   requestAccounts,
   signMessage,
@@ -808,9 +840,12 @@ const route = useRoute()
 // ---- 侧栏导航（与 React 原型稿一致） ----
 // 落地页 = 容器管理：多数操作（进入 DSH、启停、资源查看）都发生在这里，
 // 账户信息只剩地址一项，不该默认挡在前面。
-const activeTab = ref('container')
+// v1.5 用户验收②修订：进用户中心**不再自动建容器**，容器可能不存在——
+// 首屏停在"容器管理"会直面一片未就绪；改默认「账户信息」（凭证/角色第一眼看，反馈③）。
+const activeTab = ref('account')
 // v1.5 刀5C：判权面（credential-status 的 role，服务端活验证 admin 凭证属实才为 'admin'）。
-// tab 注册表按 role 装配——普通用户看不见"系统管理"，不是隐藏样式而是数据面就没有这一项。
+// tab 注册表按 role 装配——管理页签对普通用户不存在（数据面砍掉，不是 CSS 隐藏）；
+// 对管理员则与用户页签**平级并列**（验收反馈①：消灭"系统管理"嵌套壳，同一侧栏）。
 const role = ref('user')
 const sidebarTabs = computed(() => {
   const tabs = [
@@ -836,14 +871,14 @@ const sidebarTabs = computed(() => {
     },
   ]
   if (role.value === 'admin') {
-    tabs.push({
-      key: 'system',
-      label: t('user.tabSystem'),
-      icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>',
-    })
+    // 管理页签与用户页签同一侧栏并列（key 前缀 adm: 防碰撞；子页 key 见 subKey）
+    tabs.push({ divider: true, label: t('user.adminGroup') })
+    tabs.push(...buildAdminTabs(t, 'adm:'))
   }
   return tabs
 })
+const isSystemTab = computed(() => activeTab.value.startsWith('adm:'))
+const systemSubTab = computed(() => (isSystemTab.value ? activeTab.value.slice(4) : 'overview'))
 let initialTabApplied = false
 
 const shortAddrText = computed(() => {
@@ -992,9 +1027,13 @@ const loadCredentialStatus = async (address) => {
     role.value = data.role === 'admin' ? 'admin' : 'user'
     if (role.value === 'admin' && !initialTabApplied.value) {
       initialTabApplied.value = true
-      if (route.query.tab === 'system') activeTab.value = 'system' // /admin 重定向落地入口
+      // 深链落地：?tab=adm:cred 直达子页；旧入口 ?tab=system（/admin 重定向）落管理总览
+      const q = String(route.query.tab || '')
+      if (q.startsWith('adm:')) activeTab.value = q
+      else if (q === 'system') activeTab.value = 'adm:overview'
     }
-    if (role.value !== 'admin' && activeTab.value === 'system') activeTab.value = 'container'
+    // 撤销即时收面：角色掉出 admin 且正停在管理页 → 弹回账户信息
+    if (role.value !== 'admin' && isSystemTab.value) activeTab.value = 'account'
     if (data.renewed) {
       // 平台按台账 cwt/did 记录自动续发了新凭证（链上登记册同步换卡）
       credVc.value = null
@@ -1563,6 +1602,33 @@ const establishConnected = async (address) => {
   connected.value = true
 }
 
+// ★v1.5 验收反馈②：登录与建容器解耦（后端 /connect action=login：验签+换 cookie，不 docker、
+// 不过准入闸——准入闸只咬"进容器"，登录被咬会让过期凭证者进不了续发通道，死锁）。
+// 会话有效且地址一致 → 免签名弹窗秒进；否则一次性签名登录。绝不调 ensureContainer。
+const loginOnly = async (address) => {
+  try {
+    const s = await axios.get('/api/user/session-info')
+    if (s.data?.address && String(s.data.address).toLowerCase() === String(address).toLowerCase())
+      return 'ok'
+  } catch {
+    /* 会话查询失败按"无会话"处理，走签名登录 */
+  }
+  try {
+    const res = await connectWithOwnership(address, {
+      action: 'login',
+      title: t('user.loadingLogin'),
+      progress: 35,
+    })
+    if (res.status === 200) return 'ok'
+    const data = await res.json().catch(() => ({}))
+    toast(data.error || t('user.loginFail', { err: res.status }))
+    return 'denied'
+  } catch (err) {
+    toast(t('user.loginFail', { err: err?.message || err }))
+    return 'denied'
+  }
+}
+
 // 处理地址变化的通用函数
 const handleAddressChange = async (newAddress, isInitialLoad = false) => {
   const oldAddress = localStorage.getItem('swtc_address')
@@ -1601,61 +1667,25 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
     console.log('[flow] L1 loading=10% 验证地址')
     showLoading(t('user.loadingConnect'), t('user.loadingVerify'), 10)
 
-    // 关键：无论地址是否变化，都要确保容器存在并运行
-    const containerStatus = await ensureContainer(newAddress)
-
-    // 如果在等待队列中，不继续加载用户信息
-    if (containerStatus === 'waiting') {
+    // ★v1.5 验收反馈②：进入用户中心 = **登录**，不再顺手建容器。
+    // 签名换 cookie（/connect action=login，后端不碰 docker）→ 正常拉账户/凭证/角色。
+    // 容器创建/启动是显式动作：容器管理页「启动容器」按钮（restartContainer→ensureContainer
+    // 全状态机）或「进入 DSH」（enterDsh，自带创建+跳转）。管理员进来管理不再空转容器，
+    // 普通用户也不再被"进来即计费起时限"绑架——启动时机还给用户。
+    const loginState = await loginOnly(newAddress)
+    if (loginState === 'denied') {
+      // 换 cookie 失败（验签被拒/准入异常）→ 停在连接钱包卡片，loginOnly 已弹人话原因
       hideLoading()
-      // 保存地址
-      localStorage.setItem('swtc_address', newAddress)
-      // 身份已确立（地址已拿到）→ 必须进入已连接态，否则模板会停在
-      // 「连接钱包」卡片上（!connected 分支在 waiting 分支之前），排队页根本看不到
-      await establishConnected(newAddress)
       return
     }
-
-    // 今日额度用完：明确提示（初始加载不打扰），不再弹签名/进队列
-    if (containerStatus === 'usage-limit') {
-      hideLoading()
-      localStorage.setItem('swtc_address', newAddress)
-      // 关键修复：额度用完 ≠ 没连上钱包。这里必须进入「已连接」态并直接切到
-      // 账户页 —— 否则页面停在「连接钱包」卡片，而解除限时的 CWT 入口又在
-      // 已连接界面里，点了弹限时、弹完还是连接钱包，形成死循环（用户实测反馈）
-      await establishConnected(newAddress)
-      // v1.4 无独立 cwt tab（CWT 入口并入「账户」）：写 'cwt' 等于切到不存在的
-      // key，四个 tab 面板全不渲染——用户卡在空白页找不到解限入口（2026-10 审计）
-      activeTab.value = 'account'
-      if (!isInitialLoad) {
-        toast(lastConnect202Message || t('user.usageLimitReached'))
-      }
-      return
-    }
-
-    // 更新加载状态
-    showLoading(
-      t('user.loadingCreateContainer'),
-      containerStatus === 'created' ? t('user.loadingFirstStart') : t('user.loadingStartExisting'),
-      50,
-    )
 
     // 保存地址（即使是相同的地址也要保存，确保格式正确）
     localStorage.setItem('swtc_address', newAddress)
 
-    // 获取用户信息
-    showLoading(t('user.loadingFetchInfo'), t('user.loadingAccountData'), 80)
-    await fetchUserInfo(newAddress)
-
-    // 关键：设置 connected 为 true，否则页面不显示用户信息
-    if (userInfo.value.address) {
-      connected.value = true
-      console.log('[flow] L4 connected=true → hideLoading（loading 在此结束）')
-      console.log('[UserCenter] 已设置 connected = true')
-      hideLoading()
-    } else {
-      console.error('[UserCenter] userInfo.value.address 为空，无法设置 connected')
-      hideLoading()
-    }
+    // 身份已确立 → 进入已连接态（establishConnected 内部 fetchUserInfo 拉全量+凭证+角色）
+    showLoading(t('user.loadingFetchInfo'), t('user.loadingAccountData'), 70)
+    await establishConnected(newAddress)
+    hideLoading()
 
     // 只在地址真正变化时才显示提示
     if (!isInitialLoad && newAddress !== oldAddress) {
@@ -1754,7 +1784,16 @@ const connectWithOwnership = async (address, opts = {}) => {
     // format=json：浏览器 fetch 的 redirect:manual 会把 302 包成 opaque (status 0)，
     // 取不到 location → 后端直接回 200 JSON {url}，前端 window.open。
     showLoading(title, t('user.loadingEstablish'), Math.max(progress0, 70))
-    const params = new URLSearchParams({ address, nonce, signature, publicKey, format: 'json' })
+    // action=login（v1.5 反馈②）：只换 cookie 不建容器——签的仍是 CONNECT 用途同一消息，
+    // 额外 query 不参与签名内容，防重放语义不变。
+    const params = new URLSearchParams({
+      address,
+      nonce,
+      signature,
+      publicKey,
+      format: 'json',
+      ...(opts.action ? { action: opts.action } : {}),
+    })
     console.log('[flow] F9a 发起 /connect（带签名）')
     const cRes = await fetch(`/connect?${params}`)
     console.log('[flow] F9b /connect 返回 status=' + cRes.status)
@@ -2008,6 +2047,15 @@ const fetchUserInfo = async (address) => {
       return
     }
 
+    // 404（v1.5 反馈②）：登录建档分离后，未启动过容器=无档案——**正常初始态**，
+    // 不是错误：渲染"未创建"空态（容器管理页的「启动容器」按钮就是入口），不重试不弹错。
+    // 凭证/角色不依赖容器，照常拉取（判权与卡面展示都挂在 credential-status 上）。
+    if (err.response?.status === 404) {
+      userInfo.value = { address, status: 'none', exists: false }
+      loadCredentialStatus(address)
+      return
+    }
+
     // 如果获取失败，可能是容器刚创建，重试一次
     await new Promise((resolve) => setTimeout(resolve, 2000))
     try {
@@ -2022,39 +2070,24 @@ const fetchUserInfo = async (address) => {
 }
 
 const restartContainer = async () => {
+  const address = userInfo.value.address || currentAddress()
+  if (!address) {
+    toast(t('user.errConnectFirst'))
+    return
+  }
   try {
-    const address = userInfo.value.address
     showLoading(t('user.loadingStarting'), t('user.loadingPleaseWait'), 40)
-
-    const res = await connectWithOwnership(address, {
-      title: t('user.loadingStarting'),
-      progress: 40,
-    })
-
-    // 必须检查 /connect 的 HTTP 状态：容器创建/启动失败时后端会回
-    // 502（未就绪/内部错误）、202（额度用尽或排队）、503（队列满），
-    // 旧实现完全不看状态码就弹"启动成功"，于是出现"提示启动了、
-    // 状态却仍是已销毁"（实测：容器未就绪被回滚，用户以为已就绪）。
-    if (!res.ok) {
-      let detail = ''
-      try {
-        const data = await res.json()
-        detail = data?.message || data?.error || ''
-      } catch {
-        try {
-          detail = (await res.text()).slice(0, 300)
-        } catch {
-          /* 响应体不可读则只用状态码 */
-        }
-      }
-      throw new Error(detail || `HTTP ${res.status}`)
-    }
-
-    // 等待容器完全就绪
-    await new Promise((resolve) => setTimeout(resolve, 5000))
-
-    await fetchUserInfo(address)
+    // ★v1.5 反馈②：进页面不再建容器，此按钮成为建/启容器的唯一自动入口——
+    // 走 ensureContainer 全状态机（不存在→创建、停止→启动、排队→排队页、额度尽→提示），
+    // 旧实现直连 /connect 不看 202 的坑也一并消掉（202 在状态机内转成排队/usage-limit）。
+    const st = await ensureContainer(address)
     hideLoading()
+    if (st === 'waiting') return // 排队页已由状态机挂出（waiting.value）
+    if (st === 'usage-limit') {
+      toast(lastConnect202Message || t('user.usageLimitReached'))
+      return
+    }
+    await fetchUserInfo(address)
     toast(t('user.startedOk'))
   } catch (err) {
     hideLoading()
@@ -2152,7 +2185,11 @@ const statusText = (status) => {
     running: t('user.statusRunning'),
     stopped: t('user.statusStopped'),
     destroyed: t('user.statusDestroyed'),
+    // v1.5 反馈②：登录不建容器后"未创建"是常态首屏，不该裸显 null/none
+    none: t('user.statusNone'),
+    null: t('user.statusNone'),
   }
+  if (!status) return map.none
   return map[status] || status
 }
 
@@ -2730,6 +2767,25 @@ onUnmounted(() => {
 }
 
 .sidebar-icon :deep(svg) {
+  display: block;
+}
+
+/* v1.5 验收①：用户页签与管理页签同侧栏并列，中间一条"管理"分组细线 */
+.sidebar-divider {
+  margin: 0.85rem 0.75rem 0.4rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid rgba(226, 232, 240, 0.9);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #94a3b8;
+  user-select: none;
+}
+
+/* v1.5 验收①：管理页签内嵌 AdminPanel——外层 tab-content 不再叠 padding，
+   避免双层留白；AdminPanel(embedded) 自身不渲染侧栏，内容即全宽 */
+.tab-content.admin-embed {
+  padding: 0;
   display: block;
 }
 

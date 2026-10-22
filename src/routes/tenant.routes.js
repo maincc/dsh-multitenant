@@ -88,6 +88,20 @@ export async function handleTenantRoutes(req, res, path, url) {
         return true
       }
 
+      // ═══ 登录通道（v1.5）：只换 user_session cookie，**不建容器、不过准入闸** ═══
+      // 准入闸（gateConnect）咬的是"进容器"这条路（ensureContainer/网关导航）；
+      // 登录只证"是谁"（钱包签名）。若登录也过闸，凭证过期者会被挡在用户中心
+      // 门外——而续发（enter→_renewIfExpired）恰在门内，闭环成死锁，违背"绝不上锁"。
+      if (url.searchParams.get('action') === 'login') {
+        const loginToken = userSessionStore.create(address, 2 * 60 * 60 * 1000)
+        res.writeHead(200, {
+          'content-type': 'application/json; charset=utf-8',
+          'set-cookie': `user_session=${loginToken}; path=/; max-age=43200; httponly; samesite=strict`,
+        })
+        res.end(JSON.stringify({ ok: true, loggedIn: true, address }))
+        return true
+      }
+
       // v1.5 刀5B 凭证即准入：签名证"是谁"，台账证"有没有资格"。
       // 自动配发兜底=正常用户永不触发；咬的只是过期/伪造/异常态（license 模式另含 did）。
       const gate = await credentialService.gateConnect(address)

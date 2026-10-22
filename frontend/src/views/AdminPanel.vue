@@ -39,8 +39,8 @@
 
     <!-- 系统管理：左侧栏 + 右侧内容（与 React 原型稿一致） -->
     <div v-else class="gate-shell">
-      <!-- 左侧栏 -->
-      <aside class="gate-sidebar">
+      <!-- 左侧栏：内嵌态不渲染（管理页签已并入用户中心左栏，v1.5 验收反馈①） -->
+      <aside v-if="!embedded" class="gate-sidebar">
         <div class="sidebar-card">
           <nav class="sidebar-nav">
             <button
@@ -1351,6 +1351,7 @@ import { askConfirm, toast } from '../composables/useDialog'
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import axios from 'axios'
 import { useI18n } from 'vue-i18n'
+import { buildAdminTabs } from '../admin-tabs'
 import {
   requestAccounts,
   signMessage,
@@ -1361,47 +1362,24 @@ import {
 
 const { t } = useI18n()
 
-// v1.5 刀5C：可被用户中心「系统管理」tab 内嵌挂载（源码不合并，同一组件两用）。
-// embedded=true 时外层不再撑满整页高度，其余行为与独立页一致——admin_session
-// 的钱包签名登录**照旧要**（刀2B 安全模型一字不松：tab 可见=凭证判权，可操作=会话）。
+// v1.5 刀5C/用户验收①：可被用户中心内嵌挂载（源码不合并，同一组件两用）。
+// embedded=true 时不渲染自带侧栏——管理页签由用户中心左栏统一驱动（externalTab 传子页
+// key，与用户 tab 平级并列，消灭"系统管理"嵌套壳）。admin_session 的钱包签名登录
+// **照旧要**（刀2B 安全模型一字不松：tab 可见=凭证判权，可操作=会话+当场签名）。
 const props = defineProps({
   embedded: { type: Boolean, default: false },
+  externalTab: { type: String, default: '' },
 })
 
-// ---- 侧栏导航（与 React 原型稿一致） ----
-const activeTab = ref('overview')
-const adminTabs = [
-  {
-    key: 'overview',
-    label: t('admin.tabOverview'),
-    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>',
+// ---- 侧栏导航（页签定义与用户中心共享：admin-tabs.js） ----
+const activeTab = ref(props.embedded && props.externalTab ? props.externalTab : 'overview')
+watch(
+  () => props.externalTab,
+  (v) => {
+    if (props.embedded && v) activeTab.value = v
   },
-  {
-    key: 'users',
-    label: t('admin.tabUsers'),
-    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
-  },
-  {
-    key: 'quota',
-    label: t('admin.tabQuota'),
-    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
-  },
-  {
-    key: 'monitor',
-    label: t('admin.tabMonitor'),
-    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
-  },
-  {
-    key: 'dsh',
-    label: t('admin.tabDsh'),
-    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>',
-  },
-  {
-    key: 'cred',
-    label: t('admin.tabCred'),
-    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>',
-  },
-]
+)
+const adminTabs = buildAdminTabs(t)
 
 const users = ref([])
 const stats = ref({ totalUsers: 0, runningUsers: 0, tierCounts: {} })
