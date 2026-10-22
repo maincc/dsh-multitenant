@@ -88,6 +88,23 @@ export async function handleTenantRoutes(req, res, path, url) {
         return true
       }
 
+      // v1.5 刀5B 凭证即准入：签名证"是谁"，台账证"有没有资格"。
+      // 自动配发兜底=正常用户永不触发；咬的只是过期/伪造/异常态（license 模式另含 did）。
+      const gate = await credentialService.gateConnect(address)
+      if (!gate.allowed) {
+        res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(
+          JSON.stringify({
+            error:
+              gate.code === 'CREDENTIAL_EXPIRED'
+                ? '凭证已过期，请到用户中心登录后重新连接'
+                : '凭证缺失或已失效，请到用户中心连接领取',
+            code: 'NO_VALID_CREDENTIAL',
+          }),
+        )
+        return true
+      }
+
       // 连接/创建容器
       const port = await userService.ensureContainer(address)
       // 跳转/返回的 host 跟随请求 Host（浏览器当前 origin）：127 入口跳 127 容器页

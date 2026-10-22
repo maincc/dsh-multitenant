@@ -359,6 +359,54 @@ const VERIFY_PAGE_TEMPLATE = `<!doctype html>
 </body>
 </html>`
 
+/**
+ * v1.5 刀5B·准入拒绝页（凭证即准入）：容器属主无有效凭证时由网关直接返回，
+ * 不转发容器、不演进校验页。VERIFY_PAGE 同风格换文案，回平台领证。纯静态无脚本
+ * （无需插件签名——拦的是资格，不是身份）。
+ */
+const GATE_DENIED_TEMPLATE = `<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>凭证校验未通过</title>
+<style>
+  body{font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f5f7fa;color:#1f2937}
+  .card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:40px 48px;max-width:460px;text-align:center;box-shadow:0 4px 24px rgba(15,23,42,.06)}
+  .icon{font-size:40px;margin-bottom:6px}
+  h1{font-size:18px;margin:10px 0 10px;color:#b91c1c}
+  p{color:#6b7280;font-size:13.5px;line-height:1.8;margin:0 0 24px;word-break:break-all}
+  a{display:block;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:#fff;text-decoration:none;padding:12px;border-radius:10px;font-weight:600;font-size:14px}
+  a:hover{opacity:.92}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="icon">🚫</div>
+  <h1>凭证缺失或已失效</h1>
+  <p>该容器的进入资格（CWT/管理凭证）已过期或被收回。请回到平台用户中心重新连接并领取有效凭证后再进入。</p>
+  <a href="__PLATFORM_URL__">返回平台重新连接</a>
+</div>
+</body>
+</html>`
+
+/** 平台入口 URL（跟随请求 Host 推导 310xx→:8090/user；Host 投毒防护集中于此） */
+function derivePlatformUrl(req) {
+  // 2026-10 审计：Host 是攻击者可控头，此前原样拼进 HTML/跳转链接——恶意 Host
+  // 可把"返回平台"投毒成任意域。只收 [A-Za-z0-9._-] 形态主机名（IPv4/域名足够），
+  // 其余一律回退 publicHost；端口取配置，不再硬编码 8090 猜。
+  const raw = (req.headers.host || '').replace(/:\d+$/, '')
+  const hostname = /^[A-Za-z0-9._-]{1,253}$/.test(raw)
+    ? raw
+    : String(CONFIG.server.publicHost || '127.0.0.1')
+  const port = Number.isFinite(CONFIG.server.port) ? CONFIG.server.port : 8090
+  return `http://${hostname}:${port}/user`
+}
+
+/** 组装准入拒绝页 */
+function buildGateDeniedPage(req) {
+  return GATE_DENIED_TEMPLATE.replaceAll('__PLATFORM_URL__', derivePlatformUrl(req))
+}
+
 /** 顶层导航判定：浏览器页面级请求（资源/fetch/WS 不受此路径影响） */
 function isNavigationRequest(req) {
   if ((req.headers['sec-fetch-mode'] || '').toLowerCase() === 'navigate') return true
@@ -385,19 +433,9 @@ function hasGwOk(req, token) {
   return !!m && m[2] === token
 }
 
-/** 组装校验页（平台 URL 跟随请求 Host 推导：310xx → :8090/user） */
+/** 组装校验页（平台 URL 推导共用 derivePlatformUrl——Host 投毒防护单点） */
 function buildVerifyPage(req, gwToken) {
-  // 2026-10 审计：Host 是攻击者可控头，此前原样拼进 HTML/跳转链接——
-  // 恶意 Host 可把校验页的"返回平台"投毒成任意域。只收 [A-Za-z0-9._-]
-  // 形态的主机名（IPv4/域名足够），其余一律回退 publicHost；端口取配置，
-  // 不再用硬编码 8090 猜。
-  const raw = (req.headers.host || '').replace(/:\d+$/, '')
-  const hostname = /^[A-Za-z0-9._-]{1,253}$/.test(raw)
-    ? raw
-    : String(CONFIG.server.publicHost || '127.0.0.1')
-  const port = Number.isFinite(CONFIG.server.port) ? CONFIG.server.port : 8090
-  const platformUrl = `http://${hostname}:${port}/user`
-  return VERIFY_PAGE_TEMPLATE.replaceAll('__PLATFORM_URL__', platformUrl).replaceAll(
+  return VERIFY_PAGE_TEMPLATE.replaceAll('__PLATFORM_URL__', derivePlatformUrl(req)).replaceAll(
     '__GWOK_TOKEN__',
     String(gwToken || ''),
   )
@@ -852,6 +890,14 @@ class TenantGateway {
     const navRoute = this.routes.get(publicPort)
     const gwToken = navRoute ? gwOkToken(navRoute.address, publicPort) : null
     if (isNavigationRequest(req) && !hasGwOk(req, gwToken)) {
+      // v1.5 刀5B·准入闸（顶层导航换牌）：属主无有效凭证 → 不演进校验页，
+      // 直接"凭证缺失/失效"页（读本地快照零 I/O；快照未水合放行不误锁）。
+      // 只拦"进"，在跑会话不爆破（fail-open-to-finish）。
+      if (navRoute && !credentialService.isEntryValidSync(navRoute.address)) {
+        res.writeHead(403, { 'content-type': 'text/html; charset=utf-8' })
+        res.end(buildGateDeniedPage(req))
+        return
+      }
       if (this.authorize(req, publicPort)) {
         // 有会话：先消费一次性 ticket（官网「进入」URL 携带），命中即放行
         if (!this.tryTicket(req, res, publicPort)) {

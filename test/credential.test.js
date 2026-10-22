@@ -18,6 +18,7 @@ import {
   profilePath,
   KINDS,
 } from '../src/services/credential.service.js'
+import { CONFIG } from '../src/config/config.js' // 同源 CONFIG 对象：accessGate 模式切换测试用
 
 const ADDR = 'jtestaddr00000000000000000000000000'
 const CANON = 'jTestAddr00000000000000000000000000' // 原始大小写形态
@@ -54,6 +55,14 @@ function fakeBackend() {
     async listAdminAddresses() {
       return [...creds.entries()]
         .filter(([, d]) => d.kind === 'cwt' && (d.roles || []).includes('admin'))
+        .map(([a, d]) => ({ _id: a, expiresAt: d.expiresAt || null }))
+    },
+    async listValidRows() {
+      return [...creds.entries()]
+        .filter(
+          ([, d]) =>
+            (d.kind === 'did' || d.kind === 'cwt') && ['assigned', 'claimed'].includes(d.state),
+        )
         .map(([a, d]) => ({ _id: a, expiresAt: d.expiresAt || null }))
     },
     async hasApprovedApp(a) {
@@ -1198,5 +1207,101 @@ describe('v1.5 管理员凭证编排（任命/撤销/对账/判权）', () => {
     verifySdkReturn = false // 实卡验签失败=伪造/被覆盖
     await credentialService.onChainVerify(ADDR, { force: true })
     expect(credentialService.isAdmSync(ADDR)).toBe(false) // invalid 才摘
+  })
+})
+
+describe('v1.5 刀5B 准入闸（凭证即准入：did|cwt|admin 三证皆进）', () => {
+  it('gateConnect：从未来过用户中心的插件直连者 → 自动配发 did 卡放行（正常用户永不触发）', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    const r = await credentialService.gateConnect(ADDR)
+    expect(r).toMatchObject({ allowed: true, kind: 'did' })
+    expect(b.creds.get(ADDR).kind).toBe('did')
+    expect(b.creds.get(ADDR).source).toBe('connect')
+    expect(credentialService.isEntryValidSync(ADDR)).toBe(true)
+    expect(credentialService.isExemptSync(ADDR)).toBe(false) // did 准入但不解限——分级原样
+  })
+
+  it('gateConnect：过期行拒绝 → 登录续发后恢复放行（自愈闭环）', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    await b.grantCwt(ADDR, {
+      kind: 'cwt',
+      state: 'claimed',
+      source: 'approval',
+      roles: [],
+      vcId: 'did:swtc:jplatform#credential-old',
+      expiresAt: '2000-01-01',
+    })
+    const r = await credentialService.gateConnect(ADDR)
+    expect(r.allowed).toBe(false)
+    expect(r.code).toBe('CREDENTIAL_EXPIRED')
+    const e = await credentialService.enter(ADDR) // 登录续发：当场重铸一年卡
+    expect(e.renewed).toBe(true)
+    const r2 = await credentialService.gateConnect(ADDR)
+    expect(r2.allowed).toBe(true) // 恢复通道走通
+  })
+
+  it('license 备用模式：did 拒、cwt/admin 进；off 模式全放行（恢复现场）', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    await b.grantCwt(ADDR, { kind: 'did', state: 'claimed', source: 'auto', roles: [] })
+    const saved = CONFIG.accessGate
+    try {
+      CONFIG.accessGate = { mode: 'license' }
+      const r = await credentialService.gateConnect(ADDR)
+      expect(r.allowed).toBe(false)
+      expect(r.code).toBe('NO_VALID_CREDENTIAL')
+      CONFIG.accessGate = { mode: 'off' }
+      expect((await credentialService.gateConnect(ADDR)).allowed).toBe(true)
+      expect(credentialService.isEntryValidSync('jwhoever')).toBe(true) // off=闸不存在
+    } finally {
+      CONFIG.accessGate = saved
+    }
+  })
+
+  it('isEntryValidSync：首次水合前 fail-open（升级期绝不误锁），水合后陌生地址拒', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    expect(credentialService._validHydrated).toBe(false)
+    expect(credentialService.isEntryValidSync('jstranger000000000000000000000000')).toBe(true) // 未水合放行
+    await b.grantCwt(ADDR, { kind: 'did', state: 'claimed', source: 'auto', roles: [] })
+    await credentialService.refreshExemptSet()
+    expect(credentialService._validHydrated).toBe(true)
+    expect(credentialService.isEntryValidSync(ADDR)).toBe(true)
+    expect(credentialService.isEntryValidSync('jstranger000000000000000000000000')).toBe(false)
+  })
+
+  it('刷新窗口竞态：_unmarkValid 在旧快照整替后仍生效（对称刀3保护）', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    await b.grantCwt(ADDR, { kind: 'did', state: 'claimed', source: 'auto', roles: [] })
+    await credentialService.refreshExemptSet()
+    expect(credentialService.isEntryValidSync(ADDR)).toBe(true)
+    let release
+    b.listValidRows = () =>
+      new Promise((r) => (release = () => r([{ _id: ADDR, expiresAt: null }])))
+    const p = credentialService.refreshExemptSet() // fetch 在途（旧结果=仍在册）
+    credentialService._unmarkValid(ADDR) // 窗口内收回
+    release()
+    await p
+    expect(credentialService.isEntryValidSync(ADDR)).toBe(false)
+  })
+
+  it('降格不踢准入：provisionAdmin→demoteAdmin 全程 isEntryValidSync 恒真', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    await credentialService.provisionAdmin(ADDR)
+    await credentialService.refreshExemptSet()
+    expect(credentialService.isEntryValidSync(ADDR)).toBe(true)
+    await credentialService.demoteAdmin(ADDR) // 无批准史 → 回 did（限时但可进）
+    expect(credentialService.isEntryValidSync(ADDR)).toBe(true)
+    expect(b.creds.get(ADDR).kind).toBe('did')
   })
 })

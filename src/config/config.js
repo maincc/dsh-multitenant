@@ -46,6 +46,12 @@ const DEFAULTS = {
     exemptCacheMs: 60000,
     vcNamespace: 'urn:dshm-test:credential',
   },
+  // v1.5 刀5B·准入闸（凭证即准入，V3.1 定式）：建容器与网关导航须持台账有效凭证。
+  // credential=did|cwt 任一有效即进（默认；admin=cwt+roles 天然在内）；
+  // license=仅 cwt/admin 可进（did 拒，运营备用方向）；off=全放行（灰度逃生门）。
+  accessGate: {
+    mode: 'credential',
+  },
   skills: {
     autoInvoke: false, // 市场技能默认禁止模型自动调用（P0-4：安装到用户卷时强制
     // disable-model-invocation: true，除非本配置开启）
