@@ -16,6 +16,7 @@ import {
   _resetForTest,
   _shelfCredentialForTest,
   _mintVCForTest,
+  _isPlatformMintedForTest,
   profilePath,
   KINDS,
 } from '../src/services/credential.service.js'
@@ -796,14 +797,75 @@ describe('链上验真（onChainVerify）', () => {
     await vi.waitFor(() => expect(b.creds.get(ADDR).onChain?.status).toBe('ok'), { timeout: 2000 })
   })
 
-  it('mintVC 卡体 issuer=纯 DID 字符串（LDP 硬约束：issuer.name 触发 safe canonize 炸，2026-10-23 存入 500 教训）', async () => {
+  it('mintVC 生态统一形态：issuer=纯DID字符串 + id=持有人命名空间内嵌平台DID + jdid 品牌词表', async () => {
     installMocks(fakeBackend())
     const vc = await _mintVCForTest('did', ADDR, [])
     expect(vc.issuer).toBe('did:swtc:jplatform')
     expect(typeof vc.issuer).toBe('string') // 形态铁律：非字符串=签发管线必炸
+    // 生态 id 模板（仿官网实卡 #phone-<ISO>-did:swtc:<issuer>-<后缀>）：
+    expect(String(vc.id).startsWith(`did:swtc:${ADDR}#dsh-member-`)).toBe(true)
+    expect(String(vc.id)).toContain('-did:swtc:jplatform-')
+    // jdid 品牌词表（官方 @jccdex/vc-vocabularies brands/jdid.js 同款 URL）
+    expect(vc['@context'][0]).toBe('https://www.w3.org/2018/credentials/v1')
+    expect(vc['@context'][1].DshMemberCredential).toBe('https://jdid.cn/vc/v1#DshMemberCredential')
+    expect(vc['@context'][1].tier).toBe('https://jdid.cn/did/v1#tier')
+    expect(vc['@context'][1].version).toBe('https://jdid.cn/did/v1')
+    // subject 值去自创 urn：裸词形态
+    expect(vc.credentialSubject.verifiedVia).toBe('auto-assign')
     const cwt = await _mintVCForTest('cwt', ADDR, ['admin'])
     expect(cwt.issuer).toBe('did:swtc:jplatform')
-    expect(String(cwt.id).startsWith('did:swtc:jplatform#credential-')).toBe(true)
+    expect(String(cwt.id).startsWith(`did:swtc:${ADDR}#dsh-cwt-`)).toBe(true)
+    expect(cwt.credentialSubject.cwtGrant).toBe('approved')
+    // holderDid 传档案实际大小写 → id 保留混合大小写（生态卡同款）
+    const mixed = await _mintVCForTest('did', ADDR, [], `did:swtc:${CANON}`)
+    expect(String(mixed.id).startsWith(`did:swtc:${CANON}#dsh-member-`)).toBe(true)
+    // 非法 holderDid（别的地址）→ 退回小写规范形态，不移花接木
+    const wrong = await _mintVCForTest(
+      'did',
+      ADDR,
+      [],
+      'did:swtc:jOTHERaddr9999999999999999999999x',
+    )
+    expect(String(wrong.id).startsWith(`did:swtc:${ADDR}#`)).toBe(true)
+  })
+
+  it('isPlatformMinted id 判据双代：新代生态形接受、旧代兼容、畸形拒绝', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    const mkCard = (id) => ({
+      '@context': ['https://www.w3.org/2018/credentials/v1'],
+      id,
+      type: ['VerifiableCredential', 'DshMemberCredential'],
+      issuer: 'did:swtc:jplatform',
+      credentialSubject: { id: `did:swtc:${ADDR}` },
+      proof: { type: 'EcdsaSecp256k1Signature2019', jws: 'a.b.c' },
+    })
+    // 新代：持有人命名空间 + dsh- 前缀 + 内嵌平台 DID（大小写不敏感）
+    await expect(
+      _isPlatformMintedForTest(
+        mkCard(`did:swtc:${CANON}#dsh-member-2026-10-23T00:00:00.000Z-did:swtc:jplatform-abcd`),
+        ADDR,
+      ),
+    ).resolves.toBe(true)
+    // 旧代：平台命名空间 #credential-*（存量兼容）
+    await expect(
+      _isPlatformMintedForTest(mkCard('did:swtc:jplatform#credential-t1-old'), ADDR),
+    ).resolves.toBe(true)
+    // 畸形①：他人命名空间且 fragment 不含平台 DID（他人自签仿冒形态）
+    await expect(
+      _isPlatformMintedForTest(
+        mkCard(`did:swtc:jhacker0000000000000000000000000#dsh-member-x-did:swtc:jhacker-1`),
+        ADDR,
+      ),
+    ).resolves.toBe(false)
+    // 畸形②：持有人命名空间但 fragment 无平台 DID 锚（无法证明平台签发关联）
+    await expect(
+      _isPlatformMintedForTest(mkCard(`did:swtc:${CANON}#dsh-member-2026-random-only`), ADDR),
+    ).resolves.toBe(false)
+    // 畸形③：subject 不是本地址
+    const other = mkCard(`did:swtc:${CANON}#dsh-member-x-did:swtc:jplatform-1`)
+    other.credentialSubject = { id: 'did:swtc:jsomeoneelse0000000000000000000' }
+    await expect(_isPlatformMintedForTest(other, ADDR)).resolves.toBe(false)
   })
 })
 

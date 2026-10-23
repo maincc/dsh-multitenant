@@ -43,6 +43,11 @@ const sha256hex = (b) => createHash('sha256').update(b).digest('hex')
 export const KINDS = Object.freeze({ DID: 'did', CWT: 'cwt' })
 export const VC_TYPES = Object.freeze({ did: 'DshMemberCredential', cwt: 'DshCwtCredential' })
 
+// 官网生态词表（2026-10-23 官方 @jccdex/vc-vocabularies brands/*.js 源码定案）：
+// SWTC 链品牌=jdid（词汇根 jdid.cn），EVM 链品牌=ccdao（ccda.ooo）。我们发 SWTC 卡。
+const ECOSYSTEM_VC_VOCAB = 'https://jdid.cn/vc/v1'
+const ECOSYSTEM_DID_VOCAB = 'https://jdid.cn/did/v1'
+
 // relay 文件签消息前缀：0x19 控制字符 + 'IPFS Signed Message:' + LF + 消息长度
 const MSG_PREFIX_BYTES = Buffer.from([25, ...Buffer.from('IPFS Signed Message:', 'utf8'), 10])
 
@@ -137,38 +142,59 @@ export function _resetForTest(inj = {}) {
 /** 挂架入口（串行包装后）暴露给测试：并发顺序合并语义的回归位用 */
 export const _shelfCredentialForTest = shelfCredential
 export const _mintVCForTest = mintVC
+export const _isPlatformMintedForTest = isPlatformMinted
 export const _syncProfileIdentityForTest = syncProfileIdentity
 
 /* ───────────────────────── VC 签发 ───────────────────────── */
 
-/** 平台真签一张 VC（kind: did|cwt），subject = 用户 DID（小写规范形态） */
-async function mintVC(kind, subjectAddrLower, roles = []) {
+/**
+ * 平台真签一张 VC（kind: did|cwt）——**生态统一形态**（2026-10-23 官方词表
+ * @jccdex/vc-vocabularies 源码 + relay 实卡双重定案）：
+ *  - @context = [W3C credentials/v1, jdid 品牌内联术语]。SWTC 链=官方 jdid
+ *    品牌：类型 URI `https://jdid.cn/vc/v1#<Type>`，属性 subject 术语归
+ *    did/v1（官方 NFTOwnership 先例 chainId/tokenId/owner 同款），声明 version
+ *    术语（官方全 profile 惯例，subject 可不用——电话卡即如此）。
+ *  - id = 生态模板形（实卡逐字仿写，如 #phone-<ISO>-did:swtc:<issuer>-0）：
+ *    `{持有人canonical DID}#dsh-{member|cwt}-{ISO时间}-{平台DID}-{防碰后缀}`
+ *    ——卡进持有人命名空间、fragment 内嵌相关方 DID，官网按惯例解析签发方
+ *    （旧形态 id=平台命名空间+随机尾巴，官网读不出→弹窗签发方空白）。
+ *  - holderDid 传档案实际大小写（台账 profileDid/文件名 canonical），非法或
+ *    缺省退回小写形态。subject 值去自创 urn 前缀（'auto-assign'/'approved' 裸词）。
+ * 旧代卡（#credential-*）由 isPlatformMinted 双代判据继续认，存量无需迁移。
+ */
+async function mintVC(kind, subjectAddrLower, roles = [], holderDid = null) {
   const p = platform()
-  const c = cfg()
-  const ns = c.vcNamespace || 'urn:dshm-test:credential'
   const typeName = VC_TYPES[kind]
   if (!typeName) throw new BadRequestError(`未知凭证类型: ${kind}`)
   const now = new Date()
+  let holder = `did:swtc:${subjectAddrLower}`
+  if (
+    typeof holderDid === 'string' &&
+    /^did:swtc:/i.test(holderDid) &&
+    normalizeAddress(holderDid.replace(/^did:swtc:/i, '')) === subjectAddrLower
+  ) {
+    holder = holderDid // 保留档案实际大小写（生态卡 id 均如此）
+  }
+  const slug = kind === 'did' ? 'member' : 'cwt'
   const descriptor = {
     '@context': [
       'https://www.w3.org/2018/credentials/v1',
       {
-        [typeName]: `${ns}:${typeName}`,
-        tier: `${ns}#tier`,
-        verifiedVia: `${ns}#verifiedVia`,
-        dailyMinutes: `${ns}#dailyMinutes`,
-        cwtGrant: `${ns}#cwtGrant`,
-        roles: `${ns}#roles`,
+        [typeName]: `${ECOSYSTEM_VC_VOCAB}#${typeName}`,
+        version: ECOSYSTEM_DID_VOCAB,
+        tier: `${ECOSYSTEM_DID_VOCAB}#tier`,
+        dailyMinutes: `${ECOSYSTEM_DID_VOCAB}#dailyMinutes`,
+        verifiedVia: `${ECOSYSTEM_DID_VOCAB}#verifiedVia`,
+        cwtGrant: `${ECOSYSTEM_DID_VOCAB}#cwtGrant`,
+        roles: `${ECOSYSTEM_DID_VOCAB}#roles`,
       },
     ],
-    id: `${p.did}#credential-${kind === 'did' ? 't1' : 'cwt'}-${now.getTime().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    id: `${holder}#dsh-${slug}-${now.toISOString()}-${p.did}-${Math.random().toString(36).slice(2, 6)}`,
     type: ['VerifiableCredential', typeName],
     // issuer 必须是【纯 DID 字符串】——2026-10-23 实测教训：VC v1 上下文对 issuer 有
     // @protected + @type:@id 强制，{id,name} 节点形态在 jsonld safe canonize 必抛
     // "Safe mode validation error."（invalid property: name），签发直接炸（存入 500）。
-    // W3C 规范口径：issuer 附加属性在 RDF 规范化中丢失，LDP 签名卡物理上存不了名字。
-    // 签发方显示名改走【issuer DID 档案文档的 name 字段】（官网弹窗按解析结果展示，
-    // 见 data/keys/issuer-profile.json name）。
+    // 生态实卡同款：全部 issuer=纯字符串；显示名走 issuer DID 档案 Profile 端点。
     issuer: p.did,
     issuanceDate: now.toISOString(),
     expirationDate: new Date(now.getTime() + 365 * 864e5).toISOString(),
@@ -178,13 +204,13 @@ async function mintVC(kind, subjectAddrLower, roles = []) {
             id: `did:swtc:${subjectAddrLower}`,
             tier: 1,
             dailyMinutes: cfgDailyMinutes(),
-            verifiedVia: `${ns}:auto-assign`,
+            verifiedVia: 'auto-assign',
           }
         : {
             id: `did:swtc:${subjectAddrLower}`,
             tier: 1,
-            cwtGrant: `${ns}:approved`,
-            verifiedVia: `${ns}:cwt`,
+            cwtGrant: 'approved',
+            verifiedVia: 'cwt',
             ...(Array.isArray(roles) && roles.length ? { roles } : {}),
           },
   }
@@ -216,7 +242,23 @@ function cfgDailyMinutes() {
 async function isPlatformMinted(vc, subjectAddrLower) {
   const p = platform()
   if (!vc || typeof vc !== 'object') return false
-  if (!String(vc.id || '').startsWith(`${p.did}#credential-`)) return false
+  // id 判据双代（2026-10-23 生态统一）：
+  //  · 新代=生态形：卡进持有人命名空间（大小写不限）+ fragment `dsh-<类型>-` 起头
+  //    + 内嵌平台 DID 字符串（官网按此惯例解析"签发方"）；
+  //  · 旧代兼容：`<平台DID>#credential-*`（存量卡不迁移）。
+  // 两代都只是**辅助闸门**，主闸门永远是下面的 SDK 平台真签验签。
+  const idStr = String(vc.id || '')
+  const hashAt = idStr.indexOf('#')
+  const idOk = idStr.startsWith(`${p.did}#credential-`)
+    ? true
+    : hashAt > 0 &&
+      idStr.slice(0, hashAt).toLowerCase() === `did:swtc:${subjectAddrLower}` &&
+      /^dsh-(member|cwt)-/.test(idStr.slice(hashAt + 1)) &&
+      idStr
+        .slice(hashAt + 1)
+        .toLowerCase()
+        .includes(p.did.toLowerCase())
+  if (!idOk) return false
   if (
     normalizeAddress(String(vc.credentialSubject?.id || '').replace(/^did:swtc:/, '')) !==
     subjectAddrLower
@@ -1194,7 +1236,7 @@ class CredentialService {
   async _renewIfExpired(cred, addrLower) {
     if (!cred?.vcId || !cred.expiresAt) return { cred, renewed: false }
     if (new Date(cred.expiresAt).getTime() > Date.now()) return { cred, renewed: false }
-    const vc = await mintVC(cred.kind, addrLower, cred.roles || [])
+    const vc = await mintVC(cred.kind, addrLower, cred.roles || [], cred.profileDid || null)
     // claimedAt 随重铸刷新=新卡换发时刻：档案里此刻还是旧卡（新卡待用户再领/同步），
     // 60s 副本传播宽限由此自动覆盖续发窗口——onChainVerify 不会拿旧档案对新 vcId
     // 误判 missing 而错剥"已领取"（2026-10-23 官网删卡对账引入的时序补全）。
@@ -1380,7 +1422,7 @@ class CredentialService {
         expectedAddress: canonicalAddr,
       }
     }
-    const vc = await mintVC(cred.kind, addrLower, cred.roles || [])
+    const vc = await mintVC(cred.kind, addrLower, cred.roles || [], `did:swtc:${canonicalAddr}`)
     // 互斥在档案侧的落实：先摘掉平台签发的 Dsh 凭证（含历史信封形态），再放当前这张
     const doc = {
       ...read.doc,

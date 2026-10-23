@@ -51,7 +51,7 @@ const DEFAULTS = {
     // 旧版 CWT registry（解除限制白名单）：命中=直接签发 CWT 凭证
     legacyFile: 'data/legacy-cwt.json',
     exemptCacheMs: 60000,
-    vcNamespace: 'urn:dshm-test:credential',
+    // vcNamespace 下线（2026-10-23 生态统一）：凭证词表/形态以官网 jdid 品牌为准
   },
   // v1.5 刀5B·准入闸（凭证即准入，V3.1 定式）：建容器与网关导航须持台账有效凭证。
   // credential=did|cwt 任一有效即进（默认；admin=cwt+roles 天然在内）；
