@@ -15,6 +15,7 @@ import {
   credentialService,
   _resetForTest,
   _shelfCredentialForTest,
+  _mintVCForTest,
   profilePath,
   KINDS,
 } from '../src/services/credential.service.js'
@@ -659,13 +660,21 @@ describe('链上验真（onChainVerify）', () => {
     expect(r.status).toBe('stale')
     expect(r.reason).toContain('vc-other')
   })
-  it('档案彻底没有平台卡 → missing', async () => {
-    claimed()
+  it('档案彻底没有平台卡 → missing 且台账回未领取（官网删卡对账）', async () => {
+    const b = claimed()
     okRelay(
       docWith([{ id: 'vc-own', type: ['VerifiableCredential'], issuer: `did:swtc:${CANON}` }]),
     )
     const r = await credentialService.onChainVerify(ADDR)
     expect(r.status).toBe('missing')
+    // v1.5 对账：确凿 missing → state 回 assigned、vcId/claimedAt 清空——
+    // 但 kind/roles/source 一律不动（判权在台账不在档案：删档案卡不夺豁免）
+    const row = b.creds.get(ADDR)
+    expect(row.state).toBe('assigned')
+    expect(row.vcId).toBeNull()
+    expect(row.claimedAt).toBeNull()
+    expect(row.kind).toBe('cwt')
+    expect(row.onChain.status).toBe('missing')
   })
   it('读档网络失败 → 保留上次结论不写台账（probe-fail 不误判）', async () => {
     const b = claimed()
@@ -717,6 +726,27 @@ describe('链上验真（onChainVerify）', () => {
     installMocks(b)
     b.creds.set(ADDR, { _id: ADDR, kind: 'did', state: 'assigned', source: 'auto' })
     expect(await credentialService.onChainVerify(ADDR)).toBeNull()
+  })
+
+  it('enter 当轮对账：已领取但档案卡已被官网删除 → 本轮即回未领取+重新引导领取弹窗', async () => {
+    const b = claimed()
+    okRelay(docWith([])) // 档案确凿可读、里面没有任何平台卡（持有人删卡后的常态）
+    const r = await credentialService.enter(ADDR)
+    expect(r.credential.state).toBe('assigned') // 不再是慢一拍显示"已存入"
+    expect(r.popup).toBe(true) // 本轮就重新弹窗引导再领
+    const row = b.creds.get(ADDR)
+    expect(row.vcId).toBeNull()
+    expect(row.kind).toBe('cwt') // 判权面纹丝不动：删的是出示层，不是授予
+  })
+
+  it('mintVC 卡体带签发方展示名（官网删卡弹窗凭 issuer.name 点名签发方）', async () => {
+    installMocks(fakeBackend())
+    const vc = await _mintVCForTest('did', ADDR, [])
+    expect(vc.issuer.id).toBe('did:swtc:jplatform') // 验签解析路不变（getId 兼容对象）
+    expect(vc.issuer.name).toBeTruthy()
+    const cwt = await _mintVCForTest('cwt', ADDR, ['admin'])
+    expect(cwt.issuer.name).toBe(CONFIG.credential.platformName || 'DSH 平台')
+    expect(String(cwt.id).startsWith('did:swtc:jplatform#credential-')).toBe(true)
   })
 })
 

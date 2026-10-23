@@ -41,6 +41,9 @@ const DEFAULTS = {
     contextFile: 'data/keys/secp256k1-2019-v1.json',
     // 无 DID 档案时的用户指引（务必提醒核对地址）
     didGenUrl: 'https://app.ccda.ooo/#/',
+    // VC issuer 展示名（2026-10-23 用户实测：官网删卡弹窗读 issuer.name 显示签发方，
+    // 纯 DID 字符串=空白）——mintVC 经 SDK issuerObject 槽注入 {id,name}
+    platformName: 'DSH 平台',
     // 旧版 CWT registry（解除限制白名单）：命中=直接签发 CWT 凭证
     legacyFile: 'data/legacy-cwt.json',
     exemptCacheMs: 60000,

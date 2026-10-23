@@ -136,6 +136,7 @@ export function _resetForTest(inj = {}) {
 
 /** 挂架入口（串行包装后）暴露给测试：并发顺序合并语义的回归位用 */
 export const _shelfCredentialForTest = shelfCredential
+export const _mintVCForTest = mintVC
 
 /* ───────────────────────── VC 签发 ───────────────────────── */
 
@@ -161,7 +162,10 @@ async function mintVC(kind, subjectAddrLower, roles = []) {
     ],
     id: `${p.did}#credential-${kind === 'did' ? 't1' : 'cwt'}-${now.getTime().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
     type: ['VerifiableCredential', typeName],
-    issuer: p.did,
+    // issuer 带展示名（2026-10-23 用户实测：官网删卡弹窗读 issuer.name 显示"签发方"，
+    // 纯 DID 字符串=空白）。SDK 的 getId 与 jsonld 均兼容 {id,name}；验签仍按 id 链上
+    // 解析公钥，且 proof 覆盖整个 issuer——name 被人篡改版式=验签即败，防伪只增不减。
+    issuer: { id: p.did, name: c.platformName || 'DSH 平台' },
     issuanceDate: now.toISOString(),
     expirationDate: new Date(now.getTime() + 365 * 864e5).toISOString(),
     credentialSubject:
@@ -1074,8 +1078,17 @@ class CredentialService {
     // 登录即续发：已领取卡到期 → 当场重铸新卡换台账+异步换平台册（豁免无缝衔接）
     const renewed = await this._renewIfExpired(cred, addrLower)
     this._markValid(addrLower) // 台账有行即在册（准入自愈：登录过的地址闸不咬）
-    // 链上验真：异步跑（resolve 冷启动秒级，不拖登录响应），结果下次 status 可见
-    if (renewed.cred.state === 'claimed') this.onChainVerify(addrLower).catch(() => {})
+    // 链上验真：claimed 态带预算等待（2026-10-23 用户实测"官网删卡平台没反应"——
+    // 旧 fire-and-forget 使对账永远慢一轮）。节流命中=同步返回零开销；真需读档时
+    // 3.5s 预算封顶（resolve 冷启动秒级常态 0.2~2.7s），超时不拖登录——后台那条
+    // 仍在跑并落库，下轮自然一致。对账确凿 missing 时台账已回 assigned → 本轮
+    // popup=true 直接重新引导领取，用户当场看到"反应"。
+    if (renewed.cred.state === 'claimed') {
+      const verify = this.onChainVerify(addrLower).catch(() => {})
+      await Promise.race([verify, new Promise((r) => setTimeout(r, 3500))])
+      const after = await b.get(addrLower)
+      if (after) renewed.cred = after
+    }
     return {
       credential: this._public(renewed.cred),
       popup: renewed.cred.state === 'assigned',
@@ -1096,10 +1109,14 @@ class CredentialService {
     if (!cred?.vcId || !cred.expiresAt) return { cred, renewed: false }
     if (new Date(cred.expiresAt).getTime() > Date.now()) return { cred, renewed: false }
     const vc = await mintVC(cred.kind, addrLower, cred.roles || [])
+    // claimedAt 随重铸刷新=新卡换发时刻：档案里此刻还是旧卡（新卡待用户再领/同步），
+    // 60s 副本传播宽限由此自动覆盖续发窗口——onChainVerify 不会拿旧档案对新 vcId
+    // 误判 missing 而错剥"已领取"（2026-10-23 官网删卡对账引入的时序补全）。
     const patched = await backend().patch(addrLower, {
       vcId: vc.id,
       expiresAt: vc.expirationDate || null,
       renewedAt: new Date().toISOString(),
+      claimedAt: new Date().toISOString(),
     })
     if (cred.kind === KINDS.CWT) this._markExempt(addrLower)
     this._markValid(addrLower) // 过期出集的续发回归（准入跟着台账走）
@@ -1174,6 +1191,16 @@ class CredentialService {
           next = { ...prev, reason: String(err?.message || err).slice(0, 140) }
         }
       }
+    }
+    // v1.5 官网删卡对账（2026-10-23 用户实测"官网删了平台没反应，还显示已存入"）：
+    // missing 的全部来源都是【确凿读】——档案不存在（relay 明确 absent）或读档成功但
+    // 平台卡不在其中；probe-fail（网络抖动）在上游已 return prev 绝不落这里。
+    // 语义：档案=卡本体的存放地，本体被持有人删除 ⇒ "已领取"事实不再成立 ⇒ 台账
+    // 回未领取（assigned），下次 enter 自然重新弹窗引导领取。卡型/roles/source 一律
+    // 不动——判权在台账不在档案：cwt 持卡人删了档案卡依旧豁免，admin 依旧在岗。
+    if (next?.status === 'missing') {
+      await b.patch(addrLower, { state: 'assigned', vcId: null, claimedAt: null, onChain: next })
+      return next
     }
     await b.patch(addrLower, { onChain: next })
     // v1.5 判权联动：档案实卡验签【确凿】失效（invalid=被伪造/覆盖）→ 当秒摘 admin 热闸。
