@@ -1091,13 +1091,20 @@ const loadCredentialStatus = async (address) => {
       })
     }
   } catch (err) {
-    // 凭证卡走占位态（可见+可自愈重试），失败原因留痕供文案与重试策略使用
+    // 凭证卡走占位态（可见+可自愈重试），失败原因留痕供文案与重试策略使用。
+    // 连接级失败（服务重启/断网/超时）无 response——用 err.code（ERR_NETWORK/
+    // ECONNABORTED）识别，交给 retryCredential 的退避重试，绝不谎报成 HTTP 码。
     credInfo.value = null
     credErr.value = {
       status: err?.response?.status || null,
-      code: err?.response?.data?.code || null,
+      code: err?.response?.data?.code || err?.code || null,
     }
-    console.error('[UserCenter] credential-status 加载失败:', credErr.value.status, err?.message)
+    console.error(
+      '[UserCenter] credential-status 加载失败:',
+      credErr.value.status,
+      credErr.value.code,
+      err?.message,
+    )
   }
 }
 
@@ -1113,17 +1120,29 @@ const retryCredential = async () => {
     return
   }
   credRetrying.value = true
+  const netFail = () => credErr.value && !credErr.value.status // 有留痕但无 HTTP 码=连接级
   try {
     const st = await loginOnly(address)
     if (st === 'ok') await loadCredentialStatus(address)
+    // 连接级失败（实测主因：服务部署重启 ~10s 窗口 ECONNREFUSED）→ 等 3s 自动
+    // 再试一次，瞬断不该劳烦用户二次点击
+    if (st === 'ok' && !credInfo.value && netFail()) {
+      await new Promise((r) => setTimeout(r, 3000))
+      await loadCredentialStatus(address)
+    }
     if (credInfo.value) {
       toast(t('user.credReloaded'))
     } else if (st === 'denied') {
       // loginOnly 已 toast 具体原因（拒签/验签失败），此处不叠话
     } else if (credErr.value?.status === 401 || credErr.value?.status === 403) {
       toast(t('user.credFailSession'))
+    } else if (netFail()) {
+      toast(t('user.credFailNet'))
+    } else if (credErr.value?.status) {
+      toast(t('user.credFailHttp', { err: credErr.value.status }))
     } else {
-      toast(t('user.credFailOther', { err: credErr.value?.status || '网络' }))
+      // 200 却无凭证体：服务端应答异常，与网络无关——旧版谎报"网络"的定位坑
+      toast(t('user.credFailEmpty'))
     }
   } finally {
     credRetrying.value = false

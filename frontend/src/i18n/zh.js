@@ -507,7 +507,11 @@ export default {
     credRetrying: '正在重新登录…（钱包会请求一次签名）',
     credReloaded: '会话已恢复，凭证读取成功',
     credFailSession: '重登后仍被拒绝：当前钱包账户与会话地址不一致，请确认插件解锁的是登录地址',
-    credFailOther: '凭证仍加载失败：{err}，请稍后重试或刷新页面',
+    credFailNet:
+      '服务连不上（可能正在重启，或您的网络中断）。已自动重试一次仍失败，请稍候再点「重新登录并重载凭证」，或刷新页面。',
+    credFailHttp: '凭证加载失败（服务返回 {err}）。凭证本身仍在平台台账，请稍后重试或刷新页面。',
+    credFailEmpty:
+      '服务应答异常（未返回凭证），非网络问题。请稍后刷新页面或重新点「重新登录并重载凭证」。',
     credClaiming: '写入档案中…',
     credClaimed: '已存入您的数字档案（链上生效，稍后自动核验真伪）',
     credClaimFail: '存入失败：{msg}',

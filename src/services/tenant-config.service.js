@@ -321,6 +321,12 @@ export class TenantConfigService {
 
   /** 查询配置状态（只回 configured/absent，不回显 key） */
   async getStatus(address) {
+    // 无卷 = 无配置：一次探卷后短路返回空态。此前直接串行跑 3 个 runScript，
+    // 每个内部再各自探卷失败抛错被吞——无容器的地址（验收②后管理员进中心不再
+    // 自动建容器，这是常态首屏）也要白跑 docker 三连，实测 6751ms 慢源。
+    if (!(await this.volumeExists(address))) {
+      return { apiKeyConfigured: false, baseURL: null, models: null, providers: [] }
+    }
     // 凭据引用集合（一次容器调用，list 不输出值）
     let configuredRefs = []
     try {
