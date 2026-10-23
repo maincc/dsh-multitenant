@@ -1045,9 +1045,33 @@ const toggleCredVc = async () => {
 
 const loadCredentialStatus = async (address) => {
   if (!address) return
+  // ★致命/非致命彻底分离（用户实测"200 却报服务连不上"的根治）：此前 fetch、
+  // 状态装配、领取弹窗同居一个 try——axios 成功之后任何一行抛 JS 异常都会被
+  // catch 当成请求失败：清掉已装配好的 credInfo、置无状态码的 credErr，
+  // retryCredential 的 netFail()（判据=status 空）把干净的 200 谎报成"网络中断"。
+  // 现在 catch 只包 fetch——credErr 有值 ⇔ 请求本身真失败；后续装配/弹窗的
+  // 异常只留 console 痕，绝不动 credInfo/credErr。
+  let data
   try {
     const res = await axios.get('/api/user/credential-status', { params: { address } })
-    const data = res.data || {}
+    data = res.data || {}
+  } catch (err) {
+    credInfo.value = null
+    credErr.value = {
+      status: err?.response?.status || null,
+      code:
+        err?.response?.data?.code || err?.code || (err?.request ? 'ERR_NETWORK' : 'ERR_UNKNOWN'),
+    }
+    console.error(
+      '[UserCenter] credential-status 请求失败:',
+      credErr.value.status,
+      credErr.value.code,
+      err?.message,
+    )
+    return
+  }
+  // ↓↓↓ 以下为"请求已成功"的纯装配段：任何异常都不许推翻凭证卡本身 ↓↓↓
+  try {
     credErr.value = null // 成功即清因（占位态/文案随之消退）
     credInfo.value = data.credential || null
     // v1.5 判权面：role='admin' 才装配「系统管理」tab（服务端活验证凭证属实）
@@ -1076,7 +1100,12 @@ const loadCredentialStatus = async (address) => {
     } else {
       credApp.value = null
     }
-    // 分配了但还没领取 → 弹窗提醒（领取=把凭证写进用户自己的 DID 档案）；按地址节流
+  } catch (err) {
+    console.error('[UserCenter] 凭证装配异常（不影响凭证卡）:', err?.message)
+  }
+  // 分配了但还没领取 → 弹窗提醒（领取=把凭证写进用户自己的 DID 档案）；按地址节流。
+  // 弹窗是锦上添花：its 成败与凭证卡彻底无关（askConfirm 本身永不 reject，双保险）
+  try {
     if (data.popup && credInfo.value && credPopupShown.value !== address) {
       credPopupShown.value = address
       await askConfirm({
@@ -1091,20 +1120,7 @@ const loadCredentialStatus = async (address) => {
       })
     }
   } catch (err) {
-    // 凭证卡走占位态（可见+可自愈重试），失败原因留痕供文案与重试策略使用。
-    // 连接级失败（服务重启/断网/超时）无 response——用 err.code（ERR_NETWORK/
-    // ECONNABORTED）识别，交给 retryCredential 的退避重试，绝不谎报成 HTTP 码。
-    credInfo.value = null
-    credErr.value = {
-      status: err?.response?.status || null,
-      code: err?.response?.data?.code || err?.code || null,
-    }
-    console.error(
-      '[UserCenter] credential-status 加载失败:',
-      credErr.value.status,
-      credErr.value.code,
-      err?.message,
-    )
+    console.error('[UserCenter] 领取弹窗异常（不影响凭证卡）:', err?.message)
   }
 }
 
@@ -1120,7 +1136,9 @@ const retryCredential = async () => {
     return
   }
   credRetrying.value = true
-  const netFail = () => credErr.value && !credErr.value.status // 有留痕但无 HTTP 码=连接级
+  // loadCredentialStatus 已保证：credErr 有值 ⇔ fetch 本身真失败（有留痕无
+  // HTTP 状态码=连接级：重启窗口/断网/超时）
+  const netFail = () => credErr.value && !credErr.value.status
   try {
     const st = await loginOnly(address)
     if (st === 'ok') await loadCredentialStatus(address)
