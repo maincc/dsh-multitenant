@@ -509,25 +509,26 @@ async function _syncProfileIdentityStep(name) {
     if (read.status === 'probe-fail')
       return { written: false, reason: 'probe-fail（读不到绝不动档）' }
     const base = read.status === 'ok' && read.doc ? read.doc : p.profile
-    // ═══ 显示名口径（2026-10-23 参考实现 oa-dapp/did-profile.service.ts 实锤）═══
-    // 生态组件读签发方/昵称的【规范位置】= service[] 中 type==='Profile' 条目的
-    // serviceEndpoint.nickname（顶层 name 不是任何已知消费方的取数路）。双写：
-    // Profile 服务条目为准，顶层 name 留作冗余人读。
+    // ═══ 签发方显示名——逐字节对齐生态模板（2026-10-23 relay 实读解剖定案）═══
+    // 生态卡 issuer 也是纯 DID 字符串（与我们同款）；官网弹窗"签发方"显示的
+    // 【不是卡上的名字】，而是 issuer DID 档案里 Profile 服务端点的 nickname——
+    // 实读生态"有签发方"的两例：上海光元JDID井证 {"id":did#profile,"type":
+    // "Profile","serviceEndpoint":{"nickname":"…","preferredAvatar":""}}、
+    // Team SWTC 同款。我们此前差两点：条目缺 preferredAvatar 键（模板恒有此
+    // 键，空串亦然，UI 可能严格判形）+ 顶层多发自创 name 字段（生态档案全部
+    // 没有，自创口径=疑点面）。现在：只写 Profile 条目、键序与模板一致、
+    // 顶层 name 移除（含本地镜像）。
     const services = Array.isArray(base.service) ? [...base.service] : []
     const pi = services.findIndex((s) => s?.type === 'Profile')
-    const entry = {
-      id: `${p.did}#profile`,
-      type: 'Profile',
-      ...(pi >= 0 ? services[pi] : {}),
-      serviceEndpoint: {
-        ...(pi >= 0 ? services[pi].serviceEndpoint || {} : {}),
-        nickname: name,
-      },
-    }
+    const endpoint = { nickname: name, preferredAvatar: '' }
+    const entry = { id: `${p.did}#profile`, type: 'Profile', serviceEndpoint: endpoint }
+    const already =
+      pi >= 0 && JSON.stringify(services[pi]) === JSON.stringify(entry) && !('name' in base)
+    if (already) return { written: false, reason: 'already' }
     if (pi >= 0) services[pi] = entry
     else services.push(entry)
-    if (base.name === name && pi >= 0) return { written: false, reason: 'already' }
-    const doc = { ...base, name, service: services, updated: new Date().toISOString() }
+    const { name: _drop, ...baseRest } = base // 顶层自创 name 下线，形态归一生态模板
+    const doc = { ...baseRest, service: services, updated: new Date().toISOString() }
     const signature = signWithPlatformKey(Buffer.from(JSON.stringify(doc), 'utf8'))
     await relayWrite({
       document: doc,
