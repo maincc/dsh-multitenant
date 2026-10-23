@@ -66,7 +66,11 @@ function fakeBackend() {
           ([, d]) =>
             (d.kind === 'did' || d.kind === 'cwt') && ['assigned', 'claimed'].includes(d.state),
         )
-        .map(([a, d]) => ({ _id: a, expiresAt: d.expiresAt || null }))
+        .map(([a, d]) => ({
+          _id: a,
+          expiresAt: d.expiresAt || null,
+          onChain: d.onChain || null,
+        }))
     },
     async hasApprovedApp(a) {
       return apps.some((x) => x.address === a && x.status === 'approved')
@@ -937,6 +941,73 @@ describe('链上验真（onChainVerify）', () => {
     const other = mkCard(`did:swtc:${CANON}#dsh-member-x-did:swtc:jplatform-1`)
     other.credentialSubject = { id: 'did:swtc:jsomeoneelse0000000000000000000' }
     await expect(_isPlatformMintedForTest(other, ADDR)).resolves.toBe(false)
+  })
+})
+
+describe('运行时豁免档案优先贯通（_reconcileExemptWithArchive，2026-10-23 用户拍板 VC-as-authority 端到端）', () => {
+  const claimedRow = () => {
+    const b = fakeBackend()
+    installMocks(b)
+    b.creds.set(ADDR, {
+      _id: ADDR,
+      kind: 'cwt',
+      state: 'claimed',
+      source: 'approval',
+      profileDid: `did:swtc:${CANON}`,
+      vcId: 'vc-live',
+      expiresAt: new Date(Date.now() + 864e5).toISOString(),
+    })
+    return b
+  }
+  const docW = (cards) => ({ id: `did:swtc:${CANON}`, credentials: cards })
+  it('删卡确凿 → 对账当秒摘豁免；台账照常降级；水合不复活（missing 戳防线）', async () => {
+    const b = claimedRow()
+    await credentialService.refreshExemptSet()
+    expect(credentialService.isExemptSync(ADDR)).toBe(true) // 前置：台账授予在集
+    okRelay(docW([])) // 档案确凿可读、卡已被持有人删除
+    await credentialService._reconcileExemptWithArchive()
+    expect(credentialService.isExemptSync(ADDR)).toBe(false) // 即时摘，不等登录
+    expect(b.creds.get(ADDR).state).toBe('assigned') // 台账侧对账照旧
+    await credentialService.refreshExemptSet() // 5 分钟水合不得复活确凿负结论行
+    expect(credentialService.isExemptSync(ADDR)).toBe(false)
+  })
+  it('验签不过（invalid=伪造覆盖）→ 豁免即摘', async () => {
+    claimedRow()
+    await credentialService.refreshExemptSet()
+    okRelay(
+      docW([
+        {
+          id: 'vc-live',
+          type: ['VerifiableCredential', 'DshCwtCredential'],
+          issuer: 'did:swtc:jplatform',
+        },
+      ]),
+    )
+    verifyReturn = false // 假 SDK：verified:false
+    await credentialService._reconcileExemptWithArchive()
+    expect(credentialService.isExemptSync(ADDR)).toBe(false)
+  })
+  it('probe-fail 绝不摘豁免（绝不上锁）：网络失败保台账结论', async () => {
+    claimedRow()
+    await credentialService.refreshExemptSet()
+    fetchStub.mockRejectedValue(new Error('socket hang up'))
+    await credentialService._reconcileExemptWithArchive()
+    expect(credentialService.isExemptSync(ADDR)).toBe(true)
+  })
+  it('legacy 配发未领取（null 结论）不受扰；重新领取 _markExempt 后翻案复活', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    b.creds.set(ADDR, { _id: ADDR, kind: 'cwt', state: 'assigned', source: 'legacy', roles: [] })
+    await credentialService.refreshExemptSet()
+    await credentialService._reconcileExemptWithArchive()
+    expect(fetchStub).not.toHaveBeenCalled() // 未领取根本不该读档
+    expect(credentialService.isExemptSync(ADDR)).toBe(true)
+    // 删卡对账摘除后重领（claimUpload 成功路径 _markExempt 的等价模拟）→ 后到者胜
+    b.creds.get(ADDR).onChain = { status: 'missing', at: new Date().toISOString() }
+    credentialService._unmarkExempt(ADDR)
+    credentialService._markExempt(ADDR)
+    await credentialService.refreshExemptSet()
+    expect(credentialService.isExemptSync(ADDR)).toBe(true)
   })
 })
 

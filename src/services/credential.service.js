@@ -832,10 +832,14 @@ class MongoCredentialBackend {
       await this._col()
         .find(
           { kind: { $in: ['did', 'cwt'] }, state: { $in: ['assigned', 'claimed'] } },
-          { projection: { _id: 1, expiresAt: 1 } },
+          { projection: { _id: 1, expiresAt: 1, onChain: 1 } },
         )
         .toArray()
-    ).map((d) => ({ _id: d._id, expiresAt: d.expiresAt || null }))
+    ).map((d) => ({
+      _id: d._id,
+      expiresAt: d.expiresAt || null,
+      onChain: d.onChain || null,
+    }))
   }
   async listClaimed() {
     return (
@@ -979,7 +983,7 @@ class JsonCredentialBackend {
           (d.kind === 'did' || d.kind === 'cwt') &&
           (d.state === 'assigned' || d.state === 'claimed'),
       )
-      .map(([a, d]) => ({ _id: a, expiresAt: d.expiresAt || null }))
+      .map(([a, d]) => ({ _id: a, expiresAt: d.expiresAt || null, onChain: d.onChain || null }))
   }
   async listClaimed() {
     const all = this._load(this._fileCred) || {}
@@ -1055,6 +1059,16 @@ class CredentialService {
       }, 300000)
       this._refreshTimer.unref()
     }
+    if (!this._exemptReconcileTimer) {
+      // 档案优先心跳（2026-10-23 用户拍板）：官网删卡→豁免回收≤~2 分钟，不必等登录
+      const rawR = Number(cfg().exemptCacheMs)
+      this._exemptReconcileTimer = setInterval(
+        () => this._reconcileExemptWithArchive().catch(() => {}),
+        Number.isFinite(rawR) && rawR > 0 ? rawR : 60000,
+      )
+      this._exemptReconcileTimer.unref()
+      this._reconcileExemptWithArchive().catch(() => {}) // 启动即跑一轮（异步尽力）
+    }
   }
 
   get enabled() {
@@ -1075,6 +1089,16 @@ class CredentialService {
           : Promise.resolve(null),
       ])
       const next = new Set(addrs)
+      // 2026-10-23 VC-as-authority 贯通（用户定式"先跑档案，出错跑台账"用到运行时）：
+      // 链上**确凿负结论**（missing=删卡实锤 / invalid=验签不过）盖戳的行不得被水合
+      // 复活——删卡语义=豁免回收，直到重新领取（claimUpload 落档 onChain:null 自然翻案）。
+      // validRows 抓不到（探测失败侧）→ 不排除，保台账结论=绝不上锁。
+      if (validRows) {
+        for (const r of validRows) {
+          const st = r.onChain?.status
+          if (st === 'missing' || st === 'invalid') next.delete(r._id)
+        }
+      }
       // 2026-10 审计：fetch 窗口内的即时增/减都要在原子替换时保全
       // （刀3 修的是"新批被旧快照吞"；v1.5 撤销引入对称面"刚撤被旧快照复活"）
       for (const a of this._cwtPending) next.add(a)
@@ -1116,7 +1140,9 @@ class CredentialService {
     }
   }
 
-  /** usage 热路径同步判据：是否持有 CWT 解限凭证（与领取状态无关） */
+  /** usage 热路径同步判据：是否持有 CWT 解限凭证。台账授予（legacy 配发未领也豁免），
+   *  但**链上确凿负结论**（删卡 missing/伪造 invalid）由 onChainVerify 即时摘 +
+   *  水合防复活（_reconcileExemptWithArchive 60s 驱动，2026-10-23 档案优先贯通） */
   isExemptSync(address) {
     if (!this.enabled) return false
     return this._cwtSet.has(normalizeAddress(address))
@@ -1135,6 +1161,32 @@ class CredentialService {
     this._cwtSet.delete(addrLower)
     this._cwtPending.delete(addrLower)
     this._cwtUnmark.add(addrLower)
+  }
+
+  /**
+   * 运行时豁免的档案驱动（2026-10-23 用户拍板"VC-as-authority 贯通"）：
+   * 此前"先跑档案"只在登录门上跑一次，使用侧豁免只读台账快照——官网删卡+不再
+   * 登录=豁免长存。本循环每 60s 给**当前豁免**的地址各跑一次活验：撤销动作
+   * 全部由 onChainVerify 产出的确凿结论当场挂钩完成（missing/invalid→_unmarkExempt），
+   * 本循环自身不读结论下判断——旧缓存结论误摘的风险为零；probe-fail/宽限期只回
+   * prev 不产新负结论=保豁免（绝不上锁）。**只减不增**：升权永远走台账签发/领取/
+   * 续发路径，档案不得凭空豁免任何人。60s 保鲜 TTL 封顶 relay 读压=每持有人每分钟
+   * 至多 1 读（与登录活验同额，无新增量级）。
+   */
+  async _reconcileExemptWithArchive() {
+    if (!this.enabled || this._exemptReconciling) return
+    this._exemptReconciling = true
+    try {
+      for (const addr of [...this._cwtSet]) {
+        try {
+          await this.onChainVerify(addr)
+        } catch {
+          /* 探测侧：维持现集，绝不下"失效"结论 */
+        }
+      }
+    } finally {
+      this._exemptReconciling = false
+    }
   }
 
   /**
@@ -1400,9 +1452,13 @@ class CredentialService {
     // 平台卡不在其中；probe-fail（网络抖动）在上游已 return prev 绝不落这里。
     // 语义：档案=卡本体的存放地，本体被持有人删除 ⇒ "已领取"事实不再成立 ⇒ 台账
     // 回未领取（assigned），下次 enter 自然重新弹窗引导领取。卡型/roles/source 一律
-    // 不动——判权在台账不在档案：cwt 持卡人删了档案卡依旧豁免，admin 依旧在岗。
+    // 不动——admin 依旧在岗（missing 不是撤职，invalid 才摘热闸）；豁免侧 2026-10-23
+    // 语义升级（用户拍板"档案优先贯通运行时"）：领取后删卡=豁免即摘，见 _unmarkExempt。
     if (next?.status === 'missing') {
       await b.patch(addrLower, { state: 'assigned', vcId: null, claimedAt: null, onChain: next })
+      // 判权联动升级（2026-10-23 用户拍板"档案优先贯通到运行时"）：卡本体确凿被删
+      // ⇒ 豁免即时回收（不必等登录/水合；此前"删卡依旧豁免"是台账中转语义）
+      this._unmarkExempt(addrLower)
       // 平台登记册同步摘卡（2026-10-23 官网一致性整改）：档案卡被删=该卡作废，
       // 展示副本必须跟着摘——否则官网看我们的签发方档案全是已死旧卡（现场实锤：
       // 台账降 assigned 后货架还挂 2 张 #credential-* 旧形态卡）。尽力轨：
@@ -1413,8 +1469,11 @@ class CredentialService {
     await b.patch(addrLower, { onChain: next })
     // v1.5 判权联动：档案实卡验签【确凿】失效（invalid=被伪造/覆盖）→ 当秒摘 admin 热闸。
     // 只认 invalid——stale/missing 是"未领取/换了新卡"的常态形态，误伤在岗管理员
-    if (next?.status === 'invalid' && Array.isArray(cred.roles) && cred.roles.includes('admin'))
-      this._unmarkAdmin(addrLower)
+    if (next?.status === 'invalid') {
+      // 卡在本体但验签不过=确凿负结论：豁免即摘；管理员再加摘热闸（原有联动）
+      this._unmarkExempt(addrLower)
+      if (Array.isArray(cred.roles) && cred.roles.includes('admin')) this._unmarkAdmin(addrLower)
+    }
     return next
   }
 
@@ -1614,6 +1673,8 @@ class CredentialService {
       onChain: null, // 新卡刚落档：链上验真状态重开（登录链路会异步补验）
     })
     if (last && isDshCard(last)) await shelfCredential(last)
+    // 再领取=豁免翻案复活（删卡对账可能已把豁免摘走）：即时回集，不等 5 分钟水合
+    if (patched?.kind === KINDS.CWT) this._markExempt(addrLower)
     // 台账换了新卡：凭证本体缓存立即失效（否则「同步」后 60s 内展开查看仍是旧卡，
     // 2026-10 审计 #7；此前 _vcCache.delete 全项目零调用点）
     _vcCache.delete(addrLower)
