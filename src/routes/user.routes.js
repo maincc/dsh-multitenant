@@ -90,7 +90,7 @@ export async function handleUserRoutes(req, res, path) {
       res.end(JSON.stringify({ error: '账号不存在', code: 'NO_ACCOUNT' }))
       return true
     }
-    const sessionToken = userSessionStore.create(addrLower, 2 * 60 * 60 * 1000)
+    const sessionToken = userSessionStore.create(addrLower)
     res.writeHead(200, {
       'content-type': 'application/json; charset=utf-8',
       'set-cookie': `user_session=${sessionToken}; path=/; max-age=43200; httponly; samesite=strict`,

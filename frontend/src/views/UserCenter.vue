@@ -338,10 +338,18 @@
               <span class="cred-title">{{ $t('user.credTitle') }}</span>
               <span class="badge badge-warning">{{ $t('user.credNotLoaded') }}</span>
             </div>
-            <p class="tab-hint">{{ $t('user.credNotLoadedHint') }}</p>
+            <p class="tab-hint">
+              {{
+                credErr?.status === 401 ? $t('user.credExpiredHint') : $t('user.credNotLoadedHint')
+              }}
+            </p>
             <div class="action-buttons">
-              <button class="btn btn-secondary" :disabled="!connected" @click="retryCredential">
-                {{ $t('user.credRetry') }}
+              <button
+                class="btn btn-secondary"
+                :disabled="!connected || credRetrying"
+                @click="retryCredential"
+              >
+                {{ credRetrying ? $t('user.credRetrying') : $t('user.credRetry') }}
               </button>
             </div>
           </div>
@@ -976,6 +984,9 @@ const fetchUsage = async (address) => {
 const credInfo = ref(null) // 台账公开形态 {kind:'did'|'cwt', state:'assigned'|'claimed', source}
 const credApp = ref(null) // 本人 CWT 申请单（did 凭证已领取态才查）
 const credBusy = ref('') // 'claim' | 'apply' | ''
+// 凭证卡自愈态：credErr=上次失败摘要 {status,code}；credRetrying=重试进行中（含重签会话）
+const credErr = ref(null)
+const credRetrying = ref(false)
 const credNoDid = ref(null) // scaffold 返回的无档案指引 {didGenUrl, expectedAddress}
 const credPopupShown = ref('') // 已弹过提醒的地址（切钱包=新地址=再提醒一次，轮询不轰炸）
 const credVcOpen = ref(false) // 凭证本体 JSON 展开态
@@ -1037,6 +1048,7 @@ const loadCredentialStatus = async (address) => {
   try {
     const res = await axios.get('/api/user/credential-status', { params: { address } })
     const data = res.data || {}
+    credErr.value = null // 成功即清因（占位态/文案随之消退）
     credInfo.value = data.credential || null
     // v1.5 判权面：role='admin' 才装配「系统管理」tab（服务端活验证凭证属实）
     role.value = data.role === 'admin' ? 'admin' : 'user'
@@ -1079,17 +1091,43 @@ const loadCredentialStatus = async (address) => {
       })
     }
   } catch (err) {
-    // 凭证卡走占位态（可见+可重试），并把失败原因留痕——不再静默吞掉
+    // 凭证卡走占位态（可见+可自愈重试），失败原因留痕供文案与重试策略使用
     credInfo.value = null
-    console.error('[UserCenter] credential-status 加载失败:', err?.response?.status, err?.message)
+    credErr.value = {
+      status: err?.response?.status || null,
+      code: err?.response?.data?.code || null,
+    }
+    console.error('[UserCenter] credential-status 加载失败:', credErr.value.status, err?.message)
   }
 }
 
-// 占位态的"重试"：重新拉 credential-status（登录已确立会话时通常一次即恢复）
+// 占位态的"重试"＝完整自愈：先重建会话再重拉。
+// 历史根因：会话签发点曾硬编码 2h（cookie 却 12h），开着页面过夜必 401，
+// 而旧重试只重发死请求、无反馈——表现"没反应"。后端已修（12h + 滑动续期），
+// 但前端仍保留自愈路做纵深：loginOnly 会话健在→session-info 命中零弹窗复用；
+// 已失效→走插件重签换 cookie（一次性挑战，验签与登录同式）。全程态可见、成败有话。
 const retryCredential = async () => {
   const address = currentAddress()
-  if (!address) return
-  await loadCredentialStatus(address)
+  if (!address) {
+    toast(t('user.errConnectFirst'))
+    return
+  }
+  credRetrying.value = true
+  try {
+    const st = await loginOnly(address)
+    if (st === 'ok') await loadCredentialStatus(address)
+    if (credInfo.value) {
+      toast(t('user.credReloaded'))
+    } else if (st === 'denied') {
+      // loginOnly 已 toast 具体原因（拒签/验签失败），此处不叠话
+    } else if (credErr.value?.status === 401 || credErr.value?.status === 403) {
+      toast(t('user.credFailSession'))
+    } else {
+      toast(t('user.credFailOther', { err: credErr.value?.status || '网络' }))
+    }
+  } finally {
+    credRetrying.value = false
+  }
 }
 
 const sha256Hex = async (bytes) => {

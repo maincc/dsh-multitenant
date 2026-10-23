@@ -500,8 +500,14 @@ export default {
     credClaimBtn: '存入我的数字档案',
     credNotLoaded: '未读取到',
     credNotLoadedHint:
-      '凭证卡加载失败（会话过期或网络异常）。凭证本身仍在平台台账，点下方重试即可恢复。',
-    credRetry: '重试加载凭证',
+      '凭证卡加载失败（网络异常或服务暂不可用）。凭证本身仍在平台台账，点下方重试即可恢复。',
+    credExpiredHint:
+      '登录会话已失效（有效期 12 小时闲置；活跃使用会自动续期，不会中途掉线）。点下方按钮重新登录并重载凭证。',
+    credRetry: '重新登录并重载凭证',
+    credRetrying: '正在重新登录…（钱包会请求一次签名）',
+    credReloaded: '会话已恢复，凭证读取成功',
+    credFailSession: '重登后仍被拒绝：当前钱包账户与会话地址不一致，请确认插件解锁的是登录地址',
+    credFailOther: '凭证仍加载失败：{err}，请稍后重试或刷新页面',
     credClaiming: '写入档案中…',
     credClaimed: '已存入您的数字档案（链上生效，稍后自动核验真伪）',
     credClaimFail: '存入失败：{msg}',

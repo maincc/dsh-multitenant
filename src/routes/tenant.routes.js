@@ -93,7 +93,7 @@ export async function handleTenantRoutes(req, res, path, url) {
       // 登录只证"是谁"（钱包签名）。若登录也过闸，凭证过期者会被挡在用户中心
       // 门外——而续发（enter→_renewIfExpired）恰在门内，闭环成死锁，违背"绝不上锁"。
       if (url.searchParams.get('action') === 'login') {
-        const loginToken = userSessionStore.create(address, 2 * 60 * 60 * 1000)
+        const loginToken = userSessionStore.create(address)
         res.writeHead(200, {
           'content-type': 'application/json; charset=utf-8',
           'set-cookie': `user_session=${loginToken}; path=/; max-age=43200; httponly; samesite=strict`,
@@ -139,7 +139,7 @@ export async function handleTenantRoutes(req, res, path, url) {
       const containerUrl =
         `http://${targetHost}:${port}/` + (gwTicket ? `?gateway_ticket=${gwTicket}` : '')
       // 签名验证通过 → 签发普通用户会话（网关门禁凭据，2h；切钱包时前端会主动吊销）
-      const sessionToken = userSessionStore.create(address, 2 * 60 * 60 * 1000)
+      const sessionToken = userSessionStore.create(address)
       const cookieHeader = `user_session=${sessionToken}; path=/; max-age=43200; httponly; samesite=strict`
       // 前端 XHR/fetch 场景：浏览器 fetch 的 redirect:manual 会把 302 包成 opaque
       // (status 0)，前端拿不到 location。format=json 时直接给 200 JSON + cookie，
@@ -514,7 +514,7 @@ export async function handleTenantRoutes(req, res, path, url) {
       if (!res.headersSent) {
         const headers = { 'content-type': 'application/json; charset=utf-8' }
         if (containerUrl) {
-          const sessionToken = userSessionStore.create(address, 2 * 60 * 60 * 1000)
+          const sessionToken = userSessionStore.create(address)
           headers['set-cookie'] =
             `user_session=${sessionToken}; path=/; max-age=43200; httponly; samesite=strict`
           result.url = containerUrl

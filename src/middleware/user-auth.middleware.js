@@ -64,15 +64,23 @@ class UserSessionStore {
     return token
   }
 
-  /** 解析 token → 地址；无效/过期返回 null */
+  /** 解析 token → 地址；无效/过期返回 null。活跃会话过半程滑动续期。 */
   resolve(token) {
     if (!token) return null
     const rec = this.sessions[sha256(token)]
     if (!rec) return null
-    if (rec.expiresAt < Date.now()) {
+    const now = Date.now()
+    if (rec.expiresAt < now) {
       delete this.sessions[sha256(token)]
       this._persist()
       return null
+    }
+    // 滑动续期：消灭"页面开着过夜必过期"（用户实测"读取不到凭证"根因）。
+    // 写放大可控：每会话至多每半程（6h）落一次盘；mongodb 形态 _persist 走
+    // 串行镜像队列（异步），热路径不被 IO 阻塞。
+    if (rec.expiresAt < now + SESSION_TTL_MS / 2) {
+      rec.expiresAt = now + SESSION_TTL_MS
+      this._persist()
     }
     return rec.address
   }
