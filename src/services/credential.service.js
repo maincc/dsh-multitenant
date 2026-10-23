@@ -1078,16 +1078,25 @@ class CredentialService {
     // 登录即续发：已领取卡到期 → 当场重铸新卡换台账+异步换平台册（豁免无缝衔接）
     const renewed = await this._renewIfExpired(cred, addrLower)
     this._markValid(addrLower) // 台账有行即在册（准入自愈：登录过的地址闸不咬）
-    // 链上验真：claimed 态带预算等待（2026-10-23 用户实测"官网删卡平台没反应"——
-    // 旧 fire-and-forget 使对账永远慢一轮）。节流命中=同步返回零开销；真需读档时
-    // 3.5s 预算封顶（resolve 冷启动秒级常态 0.2~2.7s），超时不拖登录——后台那条
-    // 仍在跑并落库，下轮自然一致。对账确凿 missing 时台账已回 assigned → 本轮
-    // popup=true 直接重新引导领取，用户当场看到"反应"。
-    if (renewed.cred.state === 'claimed') {
-      const verify = this.onChainVerify(addrLower).catch(() => {})
-      await Promise.race([verify, new Promise((r) => setTimeout(r, 3500))])
-      const after = await b.get(addrLower)
+    // ═══ 判权顺序（2026-10-23 用户定式："先跑档案，出错跑台账"）═══
+    // claimed 卡登录：同步等档案活验结论（预算 enterVerifyBudgetMs 封顶，常态
+    // 0.2~2.7s；节流保鲜期内秒回）。档案出确凿结论 → 本轮判权即按其行动
+    // （missing=删卡对账回未领取、invalid=伪造即摘热闸、ok/stale=按台账继续）；
+    // 出错/超预算 → 落回台账结论放行（"绝不上锁"：官网断≠撤销），后台那条
+    // 核验仍跑完落库，下轮自动升级为档案结论。verifiedBy 标出本轮依据来源。
+    let verifiedBy = 'ledger'
+    if (renewed.cred.state === 'claimed' && renewed.cred.vcId && renewed.cred.profileDid) {
+      const raw = Number(cfg().enterVerifyBudgetMs)
+      const budgetMs = Number.isFinite(raw) && raw > 0 ? raw : 5000
+      const TIMEOUT = Symbol('verify-timeout')
+      const verify = this.onChainVerify(addrLower).catch(() => undefined)
+      const verdict = await Promise.race([
+        verify,
+        new Promise((r) => setTimeout(() => r(TIMEOUT), budgetMs)),
+      ])
+      const after = await b.get(addrLower) // missing 对账可能已把行降级，重取为准
       if (after) renewed.cred = after
+      if (verdict !== TIMEOUT && verdict?.status) verifiedBy = 'archive'
     }
     return {
       credential: this._public(renewed.cred),
@@ -1095,6 +1104,7 @@ class CredentialService {
       role: this.roleFor(addrLower),
       legacy: null,
       renewed: renewed.renewed,
+      verifiedBy,
     }
   }
 

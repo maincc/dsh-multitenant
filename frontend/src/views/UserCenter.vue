@@ -221,6 +221,19 @@
                   <em v-else>{{ $t('user.credExpRenewing') }}</em></span
                 >
               </div>
+              <!-- 判权依据溯源（2026-10-23 定式"先跑档案，出错跑台账"）：让用户看见
+                   本轮放行是档案活验背书、还是官网抖动下的台账兜底 -->
+              <div v-if="credInfo.state === 'claimed' && credVerifiedBy" class="stat-row">
+                <span class="stat-label">{{ $t('user.credDVerifiedBy') }}</span>
+                <span class="stat-value">
+                  <span v-if="credVerifiedBy === 'archive'" class="badge badge-success">
+                    {{ $t('user.verifiedByArchive') }}
+                  </span>
+                  <span v-else class="badge badge-warning" :title="$t('user.verifiedByLedgerHint')">
+                    {{ $t('user.verifiedByLedger') }}
+                  </span>
+                </span>
+              </div>
               <div v-if="credInfo.state === 'claimed'" class="stat-row">
                 <span class="stat-label">{{ $t('user.credDOnchain') }}</span>
                 <span class="stat-value">
@@ -987,6 +1000,9 @@ const credBusy = ref('') // 'claim' | 'apply' | ''
 // 凭证卡自愈态：credErr=上次失败摘要 {status,code}；credRetrying=重试进行中（含重签会话）
 const credErr = ref(null)
 const credRetrying = ref(false)
+// 判权依据来源（2026-10-23 用户定式"先跑档案出错跑台账"）：'archive'=本轮经档案
+// 活验背书 / 'ledger'=档案出错或超预算落台账兜底 / ''=未加载或 assigned（无档可验）
+const credVerifiedBy = ref('')
 const credNoDid = ref(null) // scaffold 返回的无档案指引 {didGenUrl, expectedAddress}
 const credPopupShown = ref('') // 已弹过提醒的地址（切钱包=新地址=再提醒一次，轮询不轰炸）
 const credVcOpen = ref(false) // 凭证本体 JSON 展开态
@@ -1073,6 +1089,7 @@ const loadCredentialStatus = async (address) => {
   // ↓↓↓ 以下为"请求已成功"的纯装配段：任何异常都不许推翻凭证卡本身 ↓↓↓
   try {
     credErr.value = null // 成功即清因（占位态/文案随之消退）
+    credVerifiedBy.value = data.verifiedBy || 'ledger' // 判权顺序溯源（档案活验/台账兜底）
     credInfo.value = data.credential || null
     // v1.5 判权面：role='admin' 才装配「系统管理」tab（服务端活验证凭证属实）
     role.value = data.role === 'admin' ? 'admin' : 'user'
@@ -1136,8 +1153,7 @@ const retryCredential = async () => {
     return
   }
   credRetrying.value = true
-  // loadCredentialStatus 已保证：credErr 有值 ⇔ fetch 本身真失败（有留痕无
-  // HTTP 状态码=连接级：重启窗口/断网/超时）
+  // loadCredentialStatus 已保证：credErr 有值 ⇔ fetch 本身真失败（有留痕无  // HTTP 状态码=连接级：重启窗口/断网/超时）
   const netFail = () => credErr.value && !credErr.value.status
   try {
     const st = await loginOnly(address)

@@ -33,6 +33,10 @@ const DEFAULTS = {
     relayBaseURL: 'https://ipfsserver.ccda.ooo',
     apiBase: '/v0/api/ipfs',
     chain: 'swtc',
+    // 判权顺序预算（2026-10-23 用户定式："先跑档案，出错跑台账"）：enter 对
+    // claimed 卡同步等档案活验结论的上限；超预算不拖登录——落台账结论，后台
+    // 核验照跑照落库。relay resolve 冷启动实测 2.7s 级常态，5s 覆盖尾部。
+    enterVerifyBudgetMs: 5000,
     profileProbeTimeoutMs: 8000, // 实测 resolve 冷启动 2.7s 级常态，3s 会误判"没档案"
     profileProbeCacheMs: 900000,
     // 平台签发钥与公共档案：VC proof 用 @jccdex/did SDK 真签（EcdsaSecp256k1Signature2019）

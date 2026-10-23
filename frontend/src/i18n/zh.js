@@ -469,6 +469,11 @@ export default {
     credRenewed:
       '凭证到期，平台已按记录自动换发新卡（无需重新申请审批）。您的档案还是旧版本，点「更新我的档案」即可换成最新',
     credDOnchain: '链上状态',
+    credDVerifiedBy: '判权依据',
+    verifiedByArchive: '本次经官网档案活验',
+    verifiedByLedger: '本次以台账兜底',
+    verifiedByLedgerHint:
+      '官网/档案这轮没能在预算内核验完（可能在重启或网络慢），已按平台台账放行——判权"绝不上锁"，不影响使用。',
     credOnchainOk: '链上已验真 ✓',
     credOnchainGone: '档案里找不到这张凭证，点「存入我的数字档案」找回（不影响权限）',
     credOnchainPending: '登录后自动后台核验，稍后再看',

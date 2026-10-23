@@ -734,9 +734,66 @@ describe('链上验真（onChainVerify）', () => {
     const r = await credentialService.enter(ADDR)
     expect(r.credential.state).toBe('assigned') // 不再是慢一拍显示"已存入"
     expect(r.popup).toBe(true) // 本轮就重新弹窗引导再领
+    expect(r.verifiedBy).toBe('archive') // 判权顺序：本轮结论出自档案活验（"先跑档案"）
     const row = b.creds.get(ADDR)
     expect(row.vcId).toBeNull()
     expect(row.kind).toBe('cwt') // 判权面纹丝不动：删的是出示层，不是授予
+  })
+
+  it('enter 先跑档案：活验通过 → verifiedBy=archive，放行有链上背书', async () => {
+    claimed()
+    okRelay(
+      docWith([
+        {
+          id: 'vc-live',
+          type: ['VerifiableCredential', 'DshCwtCredential'],
+          issuer: 'did:swtc:jplatform',
+        },
+      ]),
+    )
+    const r = await credentialService.enter(ADDR)
+    expect(r.verifiedBy).toBe('archive')
+    expect(r.credential.state).toBe('claimed')
+  })
+
+  it('enter 档案出错 → 落回台账放行：verifiedBy=ledger 且 state 不动（绝不上锁）', async () => {
+    const b = claimed()
+    fetchStub.mockImplementation(async () => {
+      throw new Error('relay down')
+    })
+    const r = await credentialService.enter(ADDR)
+    expect(r.verifiedBy).toBe('ledger') // probe-fail 不下档案结论
+    expect(r.credential.state).toBe('claimed') // 官网抖动≠撤销
+  })
+
+  it('enter 核验超预算 → 本轮台账放行，后台结论落库不丢（先档案后台账是顺序不是二选一）', async () => {
+    const b = claimed()
+    const orig = CONFIG.credential.enterVerifyBudgetMs
+    CONFIG.credential.enterVerifyBudgetMs = 1 // 预算 1ms：fetch 永远来不及 → 必超时
+    let resolveFetch
+    fetchStub.mockImplementation(() => new Promise((res) => (resolveFetch = res)))
+    try {
+      const r = await credentialService.enter(ADDR)
+      expect(r.verifiedBy).toBe('ledger')
+      expect(r.credential.state).toBe('claimed') // 本轮未被（迟到的）档案结论改写
+    } finally {
+      CONFIG.credential.enterVerifyBudgetMs = orig
+    }
+    resolveFetch({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify(
+          docWith([
+            {
+              id: 'vc-live',
+              type: ['VerifiableCredential', 'DshCwtCredential'],
+              issuer: 'did:swtc:jplatform',
+            },
+          ]),
+        ),
+    })
+    await vi.waitFor(() => expect(b.creds.get(ADDR).onChain?.status).toBe('ok'), { timeout: 2000 })
   })
 
   it('mintVC 卡体带签发方展示名（官网删卡弹窗凭 issuer.name 点名签发方）', async () => {
