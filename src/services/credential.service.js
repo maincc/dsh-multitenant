@@ -164,7 +164,13 @@ export const _syncProfileIdentityForTest = syncProfileIdentity
  *    缺省退回小写形态。subject 值去自创 urn 前缀（'auto-assign'/'approved' 裸词）。
  * 旧代卡（#credential-*）由 isPlatformMinted 双代判据继续认，存量无需迁移。
  */
-async function mintVC(kind, subjectAddrLower, roles = [], holderDid = null) {
+async function mintVC(
+  kind,
+  subjectAddrLower,
+  roles = [],
+  holderDid = null,
+  { dshTypeFirst = false } = {},
+) {
   const p = platform()
   const typeName = VC_TYPES[kind]
   if (!typeName) throw new BadRequestError(`未知凭证类型: ${kind}`)
@@ -209,7 +215,11 @@ async function mintVC(kind, subjectAddrLower, roles = [], holderDid = null) {
     id: `${holder}#dsh-${slug}-${now.toISOString()}-${p.did}-${Math.random().toString(36).slice(2, 6)}`,
     // 多类型栈：[W3C 基型, 官网模板型(渲染入口), 我方业务标记型(判卡依据)]。
     // 隔离：生态真 phone 卡 issuer≠平台且无 Dsh 标记→isDshCard 不误认，零冲突。
-    type: ['VerifiableCredential', 'PhoneVerificationCredential', typeName],
+    // dshTypeFirst：实验开关（2026-10-23 标题归属实验）——官网模板匹配若是
+    // "首位制"，把 Dsh 标记放索引1 可能得到准确标题+仍带验证语义位。
+    type: dshTypeFirst
+      ? ['VerifiableCredential', typeName, 'PhoneVerificationCredential']
+      : ['VerifiableCredential', 'PhoneVerificationCredential', typeName],
     // issuer 必须是【纯 DID 字符串】——2026-10-23 实测教训：VC v1 上下文对 issuer 有
     // @protected + @type:@id 强制，{id,name} 节点形态在 jsonld safe canonize 必抛
     // "Safe mode validation error."（invalid property: name），签发直接炸（存入 500）。
