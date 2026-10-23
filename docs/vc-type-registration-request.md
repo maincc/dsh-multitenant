@@ -20,14 +20,14 @@
 
 ## 2. 类型二：DshCwtCredential（容器使用豁免凭证）
 
-| 字段         | 值/形态                                                                      | 说明         |
-| ------------ | ---------------------------------------------------------------------------- | ------------ |
-| type URI     | `https://jdid.cn/vc/v1#DshCwtCredential`                                     |              |
-| 中文显示名   | **容器豁免授权凭证**                                                         | 建议模板标题 |
-| 语义         | 平台管理员批准持有人免除容器使用时长限制（限时授权类凭证，验证过程同成员卡） |              |
-| subject 必填 | 同类型一，`verificationMethod`=`dsh-cwt-grant`                               |              |
-| subject 选填 | `cwtGrant`（`approved`）、`roles`（string[]）、`tier`                        |              |
-| id 惯例      | `{持有人DID}#dsh-cwt-{ISO时间}-{签发者DID}-{随机4}`                          |              |
+| 字段         | 值/形态                                                                             | 说明         |
+| ------------ | ----------------------------------------------------------------------------------- | ------------ |
+| type URI     | `https://jdid.cn/vc/v1#DshCwtCredential`                                            |              |
+| 中文显示名   | **容器豁免授权凭证**                                                                | 建议模板标题 |
+| 语义         | 平台管理员批准持有人免除容器使用时长限制（限时授权类凭证，验证过程同成员卡）        |              |
+| subject 必填 | 同类型一，`verificationMethod`=`dsh-cwt-grant`                                      |              |
+| subject 选填 | `cwtGrant`（`approved`）、`roles`（string[]）、`tier`                               |              |
+| id 惯例      | `{持有人DID}#dsh-cwt-（管理员角色用 #dsh-admin- 段，角色在 id 自辨）-{ISO时间}-...` |              |
 
 ## 3. @context 内联术语（签发卡中实际写入，逐字仿官方 profile 构造）
 

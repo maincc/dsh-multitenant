@@ -183,7 +183,11 @@ async function mintVC(
   ) {
     holder = holderDid // 保留档案实际大小写（生态卡 id 均如此）
   }
-  const slug = kind === 'did' ? 'member' : 'cwt'
+  // id 语义 fragment 角色化（生态 #phone-/#nft-/#file-access- 惯例；2026-10-23
+  // 用户要求 vcId 自辨角色）：member=普通会员 / cwt=普通豁免持有人 /
+  // admin=管理员豁免持有人。isPlatformMinted 判据同步放行三代 slug。
+  const slug =
+    kind === 'did' ? 'member' : Array.isArray(roles) && roles.includes('admin') ? 'admin' : 'cwt'
   // 借皮渲染双选项（2026-10-23 用户定标"和官网一样"，官网模板库仅四张皮）：
   //  · phone     = 验证卡皮：status/verificationMethod/verificationProcess 全真
   //  · ownership = 徽章所有权皮（更优）：标题"持有 XX"与成员卡语义为真（持有者
@@ -321,7 +325,7 @@ async function isPlatformMinted(vc, subjectAddrLower) {
     ? true
     : hashAt > 0 &&
       idStr.slice(0, hashAt).toLowerCase() === `did:swtc:${subjectAddrLower}` &&
-      /^dsh-(member|cwt)-/.test(idStr.slice(hashAt + 1)) &&
+      /^dsh-(member|cwt|admin)-/.test(idStr.slice(hashAt + 1)) &&
       idStr
         .slice(hashAt + 1)
         .toLowerCase()

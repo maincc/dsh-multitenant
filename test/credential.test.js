@@ -843,8 +843,11 @@ describe('链上验真（onChainVerify）', () => {
     expect(_isDshCardForTest(vc)).toBe(true)
     const cwt = await _mintVCForTest('cwt', ADDR, ['admin'])
     expect(cwt.issuer).toBe('did:swtc:jplatform')
-    expect(String(cwt.id).startsWith(`did:swtc:${ADDR}#dsh-cwt-`)).toBe(true)
+    // 角色化 fragment：cwt+admin 角色=admin 段（用户要求 vcId 自辨角色）
+    expect(String(cwt.id).startsWith(`did:swtc:${ADDR}#dsh-admin-`)).toBe(true)
     expect(cwt.credentialSubject.cwtGrant).toBe('approved')
+    const plainCwt = await _mintVCForTest('cwt', ADDR, [])
+    expect(String(plainCwt.id).startsWith(`did:swtc:${ADDR}#dsh-cwt-`)).toBe(true)
     // holderDid 传档案实际大小写 → id 保留混合大小写（生态卡同款）
     const mixed = await _mintVCForTest('did', ADDR, [], `did:swtc:${CANON}`)
     expect(String(mixed.id).startsWith(`did:swtc:${CANON}#dsh-member-`)).toBe(true)
@@ -896,6 +899,25 @@ describe('链上验真（onChainVerify）', () => {
         ADDR,
       ),
     ).resolves.toBe(true)
+    // 角色段三档：member/cwt/admin 均过 id 判据；未知角色段拒绝（防伪角色）
+    await expect(
+      _isPlatformMintedForTest(
+        mkCard(`did:swtc:${CANON}#dsh-cwt-2026-10-23T00:00:00.000Z-did:swtc:jplatform-1`),
+        ADDR,
+      ),
+    ).resolves.toBe(true)
+    await expect(
+      _isPlatformMintedForTest(
+        mkCard(`did:swtc:${CANON}#dsh-admin-2026-10-23T00:00:00.000Z-did:swtc:jplatform-1`),
+        ADDR,
+      ),
+    ).resolves.toBe(true)
+    await expect(
+      _isPlatformMintedForTest(
+        mkCard(`did:swtc:${CANON}#dsh-root-2026-10-23T00:00:00.000Z-did:swtc:jplatform-1`),
+        ADDR,
+      ),
+    ).resolves.toBe(false)
     // 旧代：平台命名空间 #credential-*（存量兼容）
     await expect(
       _isPlatformMintedForTest(mkCard('did:swtc:jplatform#credential-t1-old'), ADDR),
