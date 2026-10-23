@@ -814,8 +814,10 @@ describe('链上验真（onChainVerify）', () => {
     expect(vc['@context'][1].DshMemberCredential).toBe('https://jdid.cn/vc/v1#DshMemberCredential')
     expect(vc['@context'][1].tier).toBe('https://jdid.cn/did/v1#tier')
     expect(vc['@context'][1].version).toBe('https://jdid.cn/did/v1')
-    // subject 值去自创 urn：裸词形态
+    // subject 值去自创 urn：裸词形态 + 生态通用惯例 status 恒有（官网实卡核对）
     expect(vc.credentialSubject.verifiedVia).toBe('auto-assign')
+    expect(vc.credentialSubject.status).toBe('active')
+    expect(vc['@context'][1].status).toBe('https://jdid.cn/did/v1#status')
     const cwt = await _mintVCForTest('cwt', ADDR, ['admin'])
     expect(cwt.issuer).toBe('did:swtc:jplatform')
     expect(String(cwt.id).startsWith(`did:swtc:${ADDR}#dsh-cwt-`)).toBe(true)

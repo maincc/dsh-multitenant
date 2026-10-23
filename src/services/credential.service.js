@@ -141,6 +141,7 @@ export function _resetForTest(inj = {}) {
 
 /** 挂架入口（串行包装后）暴露给测试：并发顺序合并语义的回归位用 */
 export const _shelfCredentialForTest = shelfCredential
+export const _unshelfCredentialForTest = unshelfCredential
 export const _mintVCForTest = mintVC
 export const _isPlatformMintedForTest = isPlatformMinted
 export const _syncProfileIdentityForTest = syncProfileIdentity
@@ -187,6 +188,7 @@ async function mintVC(kind, subjectAddrLower, roles = [], holderDid = null) {
         verifiedVia: `${ECOSYSTEM_DID_VOCAB}#verifiedVia`,
         cwtGrant: `${ECOSYSTEM_DID_VOCAB}#cwtGrant`,
         roles: `${ECOSYSTEM_DID_VOCAB}#roles`,
+        status: `${ECOSYSTEM_DID_VOCAB}#status`,
       },
     ],
     id: `${holder}#dsh-${slug}-${now.toISOString()}-${p.did}-${Math.random().toString(36).slice(2, 6)}`,
@@ -202,12 +204,14 @@ async function mintVC(kind, subjectAddrLower, roles = [], holderDid = null) {
       kind === 'did'
         ? {
             id: `did:swtc:${subjectAddrLower}`,
+            status: 'active', // 生态通用惯例：官网实卡 subject 恒有 status（verified/Active/active）
             tier: 1,
             dailyMinutes: cfgDailyMinutes(),
             verifiedVia: 'auto-assign',
           }
         : {
             id: `did:swtc:${subjectAddrLower}`,
+            status: 'active',
             tier: 1,
             cwtGrant: 'approved',
             verifiedVia: 'cwt',
@@ -1331,6 +1335,11 @@ class CredentialService {
     // 不动——判权在台账不在档案：cwt 持卡人删了档案卡依旧豁免，admin 依旧在岗。
     if (next?.status === 'missing') {
       await b.patch(addrLower, { state: 'assigned', vcId: null, claimedAt: null, onChain: next })
+      // 平台登记册同步摘卡（2026-10-23 官网一致性整改）：档案卡被删=该卡作废，
+      // 展示副本必须跟着摘——否则官网看我们的签发方档案全是已死旧卡（现场实锤：
+      // 台账降 assigned 后货架还挂 2 张 #credential-* 旧形态卡）。尽力轨：
+      // unshelfStep 内部自带 probe-fail 不动册铁律，失败不回滚台账判权。
+      unshelfCredential(addrLower).catch(() => {})
       return next
     }
     await b.patch(addrLower, { onChain: next })
