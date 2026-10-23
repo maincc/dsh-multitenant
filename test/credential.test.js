@@ -17,6 +17,7 @@ import {
   _shelfCredentialForTest,
   _mintVCForTest,
   _isPlatformMintedForTest,
+  _isDshCardForTest,
   profilePath,
   KINDS,
 } from '../src/services/credential.service.js'
@@ -816,8 +817,30 @@ describe('链上验真（onChainVerify）', () => {
     expect(vc['@context'][1].version).toBe('https://jdid.cn/did/v1')
     // subject 值去自创 urn：裸词形态 + 生态通用惯例 status 恒有（官网实卡核对）
     expect(vc.credentialSubject.verifiedVia).toBe('auto-assign')
-    expect(vc.credentialSubject.status).toBe('active')
-    expect(vc['@context'][1].status).toBe('https://jdid.cn/did/v1#status')
+    // 官网"按官网侧设置"类型栈：[基型, 官网模板型(渲染入口), 我方标记型(判卡)]
+    expect(vc.type).toEqual([
+      'VerifiableCredential',
+      'PhoneVerificationCredential',
+      'DshMemberCredential',
+    ])
+    expect(vc.credentialSubject.status).toBe('verified')
+    expect(vc.credentialSubject.verificationMethod).toBe('dsh-siwe')
+    expect(vc.credentialSubject.verificationProcess.verifierId).toBe('did:swtc:jplatform')
+    expect(vc['@context'][1].PhoneVerificationCredential).toBe(
+      'https://jdid.cn/vc/v1#PhoneVerificationCredential',
+    )
+    expect(vc['@context'][1].verificationProcess['@id']).toBe(
+      'https://jdid.cn/did/v1#verificationProcess',
+    )
+    // 隔离铁律：生态真 phone 卡（他人签发、无 Dsh 标记）绝不被认成我方卡
+    expect(
+      _isDshCardForTest({
+        type: ['VerifiableCredential', 'PhoneVerificationCredential'],
+        issuer: 'did:swtc:j3xhos5osubqmfaekq3rxufrzbbucghwrv',
+        credentialSubject: { id: `did:swtc:${ADDR}` },
+      }),
+    ).toBe(false)
+    expect(_isDshCardForTest(vc)).toBe(true)
     const cwt = await _mintVCForTest('cwt', ADDR, ['admin'])
     expect(cwt.issuer).toBe('did:swtc:jplatform')
     expect(String(cwt.id).startsWith(`did:swtc:${ADDR}#dsh-cwt-`)).toBe(true)

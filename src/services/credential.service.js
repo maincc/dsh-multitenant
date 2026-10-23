@@ -142,6 +142,7 @@ export function _resetForTest(inj = {}) {
 /** 挂架入口（串行包装后）暴露给测试：并发顺序合并语义的回归位用 */
 export const _shelfCredentialForTest = shelfCredential
 export const _unshelfCredentialForTest = unshelfCredential
+export const _isDshCardForTest = isDshCard
 export const _mintVCForTest = mintVC
 export const _isPlatformMintedForTest = isPlatformMinted
 export const _syncProfileIdentityForTest = syncProfileIdentity
@@ -182,17 +183,33 @@ async function mintVC(kind, subjectAddrLower, roles = [], holderDid = null) {
       'https://www.w3.org/2018/credentials/v1',
       {
         [typeName]: `${ECOSYSTEM_VC_VOCAB}#${typeName}`,
+        // 官网已注册模板类型叠进词表（2026-10-23 "按官网侧设置"）：term 声明逐字
+        // 仿官方 phone-verification profile（jdid 品牌），官网渲染器按此模板画卡
+        // （签发方/状态/验证过程全有位置）；Dsh 类型标记同卡共存供我方机判。
+        PhoneVerificationCredential: `${ECOSYSTEM_VC_VOCAB}#PhoneVerificationCredential`,
         version: ECOSYSTEM_DID_VOCAB,
+        standard: `${ECOSYSTEM_DID_VOCAB}#standard`,
+        status: `${ECOSYSTEM_DID_VOCAB}#status`,
+        verificationMethod: `${ECOSYSTEM_DID_VOCAB}#verificationMethod`,
+        verificationProcess: {
+          '@id': `${ECOSYSTEM_DID_VOCAB}#verificationProcess`,
+          '@context': {
+            verifiedAt: `${ECOSYSTEM_DID_VOCAB}#verifiedAt`,
+            updateAt: `${ECOSYSTEM_DID_VOCAB}#updateAt`,
+            verifierId: `${ECOSYSTEM_DID_VOCAB}#verifierId`,
+          },
+        },
         tier: `${ECOSYSTEM_DID_VOCAB}#tier`,
         dailyMinutes: `${ECOSYSTEM_DID_VOCAB}#dailyMinutes`,
         verifiedVia: `${ECOSYSTEM_DID_VOCAB}#verifiedVia`,
         cwtGrant: `${ECOSYSTEM_DID_VOCAB}#cwtGrant`,
         roles: `${ECOSYSTEM_DID_VOCAB}#roles`,
-        status: `${ECOSYSTEM_DID_VOCAB}#status`,
       },
     ],
     id: `${holder}#dsh-${slug}-${now.toISOString()}-${p.did}-${Math.random().toString(36).slice(2, 6)}`,
-    type: ['VerifiableCredential', typeName],
+    // 多类型栈：[W3C 基型, 官网模板型(渲染入口), 我方业务标记型(判卡依据)]。
+    // 隔离：生态真 phone 卡 issuer≠平台且无 Dsh 标记→isDshCard 不误认，零冲突。
+    type: ['VerifiableCredential', 'PhoneVerificationCredential', typeName],
     // issuer 必须是【纯 DID 字符串】——2026-10-23 实测教训：VC v1 上下文对 issuer 有
     // @protected + @type:@id 强制，{id,name} 节点形态在 jsonld safe canonize 必抛
     // "Safe mode validation error."（invalid property: name），签发直接炸（存入 500）。
@@ -204,14 +221,26 @@ async function mintVC(kind, subjectAddrLower, roles = [], holderDid = null) {
       kind === 'did'
         ? {
             id: `did:swtc:${subjectAddrLower}`,
-            status: 'active', // 生态通用惯例：官网实卡 subject 恒有 status（verified/Active/active）
+            status: 'verified', // 官网验证卡模板口径：平台确实验证过该钱包（真实）
+            verificationMethod: 'dsh-siwe', // 验证手段如实标注：钱包签名验证，非手机
+            verificationProcess: {
+              verifiedAt: now.toISOString(),
+              updateAt: now.toISOString(),
+              verifierId: p.did,
+            },
             tier: 1,
             dailyMinutes: cfgDailyMinutes(),
             verifiedVia: 'auto-assign',
           }
         : {
             id: `did:swtc:${subjectAddrLower}`,
-            status: 'active',
+            status: 'verified',
+            verificationMethod: 'dsh-cwt-grant',
+            verificationProcess: {
+              verifiedAt: now.toISOString(),
+              updateAt: now.toISOString(),
+              verifierId: p.did,
+            },
             tier: 1,
             cwtGrant: 'approved',
             verifiedVia: 'cwt',
