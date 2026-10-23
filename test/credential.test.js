@@ -858,6 +858,26 @@ describe('链上验真（onChainVerify）', () => {
     expect(String(wrong.id).startsWith(`did:swtc:${ADDR}#`)).toBe(true)
   })
 
+  it('mintVC ownership 皮：徽章所有权形态（tokenName/owner/standard=dshBadge 防链上核验）', async () => {
+    installMocks(fakeBackend())
+    const vc = await _mintVCForTest('did', ADDR, [], null, { interop: 'ownership' })
+    expect(vc.type).toEqual(['VerifiableCredential', 'NFTOwnership', 'DshMemberCredential'])
+    const s = vc.credentialSubject
+    expect(s.standard).toBe('dshBadge') // 自声明：绝不冒充 jingtumNFT
+    expect(s.owner).toBe(`did:swtc:${ADDR}`)
+    expect(s.tokenName).toBe('DSH 平台成员徽章')
+    expect(s.status).toBe('Active')
+    expect(vc['@context'][1].NFTOwnership).toBe('https://jdid.cn/vc/v1#NFTOwnership')
+    // 判卡仍以 Dsh 标记为准，皮不参与；生态真所有权卡（他人签发）不误认
+    expect(_isDshCardForTest(vc)).toBe(true)
+    expect(
+      _isDshCardForTest({
+        type: ['VerifiableCredential', 'NFTOwnership'],
+        issuer: 'did:swtc:jsomeoneelse000000000000000000000',
+        credentialSubject: { id: `did:swtc:${ADDR}` },
+      }),
+    ).toBe(false)
+  })
   it('isPlatformMinted id 判据双代：新代生态形接受、旧代兼容、畸形拒绝', async () => {
     const b = fakeBackend()
     installMocks(b)

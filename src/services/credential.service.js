@@ -169,7 +169,7 @@ async function mintVC(
   subjectAddrLower,
   roles = [],
   holderDid = null,
-  { dshTypeFirst = false } = {},
+  { dshTypeFirst = false, interop = 'phone' } = {},
 ) {
   const p = platform()
   const typeName = VC_TYPES[kind]
@@ -184,42 +184,79 @@ async function mintVC(
     holder = holderDid // 保留档案实际大小写（生态卡 id 均如此）
   }
   const slug = kind === 'did' ? 'member' : 'cwt'
-  const descriptor = {
-    '@context': [
-      'https://www.w3.org/2018/credentials/v1',
-      {
-        [typeName]: `${ECOSYSTEM_VC_VOCAB}#${typeName}`,
-        // 官网已注册模板类型叠进词表（2026-10-23 "按官网侧设置"）：term 声明逐字
-        // 仿官方 phone-verification profile（jdid 品牌），官网渲染器按此模板画卡
-        // （签发方/状态/验证过程全有位置）；Dsh 类型标记同卡共存供我方机判。
-        PhoneVerificationCredential: `${ECOSYSTEM_VC_VOCAB}#PhoneVerificationCredential`,
-        version: ECOSYSTEM_DID_VOCAB,
-        standard: `${ECOSYSTEM_DID_VOCAB}#standard`,
-        status: `${ECOSYSTEM_DID_VOCAB}#status`,
-        verificationMethod: `${ECOSYSTEM_DID_VOCAB}#verificationMethod`,
-        verificationProcess: {
-          '@id': `${ECOSYSTEM_DID_VOCAB}#verificationProcess`,
-          '@context': {
-            verifiedAt: `${ECOSYSTEM_DID_VOCAB}#verifiedAt`,
-            updateAt: `${ECOSYSTEM_DID_VOCAB}#updateAt`,
-            verifierId: `${ECOSYSTEM_DID_VOCAB}#verifierId`,
+  // 借皮渲染双选项（2026-10-23 用户定标"和官网一样"，官网模板库仅四张皮）：
+  //  · phone     = 验证卡皮：status/verificationMethod/verificationProcess 全真
+  //  · ownership = 徽章所有权皮（更优）：标题"持有 XX"与成员卡语义为真（持有者
+  //    确实持有平台成员/豁免徽章）；tokenName 大字展示徽章名；且生态头像体系
+  //    （service.Profile.preferredAvatar→credentials.find(id==avatar)）吃的
+  //    就是这类卡——成员徽章可被用户设为官网头像。
+  //    链上核验防线：standard='dshBadge' 自声明徽章标准（绝冒充 jingtumNFT），
+  //    owner/chainId=315/tokenName 全部如实。
+  const INTEROP_TYPE = { phone: 'PhoneVerificationCredential', ownership: 'NFTOwnership' }
+  const interopType = INTEROP_TYPE[interop] || INTEROP_TYPE.phone
+  const coreTerms = {
+    [typeName]: `${ECOSYSTEM_VC_VOCAB}#${typeName}`,
+    version: ECOSYSTEM_DID_VOCAB,
+    standard: `${ECOSYSTEM_DID_VOCAB}#standard`,
+    status: `${ECOSYSTEM_DID_VOCAB}#status`,
+    tier: `${ECOSYSTEM_DID_VOCAB}#tier`,
+    dailyMinutes: `${ECOSYSTEM_DID_VOCAB}#dailyMinutes`,
+    verifiedVia: `${ECOSYSTEM_DID_VOCAB}#verifiedVia`,
+    cwtGrant: `${ECOSYSTEM_DID_VOCAB}#cwtGrant`,
+    roles: `${ECOSYSTEM_DID_VOCAB}#roles`,
+  }
+  const interopTerms =
+    interopType === 'NFTOwnership'
+      ? {
+          // 逐字仿官方 buildNftOwnershipContext（jdid 品牌）
+          NFTOwnership: `${ECOSYSTEM_VC_VOCAB}#NFTOwnership`,
+          owner: `${ECOSYSTEM_DID_VOCAB}#owner`,
+          chainId: `${ECOSYSTEM_DID_VOCAB}#chainId`,
+          contractAddress: `${ECOSYSTEM_DID_VOCAB}#contractAddress`,
+          tokenName: `${ECOSYSTEM_DID_VOCAB}#tokenName`,
+          tokenId: `${ECOSYSTEM_DID_VOCAB}#tokenId`,
+          nftIssuer: `${ECOSYSTEM_DID_VOCAB}#nftIssuer`,
+        }
+      : {
+          // 逐字仿官方 buildPhoneVerificationContext（jdid 品牌）
+          PhoneVerificationCredential: `${ECOSYSTEM_VC_VOCAB}#PhoneVerificationCredential`,
+          verificationMethod: `${ECOSYSTEM_DID_VOCAB}#verificationMethod`,
+          verificationProcess: {
+            '@id': `${ECOSYSTEM_DID_VOCAB}#verificationProcess`,
+            '@context': {
+              verifiedAt: `${ECOSYSTEM_DID_VOCAB}#verifiedAt`,
+              updateAt: `${ECOSYSTEM_DID_VOCAB}#updateAt`,
+              verifierId: `${ECOSYSTEM_DID_VOCAB}#verifierId`,
+            },
           },
-        },
-        tier: `${ECOSYSTEM_DID_VOCAB}#tier`,
-        dailyMinutes: `${ECOSYSTEM_DID_VOCAB}#dailyMinutes`,
-        verifiedVia: `${ECOSYSTEM_DID_VOCAB}#verifiedVia`,
-        cwtGrant: `${ECOSYSTEM_DID_VOCAB}#cwtGrant`,
-        roles: `${ECOSYSTEM_DID_VOCAB}#roles`,
-      },
-    ],
+        }
+  const interopSubject =
+    interopType === 'NFTOwnership'
+      ? {
+          status: 'Active', // 生态所有权卡同款值形态
+          owner: `did:swtc:${subjectAddrLower}`, // 徽章归持有人（真实）
+          chainId: 315, // SWTC 井通主网=平台所在真实链
+          tokenName: kind === 'did' ? 'DSH 平台成员徽章' : 'DSH 容器豁免徽章',
+          tokenId: `dsh-${slug}-${now.getTime().toString(36)}`, // 平台内部编号，真实可查
+          standard: 'dshBadge', // 自声明标准：不冒充链上 NFT，防官网链上核验翻车
+        }
+      : {
+          status: 'verified',
+          verificationMethod: kind === 'did' ? 'dsh-siwe' : 'dsh-cwt-grant',
+          verificationProcess: {
+            verifiedAt: now.toISOString(),
+            updateAt: now.toISOString(),
+            verifierId: p.did,
+          },
+        }
+  const descriptor = {
+    '@context': ['https://www.w3.org/2018/credentials/v1', { ...coreTerms, ...interopTerms }],
     id: `${holder}#dsh-${slug}-${now.toISOString()}-${p.did}-${Math.random().toString(36).slice(2, 6)}`,
     // 多类型栈：[W3C 基型, 官网模板型(渲染入口), 我方业务标记型(判卡依据)]。
-    // 隔离：生态真 phone 卡 issuer≠平台且无 Dsh 标记→isDshCard 不误认，零冲突。
-    // dshTypeFirst：实验开关（2026-10-23 标题归属实验）——官网模板匹配若是
-    // "首位制"，把 Dsh 标记放索引1 可能得到准确标题+仍带验证语义位。
+    // 隔离：生态真卡 issuer≠平台且无 Dsh 标记→isDshCard 不误认，零冲突。
     type: dshTypeFirst
-      ? ['VerifiableCredential', typeName, 'PhoneVerificationCredential']
-      : ['VerifiableCredential', 'PhoneVerificationCredential', typeName],
+      ? ['VerifiableCredential', typeName, interopType]
+      : ['VerifiableCredential', interopType, typeName],
     // issuer 必须是【纯 DID 字符串】——2026-10-23 实测教训：VC v1 上下文对 issuer 有
     // @protected + @type:@id 强制，{id,name} 节点形态在 jsonld safe canonize 必抛
     // "Safe mode validation error."（invalid property: name），签发直接炸（存入 500）。
@@ -231,26 +268,14 @@ async function mintVC(
       kind === 'did'
         ? {
             id: `did:swtc:${subjectAddrLower}`,
-            status: 'verified', // 官网验证卡模板口径：平台确实验证过该钱包（真实）
-            verificationMethod: 'dsh-siwe', // 验证手段如实标注：钱包签名验证，非手机
-            verificationProcess: {
-              verifiedAt: now.toISOString(),
-              updateAt: now.toISOString(),
-              verifierId: p.did,
-            },
+            ...interopSubject,
             tier: 1,
             dailyMinutes: cfgDailyMinutes(),
             verifiedVia: 'auto-assign',
           }
         : {
             id: `did:swtc:${subjectAddrLower}`,
-            status: 'verified',
-            verificationMethod: 'dsh-cwt-grant',
-            verificationProcess: {
-              verifiedAt: now.toISOString(),
-              updateAt: now.toISOString(),
-              verifierId: p.did,
-            },
+            ...interopSubject,
             tier: 1,
             cwtGrant: 'approved',
             verifiedVia: 'cwt',
