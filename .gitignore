@@ -43,3 +43,4 @@ coverage/
 .env
 .env.local
 .env.*.local
+e2e-roles.mjs
