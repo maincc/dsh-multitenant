@@ -1062,8 +1062,10 @@
         <!-- ════ v1.4 CWT 解除限制申请审批 ════ -->
         <div v-else-if="activeTab === 'cred'" class="tab-content">
           <div class="tab-head">
-            <h4>{{ $t('admin.credTabTitle') }}</h4>
-            <p class="tab-hint">{{ $t('admin.credTabHint') }}</p>
+            <div class="tab-head-text">
+              <h4>{{ $t('admin.credTabTitle') }}</h4>
+              <p class="tab-hint">{{ $t('admin.credTabHint') }}</p>
+            </div>
           </div>
           <div class="filter-row">
             <button
@@ -1145,8 +1147,10 @@
           </div>
 
           <div class="tab-head" style="margin-top: 1.75rem">
-            <h4>{{ $t('admin.ledgerTitle') }}</h4>
-            <p class="tab-hint">{{ $t('admin.ledgerHint') }}</p>
+            <div class="tab-head-text">
+              <h4>{{ $t('admin.ledgerTitle') }}</h4>
+              <p class="tab-hint">{{ $t('admin.ledgerHint') }}</p>
+            </div>
           </div>
           <div class="filter-row">
             <button
@@ -1250,8 +1254,10 @@
           </div>
 
           <div class="tab-head" style="margin-top: 1.75rem">
-            <h4>{{ $t('admin.rosterTitle') }}</h4>
-            <p class="tab-hint">{{ $t('admin.rosterHint') }}</p>
+            <div class="tab-head-text">
+              <h4>{{ $t('admin.rosterTitle') }}</h4>
+              <p class="tab-hint">{{ $t('admin.rosterHint') }}</p>
+            </div>
           </div>
           <div class="filter-row">
             <input
