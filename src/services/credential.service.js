@@ -137,6 +137,7 @@ export function _resetForTest(inj = {}) {
 /** 挂架入口（串行包装后）暴露给测试：并发顺序合并语义的回归位用 */
 export const _shelfCredentialForTest = shelfCredential
 export const _mintVCForTest = mintVC
+export const _syncProfileIdentityForTest = syncProfileIdentity
 
 /* ───────────────────────── VC 签发 ───────────────────────── */
 
@@ -162,10 +163,13 @@ async function mintVC(kind, subjectAddrLower, roles = []) {
     ],
     id: `${p.did}#credential-${kind === 'did' ? 't1' : 'cwt'}-${now.getTime().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
     type: ['VerifiableCredential', typeName],
-    // issuer 带展示名（2026-10-23 用户实测：官网删卡弹窗读 issuer.name 显示"签发方"，
-    // 纯 DID 字符串=空白）。SDK 的 getId 与 jsonld 均兼容 {id,name}；验签仍按 id 链上
-    // 解析公钥，且 proof 覆盖整个 issuer——name 被人篡改版式=验签即败，防伪只增不减。
-    issuer: { id: p.did, name: c.platformName || 'DSH 平台' },
+    // issuer 必须是【纯 DID 字符串】——2026-10-23 实测教训：VC v1 上下文对 issuer 有
+    // @protected + @type:@id 强制，{id,name} 节点形态在 jsonld safe canonize 必抛
+    // "Safe mode validation error."（invalid property: name），签发直接炸（存入 500）。
+    // W3C 规范口径：issuer 附加属性在 RDF 规范化中丢失，LDP 签名卡物理上存不了名字。
+    // 签发方显示名改走【issuer DID 档案文档的 name 字段】（官网弹窗按解析结果展示，
+    // 见 data/keys/issuer-profile.json name）。
+    issuer: p.did,
     issuanceDate: now.toISOString(),
     expirationDate: new Date(now.getTime() + 365 * 864e5).toISOString(),
     credentialSubject:
@@ -472,6 +476,60 @@ async function _unshelfStep(addrLower) {
       `[credential-unshelf] 登记册摘除失败（台账判权已即时生效，不影响撤销）: ${String(err?.message || err).slice(0, 140)}`,
     )
     return false
+  }
+}
+
+/**
+ * 同步平台档案的签发方展示字段（2026-10-23）。背景：W3C LDP 卡体的 issuer 物理上
+ * 存不了名字（VC v1 上下文 @protected + @type:@id，issuer.name 使 safe canonize 必炸
+ * ——"存入 500"实测教训），官网弹窗"签发方"的读取来源是【issuer DID 解析出的档案
+ * 文档】。本函数把 name 写进平台档案并同步本地镜像。读-改-写：远端字段全量优先，
+ * 只覆盖 name/updated；probe-fail 绝不写（与挂架同款铁律）；已是目标值=幂等跳过。
+ * 与 _shelfChain 同链串行——防与并发挂架互相整篇覆写。
+ */
+function syncProfileIdentity(name) {
+  const step = () => _syncProfileIdentityStep(name)
+  const result = _shelfChain.then(step, step)
+  _shelfChain = result.then(
+    () => {},
+    () => {},
+  )
+  return result
+}
+async function _syncProfileIdentityStep(name) {
+  try {
+    const p = platform()
+    if (!p.priv) throw new Error('平台私钥未加载')
+    if (!name || typeof name !== 'string') throw new Error('签发方展示名不能为空')
+    const canonical = normalizeToCanonical(
+      p.did.replace(/^did:swtc:/, ''),
+      `did:swtc:${p.did.replace(/^did:swtc:/, '')}.json`,
+    )
+    const read = await relayRead(canonical)
+    if (read.status === 'probe-fail')
+      return { written: false, reason: 'probe-fail（读不到绝不动档）' }
+    const base = read.status === 'ok' && read.doc ? read.doc : p.profile
+    if (base.name === name) return { written: false, reason: 'already' }
+    const doc = { ...base, name, updated: new Date().toISOString() }
+    const signature = signWithPlatformKey(Buffer.from(JSON.stringify(doc), 'utf8'))
+    await relayWrite({
+      document: doc,
+      fileName: `did:swtc:${canonical}.json`,
+      publicKeyHex: platformSignKey(),
+      signatureDerHex: signature,
+      chain: cfg().chain,
+    })
+    try {
+      writeFileSync(join(ROOT, cfg().profileFile), JSON.stringify(doc, null, 2)) // 本地镜像同步
+    } catch {
+      /* 镜像写失败不影响线上结论 */
+    }
+    return { written: true, name }
+  } catch (err) {
+    console.warn(
+      `[credential-identity] 平台档案展示字段同步失败: ${String(err?.message || err).slice(0, 140)}`,
+    )
+    return { written: false, reason: String(err?.message || err).slice(0, 120) }
   }
 }
 

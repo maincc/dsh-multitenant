@@ -796,13 +796,13 @@ describe('链上验真（onChainVerify）', () => {
     await vi.waitFor(() => expect(b.creds.get(ADDR).onChain?.status).toBe('ok'), { timeout: 2000 })
   })
 
-  it('mintVC 卡体带签发方展示名（官网删卡弹窗凭 issuer.name 点名签发方）', async () => {
+  it('mintVC 卡体 issuer=纯 DID 字符串（LDP 硬约束：issuer.name 触发 safe canonize 炸，2026-10-23 存入 500 教训）', async () => {
     installMocks(fakeBackend())
     const vc = await _mintVCForTest('did', ADDR, [])
-    expect(vc.issuer.id).toBe('did:swtc:jplatform') // 验签解析路不变（getId 兼容对象）
-    expect(vc.issuer.name).toBeTruthy()
+    expect(vc.issuer).toBe('did:swtc:jplatform')
+    expect(typeof vc.issuer).toBe('string') // 形态铁律：非字符串=签发管线必炸
     const cwt = await _mintVCForTest('cwt', ADDR, ['admin'])
-    expect(cwt.issuer.name).toBe(CONFIG.credential.platformName || 'DSH 平台')
+    expect(cwt.issuer).toBe('did:swtc:jplatform')
     expect(String(cwt.id).startsWith('did:swtc:jplatform#credential-')).toBe(true)
   })
 })
