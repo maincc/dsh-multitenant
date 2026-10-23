@@ -705,8 +705,8 @@ describe('链上验真（onChainVerify）', () => {
     const f = await credentialService.onChainVerify(ADDR, { force: true })
     expect(f.status).toBe('ok') // force 绕过宽限
   })
-  it('5 分钟保鲜期内不重复读档（节流）', async () => {
-    claimed()
+  it('60 秒保鲜期内不重复读档（节流）；保鲜过期必重读——官网删卡 1~2 次访问内对账', async () => {
+    const b = claimed()
     okRelay(
       docWith([
         {
@@ -720,7 +720,11 @@ describe('链上验真（onChainVerify）', () => {
     const n1 = fetchStub.mock.calls.length
     const r = await credentialService.onChainVerify(ADDR)
     expect(r.status).toBe('ok')
-    expect(fetchStub.mock.calls.length).toBe(n1) // 无新请求
+    expect(fetchStub.mock.calls.length).toBe(n1) // 60s 窗内无新请求
+    // 保鲜过期（ok at=90s 前）→ 必须重读：删卡对账的触发保证（2026-10-23 整改核心）
+    b.creds.get(ADDR).onChain = { status: 'ok', at: new Date(Date.now() - 90000).toISOString() }
+    await credentialService.onChainVerify(ADDR)
+    expect(fetchStub.mock.calls.length).toBe(n1 + 1)
   })
   it('未领取/无卡 → 直接跳过返回 null', async () => {
     const b = fakeBackend()

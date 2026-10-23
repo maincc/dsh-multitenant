@@ -1268,8 +1268,11 @@ class CredentialService {
     const cred = await b.get(addrLower)
     if (!cred || cred.state !== 'claimed' || !cred.vcId || !cred.profileDid) return null
     const prev = cred.onChain || {}
-    // 节流：ok 结论保鲜 5 分钟；失效结论 1 分钟内不重复锤（用户刷新页面别轰炸 relay）
-    const ttl = prev.status === 'ok' ? 300000 : 60000
+    // 节流（2026-10-23 对账时效整改）：ok 保鲜从 5 分钟砍到 60 秒，与失效侧对称。
+    // 现场实锤：官网删卡后一次进入恰逢 relay 副本滞后→读到旧档→假 ok 被冻 5 分钟，
+    // 用户感知"官网删了平台不跟"。60s 窗+副本传播物理延迟 ≈ 最坏 1~2 次访问即对账；
+    // 锤档压力封顶每 claimed 用户每分钟 1 读（与失效侧原状同级）。
+    const ttl = 60000
     if (!opts.force && prev.at && Date.now() - new Date(prev.at).getTime() < ttl) return prev
     // 副本传播宽限：刚落档 60s 内 relay 读副本可能没追上，此时验真会误报 stale
     // （2026-10-19 实测：同步成功 3 秒后被误判）——结论推迟到下次登录
