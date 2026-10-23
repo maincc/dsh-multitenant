@@ -509,8 +509,25 @@ async function _syncProfileIdentityStep(name) {
     if (read.status === 'probe-fail')
       return { written: false, reason: 'probe-fail（读不到绝不动档）' }
     const base = read.status === 'ok' && read.doc ? read.doc : p.profile
-    if (base.name === name) return { written: false, reason: 'already' }
-    const doc = { ...base, name, updated: new Date().toISOString() }
+    // ═══ 显示名口径（2026-10-23 参考实现 oa-dapp/did-profile.service.ts 实锤）═══
+    // 生态组件读签发方/昵称的【规范位置】= service[] 中 type==='Profile' 条目的
+    // serviceEndpoint.nickname（顶层 name 不是任何已知消费方的取数路）。双写：
+    // Profile 服务条目为准，顶层 name 留作冗余人读。
+    const services = Array.isArray(base.service) ? [...base.service] : []
+    const pi = services.findIndex((s) => s?.type === 'Profile')
+    const entry = {
+      id: `${p.did}#profile`,
+      type: 'Profile',
+      ...(pi >= 0 ? services[pi] : {}),
+      serviceEndpoint: {
+        ...(pi >= 0 ? services[pi].serviceEndpoint || {} : {}),
+        nickname: name,
+      },
+    }
+    if (pi >= 0) services[pi] = entry
+    else services.push(entry)
+    if (base.name === name && pi >= 0) return { written: false, reason: 'already' }
+    const doc = { ...base, name, service: services, updated: new Date().toISOString() }
     const signature = signWithPlatformKey(Buffer.from(JSON.stringify(doc), 'utf8'))
     await relayWrite({
       document: doc,
