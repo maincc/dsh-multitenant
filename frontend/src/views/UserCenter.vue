@@ -172,7 +172,9 @@
               <div class="stat-row">
                 <span class="stat-label">{{ $t('user.credDVCId') }}</span>
                 <span class="stat-value mono addr-tip" :data-full="credInfo.vcId || '—'">
-                  {{ credInfo.vcId ? '#' + (credInfo.vcId.split('#')[1] || credInfo.vcId) : '—' }}
+                  <span class="stat-clip">{{
+                    credInfo.vcId ? '#' + (credInfo.vcId.split('#')[1] || credInfo.vcId) : '—'
+                  }}</span>
                   <button
                     v-if="credInfo.vcId"
                     class="copy-mini"
@@ -186,7 +188,9 @@
               <div v-if="credInfo.profileDid" class="stat-row">
                 <span class="stat-label">{{ $t('user.credDProfile') }}</span>
                 <span class="stat-value mono addr-tip" :data-full="credInfo.profileDid">
-                  {{ credInfo.profileDid.slice(0, 18) }}…{{ credInfo.profileDid.slice(-6) }}
+                  <span class="stat-clip">
+                    {{ credInfo.profileDid.slice(0, 18) }}…{{ credInfo.profileDid.slice(-6) }}
+                  </span>
                   <button
                     class="copy-mini"
                     :title="$t('user.credCopy')"
@@ -3075,6 +3079,22 @@ onUnmounted(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 长值行（vcId/profileDid+复制按钮）：2026-10-23 实锤——.addr-tip[data-full] 全局
+   overflow:visible（hover 提示不能被裁）把上面的省略号推翻，nowrap 长串+不可压缩的
+   emoji 按钮一起撑破卡片边界。解法=职责拆分：外层宿主自然收窄成 flex 行，
+   省略号交给内层 .stat-clip，按钮永不缩 */
+.stat-value.addr-tip {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+.stat-clip {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .mono {
   font-family: 'JetBrains Mono', ui-monospace, monospace;
@@ -3576,6 +3596,7 @@ onUnmounted(() => {
   padding: 0 0.2rem;
   opacity: 0.6;
   vertical-align: baseline;
+  flex-shrink: 0;
 }
 .copy-mini:hover {
   opacity: 1;
