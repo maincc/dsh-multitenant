@@ -1074,6 +1074,28 @@ const toggleCredVc = async () => {
   }
 }
 
+// 自动重签单飞器（切账户自愈用）：并发调用共享同一次钱包弹窗与结果，
+// 成功返回"已按新会话重查且地址吻合"的 credential-status 载荷，否则 null。
+let autoResignPromise = null
+const resignSessionTo = (addr) => {
+  if (!autoResignPromise) {
+    autoResignPromise = (async () => {
+      const st = await loginOnly(addr)
+      if (st !== 'ok') return null
+      try {
+        const r = await axios.get('/api/user/credential-status', { params: { address: addr } })
+        const d = r.data || {}
+        return String(d.address || '').toLowerCase() === String(addr).toLowerCase() ? d : null
+      } catch {
+        return null
+      }
+    })().finally(() => {
+      autoResignPromise = null
+    })
+  }
+  return autoResignPromise
+}
+
 const loadCredentialStatus = async (address) => {
   if (!address) return
   // ★致命/非致命彻底分离（用户实测"200 却报服务连不上"的根治）：此前 fetch、
@@ -1106,6 +1128,16 @@ const loadCredentialStatus = async (address) => {
   // 插件切账户未重签时返回的是**会话主人**的卡与角色。绝不把他人凭证/role=admin
   // 渲染在当前地址名下——假页签、真泄露都不许过。后端所有写操作严格绑会话，
   // 权限不可冒用，此处切断的是显示层串号+领取弹窗误导。
+  // 用户拍板恢复方式：**检测到账户切换即自动发起重签**（钱包弹一次，零操作自愈）；
+  // 拒签/重签未完成才落到被动引导态（"重新登录并重载凭证"按钮出口）。
+  if (data.address && String(data.address).toLowerCase() !== String(address).toLowerCase()) {
+    console.log('[flow] F9 会话主人与当前账户不一致，自动重签发起')
+    const fresh = await resignSessionTo(address)
+    if (fresh) {
+      data = fresh
+      toast(t('user.autoResigned'))
+    }
+  }
   if (data.address && String(data.address).toLowerCase() !== String(address).toLowerCase()) {
     credInfo.value = null
     credVc.value = null
