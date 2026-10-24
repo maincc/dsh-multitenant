@@ -353,7 +353,11 @@
             </div>
             <p class="tab-hint">
               {{
-                credErr?.status === 401 ? $t('user.credExpiredHint') : $t('user.credNotLoadedHint')
+                credErr?.code === 'SESSION_MISMATCH'
+                  ? $t('user.credMismatchHint')
+                  : credErr?.status === 401
+                    ? $t('user.credExpiredHint')
+                    : $t('user.credNotLoadedHint')
               }}
             </p>
             <div class="action-buttons">
@@ -1049,7 +1053,18 @@ const toggleCredVc = async () => {
   credVcLoading.value = true
   try {
     const res = await axios.get('/api/user/credential-vc')
-    credVc.value = res.data.credential
+    const cred = res.data.credential
+    // 同款防线：卡面 subject/id 的持有人必须=当前地址（会话切号竞态下拒显他人卡）
+    const holder = String(cred?.id || cred?.credentialSubject?.id || '')
+      .replace(/^did:swtc:/i, '')
+      .split('#')[0]
+    const mine = String(displayAddr.value || '').toLowerCase()
+    if (holder && mine && holder.toLowerCase() !== mine) {
+      toast(t('user.sessionMismatch'))
+      credVcOpen.value = false
+      return
+    }
+    credVc.value = cred
     credVcConsistent.value = res.data.consistent !== false
   } catch (err) {
     toast(t('user.credVcFail', { err: err?.response?.data?.error || err.message }))
@@ -1084,6 +1099,23 @@ const loadCredentialStatus = async (address) => {
       credErr.value.code,
       err?.message,
     )
+    return
+  }
+  // ★钱包切换防线（2026-10-23 用户报"凭证与address不一致"严重 bug 的根治）：
+  // credential-status 服务端绑定的是 user_session cookie（上次签名登录的钱包），
+  // 插件切账户未重签时返回的是**会话主人**的卡与角色。绝不把他人凭证/role=admin
+  // 渲染在当前地址名下——假页签、真泄露都不许过。后端所有写操作严格绑会话，
+  // 权限不可冒用，此处切断的是显示层串号+领取弹窗误导。
+  if (data.address && String(data.address).toLowerCase() !== String(address).toLowerCase()) {
+    credInfo.value = null
+    credVc.value = null
+    credApp.value = null
+    credErr.value = { status: null, code: 'SESSION_MISMATCH' }
+    role.value = 'user'
+    if (isSystemTab.value) activeTab.value = 'account'
+    // 不动 connected：插件确实连着，只是会话 cookie 属旧账户——若置 false 会把
+    // retryCredential（解药，:disabled="!connected"）锁死，用户困进无出口空态
+    toast(t('user.sessionMismatch'))
     return
   }
   // ↓↓↓ 以下为"请求已成功"的纯装配段：任何异常都不许推翻凭证卡本身 ↓↓↓
@@ -1171,6 +1203,10 @@ const retryCredential = async () => {
       toast(t('user.credReloaded'))
     } else if (st === 'denied') {
       // loginOnly 已 toast 具体原因（拒签/验签失败），此处不叠话
+    } else if (credErr.value?.code === 'SESSION_MISMATCH') {
+      // 重签后仍不一致（理论上近零：loginOnly 失败静默/被拒的残余态）——
+      // 不许误报成"应答异常"，直说是会话与账户没对齐
+      toast(t('user.sessionMismatch'))
     } else if (credErr.value?.status === 401 || credErr.value?.status === 403) {
       toast(t('user.credFailSession'))
     } else if (netFail()) {
