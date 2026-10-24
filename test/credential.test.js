@@ -762,6 +762,85 @@ describe('档案优先发现级联（enter 完全形态，2026-10-23 用户拍�
   })
 })
 
+describe('跨平台档案共存（2026-10-23 用户定调"不同 key=不同平台"，isOurIssuedCard 窄化）', () => {
+  const profileOf = (cards) => ({ id: `did:swtc:${CANON}`, credentials: cards })
+  // 他平台生态形卡：类型名 DshCwtCredential 与我们**同名**（全局常量），issuer/id
+  // 只含别家 DID——旧的 isDshCard 条款会把它误当自家卡摘除/误报 stale
+  const alien = () => ({
+    '@context': ['https://www.w3.org/2018/credentials/v1'],
+    id: `did:swtc:${CANON}#dsh-cwt-2026-01-01-did:swtc:jothereco-aaaa`,
+    type: ['VerifiableCredential', 'DshCwtCredential'],
+    issuer: 'did:swtc:jothereco',
+    credentialSubject: { id: `did:swtc:${ADDR}` },
+    issuanceDate: '2026-01-01T00:00:00.000Z',
+    expirationDate: new Date(Date.now() + 864e5).toISOString(),
+    proof: { type: 'EcdsaSecp256k1Signature2019', jws: 'a.b.c' },
+  })
+
+  it('领取换卡只摘自家旧卡：他平台同名类型卡原样共存，自家旧卡确实让位', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    const oursOld = await _mintVCForTest('cwt', ADDR, [], `did:swtc:${CANON}`)
+    const other = alien()
+    okRelay(profileOf([other, oursOld]))
+    await credentialService.enter(ADDR, { canonical: CANON }) // 发现命中自家旧卡→claimed
+    const out = await credentialService.buildClaimDocument(ADDR, CANON)
+    const list = out.document.credentials
+    expect(list.some((c) => c.id === other.id)).toBe(true) // 他平台卡活着
+    expect(list.some((c) => c.id === oursOld.id)).toBe(false) // 自家旧卡被摘
+    expect(list[list.length - 1].issuer).toBe('did:swtc:jplatform') // 尾位=新签自家卡
+  })
+
+  it('stale 检测不被他平台卡冒领：档案只剩别家卡=确凿无我方卡→missing 对账', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    await b.putRow(ADDR, {
+      kind: 'cwt',
+      state: 'claimed',
+      source: 'approval',
+      roles: [],
+      vcId: `did:swtc:${CANON}#dsh-cwt-ours-deleted`,
+      claimedAt: '2026-01-01T00:00:00.000Z',
+      profileDid: `did:swtc:${CANON}`,
+      expiresAt: new Date(Date.now() + 864e5).toISOString(),
+      onChain: { status: 'ok', at: '2025-01-01T00:00:00.000Z' },
+    })
+    okRelay(profileOf([alien()])) // 我方卡被删，别家卡还在
+    const v = await credentialService.onChainVerify(ADDR, { force: true })
+    expect(v.status).toBe('missing') // 旧代码会误报 stale（"您档案里还是旧版本"）
+    expect((await b.get(ADDR)).state).toBe('assigned')
+  })
+
+  it('凭证本体展示绝不显示他平台卡', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    await b.putRow(ADDR, {
+      kind: 'cwt',
+      state: 'claimed',
+      source: 'approval',
+      roles: [],
+      vcId: 'vc-not-in-archive',
+      claimedAt: '2026-01-01T00:00:00.000Z',
+      profileDid: `did:swtc:${CANON}`,
+    })
+    okRelay(profileOf([alien()]))
+    await expect(credentialService.getClaimedCredential(ADDR)).rejects.toThrow(/找不到/)
+  })
+
+  it('发现引擎天然共存：别家同名类型卡不过真签闸，不触发恢复', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    okRelay(profileOf([alien()]))
+    const st = await credentialService.enter(ADDR, { canonical: CANON })
+    expect(st.credential.state).toBe('assigned') // 别家卡不算"档案有真卡"
+    expect(st.verifiedBy).toBe('ledger')
+  })
+})
+
 describe('链上验真（onChainVerify）', () => {
   const claimed = () => {
     const b = fakeBackend()

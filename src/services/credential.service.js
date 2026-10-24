@@ -458,6 +458,24 @@ function isDshCard(c) {
     issuer === platform().did || (vc?.type || []).some((t) => Object.values(VC_TYPES).includes(t))
   )
 }
+/**
+ * 本平台自有卡（档案整理的粗闸）：issuer=本平台 DID 或 卡 id 含本平台 DID 字符串
+ * （覆盖新代 holder#dsh-* 嵌平台 DID 与旧代 平台DID#credential-* 两形态）。
+ * ★不同 key = 不同平台：类型名 Dsh* 是跨平台同名常量，isDshCard 的"类型条款"
+ * 只可用于本平台挂架（自家档案）；凡动**用户档案**的摘除/展示/stale/回扫都必须
+ * 用本谓词——否则两平台在共享 relay 上互踢对方卡+误报 stale（2026-10-23 用户
+ * 定调"共存"原则时的实锤缺陷）。判权正闸仍是 isPlatformMinted 的 SDK 真签。
+ */
+function isOurIssuedCard(c) {
+  const vc = c?.credential || c
+  if (!vc || typeof vc !== 'object') return false
+  const p = platform()
+  const issuer = typeof vc.issuer === 'string' ? vc.issuer : vc?.issuer?.id
+  if (issuer === p.did) return true
+  return String(vc.id || '')
+    .toLowerCase()
+    .includes(p.did.toLowerCase())
+}
 function cardSubject(c) {
   const vc = c?.credential || c
   return String(vc?.credentialSubject?.id || '').toLowerCase()
@@ -1553,7 +1571,7 @@ class CredentialService {
     } else {
       const cards = (read.doc.credentials || []).map((c) => c.credential || c)
       const vc = cards.find((c) => c.id === cred.vcId)
-      const stale = vc ? null : cards.filter(isDshCard).pop()
+      const stale = vc ? null : cards.filter(isOurIssuedCard).pop()
       if (stale) {
         // 档案有平台签发的卡但编号对不上 = 续发后未同步的旧卡（可见、可修复）
         next = {
@@ -1701,10 +1719,11 @@ class CredentialService {
       }
     }
     const vc = await mintVC(cred.kind, addrLower, cred.roles || [], `did:swtc:${canonicalAddr}`)
-    // 互斥在档案侧的落实：先摘掉平台签发的 Dsh 凭证（含历史信封形态），再放当前这张
+    // 互斥在档案侧的落实：**只摘自家平台旧卡**（含历史信封形态），再放当前这张。
+    // 他平台（不同 key）的 Dsh 同名类型卡原样共存——档案是用户的，多平台并存正当
     const doc = {
       ...read.doc,
-      credentials: [...(read.doc.credentials || []).filter((c) => !isDshCard(c)), vc],
+      credentials: [...(read.doc.credentials || []).filter((c) => !isOurIssuedCard(c)), vc],
     }
     doc.updated = new Date().toISOString()
     return {
@@ -1730,7 +1749,7 @@ class CredentialService {
     if (ck && Date.now() - ck.at < 60000) return ck.out
     const read = await relayRead(cred.profileDid.replace(/^did:swtc:/, ''))
     if (read.status !== 'ok') throw new BadRequestError('档案暂时读不到（网络抖动），请稍后再试')
-    const cards = (read.doc.credentials || []).filter(isDshCard).map((c) => c.credential || c)
+    const cards = (read.doc.credentials || []).filter(isOurIssuedCard).map((c) => c.credential || c)
     const vc = cards.find((c) => c.id === cred.vcId)
     const consistent = !!vc
     const shown = vc || cards[cards.length - 1]
@@ -2042,7 +2061,7 @@ class CredentialService {
         failed++
         continue
       }
-      const cards = (read.doc.credentials || []).filter(isDshCard)
+      const cards = (read.doc.credentials || []).filter(isOurIssuedCard)
       const last = cards[cards.length - 1]
       if (!last) continue
       // 顺带回填存量台账缺的凭证号（vcId 字段上线前领取的用户）
