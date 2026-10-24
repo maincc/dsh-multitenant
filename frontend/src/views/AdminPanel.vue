@@ -228,11 +228,13 @@
                     >
                       {{ $t('admin.downgrade') }}
                     </button>
+                    <!-- 提权与容器生命周期解耦（2026-10-23 用户实测"不能用"的根因）：
+                         任命管理员=台账+档案动作，容器 destroyed/unknown 不该禁用它——
+                         真正的门禁是当场钱包签名双验证，这里不设状态闸 -->
                     <button
                       v-if="!user.isAdmin"
                       class="btn btn-warning"
                       @click="promoteUser(user.address)"
-                      :disabled="user.status === 'destroyed' || user.status === 'unknown'"
                     >
                       {{ $t('admin.promote') }}
                     </button>
