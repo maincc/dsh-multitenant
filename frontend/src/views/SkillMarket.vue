@@ -498,22 +498,8 @@ onUnmounted(() => {
   margin-bottom: 1rem;
 }
 
-.search-input {
-  padding: 0.5rem 0.75rem;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  font-size: 0.9rem;
-  width: 240px;
-  box-sizing: border-box;
-  outline: none;
-  color: #1e293b;
-  background: #fff;
-}
-
-.search-input:focus {
-  border-color: #6b7bdb;
-  box-shadow: 0 0 0 3px rgba(107, 123, 219, 0.15);
-}
+/* .search-input 制式已升全局 assets/style.css（2026-10-23 三框统一），
+   本页 scoped 版删除防双源漂移 */
 
 .notice {
   padding: 0.75rem 1rem;
