@@ -278,6 +278,7 @@ const server = createServer(async (req, res) => {
     // 租户路由
     if (
       path === '/connect' ||
+      path === '/connect-challenge' ||
       path === '/connect-status' ||
       path.startsWith('/leave/') ||
       (path.startsWith('/api/user/') &&

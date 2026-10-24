@@ -25,10 +25,45 @@ import { tenantGateway } from '../services/tenant-proxy.service.js'
 export async function handleTenantRoutes(req, res, path, url) {
   // 未认证端点按 IP 限流（security-hardening-plan P0-2）
   // /connect 创建容器、/connect-status 状态轮询、/leave 销毁容器
-  if (path === '/connect' || path === '/connect-status' || path.startsWith('/leave/')) {
-    const key = path === '/connect' ? 'connect' : path === '/connect-status' ? 'status' : 'leave'
+  if (
+    path === '/connect' ||
+    path === '/connect-challenge' ||
+    path === '/connect-status' ||
+    path.startsWith('/leave/')
+  ) {
+    const key =
+      path === '/connect-challenge'
+        ? 'challenge'
+        : path === '/connect'
+          ? 'connect'
+          : path === '/connect-status'
+            ? 'status'
+            : 'leave'
     const max = path === '/connect-status' ? 30 : 10
     if (!rateLimit(req, res, { max, keyPrefix: key })) return true
+  }
+
+  // GET /connect-challenge — 挑战发放的 200 正身端点（2026-10-23 去噪整改）：
+  // "先领挑战再签名"本是流程的正常一步，旧链路借 /connect 的无签名 401 应答
+  // 下发挑战——语义没错，但浏览器必把 401 记成红色网络日志，每次登录都像报错
+  //（用户实测"登录有个 url 报错"）。此端点 200+同形载荷；/connect 的无签名
+  // 401 原样保留（旧客户端/直连兜底，"未签名不得过"不放）。挑战仍只进
+  // CONNECT 用途池、只在 /connect 兑现——跨端点凭证混淆防线不动。
+  if (path === '/connect-challenge') {
+    let address = url.searchParams.get('address')
+    if (!validateSwtcAddress(address, res)) return true
+    address = normalizeAddress(address)
+    const challenge = tenantConfigService.issueChallenge(address, SIGN_PURPOSE.CONNECT)
+    if (!challenge) {
+      res.writeHead(503, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '挑战发放过载，请稍后重试', code: 'OVERLOAD' }))
+      return true
+    }
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+    res.end(
+      JSON.stringify({ ok: true, nonce: challenge.nonce, message: challenge.message, address }),
+    )
+    return true
   }
 
   // GET /connect：CCDAO 插件连接端点

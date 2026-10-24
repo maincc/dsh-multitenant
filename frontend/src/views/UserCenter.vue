@@ -1955,12 +1955,12 @@ const connectWithOwnership = async (address, opts = {}) => {
 
     const pluginAddress = await requestAccounts()
     rememberPluginCase(pluginAddress)
-    // 1) 领取一次性挑战：**必须向 /connect 领**（CONNECT 用途分池）。
-    //    不能借用 config-challenge —— 挑战池按用途隔离，借来的 nonce 在 /connect
-    //    处取不到（这正是防"跨端点凭证混淆"的设计）。无签名调用 /connect 会
-    //    返回 401 + { nonce, message }，这就是本流程要签的材料。
+    // 1) 领取一次性挑战：走 /connect-challenge（200 正身；旧链路借 /connect 的
+    //    无签名 401 下发挑战，浏览器必标红、每次登录都像"报错"）。用途仍是
+    //    CONNECT 专属——挑战池按用途隔离，借别的 nonce 在 /connect 取不到
+    //    （防跨端点凭证混淆），兑现也只由后续带签名 /connect 一步完成。
     showLoading(title, t('user.loadingWalletConnect'), Math.max(progress0, 25))
-    const chalRes = await fetch(`/connect?address=${encodeURIComponent(pluginAddress)}`)
+    const chalRes = await fetch(`/connect-challenge?address=${encodeURIComponent(pluginAddress)}`)
     const challenge = await chalRes.json()
     const nonce = challenge.nonce
     const message = challenge.message
