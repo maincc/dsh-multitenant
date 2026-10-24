@@ -116,8 +116,14 @@ function fakeBackend() {
         .map((d) => d.profileDid)
     },
     async listCreds({ kind = 'all', q = '', limit = 20, offset = 0 } = {}) {
+      const isAdminCard = (d) => d.kind === 'cwt' && (d.roles || []).includes('admin')
       const all = [...creds.values()]
-        .filter((d) => (kind === 'did' || kind === 'cwt' ? d.kind === kind : true))
+        .filter((d) => {
+          if (kind === 'did') return d.kind === 'did'
+          if (kind === 'admin') return isAdminCard(d)
+          if (kind === 'cwt') return d.kind === 'cwt' && !isAdminCard(d)
+          return true
+        })
         .filter((d) => !q || String(d._id).toLowerCase().includes(q.toLowerCase()))
         .sort((a, b) => String(b.issuedAt || '').localeCompare(String(a.issuedAt || '')))
       return { items: all.slice(offset, offset + limit), total: all.length }
@@ -1072,6 +1078,22 @@ describe('凭证台账浏览（管理端）', () => {
     expect(hit.total).toBe(1) // 粘原始大小写地址也能查到（台账键小写，匹配两侧归一）
     const hit2 = await credentialService.listCredentials({ q: 'other' })
     expect(hit2.total).toBe(1)
+    // ── 三类卡制式：管理凭证独立档，不并入 CWT（2026-10-23 用户拍板） ──
+    await b.putRow('jadminone000000000000000000000000', {
+      kind: 'cwt',
+      state: 'assigned',
+      source: 'admin-auto',
+      roles: ['admin'],
+      issuedAt: new Date().toISOString(),
+    })
+    expect((await credentialService.listCredentials({})).total).toBe(3)
+    const adm = await credentialService.listCredentials({ kind: 'admin' })
+    expect(adm.total).toBe(1)
+    expect(adm.items[0].address).toBe('jadminone000000000000000000000000')
+    expect(adm.items[0].isAdmin).toBe(true) // _public 暴露角色事实，前端据此渲染第三卡种
+    const pureCwt = await credentialService.listCredentials({ kind: 'cwt' })
+    expect(pureCwt.total).toBe(1) // 纯解限 CWT 档剔除 admin 行（其他user），admin 不混入
+    expect(pureCwt.items[0].address).toBe('jotheruser0000000000000000000000')
   })
 })
 

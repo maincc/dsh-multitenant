@@ -632,7 +632,8 @@ export async function handleAdminRoutes(req, res, path, url) {
 
   // ════════════ v1.4 凭证体系 · CWT 解限申请审批（管理员当场签名）════════════
 
-  // GET /api/admin/credentials?kind=did|cwt|all&q=<地址片段>&limit&offset - 凭证台账浏览
+  // GET /api/admin/credentials?kind=did|cwt|admin|all&q=<地址片段>&limit&offset - 凭证台账浏览
+  // 三类卡制式（2026-10-23 用户拍板）：admin=cwt∧roles∋admin 独立档；cwt 档=纯解限剔除 admin
   if (path === '/api/admin/credentials' && req.method === 'GET') {
     if (!requireAdmin(req, res)) return true
     const kind = url.searchParams.get('kind') || 'all'

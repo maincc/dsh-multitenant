@@ -238,6 +238,16 @@
                     >
                       {{ $t('admin.promote') }}
                     </button>
+                    <!-- 撤权在用户管理行内闭环（任免名册转只读后的唯一操作入口）：
+                         demoteAdmin 自带 danger 确认+钱包签名门禁，LAST_ADMIN 防锁死
+                         由后端人话报错直出 -->
+                    <button
+                      v-if="user.isAdmin"
+                      class="btn btn-danger"
+                      @click="demoteAdmin(user.address)"
+                    >
+                      {{ $t('admin.rosterDemote') }}
+                    </button>
                     <a
                       v-if="user.status === 'running'"
                       href="#"
@@ -1162,7 +1172,7 @@
           </div>
           <div class="filter-row">
             <button
-              v-for="k in ['all', 'did', 'cwt']"
+              v-for="k in ['all', 'did', 'cwt', 'admin']"
               :key="k"
               class="btn btn-small"
               :class="credKind === k ? 'btn-primary' : 'btn-secondary'"
@@ -1205,10 +1215,18 @@
                     >
                   </td>
                   <td>
+                    <!-- 三类卡制式：管理凭证是独立第三类（isAdmin=台账 roles 事实），
+                         不并入解限 CWT——两者权限语义完全不同 -->
                     <span
                       class="badge"
-                      :class="c.kind === 'cwt' ? 'badge-success' : 'badge-info'"
-                      >{{ $t('admin.ledgerCard_' + c.kind) }}</span
+                      :class="
+                        c.isAdmin
+                          ? 'badge-danger'
+                          : c.kind === 'cwt'
+                            ? 'badge-success'
+                            : 'badge-info'
+                      "
+                      >{{ $t('admin.ledgerCard_' + (c.isAdmin ? 'admin' : c.kind)) }}</span
                     >
                   </td>
                   <td>
@@ -1258,19 +1276,8 @@
             </div>
           </div>
           <div class="filter-row">
-            <input
-              v-model="rosterAddr"
-              class="search-input"
-              :placeholder="$t('admin.rosterPh')"
-              @keyup.enter="promoteAdmin"
-            />
-            <button
-              class="btn btn-small btn-primary"
-              :disabled="rosterBusy || !rosterAddr.trim()"
-              @click="promoteAdmin"
-            >
-              {{ $t('admin.rosterPromote') }}
-            </button>
+            <!-- 任命/撤销操作已统一收敛到「用户管理」行内按钮（2026-10-23 用户拍板
+                 去双入口）；本块转为现任名册只读审计视图 -->
             <button class="btn btn-small" :disabled="rosterLoading" @click="loadRoster">
               {{ $t('admin.refresh') }}
             </button>
@@ -1281,27 +1288,17 @@
               <thead>
                 <tr>
                   <th>{{ $t('admin.colAddress') }}</th>
-                  <th>{{ $t('admin.colOps') }}</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-if="!rosterAddrs.length">
-                  <td colspan="2">{{ $t('admin.rosterEmpty') }}</td>
+                  <td>{{ $t('admin.rosterEmpty') }}</td>
                 </tr>
                 <tr v-for="a in rosterAddrs" :key="a">
                   <td>
                     <span class="address addr-tip" :data-full="a"
                       >{{ a.slice(0, 12) }}…{{ a.slice(-4) }}</span
                     >
-                  </td>
-                  <td>
-                    <button
-                      class="btn btn-small btn-danger"
-                      :disabled="rosterBusy"
-                      @click="demoteAdmin(a)"
-                    >
-                      {{ $t('admin.rosterDemote') }}
-                    </button>
                   </td>
                 </tr>
               </tbody>
@@ -1954,7 +1951,6 @@ const credPage = (delta) => {
 }
 
 /* ── v1.5 管理员任免（名册=配发政策面；判权骑 admin 凭证，5A 后端编排） ── */
-const rosterAddr = ref('')
 const rosterAddrs = ref([])
 const rosterHistory = ref([])
 const rosterLoading = ref(false)
@@ -1973,27 +1969,9 @@ const loadRoster = async () => {
   }
 }
 
-const promoteAdmin = async () => {
-  const addr = rosterAddr.value.trim().toLowerCase()
-  if (!addr || rosterBusy.value) return
-  try {
-    rosterBusy.value = 'promote'
-    const headers = await signAdminOperation('promote', { address: addr })
-    const res = await axios.post(`/api/admin/promote/${addr}`, {}, { headers })
-    if (res.data.credential) {
-      toast(t('admin.rosterPromoted', { addr: addr.slice(0, 10) + '…' }))
-    } else {
-      // 名册已记入；admin 卡配发将由对账兜底完成（签发失败只降级为提示）
-      toast(t('admin.rosterPromotedSync', { addr: addr.slice(0, 10) + '…' }))
-    }
-    rosterAddr.value = ''
-    await loadRoster()
-  } catch (err) {
-    toast(t('admin.credOpFail', { err: err?.response?.data?.error || err.message }))
-  } finally {
-    rosterBusy.value = ''
-  }
-}
+// promoteAdmin（任免名册的任命输入口）已退役（2026-10-23 用户拍板去双入口）：
+// 任命=「用户管理」行内 promoteUser；名册块转只读审计视图。
+// 从未开过容器的地址不在用户列表=系统里尚不存在该用户，本就不该提前任命。
 
 const demoteAdmin = async (addr) => {
   if (rosterBusy.value) return
@@ -2012,6 +1990,8 @@ const demoteAdmin = async (addr) => {
       t('admin.rosterDemoted', { addr: addr.slice(0, 10) + '…', to: res.data.demotedTo || '?' }),
     )
     await loadRoster()
+    // 从用户管理撤销时：行徽章与提权/撤销按钮态必须即时翻转（force 绕 3s 缓存）
+    fetchData(true)
   } catch (err) {
     // LAST_ADMIN 等人话错误直出（后端已把防锁死语义写在 error 里）
     toast(t('admin.credOpFail', { err: err?.response?.data?.error || err.message }))

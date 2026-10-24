@@ -725,8 +725,17 @@ class MongoCredentialBackend {
   }
   /** 管理端台账浏览：kind/状态筛选 + 地址模糊 + 签发时间倒序分页 */
   async listCreds({ kind = 'all', q = '', limit = 20, offset = 0 } = {}) {
+    // 三类卡制式（2026-10-23 用户拍板：管理凭证独立成第三类，不并入 CWT）：
+    // admin = kind=cwt ∧ roles∋admin；cwt 档在浏览语义=「纯解限」，剔除 admin
     const flt = {}
-    if (kind === 'did' || kind === 'cwt') flt.kind = kind
+    if (kind === 'did') flt.kind = 'did'
+    else if (kind === 'admin') {
+      flt.kind = 'cwt'
+      flt.roles = 'admin' // 数组字段等值=包含
+    } else if (kind === 'cwt') {
+      flt.kind = 'cwt'
+      flt.roles = { $ne: 'admin' } // 数组 $ne=不含（缺字段亦命中）
+    }
     if (q) flt._id = { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' }
     const total = await this._col().countDocuments(flt)
     const items = await this._col()
@@ -886,8 +895,14 @@ class JsonCredentialBackend {
     return { assigned: true, doc: all[addrLower] }
   }
   async listCreds({ kind = 'all', q = '', limit = 20, offset = 0 } = {}) {
+    const isAdminCard = (d) => d.kind === 'cwt' && (d.roles || []).includes('admin')
     const all = Object.values(this._load(this._fileCred) || {})
-      .filter((d) => (kind === 'did' || kind === 'cwt' ? d.kind === kind : true))
+      .filter((d) => {
+        if (kind === 'did') return d.kind === 'did'
+        if (kind === 'admin') return isAdminCard(d)
+        if (kind === 'cwt') return d.kind === 'cwt' && !isAdminCard(d)
+        return true
+      })
       .filter((d) => !q || String(d._id).toLowerCase().includes(q.toLowerCase()))
       .sort((a, b) => String(b.issuedAt || '').localeCompare(String(a.issuedAt || '')))
     return { items: all.slice(offset, offset + limit), total: all.length }
