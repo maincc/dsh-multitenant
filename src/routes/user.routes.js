@@ -11,7 +11,7 @@ import {
   SIGN_PURPOSE,
   buildSignedMessage,
 } from '../services/tenant-config.service.js'
-import { userSessionStore, getUserSession } from '../middleware/user-auth.middleware.js'
+import { userSessionStore } from '../middleware/user-auth.middleware.js'
 import { normalizeAddress } from '../utils/address.js'
 import { rateLimit } from '../middleware/rate-limit.middleware.js'
 import { getAdminSession, getRequestAddress } from '../middleware/auth.middleware.js'
@@ -140,10 +140,10 @@ export async function handleUserRoutes(req, res, path) {
   // （admin 优先）矫枉过正——管理员浏览器遗留的 admin_session 会**抢占**凭证身份：
   // 插件切到账户 B、自动重签换的是 user_session=B，但端点恒返回旧管理员 A，前端守卫
   // 反复判"会话主人≠当前账户"且重签不掉 admin_session，F9 陷入循环。
-  // 正解：**user_session 优先，admin_session 仅作无用户会话时的回退**——循环根因正是
-  // 双 cookie 并存时 admin 抢先；user 优先即根治，又保住 2026-10 审计"管理员只有
-  // admin_session 时凭证端点仍可达"的自测契约（admin_session 只服务 /api/admin/*）。
-  const credSession = () => getUserSession(req) ?? getAdminSession(req)
+  // 正解：身份 = **user_session 优先，admin_session 仅作无用户会话回退**——循环根因
+  // 正是双 cookie 并存时 admin 抢先；已由 auth.middleware.getRequestAddress 源头翻正
+  // （两段事故复盘注释钉在那边），此处单源复用，凭证端点与 restart/logout 等同构。
+  const credSession = () => getRequestAddress(req)
 
   // GET /api/user/credential-status - 进入用户中心的判定钩子：
   // 有凭证→原样；无→自动分配（legacy CWT 名单命中=直接发 CWT 解限凭证，否则 DID 普通待领取）。

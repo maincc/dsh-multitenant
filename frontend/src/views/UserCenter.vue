@@ -90,6 +90,12 @@
               >
                 <span class="sidebar-icon" v-html="tab.icon"></span>
                 <span>{{ tab.label }}</span>
+                <!-- 后台自动拉起指示：容器 tab 右侧小转圈（完成/失败即消失，弹窗收尾） -->
+                <span
+                  v-if="tab.key === 'container' && containerBooting"
+                  class="tab-boot-spin"
+                  :title="$t('user.tabBooting')"
+                ></span>
               </button>
             </template>
           </nav>
@@ -1950,6 +1956,9 @@ const connectWallet = async () => {
 let ownershipInFlight = false
 const connectWithOwnership = async (address, opts = {}) => {
   console.log('[flow] F6 connectWithOwnership 进入（签名链路）')
+  // quiet=后台自动拉起（进入用户中心触发）：钱包签名弹窗照常（归属闸不放松），
+  // 但不糊全屏 loading——用户可继续浏览，进度由容器 tab 的加载图标承担
+  const quiet = !!opts.quiet
   if (ownershipInFlight) {
     console.warn('[UserCenter] 签名连接进行中，忽略重复请求')
     throw new Error(t('user.busy'))
@@ -1963,7 +1972,7 @@ const connectWithOwnership = async (address, opts = {}) => {
   try {
     // 阶段化 loading（每次 show 不 hide，由调用方统一 hideLoading）：
     // 覆盖"钱包弹窗请求账户 → 领取挑战 → 等待签名 → 建立连接"的每个耗时环节
-    showLoading(title, t('user.loadingVerify'), progress0)
+    if (!quiet) showLoading(title, t('user.loadingVerify'), progress0)
 
     const pluginAddress = await requestAccounts()
     rememberPluginCase(pluginAddress)
@@ -1971,7 +1980,7 @@ const connectWithOwnership = async (address, opts = {}) => {
     //    无签名 401 下发挑战，浏览器必标红、每次登录都像"报错"）。用途仍是
     //    CONNECT 专属——挑战池按用途隔离，借别的 nonce 在 /connect 取不到
     //    （防跨端点凭证混淆），兑现也只由后续带签名 /connect 一步完成。
-    showLoading(title, t('user.loadingWalletConnect'), Math.max(progress0, 25))
+    if (!quiet) showLoading(title, t('user.loadingWalletConnect'), Math.max(progress0, 25))
     const chalRes = await fetch(`/connect-challenge?address=${encodeURIComponent(pluginAddress)}`)
     const challenge = await chalRes.json()
     const nonce = challenge.nonce
@@ -1981,14 +1990,14 @@ const connectWithOwnership = async (address, opts = {}) => {
     }
     console.log('[flow] F7 挑战获取完成 nonce.length=' + (nonce ? String(nonce).length : 0))
     // 2) 插件签名（用户确认弹窗，可能等待较久）：签的是用途绑定消息（hex）
-    showLoading(title, t('user.loadingSign'), Math.max(progress0, 45))
+    if (!quiet) showLoading(title, t('user.loadingSign'), Math.max(progress0, 45))
     const signature = await signMessage(pluginAddress, message)
     const publicKey = await getPublicKey(pluginAddress)
     console.log('[flow] F8 钱包签名+公钥完成')
     // 3) 带签名访问 /connect（已存在容器同样验签并发 cookie）
     // format=json：浏览器 fetch 的 redirect:manual 会把 302 包成 opaque (status 0)，
     // 取不到 location → 后端直接回 200 JSON {url}，前端 window.open。
-    showLoading(title, t('user.loadingEstablish'), Math.max(progress0, 70))
+    if (!quiet) showLoading(title, t('user.loadingEstablish'), Math.max(progress0, 70))
     // action=login（v1.5 反馈②）：只换 cookie 不建容器——签的仍是 CONNECT 用途同一消息，
     // 额外 query 不参与签名内容，防重放语义不变。
     const params = new URLSearchParams({
@@ -2059,7 +2068,7 @@ const enterDsh = async () => {
 
 // 最近一次 /connect 202 的后端提示（资源不足/额度用完），供上层展示
 let lastConnect202Message = ''
-const ensureContainer = async (address) => {
+const ensureContainer = async (address, opts = {}) => {
   console.log('[flow] F4a ensureContainer 进入')
   // 先检查容器状态
   try {
@@ -2086,6 +2095,7 @@ const ensureContainer = async (address) => {
       const connectRes = await connectWithOwnership(address, {
         title: t('user.loadingCreateContainer'),
         progress: 50,
+        quiet: !!opts.quiet,
       })
 
       // 检查是否返回 202（资源不足 → 排队；额度用完 → 明确提示，不排队）
@@ -2233,6 +2243,8 @@ const fetchUserInfo = async (address) => {
     fetchUsage(address)
     fetchConfigStatus()
     loadCredentialStatus(address)
+    // 进入即检容器态并后台拉起（每地址一次性；不 await——凭证装配不受牵制）
+    void autoBootContainer(res.data)
   } catch (err) {
     // 403/404 是已知良性态（未连接/未建档空态），不再 error 级刷屏——
     // 真异常仍走 error（下面分支处理不到的情况）
@@ -2286,6 +2298,50 @@ const fetchUserInfo = async (address) => {
     }
   } finally {
     if (opened) hideLoading()
+  }
+}
+
+// ══ 进入用户中心·容器后台自动拉起（2026-10-23 用户拍板）══
+// 检查容器态 → 未跑则后台启动（不糊页面，tab 挂加载图标）→ 完毕弹窗；
+// 本来就在跑 → 直接弹窗告知。与 v1.5"进入不顺手建容器"的关系：当年痛点是
+// **全屏 loading 阻断浏览**，这里改为后台化+图标化，签名仅 destroyed 重建
+// 时按归属闸照常请求一次（闸口语义不放松）。每地址一次性，轮询/手动刷新不重复弹。
+let autoBootFor = ''
+const containerBooting = ref(false)
+const autoBootContainer = async (data) => {
+  const address = data?.address || currentAddress()
+  if (!address || autoBootFor === address) return
+  autoBootFor = address
+  const st = data?.status
+  if (st === 'running') {
+    askConfirm({ message: t('user.bootAlreadyRunning') })
+    return
+  }
+  // 只拉"登过账的停机户"：stopped（纯 session 静默启动）与 destroyed（需一次
+  // 归属签名重建）；none 未建档/waiting 已在排队页/未知态都不自动造轮子
+  if (st !== 'stopped' && st !== 'destroyed') return
+  containerBooting.value = true
+  console.log('[flow] F14 后台自动拉起容器, status=' + st)
+  try {
+    if (st === 'stopped') {
+      await axios.post(`/api/user/${address}/restart`)
+      await new Promise((resolve) => setTimeout(resolve, 3000))
+    } else {
+      const r = await ensureContainer(address, { quiet: true })
+      if (r === 'waiting') return // 排队页由状态机挂出——页面本身即告知
+      if (r === 'usage-limit') {
+        askConfirm({ message: lastConnect202Message || t('user.bootUsageLimit') })
+        return
+      }
+    }
+    await fetchUserInfo(address)
+    askConfirm({ message: t('user.bootDoneNotice') })
+  } catch (err) {
+    askConfirm({
+      message: t('user.bootFailNotice', { err: err?.message || String(err) }),
+    })
+  } finally {
+    containerBooting.value = false
   }
 }
 
@@ -3581,6 +3637,21 @@ onUnmounted(() => {
   align-items: center;
   gap: 0.5rem;
   flex-wrap: wrap;
+}
+.tab-boot-spin {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  margin-left: auto;
+  border: 2px solid rgba(107, 123, 219, 0.25);
+  border-top-color: #6b7bdb;
+  border-radius: 50%;
+  animation: tab-boot-spin 0.8s linear infinite;
+}
+@keyframes tab-boot-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 .cred-detail {
   margin: 0.5rem 0 0.75rem;

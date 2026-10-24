@@ -127,9 +127,13 @@ export function getSessionAddress(req) {
 }
 
 /**
- * 获取请求身份（管理员会话优先，其次是普通用户会话）。
- * 用于"本人或管理员"这类判定：普通用户终于有自己的会话了。
+ * 获取请求身份（**user_session 优先，admin_session 仅作无用户会话时的回退**）。
+ * 用于"本人或管理员"这类判定。方向翻正史（2026-10-23）：原为 admin 优先——那是
+ * 2026-10 审计"真用户（只有 user_session）被凭证端点整体误判 401"事故时的矫枉，
+ * 结果管理员浏览器残留 admin cookie 会**抢占**插件当前钱包的身份（F9 会话不一致
+ * 循环、本人 restart 被 403 等一族串号 bug 的同根因）。插件当前登录的钱包才是
+ * "操作人"；管理员代他人操作走各自的管理签名闸，不依赖本函数的优先方向。
  */
 export function getRequestAddress(req) {
-  return getAdminSession(req) ?? getUserSession(req)
+  return getUserSession(req) ?? getAdminSession(req)
 }
