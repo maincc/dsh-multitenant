@@ -1083,56 +1083,62 @@
             </button>
           </div>
           <div v-if="cwtLoading" class="loading">{{ $t('admin.loading') }}</div>
-          <table v-else>
-            <thead>
-              <tr>
-                <th>{{ $t('admin.colAddress') }}</th>
-                <th>{{ $t('admin.credColSubmitted') }}</th>
-                <th>{{ $t('admin.credColStatus') }}</th>
-                <th>{{ $t('admin.colOps') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-if="!cwtApps.length">
-                <td colspan="4">{{ $t('admin.credEmpty') }}</td>
-              </tr>
-              <tr v-for="app in cwtApps" :key="app._id">
-                <td>
-                  <span class="address addr-tip" :data-full="app.addressDisplay || app.address"
-                    >{{ (app.addressDisplay || app.address).slice(0, 10) }}...</span
-                  >
-                </td>
-                <td>{{ fmtTime(app.submittedAt) }}</td>
-                <td>
-                  <span
-                    class="badge"
-                    :class="
-                      app.status === 'pending'
-                        ? 'badge-warning'
-                        : app.status === 'approved'
-                          ? 'badge-success'
-                          : 'badge-info'
-                    "
-                    >{{ $t('admin.credStatus_' + app.status) }}</span
-                  >
-                  <span v-if="app.decidedAt" class="dsh-ver-unknown">{{
-                    fmtTime(app.decidedAt)
-                  }}</span>
-                </td>
-                <td>
-                  <div v-if="app.status === 'pending'" class="ops-cell">
-                    <button class="btn btn-success" :disabled="!!cwtBusy" @click="approveCwt(app)">
-                      {{ $t('admin.credApprove') }}
-                    </button>
-                    <button class="btn" :disabled="!!cwtBusy" @click="rejectCwt(app)">
-                      {{ $t('admin.credReject') }}
-                    </button>
-                  </div>
-                  <span v-else>-</span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <div v-else class="table-scroll">
+            <table class="cred-table">
+              <thead>
+                <tr>
+                  <th>{{ $t('admin.colAddress') }}</th>
+                  <th>{{ $t('admin.credColSubmitted') }}</th>
+                  <th>{{ $t('admin.credColStatus') }}</th>
+                  <th>{{ $t('admin.colOps') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-if="!cwtApps.length">
+                  <td colspan="4">{{ $t('admin.credEmpty') }}</td>
+                </tr>
+                <tr v-for="app in cwtApps" :key="app._id">
+                  <td>
+                    <span class="address addr-tip" :data-full="app.addressDisplay || app.address"
+                      >{{ (app.addressDisplay || app.address).slice(0, 10) }}...</span
+                    >
+                  </td>
+                  <td>{{ fmtTime(app.submittedAt) }}</td>
+                  <td>
+                    <span
+                      class="badge"
+                      :class="
+                        app.status === 'pending'
+                          ? 'badge-warning'
+                          : app.status === 'approved'
+                            ? 'badge-success'
+                            : 'badge-info'
+                      "
+                      >{{ $t('admin.credStatus_' + app.status) }}</span
+                    >
+                    <span v-if="app.decidedAt" class="dsh-ver-unknown">{{
+                      fmtTime(app.decidedAt)
+                    }}</span>
+                  </td>
+                  <td>
+                    <div v-if="app.status === 'pending'" class="ops-cell">
+                      <button
+                        class="btn btn-success"
+                        :disabled="!!cwtBusy"
+                        @click="approveCwt(app)"
+                      >
+                        {{ $t('admin.credApprove') }}
+                      </button>
+                      <button class="btn" :disabled="!!cwtBusy" @click="rejectCwt(app)">
+                        {{ $t('admin.credReject') }}
+                      </button>
+                    </div>
+                    <span v-else>-</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
           <div class="ops-cell" style="margin-top: 0.75rem">
             <button class="btn btn-small" :disabled="cwtOffset === 0" @click="cwtPage(-1)">
               {{ $t('admin.credPrev') }}
@@ -1188,58 +1194,62 @@
             </button>
           </div>
           <div v-if="credLoading" class="loading">{{ $t('admin.loading') }}</div>
-          <table v-else>
-            <thead>
-              <tr>
-                <th>{{ $t('admin.colAddress') }}</th>
-                <th>{{ $t('admin.ledgerColKind') }}</th>
-                <th>{{ $t('admin.ledgerColState') }}</th>
-                <th>{{ $t('admin.ledgerColSource') }}</th>
-                <th>{{ $t('admin.ledgerColIssued') }}</th>
-                <th>{{ $t('admin.ledgerColVc') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-if="!credRows.length">
-                <td colspan="6">{{ $t('admin.ledgerEmpty') }}</td>
-              </tr>
-              <tr v-for="c in credRows" :key="c.address">
-                <td>
-                  <span class="address addr-tip" :data-full="c.addressDisplay || c.address"
-                    >{{ (c.addressDisplay || c.address).slice(0, 10) }}...</span
-                  >
-                </td>
-                <td>
-                  <span class="badge" :class="c.kind === 'cwt' ? 'badge-success' : 'badge-info'">{{
-                    $t('admin.ledgerCard_' + c.kind)
-                  }}</span>
-                </td>
-                <td>
-                  <span
-                    class="badge"
-                    :class="c.state === 'claimed' ? 'badge-success' : 'badge-warning'"
-                    >{{ $t('admin.ledgerState_' + c.state) }}</span
-                  >
-                </td>
-                <td>{{ $t('admin.ledgerSrc_' + c.source) }}</td>
-                <td>
-                  {{ fmtTime(c.issuedAt) }}
-                  <span v-if="c.claimedAt" class="dsh-ver-unknown"
-                    >{{ $t('admin.ledgerClaimedAt') }} {{ fmtTime(c.claimedAt) }}</span
-                  >
-                  <span v-if="c.expiresAt" class="dsh-ver-unknown"
-                    >{{ $t('admin.ledgerExpiresAt') }} {{ fmtTime(c.expiresAt) }}</span
-                  >
-                </td>
-                <td>
-                  <span v-if="c.vcId" class="addr-tip" :data-full="c.vcId">{{
-                    '#' + (c.vcId.split('#')[1] || c.vcId)
-                  }}</span>
-                  <span v-else>-</span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <div v-else class="table-scroll">
+            <table class="cred-table">
+              <thead>
+                <tr>
+                  <th>{{ $t('admin.colAddress') }}</th>
+                  <th>{{ $t('admin.ledgerColKind') }}</th>
+                  <th>{{ $t('admin.ledgerColState') }}</th>
+                  <th>{{ $t('admin.ledgerColSource') }}</th>
+                  <th>{{ $t('admin.ledgerColIssued') }}</th>
+                  <th>{{ $t('admin.ledgerColVc') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-if="!credRows.length">
+                  <td colspan="6">{{ $t('admin.ledgerEmpty') }}</td>
+                </tr>
+                <tr v-for="c in credRows" :key="c.address">
+                  <td>
+                    <span class="address addr-tip" :data-full="c.addressDisplay || c.address"
+                      >{{ (c.addressDisplay || c.address).slice(0, 10) }}...</span
+                    >
+                  </td>
+                  <td>
+                    <span
+                      class="badge"
+                      :class="c.kind === 'cwt' ? 'badge-success' : 'badge-info'"
+                      >{{ $t('admin.ledgerCard_' + c.kind) }}</span
+                    >
+                  </td>
+                  <td>
+                    <span
+                      class="badge"
+                      :class="c.state === 'claimed' ? 'badge-success' : 'badge-warning'"
+                      >{{ $t('admin.ledgerState_' + c.state) }}</span
+                    >
+                  </td>
+                  <td>{{ $t('admin.ledgerSrc_' + c.source) }}</td>
+                  <td>
+                    {{ fmtTime(c.issuedAt) }}
+                    <span v-if="c.claimedAt" class="dsh-ver-unknown"
+                      >{{ $t('admin.ledgerClaimedAt') }} {{ fmtTime(c.claimedAt) }}</span
+                    >
+                    <span v-if="c.expiresAt" class="dsh-ver-unknown"
+                      >{{ $t('admin.ledgerExpiresAt') }} {{ fmtTime(c.expiresAt) }}</span
+                    >
+                  </td>
+                  <td>
+                    <span v-if="c.vcId" class="addr-tip" :data-full="c.vcId">{{
+                      '#' + (c.vcId.split('#')[1] || c.vcId)
+                    }}</span>
+                    <span v-else>-</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
           <div class="ops-cell" style="margin-top: 0.75rem">
             <button class="btn btn-small" :disabled="credOffset === 0" @click="credPage(-1)">
               {{ $t('admin.credPrev') }}
@@ -1278,35 +1288,37 @@
             </button>
           </div>
           <div v-if="rosterLoading" class="loading">{{ $t('admin.loading') }}</div>
-          <table v-else>
-            <thead>
-              <tr>
-                <th>{{ $t('admin.colAddress') }}</th>
-                <th>{{ $t('admin.colOps') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-if="!rosterAddrs.length">
-                <td colspan="2">{{ $t('admin.rosterEmpty') }}</td>
-              </tr>
-              <tr v-for="a in rosterAddrs" :key="a">
-                <td>
-                  <span class="address addr-tip" :data-full="a"
-                    >{{ a.slice(0, 12) }}…{{ a.slice(-4) }}</span
-                  >
-                </td>
-                <td>
-                  <button
-                    class="btn btn-small btn-danger"
-                    :disabled="rosterBusy"
-                    @click="demoteAdmin(a)"
-                  >
-                    {{ $t('admin.rosterDemote') }}
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <div v-else class="table-scroll">
+            <table class="cred-table">
+              <thead>
+                <tr>
+                  <th>{{ $t('admin.colAddress') }}</th>
+                  <th>{{ $t('admin.colOps') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-if="!rosterAddrs.length">
+                  <td colspan="2">{{ $t('admin.rosterEmpty') }}</td>
+                </tr>
+                <tr v-for="a in rosterAddrs" :key="a">
+                  <td>
+                    <span class="address addr-tip" :data-full="a"
+                      >{{ a.slice(0, 12) }}…{{ a.slice(-4) }}</span
+                    >
+                  </td>
+                  <td>
+                    <button
+                      class="btn btn-small btn-danger"
+                      :disabled="rosterBusy"
+                      @click="demoteAdmin(a)"
+                    >
+                      {{ $t('admin.rosterDemote') }}
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
           <div v-if="rosterHistory.length" style="margin-top: 0.75rem">
             <p class="hint">{{ $t('admin.rosterHistoryTitle') }}</p>
             <div v-for="(h, i) in rosterHistory.slice(0, 8)" :key="i" class="hint">
@@ -4056,6 +4068,17 @@ table {
   gap: 0.5rem;
   flex-wrap: wrap;
   margin-bottom: 0.75rem;
+}
+
+/* 凭证审批三表（审批/签发台账/任免名册）数据行恒单行（2026-10-23 用户反馈
+   "表格里数据换行"）：列内容不被压缩折行，放不下时容器横向滚动——宽度换给
+   内嵌态的窄内容区也不破版 */
+.table-scroll {
+  overflow-x: auto;
+}
+.cred-table th,
+.cred-table td {
+  white-space: nowrap;
 }
 
 /* 台账搜索：大号胶囊 + 放大镜 + 聚焦光晕 */
