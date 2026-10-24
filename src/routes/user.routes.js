@@ -424,8 +424,11 @@ export async function handleUserRoutes(req, res, path) {
       res.end(JSON.stringify(userInfo))
     } catch (err) {
       if (err instanceof NotFoundError) {
-        res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ error: err.message, code: err.code }))
+        // 未建档=新用户正常初始态（v1.5 登录/建档分离）：回 200+exists:false 同形载荷
+        // （与前端空态合成一致），不再用 404——浏览器把非 2xx 记成红色网络日志，
+        // 每个新用户进中心都"报错"一回，纯噪音还诱发误判。code 留作机器可读标记。
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ address, exists: false, status: 'none', code: 'USER_NOT_FOUND' }))
       } else {
         handleError(err, res)
       }

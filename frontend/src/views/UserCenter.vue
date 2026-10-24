@@ -2140,6 +2140,15 @@ const fetchUserInfo = async (address) => {
         ', status=' +
         res.data?.status,
     )
+    // 未建档新用户空态：后端以 200+USER_NOT_FOUND 表达（根治浏览器网络层红字
+    // 404；catch 里的 404 分支保留兼容旧服务端）。空态不发 usage/config 请求；
+    // 装配必须先于 userInfo 落位——领取弹窗由装配触发，若后于容器管理块的
+    // 档案加载完成，会被其"无档案→弹连接引导"时序顶掉（新用户首见弹窗不能丢）。
+    if (res.data && res.data.code === 'USER_NOT_FOUND') {
+      await loadCredentialStatus(address)
+      userInfo.value = { address, status: 'none', exists: false }
+      return
+    }
     userInfo.value = res.data
     fetchUsage(address)
     fetchConfigStatus()
