@@ -150,7 +150,14 @@ export async function handleUserRoutes(req, res, path) {
       return true
     }
     try {
-      const st = await credentialService.enter(addr)
+      // canonical=插件原始大小写地址（前端凭证区随询带上）：档案优先发现的拼法线索，
+      // 服务端校验小写归一确为本会话地址后才用（credential.service.enter 内），
+      // 台账丢行时也能直达用户档案——不传/乱传只降级为拼法候选缺失，无害
+      const st = await credentialService.enter(addr, {
+        canonical: new URL(req.url, `http://${req.headers.host || 'local'}`).searchParams.get(
+          'canonical',
+        ),
+      })
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify({ ok: true, address: addr, ...st }))
     } catch (err) {

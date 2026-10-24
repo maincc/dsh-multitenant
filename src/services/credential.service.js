@@ -1296,11 +1296,135 @@ class CredentialService {
    * 进入用户中心（核心钩子）：已有凭证→原样返回；无→分配。
    * 返回 { credential, popup, legacy }；popup=true 表示有 assigned 未领取→前端弹窗。
    */
-  async enter(address) {
+  /**
+   * 档案发现引擎（2026-10-23 用户定式"先跑档案，出错跑台账"落到发现级）：
+   * 按拼法候选读档案 → 筛平台真签卡（isDshCard+subject 同址+SDK 验真+未过期）。
+   * 返回 {cards, canonical}（命中）或 null（读不到/无卡/抖动——一律不猜测）：
+   *  · probe-fail（网络抖动）立即 null：绝不把"读不到"当"没有"（绝不上锁铁律）；
+   *  · absent（该拼法无档案文件）试下一个拼法：台账 profileDid（行在手最可信）
+   *    → 会话传来的插件原始大小写 → 小写地址（同名档案只有一种拼法存在）。
+   * claimed 行的 missing 降级不在此做——仍由 onChainVerify 既有链路裁定，
+   * 本引擎只负责"档案有真卡"的正向发现。
+   */
+  async _archiveLiveCard(addrLower, spellings) {
+    if (!this.enabled) return null
+    const tried = []
+    for (const s of spellings) {
+      if (!s || tried.includes(s)) continue
+      tried.push(s)
+      const read = await relayRead(s)
+      if (read.status === 'probe-fail') return null
+      if (read.status !== 'ok' || !read.doc) continue
+      const cards = (read.doc.credentials || []).map((c) => c.credential || c)
+      const ours = []
+      for (const c of cards) {
+        if (!isDshCard(c) || cardSubject(c) !== `did:swtc:${addrLower}`) continue
+        if (!(await isPlatformMinted(c, addrLower))) continue
+        if (c.expirationDate && new Date(c.expirationDate).getTime() <= Date.now()) continue
+        ours.push(c)
+      }
+      if (ours.length) return { cards: ours, canonical: s }
+      // 档案确凿在读但无有效平台卡：同一地址不存在"另一种拼法有卡"的前提，停试
+      break
+    }
+    return null
+  }
+
+  async enter(address, opts = {}) {
     const addrLower = normalizeAddress(address)
     const b = backend()
     let cred = await b.get(addrLower)
-    if (!cred) {
+    // ══ 第一步·档案优先发现（2026-10-23 用户拍板级联完全形态）══
+    // 无论台账有没有行，先跑档案：命中平台真签卡 → 台账对账恢复为 claimed——
+    // 这是【记录恢复】不是凭空增权（卡本就是平台已签发的事实），DB 丢行/误删
+    // 不再把 CWT/admin 用户降成"普通新用户"。miss/探测失败 → 原样落下方台账
+    // 级联（legacy 直发/自动签发/名册补签/到期续发/活验），绝不上锁不变。
+    const hint = String(opts.canonical || '').trim()
+    // canonical 提示=前端插件原始大小写：必须先证小写归一后确是本会话地址，
+    // 否则弃用（拼法候选只剩行 profileDid/小写）；字符集锁 base58 形态防路径注入
+    const canonicalHint =
+      /^[a-zA-Z0-9]{20,64}$/.test(hint) && normalizeAddress(hint) === addrLower ? hint : null
+    const spellings = [
+      cred?.profileDid ? String(cred.profileDid).replace(/^did:swtc:/i, '') : null,
+      canonicalHint,
+      addrLower,
+    ]
+    // 发现条件（读压纪律）：claimed 行/无行/带 canonical 才跑档案。
+    // assigned 且无 canonical 提示=从没有过领取事实，档案必无平台卡，不劳 relay；
+    // 官网删卡后又手动恢复卡的翻案场景由 canonical 支路照常覆盖。
+    const runDiscovery =
+      this.enabled &&
+      spellings.some(Boolean) &&
+      (!!canonicalHint || !cred || cred.state === 'claimed')
+    let discovery = null
+    if (runDiscovery) {
+      const raw = Number(cfg().enterVerifyBudgetMs)
+      const budgetMs = Number.isFinite(raw) && raw > 0 ? raw : 5000
+      const TIMEOUT = Symbol('discover-timeout')
+      const race = await Promise.race([
+        this._archiveLiveCard(addrLower, spellings).catch(() => null),
+        new Promise((r) => setTimeout(() => r(TIMEOUT), budgetMs)),
+      ])
+      if (race !== TIMEOUT && race && Array.isArray(race.cards) && race.cards.length)
+        discovery = race
+    }
+    if (discovery) {
+      // 多卡择新（续发换卡间隙档案可能短暂并存两代）；台账 vcId 能对上的优先
+      const card =
+        discovery.cards.find((c) => cred && c.id === cred.vcId) ||
+        discovery.cards
+          .slice()
+          .sort((a, x) =>
+            String(x.issuanceDate || '').localeCompare(String(a.issuanceDate || '')),
+          )[0]
+      const frag = String(card.id || '').split('#')[1] || ''
+      const kind =
+        /^dsh-(cwt|admin)-/.test(frag) || (card.type || []).includes(VC_TYPES.cwt)
+          ? KINDS.CWT
+          : KINDS.DID
+      const roles = Array.isArray(card.credentialSubject?.roles)
+        ? card.credentialSubject.roles.slice()
+        : []
+      if (/^dsh-admin-/.test(frag) && !roles.includes('admin')) roles.push('admin')
+      const profileDid = `did:swtc:${discovery.canonical}`
+      const needRow =
+        !cred ||
+        cred.state !== 'claimed' ||
+        cred.vcId !== card.id ||
+        cred.kind !== kind ||
+        JSON.stringify(cred.roles || []) !== JSON.stringify(roles) ||
+        cred.profileDid !== profileDid
+      if (needRow) {
+        await b.putRow(addrLower, {
+          kind,
+          state: 'claimed',
+          source: cred?.source || 'archive-revive',
+          roles,
+          vcId: card.id,
+          issuedAt: cred?.issuedAt || card.issuanceDate || new Date().toISOString(),
+          claimedAt:
+            cred && cred.state === 'claimed' && cred.claimedAt
+              ? cred.claimedAt
+              : new Date().toISOString(),
+          expiresAt: card.expirationDate || null,
+          profileDid,
+          onChain: { status: 'ok', at: new Date().toISOString() },
+        })
+        cred = await b.get(addrLower)
+        this._markValid(addrLower)
+        if (kind === KINDS.CWT) this._markExempt(addrLower)
+        if (roles.includes('admin')) this._markAdmin(addrLower)
+        console.log(
+          `[credential] 档案优先命中：台账${cred?.source === 'archive-revive' ? '恢复' : '对齐'}为 claimed(${kind}${roles.includes('admin') ? '+admin' : ''}) ${addrLower.slice(0, 10)}…`,
+        )
+      } else {
+        // 行已对齐：仅盖 onChain=ok 保鲜戳——本轮后面那段活验由此走 60s
+        // 节流捷径，同一次 enter 不再二读同一份档案文件
+        await b.patch(addrLower, { onChain: { status: 'ok', at: new Date().toISOString() } })
+      }
+      // 命中即档案结论"已领取"：跳过 legacy/自动分配（有真卡者非新用户）
+      cred = (await b.get(addrLower)) || cred
+    } else if (!cred) {
       const lg = legacyHit(addrLower)
       if (lg) {
         await b.grantCwt(addrLower, this._cwtDoc(addrLower, 'legacy', lg))

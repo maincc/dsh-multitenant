@@ -1083,7 +1083,9 @@ const resignSessionTo = (addr) => {
       const st = await loginOnly(addr)
       if (st !== 'ok') return null
       try {
-        const r = await axios.get('/api/user/credential-status', { params: { address: addr } })
+        const r = await axios.get('/api/user/credential-status', {
+          params: { address: addr, canonical: pluginCaseAddr.value || undefined },
+        })
         const d = r.data || {}
         return String(d.address || '').toLowerCase() === String(addr).toLowerCase() ? d : null
       } catch {
@@ -1106,7 +1108,11 @@ const loadCredentialStatus = async (address) => {
   // 异常只留 console 痕，绝不动 credInfo/credErr。
   let data
   try {
-    const res = await axios.get('/api/user/credential-status', { params: { address } })
+    const res = await axios.get('/api/user/credential-status', {
+      // canonical=钱包原始大小写：给服务端"档案优先发现"当拼法线索（台账丢行也能
+      // 直达档案真卡）；服务端验归一同址才采信，缺省不影响既有链路
+      params: { address, canonical: pluginCaseAddr.value || undefined },
+    })
     data = res.data || {}
   } catch (err) {
     credInfo.value = null

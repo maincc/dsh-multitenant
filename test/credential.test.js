@@ -614,6 +614,154 @@ describe('CWT 申请与审批（互斥签发）', () => {
   })
 })
 
+describe('档案优先发现级联（enter 完全形态，2026-10-23 用户拍板"先跑档案 出错跑台账"）', () => {
+  // 档案文档 {id, credentials:[…]}：relayRead 缺 id 判 absent——与活验套件同形
+  const profileOf = (cards) => ({ id: `did:swtc:${CANON}`, credentials: cards })
+  const netDown = () => fetchStub.mockRejectedValue(new Error('net down'))
+
+  it('台账无行+档案有平台 admin 卡 → 恢复 claimed（豁免+热闸+admin 角色，档案判权）', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    credentialService._provisioned = true // 线上同构：启动对账已完成，isAdmSync 走热快照
+    const card = await _mintVCForTest('cwt', ADDR, ['admin'], `did:swtc:${CANON}`)
+    okRelay(profileOf([card]))
+    const st = await credentialService.enter(ADDR, { canonical: CANON })
+    expect(st.verifiedBy).toBe('archive')
+    expect(st.popup).toBe(false)
+    expect(st.role).toBe('admin')
+    expect(st.credential.state).toBe('claimed')
+    expect(st.credential.kind).toBe('cwt')
+    expect(st.credential.roles).toEqual(['admin'])
+    expect(st.credential.vcId).toBe(card.id)
+    expect(st.credential.source).toBe('archive-revive') // 签发来源如实：档案恢复非平台补签
+    expect(st.credential.profileDid).toBe(`did:swtc:${CANON}`)
+    expect(credentialService.isExemptSync(ADDR)).toBe(true)
+    expect(credentialService.isAdmSync(ADDR)).toBe(true)
+  })
+
+  it('assigned 行+档案有真 cwt 卡 → 对账翻 claimed，source 不动，豁免即补', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    netDown()
+    await credentialService.enter(ADDR) // 首进：档案不通→台账自动发 assigned
+    const card = await _mintVCForTest('cwt', ADDR, [], `did:swtc:${CANON}`)
+    okRelay(profileOf([card]))
+    const st = await credentialService.enter(ADDR, { canonical: CANON })
+    expect(st.credential.state).toBe('claimed')
+    expect(st.credential.kind).toBe('cwt')
+    expect(st.credential.source).toBe('auto') // 恢复=记录对齐，不改写签发来源
+    expect(st.popup).toBe(false)
+    expect(credentialService.isExemptSync(ADDR)).toBe(true)
+  })
+
+  it('claimed 行+档案确凿无卡 → 既有降级对账链原样（assigned+弹窗重领+豁免即摘）', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    await b.putRow(ADDR, {
+      kind: 'cwt',
+      state: 'claimed',
+      source: 'approval',
+      roles: [],
+      vcId: `did:swtc:${CANON}#dsh-cwt-deleted`,
+      claimedAt: '2026-01-01T00:00:00.000Z',
+      profileDid: `did:swtc:${CANON}`,
+      expiresAt: new Date(Date.now() + 864e5).toISOString(),
+      onChain: { status: 'ok', at: '2025-01-01T00:00:00.000Z' },
+    })
+    credentialService._markExempt(ADDR) // 前置：运行时豁免在集
+    okRelay(profileOf([])) // 档案确凿可读、卡已被持有人删除
+    const st = await credentialService.enter(ADDR, { canonical: CANON })
+    expect(st.verifiedBy).toBe('archive')
+    expect(st.credential.state).toBe('assigned')
+    expect(st.popup).toBe(true)
+    expect(credentialService.isExemptSync(ADDR)).toBe(false)
+  })
+
+  it('档案不通（网络抖动）→ 台账级联照走：新用户照常自动签发，绝不上锁', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    netDown()
+    const st = await credentialService.enter(ADDR, { canonical: CANON })
+    expect(st.credential.state).toBe('assigned')
+    expect(st.credential.kind).toBe('did')
+    expect(st.popup).toBe(true)
+    expect(st.verifiedBy).toBe('ledger')
+  })
+
+  it('过期卡≠已领取事实：发现层不认', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    const card = await _mintVCForTest('cwt', ADDR, [], `did:swtc:${CANON}`)
+    card.expirationDate = new Date(Date.now() - 60000).toISOString()
+    okRelay(profileOf([card]))
+    const st = await credentialService.enter(ADDR, { canonical: CANON })
+    expect(st.credential.state).toBe('assigned')
+    expect(st.credential.kind).toBe('did')
+    expect(st.popup).toBe(true)
+  })
+
+  it('他人卡（subject 不同址）与非生态形卡（id 无 dsh- 起头）都不算发现命中', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    // 手摆真·他人卡（mintVC 会把 holderDid 归一校验成同址，伪造不了别人）
+    const alien = {
+      '@context': ['https://www.w3.org/2018/credentials/v1'],
+      id: 'did:swtc:jotheruser00000000000000000000#dsh-cwt-2026-did:swtc:jplatform-0000',
+      type: ['VerifiableCredential', 'DshCwtCredential'],
+      issuer: 'did:swtc:jplatform',
+      credentialSubject: { id: 'did:swtc:jotheruser00000000000000000000' },
+      issuanceDate: new Date().toISOString(),
+      expirationDate: new Date(Date.now() + 864e5).toISOString(),
+      proof: { type: 'EcdsaSecp256k1Signature2019', jws: 'a.b.c' },
+    }
+    const noSlug = {
+      '@context': ['https://www.w3.org/2018/credentials/v1'],
+      id: `did:swtc:${ADDR}#random-legacy-1`,
+      type: ['VerifiableCredential', 'DshMemberCredential'],
+      issuer: 'did:swtc:jplatform',
+      credentialSubject: { id: `did:swtc:${ADDR}` },
+      expirationDate: new Date(Date.now() + 864e5).toISOString(),
+      proof: { type: 'EcdsaSecp256k1Signature2019', jws: 'a.b.c' },
+    }
+    okRelay(profileOf([alien, noSlug]))
+    const st = await credentialService.enter(ADDR, { canonical: CANON })
+    expect(st.credential.state).toBe('assigned') // 两都不认：视同"档案无卡"落台账
+    expect(st.popup).toBe(true)
+  })
+
+  it('canonical 传路径注入形态被归一校验弃用；实际读的文件名不含 "../"', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    okRelay(profileOf([]))
+    const st = await credentialService.enter(ADDR, { canonical: '../../etc/passwd' })
+    expect(st.credential.state).toBe('assigned')
+    const bodies = fetchStub.mock.calls.map((c) => String((c[1] && c[1].body) || ''))
+    expect(bodies.length).toBeGreaterThan(0)
+    expect(bodies.every((s) => !s.includes('..'))).toBe(true)
+  })
+
+  it('读压纪律：assigned 行无 canonical 完全不劳 relay（新用户轮询零档案读）', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    netDown()
+    await credentialService.enter(ADDR) // 首进发 assigned（无行态的发现尝试一次）
+    fetchStub.mockClear()
+    fetchStub.mockRejectedValue(new Error('must-not-be-called'))
+    const st = await credentialService.enter(ADDR)
+    expect(st.credential.state).toBe('assigned')
+    expect(st.verifiedBy).toBe('ledger')
+    expect(fetchStub).not.toHaveBeenCalled()
+  })
+})
+
 describe('链上验真（onChainVerify）', () => {
   const claimed = () => {
     const b = fakeBackend()
