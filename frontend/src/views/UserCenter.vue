@@ -629,6 +629,8 @@
               <button
                 v-if="userInfo.status !== 'running'"
                 class="btn btn-small btn-success"
+                :disabled="containerBooting"
+                :title="containerBooting ? $t('user.tabBooting') : ''"
                 @click="restartContainer"
               >
                 {{ $t('user.startContainer') }}
@@ -2308,13 +2310,20 @@ const fetchUserInfo = async (address) => {
 // 时按归属闸照常请求一次（闸口语义不放松）。每地址一次性，轮询/手动刷新不重复弹。
 let autoBootFor = ''
 const containerBooting = ref(false)
+// 弹窗收尾约定（2026-10-23 用户拍板）：确定=跳「容器管理」页看结果/手动重试，
+// 取消=仅关闭。后台启动期间 restartContainer 入口同样置灰+防御性直返
+const bootNotice = (msg) => {
+  askConfirm({ message: msg }).then((ok) => {
+    if (ok) activeTab.value = 'container'
+  })
+}
 const autoBootContainer = async (data) => {
   const address = data?.address || currentAddress()
   if (!address || autoBootFor === address) return
   autoBootFor = address
   const st = data?.status
   if (st === 'running') {
-    askConfirm({ message: t('user.bootAlreadyRunning') })
+    bootNotice(t('user.bootAlreadyRunning'))
     return
   }
   // 只拉"登过账的停机户"：stopped（纯 session 静默启动）与 destroyed（需一次
@@ -2330,22 +2339,22 @@ const autoBootContainer = async (data) => {
       const r = await ensureContainer(address, { quiet: true })
       if (r === 'waiting') return // 排队页由状态机挂出——页面本身即告知
       if (r === 'usage-limit') {
-        askConfirm({ message: lastConnect202Message || t('user.bootUsageLimit') })
+        bootNotice(lastConnect202Message || t('user.bootUsageLimit'))
         return
       }
     }
     await fetchUserInfo(address)
-    askConfirm({ message: t('user.bootDoneNotice') })
+    bootNotice(t('user.bootDoneNotice'))
   } catch (err) {
-    askConfirm({
-      message: t('user.bootFailNotice', { err: err?.message || String(err) }),
-    })
+    bootNotice(t('user.bootFailNotice', { err: err?.message || String(err) }))
   } finally {
     containerBooting.value = false
   }
 }
 
 const restartContainer = async () => {
+  // 后台自动拉起进行中：按钮已置灰，这里再挡一层（快捷键/其他路径直触）
+  if (containerBooting.value) return
   const address = userInfo.value.address || currentAddress()
   if (!address) {
     toast(t('user.errConnectFirst'))
