@@ -1137,7 +1137,9 @@ const loadCredentialStatus = async (address) => {
   // 用户拍板恢复方式：**检测到账户切换即自动发起重签**（钱包弹一次，零操作自愈）；
   // 拒签/重签未完成才落到被动引导态（"重新登录并重载凭证"按钮出口）。
   if (data.address && String(data.address).toLowerCase() !== String(address).toLowerCase()) {
-    console.log('[flow] F9 会话主人与当前账户不一致，自动重签发起')
+    console.log(
+      `[flow] F9 会话主人=${String(data.address).slice(0, 10)}…（上次签名登录的钱包）≠ 当前账户=${String(address).slice(0, 10)}…，自动重签发起（钱包只弹一次）`,
+    )
     const fresh = await resignSessionTo(address)
     if (fresh) {
       data = fresh

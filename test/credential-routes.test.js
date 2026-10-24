@@ -198,6 +198,23 @@ describe('凭证六端点 × 会话类型（HTTP 层契约）', () => {
         expiresAt: Date.now() + 3600e3,
       }
     })
+    // ★F9 循环根因钉位（2026-10-23）：admin_session + user_session 并存时凭证端点
+    // 必须认 user_session（插件当前登录钱包）——旧实现 getRequestAddress admin 抢先，
+    // 自动重签只换 user_session 永远换不掉残留 admin cookie → "会话主人≠当前账户"死循环
+    it('双会话并存：user_session 优先（admin 旧 cookie 不抢占凭证身份）', async () => {
+      for (const ep of ENDPOINTS) {
+        const req = makeReq({
+          method: ep.method,
+          url: ep.path,
+          cookie: `admin_session=admintoken-cred-routes; user_session=${userToken}`,
+          body: ep.body,
+        })
+        const res = makeRes()
+        await handleUserRoutes(req, res, ep.path)
+        expect(res.statusCode).toBe(200)
+        expect(credentialService[ep.svc].mock.calls[0][0]).toBe(USER_ADDR)
+      }
+    })
     for (const ep of ENDPOINTS) {
       it(`${ep.path} 可达`, async () => {
         const req = makeReq({
