@@ -1093,8 +1093,11 @@ const loadCredentialStatus = async (address) => {
     credInfo.value = data.credential || null
     // v1.5 判权面：role='admin' 才装配「系统管理」tab（服务端活验证凭证属实）
     role.value = data.role === 'admin' ? 'admin' : 'user'
-    if (role.value === 'admin' && !initialTabApplied.value) {
-      initialTabApplied.value = true
+    // （2026-10-23 修重大 bug：initialTabApplied 声明是裸布尔（:918），这里曾按
+    // ref 用 .value——赋值即 TypeError，管理员每次装配都在此 throw，深链页签/
+    // 续发提示/申请单态全被 catch 吞掉。恢复纯布尔用法，语义不变=仅首次生效）
+    if (role.value === 'admin' && !initialTabApplied) {
+      initialTabApplied = true
       // 深链落地：?tab=adm:cred 直达子页；旧入口 ?tab=system（/admin 重定向）落管理总览
       const q = String(route.query.tab || '')
       if (q.startsWith('adm:')) activeTab.value = q
@@ -2142,7 +2145,13 @@ const fetchUserInfo = async (address) => {
     fetchConfigStatus()
     loadCredentialStatus(address)
   } catch (err) {
-    console.error('获取用户信息失败:', err)
+    // 403/404 是已知良性态（未连接/未建档空态），不再 error 级刷屏——
+    // 真异常仍走 error（下面分支处理不到的情况）
+    const benign = err.response?.status === 404 || err.response?.status === 403
+    ;(benign ? console.info : console.error)(
+      benign ? '[UserCenter] 用户信息空态/待解锁:' : '获取用户信息失败:',
+      err,
+    )
 
     // 如果是 400 错误，说明地址无效，清除 localStorage
     if (err.response?.status === 400) {
