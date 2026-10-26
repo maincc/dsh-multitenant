@@ -32,13 +32,27 @@
     "checkIntervalMs": 60000,
     "comment": "每日使用时限：enabled 开关；dailyMinutes 每个地址每天累计使用上限（分钟），容器运行即计时，超过后优雅停止，次日重置；已通过 CWT 验证的用户豁免；checkIntervalMs 超时检查间隔（毫秒）"
   },
-  "cwt": {
+  "credential": {
     "enabled": true,
-    "ttlMs": 300000,
-    "allowCwtEnt": false,
-    "maxPending": 500,
-    "maxTokenBytes": 8192,
-    "comment": "CWT 申请-审批-出示：enabled 开关；ttlMs 出示 token 全局时效（毫秒，单向：0 ≤ now−issued ≤ ttl，拒绝未来签发；用于申请/出示防重放）；审批时只复核签名、不校验时效（人工审批延迟不应失败）；allowCwtEnt: 预留字段——当前代码无任何实现，改它不会有效果（CWT_ENT 组形态尚未开发）；maxPending: 待审批申请总条数上限（默认 500），超限时申请接口返回 503——/api/user/cwt/apply 是未认证端点且 token 自签，没有这道硬边界可被刷爆磁盘/灌满审批队列；maxTokenBytes: 单个 token 字节上限（默认 8192）"
+    "platformDid": "",
+    "keyFile": "data/keys/issuer.key",
+    "profileFile": "data/keys/issuer-profile.json",
+    "contextFile": "src/assets/secp256k1-2019-v1.json",
+    "relayBaseURL": "https://ipfsserver.ccda.ooo",
+    "apiBase": "/v0/api/ipfs",
+    "chain": "swtc",
+    "enterVerifyBudgetMs": 5000,
+    "profileProbeTimeoutMs": 8000,
+    "profileProbeCacheMs": 900000,
+    "platformName": "DSH 平台",
+    "didGenUrl": "https://app.ccda.ooo/#/",
+    "legacyFile": "data/legacy-cwt.json",
+    "exemptCacheMs": 60000,
+    "comment": "v1.4 凭证体系（docs/credential-v1.4.md）：一地址一条互斥凭证（did 普通/cwt 解限），档案是判权权威。★platformDid 何时才需要配：仅'issuer.key 在场 + issuer-profile.json 缺失 + 官网已有该档案'（接管/灾备重建）——声明后首启自动从官网读档落 profile 镜像（只读线上、零写线上；线上档案 id 与声明不符=宁拒不写）；留空=不自取。profile 在场不需要它；全新平台也不需要（跑 scripts/shelf-open.mjs 注册，key+档案+镜像一步落齐，见 README §5 决策表）。keyFile/profileFile 属部署者提供区：git/rsync 永不携带（data/keys/ 只进不出），缺钥不拦启动、首次签发才报错；contextFile 是公开固定 schema，已迁仓随代码走。enterVerifyBudgetMs：判权顺序预算（'先跑档案，出错跑台账'）——enter 等同步等档案活验结论的上限，超预算落台账结论、后台核验照跑，不拖登录。profileProbeTimeoutMs 8s 是实测校准：官网 resolve 冷启动 2.7s 级常态，3s 会误判'没档案'。platformName：官网删卡弹窗展示的签发方名（mintVC 经 issuerObject 槽注入 {id,name}）。legacyFile：旧版 CWT 白名单（命中=直接签 CWT 解限卡）。CWT 申请防洪参数（maxPending/maxTokenBytes）是实现内实例字段、非配置项（docs/fixlog.md 第 36 条）"
+  },
+  "accessGate": {
+    "mode": "credential",
+    "comment": "准入闸（凭证即准入，V3.1 定式）：建容器与网关导航须持台账有效凭证。credential=did|cwt 任一有效即进（默认；admin 天然在内）；license=仅 cwt/admin 可进（did 拒，运营备用方向）；off=全放行（灰度逃生门）"
   },
   "skills": {
     "autoInvoke": false,
@@ -66,33 +80,6 @@
       "cpus": "4.0",
       "pids": 1024
     }
-  },
-  "issuer": {
-    "keyPath": "data/keys/issuer.key",
-    "vcTtlDays": 365,
-    "legacyKids": [],
-    "comment": "DID/VC 签发侧（did-vc-runbook）：keyPath 部署者提供（程序零生成钥），文件缺失=发卡哑火、登录等一切照常；legacyKids 换钥后旧 kid 只验不签"
-  },
-  "shelf": {
-    "rpcBaseURL": "https://ipfsserver.ccda.ooo",
-    "chain": "swtc",
-    "comment": "凭证货架所在 wodecards 实例——实例选择=公示范围选择：prod 写入即 app.ccda.ooo 查询页全网可查；联调/灰度改 https://wodecards.wh.jccdex.cn:8550（dev）。chain 一经使用不可改（ADR-18）"
-  },
-  "vc": {
-    "tiers": {
-      "1": {
-        "dailyMinutes": 120
-      },
-      "2": {
-        "dailyMinutes": null
-      }
-    },
-    "upgradePolicy": "hybrid",
-    "shelfSync": true,
-    "namespace": "dsh",
-    "presentMode": "registry",
-    "reconcileIntervalMs": 900000,
-    "comment": "发卡档位→服务参数查表（区别于上方 tiers=容器资源规格）；upgradePolicy: l1-auto | manual | hybrid（升级闸门，ADR-16）；shelfSync: true=发卡同步上平台货架做对外公示（false=纯账本+用户持有）；presentMode: registry|off（出示信道口）；reconcileIntervalMs: 货架对账周期（0=关）"
   },
   "docker": {
     "image": "dsh-multitenant:latest",
