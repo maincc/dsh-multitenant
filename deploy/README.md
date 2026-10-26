@@ -1,5 +1,7 @@
 # 部署工具集（deploy/）
 
+> 平台形态选型（接管/平行测试）、`data/keys/` 签发钥红线、跨平台共存验收回归点：见仓库根 **`DEPLOY.md`**。
+
 把 dsh-multitenant 一键部署到 Linux 服务器（要求：Docker；若在服务器上构建前端还需 Node ≥ 18）。
 
 ## 快速开始（3 步）

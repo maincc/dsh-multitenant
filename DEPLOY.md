@@ -1,85 +1,57 @@
-# 部署手册（当前架构：档案优先级联 + 跨平台共存，2026-10-23 定稿）
+# 部署增量指南（本轮架构变更 → 接现有 `deploy/` 脚本）
 
-## 0. 两种部署形态，先选对
+> **执行入口一律是 `deploy/` 既有脚本，本文不重复造流程。**
+> 完整上传/安装/更新/回滚步骤见 **`deploy/README.md`**（`rsync-upload.sh` → `install.sh` / `update.sh` → systemd）。
+> 本文只补三件既有 README 没覆盖的事：**平台形态选型、签发钥红线、本轮新架构的验收回归点**。
 
-| 形态                              | issuer.key                          | relay            | 说明                                                                                                                                             |
-| --------------------------------- | ----------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **A. 正式接管**                   | 复制现有平台 key                    | 官网 relay       | 用户档案里的卡被服务器台账"档案优先发现"自动恢复（含 CWT 豁免/admin 任命）。上线后**退役旧实例**，保持单写者                                     |
-| **B. 平行测试**（当前服务器属此） | **新生成一套**（不同 key=不同平台） | 可共用官网 relay | 2026-10-23 `isOurIssuedCard` 修复后，两平台卡在同一用户档案**互不摘除、互不误报**，放心共存。测试台账空库冷启动，用户照常走"自动签发→领取"全流程 |
-
-## 1. 前置条件
-
-- Node **22.x**（与开发一致），docker（租户容器运行时），**mongod 副本集**（会话镜像/台账事务前提）
-- 网络：入站服务端口（8090 或反代 443）；出站可达 `https://ipfsserver.ccda.ooo`（档案 relay）与 `jdid.cn`（DID 解析）
-- 服务器本地备好租户镜像：按 `data/dsh-image.json` 定义先 build/pull——**新版有"进入用户中心自动拉起容器"，上线瞬间会并发建容器，镜像没备好会一波全失败**
-
-## 2. 代码
+## 一键部署（复用现有脚本，回顾）
 
 ```bash
-git clone <repo> -b cly && cd <repo>
-npm ci
-cd frontend && npm ci && npm run build && cd ..   # dist 是构建产物，不在 git
-npm test                                          # 可选自检：862 用例
+# 服务器能连 GitHub：
+git push                                        # 本地推 cly 分支
+ssh root@<IP> "cd /srv/dsh-multitenant && sudo ./deploy/update.sh"   # pull+按需构建+重启
+# 服务器连不上 GitHub：本地 rsync 上传后 update.sh 自动跳过 pull 并全量重建
+SERVER_HOST=<IP> ./deploy/rsync-upload.sh
 ```
 
-## 3. `data/` 装配（gitignore 区，程序零生成，手动放置）
+## 1. 平台形态选型（决定 `data/keys/issuer.key` 放哪把）
 
-```
-data/keys/issuer.key              # 0600，secp256k1 SEC1 PEM（形态 B：新平台身份）
-data/keys/issuer-profile.json     # 该 key 的平台 DID 档案（relay 写挂架要用它验文件签，
-                                  #   须经官网 app.ccda.ooo 注册流程生成，不能手编）
-data/keys/secp256k1-2019-v1.json  # 公共 context，直接从开发机复制
-data/dsh-image.json               # 租户镜像定义（复制）
-data/legacy-cwt.json              # CWT 集合（形态 B 可放空 {} 或测试子集）
-data/config/admin.json            # 管理员名册（形态 B 放测试地址）
-data/installs.json data/skills/   # 技能市场数据（要测技能才复制）
-```
+| 形态                    | issuer.key                          | relay                      | 台账库             |
+| ----------------------- | ----------------------------------- | -------------------------- | ------------------ |
+| **A. 正式接管**         | 复制现有平台 key                    | 官网 `ipfsserver.ccda.ooo` | 旧实例退役，单写者 |
+| **B. 平行测试**（当前） | **新生成一套**（不同 key=不同平台） | 可共用官网 relay           | 独立空库冷启动     |
 
-> **key 红线**：issuer.key 一旦启用不可更换——换 key = 该平台已写入用户档案的所有卡
-> 验真失效（invalid → 剥豁免摘卡）。形态 A 用旧 key 则无所谓（本来就是同一身份）。
+判据：把服务器 `issuer-profile.json` 里的 DID 打出来对比 `did:swtc:jh7Gc6hGpu7kj9sytaUPFHoV6dwEYU3P9y`——一致=形态 A，不一致=形态 B。
 
-## 4. 环境变量
+**形态 B 的核心保障**：2026-10-23 `isOurIssuedCard` 窄闸修复后，两平台在同一用户档案**互不摘除、互不误报 stale**（`credential.test.js` 有 4 条回归用例钉死），可放心共用 relay。
 
-```bash
-DSH_STORAGE_PROVIDER=mongodb
-MONGODB_URI='mongodb://…/…?replicaSet=…'   # 副本集 URI
-```
+## 2. 签发钥红线（`data/keys/` 区，`deploy/` 脚本不碰）
 
-## 5. 台账库选择（形态 B：空库即可）
+- `rsync-upload.sh` 对 `data/keys/` **无条件排除**：只进不出，现场钥永不被本地覆盖（毁灭级保护，见脚本注释）。
+- 程序**零生成**：key 由部署者放置，权限 `0600`。形态 B 的新 DID 须经官网 `app.ccda.ooo` 注册流程生成（relay 写挂架验文件签要它在链），手编裸 PEM 过不了。
+- **一旦启用不可换**：换 key = 该平台已写入用户档案的所有卡验真失效（invalid → 剥豁免摘卡）。
+- 装配清单（rsync 不带、须手动放服务器）：`issuer.key` / `issuer-profile.json` / `secp256k1-2019-v1.json`（context 从开发机复制）。
 
-- 空库直接跑：`credentialService.init()` 自建集合与索引。
-- **不需要预先"造凭证"**：级联第③步（无档无台账→按 CWT 集合/新用户自动签发 assigned）
-  就是冷启动入口；用户登录→弹窗→领取→档案落卡，全链路自动长出来。
-- 形态 A 才涉及 mongodump/restore 迁移（credentials/users/sessions 三集合），
-  且有档案优先发现在兜底：丢了 dump，用户首登也会自动恢复 claimed。
+## 3. 台账：空库直接跑，**不需预造凭证**
 
-## 6. 启动与冒烟
+`data/` 不在 git、rsync 默认也不带——服务器 mongo 可空库起步。本轮档案优先级联就是冷启动入口：
 
-```bash
-pm2 start src/server.js --name dsh --env production   # 或 systemd / nohup
-```
+> 无档案无台账 → 按 CWT 集合/新用户**自动签发** assigned → 登录弹窗 → 用户领取落卡 → 档案长出凭证。
 
-冒烟清单（全部应为 ✅）：
+`credentialService.init()` 首启自建集合与索引。形态 A 才涉及 `mongodump/restore`；且即便迁移丢库，用户首登也经"档案优先发现"自动恢复 claimed。
 
-```bash
-curl -s -o /dev/null -w '%{http_code}\n' http://<server>/              # 200，且为新 bundle 哈希
-curl -s -o /dev/null -w '%{http_code}\n' http://<server>/user          # 200
-curl -s 'http://<server>/connect-challenge?address=<测试地址>'           # 200 + {ok,nonce,message}
-curl -s -o /dev/null -w '%{http_code}\n' http://<server>/api/user/credential-status  # 401（无 cookie）
-pm2 logs dsh --lines 50                                                # 无 error/unhandled
-```
+## 4. 镜像预热（本轮新行为的前置）
 
-浏览器验收：插件登录 → 自动重签（如需）→ 凭证区出现**本平台新签的 assigned 卡**+领取弹窗
-→ 点领取落档 → 官网档案页出现"DSH 平台（测试）"卡，且**原有平台的卡仍在档案里未被动**
-（跨平台共存回归点）→ 容器 tab 自动拉起 → 弹窗【确定】跳容器管理。
+新版**进入用户中心即自动拉起容器**——上线瞬间会并发建容器。租户镜像 `dsh-multitenant:latest` 须**预先存在**（`install.sh`/`update.sh` 会按需构建，但首次务必确认 `docker images` 有它，否则一波创建全卡在构建/拉取）。`data/dsh-image.json`（镜像定义）须在场。
 
-## 7. 回滚
+## 5. 本轮新架构验收回归点（在 `deploy/README.md` §3 冒烟之上追加）
 
-`git checkout <旧提交> && npm run build && pm2 restart dsh`。
-key 不动 = 任何旧版本对新档案验签永远兼容；台账新字段（archive-revive 等）旧版本读不坏。
+浏览器走一遍：登录 →（如需）自动重签 → 凭证区出现**本平台新签** assigned 卡 + 领取弹窗 → 点领取落档 →
 
-## 8. 已知无害现象
+- **跨平台共存**：官网档案页里"测试平台"卡与"DSH 平台"卡**并存、互不摘除**（`isOurIssuedCard` 修复的实弹验证）
+- **容器 tab**：未跑则后台自动拉起 + tab 右侧转圈 → 完毕弹窗【确定】跳容器管理；期间「启动容器」按钮置灰
+- **F9 会话**：切换插件账户自动重签一次即闭环，不再循环报"会话主人不一致"（`getRequestAddress` 已翻正为 user 优先）
 
-- 双平台并行时各自平台册（挂架）只登记自家分发，官网"平台档案"展示互不包含——正常
-- relay 完全不可达 = probe-fail：已领取**不会被剥**（只减不增铁律），但新领取会失败提示重试
-- 队列位次不落盘：重启时排队中的用户重排
+## 6. 回滚
+
+沿用现有能力：`update.sh` 失败可 `git checkout` 旧提交再跑；镜像回滚靠 `update.sh` 打的版本 tag `${IMAGE%%:*}:$DSH_VERSION`。key 不动 = 任何旧版本对新档案验签永远兼容；台账新字段（`archive-revive` 等）旧版本读不坏。
