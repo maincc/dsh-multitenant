@@ -1,7 +1,8 @@
 process.env.DSH_STORAGE_PROVIDER = 'mongodb'
 import https from 'node:https'
 import crypto from 'node:crypto'
-const { credentialService, _unshelfCredentialForTest } = await import('./src/services/credential.service.js')
+const { credentialService, _unshelfCredentialForTest } =
+  await import('../src/services/credential.service.js')
 await credentialService.init()
 const canon = 'jh7Gc6hGpu7kj9sytaUPFHoV6dwEYU3P9y'
 const subs = [
@@ -13,19 +14,37 @@ const subs = [
 const read = () =>
   new Promise((res) => {
     const h = crypto.createHash('sha256').update(canon, 'utf8').digest('hex')
-    const file = '/' + h.slice(0, 2) + '/' + h.slice(2, 4) + '/' + canon + '/shared/did:swtc:' + canon + '.json'
+    const file =
+      '/' +
+      h.slice(0, 2) +
+      '/' +
+      h.slice(2, 4) +
+      '/' +
+      canon +
+      '/shared/did:swtc:' +
+      canon +
+      '.json'
     const body = JSON.stringify({ file })
-    const q = https.request({ hostname: 'ipfsserver.ccda.ooo', path: '/v0/api/ipfs/shared/files/read', method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) }, timeout: 9000 }, (r) => {
-      let t = ''
-      r.on('data', (d) => (t += d))
-      r.on('end', () => {
-        try {
-          res(JSON.parse(t).credentials?.length ?? 0)
-        } catch {
-          res(-1)
-        }
-      })
-    })
+    const q = https.request(
+      {
+        hostname: 'ipfsserver.ccda.ooo',
+        path: '/v0/api/ipfs/shared/files/read',
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) },
+        timeout: 9000,
+      },
+      (r) => {
+        let t = ''
+        r.on('data', (d) => (t += d))
+        r.on('end', () => {
+          try {
+            res(JSON.parse(t).credentials?.length ?? 0)
+          } catch {
+            res(-1)
+          }
+        })
+      },
+    )
     q.on('error', () => res(-1))
     q.write(body)
     q.end()
