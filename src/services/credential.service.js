@@ -594,6 +594,68 @@ async function _shelfStep(vc) {
 }
 
 /**
+ * 批量挂架（2026-10-26 实弹缺陷修复）：**一次读、合并全部卡、一次写**。
+ * 单张版 shelfCredential 连发多张在 relay 快照 10-60s debounce 内必互踩——
+ * 第二张读到的 base 还是第一张生效前的快照，整篇覆写把第一张抹掉（lost update
+ * 实锤：resyncShelf 连跑三轮，货架终态只剩最后一张）。_shelfChain 串行化写入，
+ * 但串行化不了快照可见性——只有"单轮单写"是精确解。登录链路单张挂架不受影响
+ * （already 幂等下一轮自然补上），需要一轮落齐的批量场景必须走本函数。
+ */
+function shelfMany(vcs) {
+  const step = () => _shelfManyStep(vcs)
+  const result = _shelfChain.then(step, step)
+  _shelfChain = result.then(
+    () => {},
+    () => {},
+  )
+  return result
+}
+async function _shelfManyStep(vcs) {
+  try {
+    const p = platform()
+    if (!p.priv) throw new Error('平台私钥未加载')
+    if (!vcs.length) return true
+    const canonical = normalizeToCanonical(
+      p.did.replace(/^did:swtc:/, ''),
+      `did:swtc:${p.did.replace(/^did:swtc:/, '')}.json`,
+    )
+    const read = await relayRead(canonical)
+    if (read.status === 'probe-fail') {
+      console.warn(
+        `[shelf] 批量挂架读档失败（网络/relay 故障），本轮放弃：${vcs.length} 张待下次补登`,
+      )
+      return false
+    }
+    const base = read.status === 'ok' && read.doc ? read.doc : p.profile
+    let list = base.credentials || []
+    let changed = false
+    for (const vc of vcs) {
+      const subj = cardSubject({ credential: vc })
+      const same = list.filter((c) => isDshCard(c) && cardSubject(c) === subj)
+      if (!(same.length === 1 && (same[0].credential || same[0]).id === vc.id)) changed = true
+      list = [...list.filter((c) => !isDshCard(c) || cardSubject(c) !== subj), vc]
+    }
+    if (!changed) return true // 全部在册且 id 一致=幂等零写
+    list = list.map((c) => c.credential || c)
+    const doc = { ...base, credentials: list, updated: new Date().toISOString() }
+    const signature = signWithPlatformKey(Buffer.from(JSON.stringify(doc), 'utf8'))
+    await relayWrite({
+      document: doc,
+      fileName: `did:swtc:${canonical}.json`,
+      publicKeyHex: platformSignKey(),
+      signatureDerHex: signature,
+      chain: cfg().chain,
+    })
+    return true
+  } catch (err) {
+    console.warn(
+      `[credential-shelf] 批量登记失败（台账已生效，不影响凭证）: ${String(err?.message || err).slice(0, 140)}`,
+    )
+    return false
+  }
+}
+
+/**
  * 从平台登记册摘除某地址的 Dsh 卡（v1.5 撤销链）。读档失败绝不写（probe-fail 铁律，
  * 同 _shelfStep）；确属缺席/网络失败返回 false 不炸调用方（降格路径里这是尽力轨：
  * 判权即时性由台账+_unmark 保证，摘册是对外一致性复核）。
@@ -2086,10 +2148,15 @@ class CredentialService {
     }
   }
 
-  /** 平台档案补登：把已领取用户档案里的实卡同步上平台登记册（幂等，可反复跑） */
+  /**
+   * 平台档案补登：把已领取用户档案里的实卡同步上平台登记册。
+   * ★2026-10-26 起为"收集全部卡→shelfMany 一次读写"——逐张 shelfCredential 连发
+   * 会踩 relay 快照 debounce 互抹（实弹：三轮连跑货架只剩最后一张）。幂等收敛：
+   * 在册且 id 一致=零写直通。
+   */
   async resyncShelf() {
     const dids = await backend().listClaimed()
-    let shelved = 0
+    const cards = []
     let failed = 0
     for (const did of dids) {
       const addr = String(did).replace(/^did:swtc:/, '')
@@ -2098,16 +2165,20 @@ class CredentialService {
         failed++
         continue
       }
-      const cards = (read.doc.credentials || []).filter(isOurIssuedCard)
-      const last = cards[cards.length - 1]
+      const mine = (read.doc.credentials || []).filter(isOurIssuedCard)
+      const last = mine[mine.length - 1]
       if (!last) continue
       // 顺带回填存量台账缺的凭证号（vcId 字段上线前领取的用户）
       const row = await backend().get(addr.toLowerCase())
       if (row && !row.vcId && last.id) await backend().patch(addr.toLowerCase(), { vcId: last.id })
-      if (await shelfCredential(last.credential || last)) shelved++
-      else failed++
+      cards.push(last.credential || last)
     }
-    return { total: dids.length, shelved, failed }
+    const ok = await shelfMany(cards)
+    return {
+      total: dids.length,
+      shelved: ok ? cards.length : 0,
+      failed: ok ? failed : failed + cards.length,
+    }
   }
 
   async stats() {

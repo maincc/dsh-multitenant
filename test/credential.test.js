@@ -479,9 +479,17 @@ describe('领取链路（scaffold → upload）', () => {
       source: 'approval',
       profileDid: `did:swtc:${CANON}`,
     })
-    fetchStub.mockImplementation(async (url) => {
+    fetchStub.mockImplementation(async (url, opts) => {
       if (String(url).includes('/files/write'))
         return { ok: true, status: 201, text: async () => '{"code":0}' }
+      const body = String(opts?.body || '')
+      // 平台册（jplatform 路径）=空架；用户档案=含卡。补登=一写
+      if (body.includes('jplatform'))
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ id: 'did:swtc:jplatform', credentials: [] }),
+        }
       return {
         ok: true,
         status: 200,
@@ -895,6 +903,97 @@ describe('跨平台档案共存（2026-10-23 用户定调"不同 key=不同平�
     const st = await credentialService.enter(ADDR, { canonical: CANON })
     expect(st.credential.state).toBe('assigned') // 别家卡不算"档案有真卡"
     expect(st.verifiedBy).toBe('ledger')
+  })
+})
+
+describe('批量挂架单写（shelfMany——2026-10-26 实弹 lost-update 缺陷回归）', () => {
+  // 事故回放：resyncShelf 逐张 shelfCredential 连发，relay 快照 10-60s debounce 内
+  // 第二张读到的 base 还没有第一张 → 整篇覆写互抹，三轮连跑货架恒剩最后一张。
+  // 修复=一轮收集全部卡→一次读一次写。用 fetch 写计数钉死该语义。
+  // stub 分家判据：平台册路径含注入平台 DID 'jplatform'；用户档案按行 profileDid 尾串寻址
+  // （listClaimed 吐出的是 profileDid——resyncShelf 正是按它去读"该用户档案"，勿用 ADDR 当 key）
+  const OTHER = 'jotherholder00000000000x'
+  const OCANON = 'jOtherHolder00000000000000000000x'
+  function shelfStub(shelfDoc, userCards) {
+    fetchStub.mockImplementation(async (url, opts) => {
+      if (String(url).includes('/files/write'))
+        return { ok: true, status: 201, text: async () => '{"code":0}' }
+      const body = String(opts?.body || '')
+      if (body.includes('jplatform'))
+        return { ok: true, status: 200, text: async () => JSON.stringify(shelfDoc) }
+      const hit = Object.keys(userCards).find((a) => body.includes(a))
+      const cards = hit ? userCards[hit] : []
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ id: `did:swtc:${hit || 'x'}`, credentials: cards }),
+      }
+    })
+  }
+  const claimedRow = async (b, addr, kind, card, canon = CANON) =>
+    b.putRow(addr, {
+      kind,
+      state: 'claimed',
+      source: 'approval',
+      roles: [],
+      vcId: card.id,
+      claimedAt: '2026-01-01T00:00:00.000Z',
+      profileDid: `did:swtc:${canon}`,
+    })
+
+  it('resyncShelf 多卡一轮：平台册只写一次，两张全收集', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    const A = await _mintVCForTest('cwt', ADDR, [], `did:swtc:${CANON}`)
+    const C = await _mintVCForTest('did', OTHER, [], `did:swtc:${OCANON}`)
+    await claimedRow(b, ADDR, 'cwt', A)
+    await claimedRow(b, OTHER, 'did', C, OCANON)
+    shelfStub(
+      { id: 'did:swtc:jplatform', credentials: [] },
+      {
+        [CANON]: [{ credential: A }],
+        [OCANON]: [{ credential: C }],
+      },
+    )
+    const r = await credentialService.resyncShelf()
+    const writes = fetchStub.mock.calls.filter(([u]) => String(u).includes('/files/write'))
+    expect(r.shelved).toBe(2)
+    expect(writes.length).toBe(1) // ★核心断言：一轮一写（逐张版=两写互抹）
+  })
+
+  it('全部在册且 id 一致 → 幂等零写', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    const A = await _mintVCForTest('cwt', ADDR, [], `did:swtc:${CANON}`)
+    await claimedRow(b, ADDR, 'cwt', A)
+    shelfStub({ id: 'did:swtc:jplatform', credentials: [A] }, { [CANON]: [{ credential: A }] })
+    await credentialService.resyncShelf()
+    expect(fetchStub.mock.calls.filter(([u]) => String(u).includes('/files/write')).length).toBe(0)
+  })
+
+  it('平台册读档抖动（probe-fail）→ 绝不写册（铁律），shelved 归零', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    const A = await _mintVCForTest('cwt', ADDR, [], `did:swtc:${CANON}`)
+    await claimedRow(b, ADDR, 'cwt', A)
+    fetchStub.mockImplementation(async (url, opts) => {
+      if (String(url).includes('/files/write'))
+        return { ok: true, status: 201, text: async () => '{}' }
+      const body = String(opts?.body || '')
+      if (body.includes('jplatform')) throw new Error('network jitter')
+      return {
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({ id: `did:swtc:${ADDR}`, credentials: [{ credential: A }] }),
+      }
+    })
+    const r = await credentialService.resyncShelf()
+    expect(r.shelved).toBe(0)
+    expect(fetchStub.mock.calls.filter(([u]) => String(u).includes('/files/write')).length).toBe(0)
   })
 })
 
