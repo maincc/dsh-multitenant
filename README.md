@@ -108,6 +108,19 @@ scripts/mongo-backup.sh verify   # 演练：还原进影子库 dsh_prod_verify �
 业务数据只在库里，以库为准）。安全边界：mongod 仅监听 127.0.0.1 且未启鉴权——
 **本地形态专用**，上服务器必须 auth+TLS+独立账号（见 docs/security-hardening-plan.md）。
 
+### 5. 平台签发身份（data/keys/，正式部署前）
+
+凭证链路的签发密钥区是**程序零生成 + 因环境而异**的，git 与 rsync 都不会携带它，须现场放置两件：
+
+- `data/keys/issuer.key`——SEC1 PEM 私钥（0600）。新造：`openssl ecparam -name secp256k1 -genkey -noout`；
+  钱包导出的 ss seed 字符串用 `node scripts/seed-to-pem.mjs` 转换
+- `data/keys/issuer-profile.json`——官网 app.ccda.ooo 注册的平台 DID 档案，
+  **id 必须与 key 派生地址同配对**（配错=领取照常"成功"但链上验真永远 invalid 的静默事故）
+
+签名套件 context 已迁进仓（`src/assets/secp256k1-2019-v1.json`，随代码走，loader 兼容回退旧位置）。
+缺钥不拦启动（登录等一切照常，首次签发才报错）。完整装配与保护矩阵见
+[docs/keys-provisioning.md](docs/keys-provisioning.md)。
+
 ## 🧪 运行测试
 
 ```bash

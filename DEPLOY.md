@@ -30,7 +30,7 @@ SERVER_HOST=<IP> ./deploy/rsync-upload.sh
 - `rsync-upload.sh` 对 `data/keys/` **无条件排除**：只进不出，现场钥永不被本地覆盖（毁灭级保护，见脚本注释）。
 - 程序**零生成**：key 由部署者放置，权限 `0600`。形态 B 的新 DID 须经官网 `app.ccda.ooo` 注册流程生成（relay 写挂架验文件签要它在链），手编裸 PEM 过不了。
 - **一旦启用不可换**：换 key = 该平台已写入用户档案的所有卡验真失效（invalid → 剥豁免摘卡）。
-- 装配清单（rsync 不带、须手动放服务器）：`issuer.key` / `issuer-profile.json` / `secp256k1-2019-v1.json`（context 从开发机复制）。
+- 装配清单（rsync 不带、须手动放服务器）：**只剩两件**——`issuer.key` + `issuer-profile.json`。context（`secp256k1-2019-v1.json`）2026-10-23 已迁进仓 `src/assets/` 随代码走（loader 兼容回退旧位置，存量服务器不炸）。ss seed 字符串转 PEM 用 `scripts/seed-to-pem.mjs`（stderr 打派生地址，核对 profile.id——配错对是静默事故：领取照常成功、链上验真永远 invalid）。详见 [docs/keys-provisioning.md](docs/keys-provisioning.md)。
 
 ## 3. 台账：空库直接跑，**不需预造凭证**
 

@@ -44,7 +44,7 @@ registerContextUrl(
   'https://w3id.org/security/suites/secp256k1-2019/v1',
   JSON.parse(
     fs.readFileSync(
-      '/Users/cly/.dshWorkspace/dsh-multitenant/data/keys/secp256k1-2019-v1.json',
+      '/Users/cly/.dshWorkspace/dsh-multitenant/src/assets/secp256k1-2019-v1.json',
       'utf8',
     ),
   ),

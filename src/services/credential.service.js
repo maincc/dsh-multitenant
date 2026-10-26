@@ -120,7 +120,10 @@ function createDocLoader() {
   if (_loader) return _loader
   const { createDocumentLoader, registerContextUrl } = sdk()
   const c = cfg()
-  const ctx = JSON.parse(readFileSync(join(ROOT, c.contextFile), 'utf8'))
+  const ctxPath = join(ROOT, c.contextFile)
+  // 新址（随仓）优先；现场只有旧位 data/keys/ 的历史服务器回退之——迁位不破存量
+  const ctxPath2 = existsSync(ctxPath) ? ctxPath : join(ROOT, 'data/keys/secp256k1-2019-v1.json')
+  const ctx = JSON.parse(readFileSync(ctxPath2, 'utf8'))
   registerContextUrl('https://w3id.org/security/suites/secp256k1-2019/v1', ctx)
   _loader = createDocumentLoader()
   return _loader

@@ -40,9 +40,12 @@ const DEFAULTS = {
     profileProbeTimeoutMs: 8000, // 实测 resolve 冷启动 2.7s 级常态，3s 会误判"没档案"
     profileProbeCacheMs: 900000,
     // 平台签发钥与公共档案：VC proof 用 @jccdex/did SDK 真签（EcdsaSecp256k1Signature2019）
+    // keyFile/profileFile 是"部署者提供区"（因环境而异+敏感，永不移出 data/keys/）；
+    // contextFile 是公开固定 schema——2026-10-23 迁进仓 src/assets/ 随代码走（loader
+    // 兼容回退旧位置 data/keys/，存量服务器不炸）。装配说明见 README「平台签发身份」。
     keyFile: 'data/keys/issuer.key',
     profileFile: 'data/keys/issuer-profile.json',
-    contextFile: 'data/keys/secp256k1-2019-v1.json',
+    contextFile: 'src/assets/secp256k1-2019-v1.json',
     // 无 DID 档案时的用户指引（务必提醒核对地址）
     didGenUrl: 'https://app.ccda.ooo/#/',
     // VC issuer 展示名（2026-10-23 用户实测：官网删卡弹窗读 issuer.name 显示签发方，
