@@ -25,6 +25,8 @@
 | [storage-design.md](./storage-design.md)                             | 存储介质迁移设计（json→MongoDB 权威轨：域划分/迁移/会话并池/回退开关）                                | ✅ 已实施（M0-M2）    | 现场 URI 以 config.json storage 段为准 |
 | [deploy-test-server.md](./deploy-test-server.md)                     | 测试服务器实弹部署记录（mongod 副本集配方/install·update 实操与踩坑）                                 | ✅ 运维实录           | `install.sh`/README 引用的配方出处     |
 | [vc-type-registration-request.md](./vc-type-registration-request.md) | 提交官网的 VC 类型注册申请稿（Dsh* 词表入 jdid 品牌）                                                 | 📮 待提交官网         | 批准后翻 `interop` 开关                |
+| [fixlog.md](./fixlog.md)                                             | 修复实录 36 条（根因+修法+判例；从根 README 迁出）                                                    | 🗄️ 事故复盘档案       | 排障对照与决策援引，只增不删           |
+| [api.md](./api.md)                                                   | API 参考（会话/管理/租户自助配置/技能市场 全量请求响应示例；从根 README 迁出）                        | ✅ 随实现滚动         | 签名用途绑定规则见 §安全               |
 | plugin-market-design.md                                              | 统一市场（技能 + 插件）扩展设计                                                                       | 📌 用户既有物         | 未按本索引修订                         |
 | [crypto-randomuuid.md](./crypto-randomuuid.md)                       | 局域网 HTTPS 兼容事件记录（crypto.randomUUID shim）                                                   | 🗄️ 历史归档           | 已修复，备查                           |
 
