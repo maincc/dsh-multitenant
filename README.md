@@ -110,12 +110,18 @@ scripts/mongo-backup.sh verify   # 演练：还原进影子库 dsh_prod_verify �
 
 ### 5. 平台签发身份（data/keys/，正式部署前）
 
-凭证链路的签发密钥区是**程序零生成 + 因环境而异**的，git 与 rsync 都不会携带它，须现场放置两件：
+凭证链路的签发身份因环境而异，git 与 rsync 都不会携带它。两条装配路径（2026-10-23 起）：
 
-- `data/keys/issuer.key`——SEC1 PEM 私钥（0600）。新造：`openssl ecparam -name secp256k1 -genkey -noout`；
-  钱包导出的 ss seed 字符串用 `node scripts/seed-to-pem.mjs` 转换
-- `data/keys/issuer-profile.json`——官网 app.ccda.ooo 注册的平台 DID 档案，
-  **id 必须与 key 派生地址同配对**（配错=领取照常"成功"但链上验真永远 invalid 的静默事故）
+- **形态 A·接管现有平台**：现场放 `data/keys/issuer.key`（SEC1 PEM，0600；钱包 ss seed 用
+  `node scripts/seed-to-pem.mjs` 转换），profile 不用再抄——config 声明
+  `credential.platformDid: "did:swtc:<平台DID>"`，服务首启自动从官网读档落成
+  `data/keys/issuer-profile.json` 镜像（只读线上；线上档案 id 与声明不符=宁拒不写）
+- **形态 B·新平台一条命令装配**：`node scripts/shelf-open.mjs --seed '<ss-seed>'
+--nickname 'DSH 测试平台'` dry-run 预览，确认后加 `--yes`：落 key（0600）→ 构造生态模板
+  DID 档案 → 上传官网（链上已有档/读档不稳=拒写）→ 落 profile 镜像，三件装配一步完成
+
+配对红线仍在：`issuer.key` 派生地址必须等于 profile `id`——形态 B 由脚本同源派生天然成立；
+手工装配（形态 A）配错 = 领取照常"成功"但链上验真永远 invalid 的静默事故。
 
 签名套件 context 已迁进仓（`src/assets/secp256k1-2019-v1.json`，随代码走，loader 兼容回退旧位置）。
 缺钥不拦启动（登录等一切照常，首次签发才报错）。完整装配与保护矩阵见

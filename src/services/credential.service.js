@@ -90,7 +90,15 @@ function platform() {
   const priv = Buffer.from(k.export({ format: 'jwk' }).d, 'base64url')
     .toString('hex')
     .padStart(64, '0')
-  const profile = JSON.parse(readFileSync(join(ROOT, c.profileFile), 'utf8'))
+  let profile
+  try {
+    profile = JSON.parse(readFileSync(join(ROOT, c.profileFile), 'utf8'))
+  } catch (e) {
+    throw new Error(
+      `平台档案 ${c.profileFile} 不可用（${e.code || e.message}）：放置文件 / config 声明 ` +
+        `credential.platformDid 让首启自取 / 新平台跑 scripts/shelf-open.mjs 注册——三选一`,
+    )
+  }
   // 公共档案的 credentials[] 是历史货架遗留——签发只需要 verificationMethod
   const { secp256k1, Secp256k1Keypair } = sdk()
   const pubU = Buffer.from(secp256k1.getPublicKey(priv, false)).toString('hex')
@@ -113,6 +121,25 @@ function platform() {
   const loader = createDocLoader()
   _platform.loader = loader
   return _platform
+}
+
+/**
+ * 平台档案自取（2026-10-23 用户拍板"没有就访问官网获取"）：以 config 显式声明的
+ * platformDid 为身份指针，从官网 relay 读平台档案，校验文档 id 与声明严格一致后
+ * 落成 profileFile 本地镜像。**纯只读线上**（写线上是 shelf-open 注册脚本的事），
+ * id 不符=声明错/链上非我档，宁拒不写——镜像一旦落地就成了平台身份事实来源。
+ */
+export async function provisionPlatformProfile() {
+  const c = cfg()
+  const did = String(c.platformDid || '').trim()
+  if (!did.startsWith('did:swtc:')) return { ok: false, reason: 'platformDid 未声明或形态非法' }
+  const canonical = did.replace(/^did:swtc:/, '')
+  const read = await relayRead(canonical)
+  if (read.status !== 'ok' || !read.doc)
+    return { ok: false, reason: `官网读档 status=${read.status}（未注册？先跑 shelf-open.mjs）` }
+  if (read.doc.id !== did) return { ok: false, reason: `线上档案 id=${read.doc.id} 与声明不符` }
+  writeFileSync(join(ROOT, c.profileFile), JSON.stringify(read.doc, null, 2))
+  return { ok: true, did }
 }
 
 let _loader = null
@@ -1078,6 +1105,13 @@ class CredentialService {
       await getStore()
         .ensureIndexes()
         .catch(() => {})
+    }
+    // 平台档案自取（缺档+有声明才动；成功/失败都留痕，失败不拦启动——platform()
+    // 的报错三选一引导在首个签发动作处等着）
+    if (cfg().platformDid && !existsSync(join(ROOT, cfg().profileFile))) {
+      const got = await provisionPlatformProfile().catch((e) => ({ ok: false, reason: e.message }))
+      if (got.ok) console.log(`[credential] 平台档案已自取：${got.did}`)
+      else console.warn(`[credential] 平台档案自取未果：${got.reason}`)
     }
     await this.refreshExemptSet()
     // v1.5：名册→凭证双向对账（纯本地台账写；挂册异步尽力）。失败不抛——

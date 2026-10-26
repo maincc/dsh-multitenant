@@ -4,7 +4,7 @@
  * 全部外部件注入：SDK/平台钥/relay fetch/L1 探测/legacy 名单/存储 backend——
  * 不碰真实网络、私钥文件与工作区 data/。
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 vi.mock('../src/services/did.service.js', () => ({
   l1ProfileHit: vi.fn(async () => true),
@@ -18,6 +18,7 @@ import {
   _mintVCForTest,
   _isPlatformMintedForTest,
   _isDshCardForTest,
+  provisionPlatformProfile,
   profilePath,
   KINDS,
 } from '../src/services/credential.service.js'
@@ -758,6 +759,62 @@ describe('档案优先发现级联（enter 完全形态，2026-10-23 用户拍�
     const st = await credentialService.enter(ADDR)
     expect(st.credential.state).toBe('assigned')
     expect(st.verifiedBy).toBe('ledger')
+    expect(fetchStub).not.toHaveBeenCalled()
+  })
+})
+
+describe('平台档案自取（provisionPlatformProfile——用户定式"没有就访问官网获取"）', () => {
+  const TMP_REL = 'data/keys/.test-provision-profile.json'
+  const TMP_ABS = `${process.cwd()}/${TMP_REL}`
+  const DID = 'did:swtc:jTestPlat00000000000000000000x'
+  const saved = {}
+  beforeEach(() => {
+    saved.profileFile = CONFIG.credential.profileFile
+    saved.platformDid = CONFIG.credential.platformDid
+    CONFIG.credential.profileFile = TMP_REL
+    CONFIG.credential.platformDid = DID
+    fetchStub.mockReset()
+  })
+  afterEach(async () => {
+    CONFIG.credential.profileFile = saved.profileFile
+    CONFIG.credential.platformDid = saved.platformDid
+    const fs = await import('node:fs')
+    fs.rmSync(TMP_ABS, { force: true })
+  })
+
+  it('线上有档且 id 严格一致 → 落成本地镜像（只读线上，不动线上）', async () => {
+    const doc = { id: DID, verificationMethod: [{ id: `${DID}#key-1` }], service: [] }
+    okRelay(doc)
+    const got = await provisionPlatformProfile()
+    expect(got).toEqual({ ok: true, did: DID })
+    const fs = await import('node:fs')
+    expect(JSON.parse(fs.readFileSync(TMP_ABS, 'utf8'))).toEqual(doc)
+  })
+
+  it('线上档案 id 与声明不符 → 宁拒不写（镜像一旦落地即成身份事实来源）', async () => {
+    okRelay({ id: 'did:swtc:jimpostor0000000000000000000x', verificationMethod: [] })
+    const got = await provisionPlatformProfile()
+    expect(got.ok).toBe(false)
+    expect(got.reason).toMatch(/不符/)
+    const fs = await import('node:fs')
+    expect(fs.existsSync(TMP_ABS)).toBe(false)
+  })
+
+  it('读档抖动/无档（probe-fail 语义）→ 不写镜像不崩溃（缺档引导注册脚本）', async () => {
+    fetchStub.mockImplementation(async () => {
+      return { ok: false, status: 500, text: async () => 'gateway down' }
+    })
+    const got = await provisionPlatformProfile()
+    expect(got.ok).toBe(false)
+    expect(got.reason).toMatch(/未注册|status/)
+    const fs = await import('node:fs')
+    expect(fs.existsSync(TMP_ABS)).toBe(false)
+  })
+
+  it('platformDid 未声明 → 直接未果（自取是显式 opt-in，默认零动作）', async () => {
+    CONFIG.credential.platformDid = ''
+    const got = await provisionPlatformProfile()
+    expect(got.ok).toBe(false)
     expect(fetchStub).not.toHaveBeenCalled()
   })
 })

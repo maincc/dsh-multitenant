@@ -8,7 +8,7 @@
 
 ### 1. `issuer.key` — 平台签发私钥（0600，永不出、永不换）
 
-程序**零生成**：没有任何代码路径会创建或轮换这把钥。两种来源任选：
+程序不自动生成、永不轮换这把钥（`shelf-open.mjs --seed` 的落盘是**人工显式触发的一次性装配**，不是自动路径）。两种来源任选：
 
 ```bash
 # 途径 A：服务器现场新造（测试平台形态 B）
@@ -21,11 +21,18 @@ chmod 600 data/keys/issuer.key
 
 `platform()` 硬编码 `createPrivateKey({format:'pem'})`——**只认 SEC1 PEM**；hex/base58 字符串都要先过 `seed-to-pem.mjs`。
 
-### 2. `issuer-profile.json` — 平台 DID 公共档案
+### 2. `issuer-profile.json` — 平台 DID 公共档案（标准 DID Document）
 
-官网 `app.ccda.ooo` 注册流程产出的那一份（含 `id` 与 `verificationMethod` 公钥）。
-手编的裸 JSON 过不了 relay 的平台挂架文件签（链上查无此 DID）——挂架只 warn 不阻断核心链路，
-但官网侧"该平台发了哪些卡"不可见。
+它不是私钥的附属品：`id` 是卡的 issuer/id 嵌段/验真闸的唯一来源，`verificationMethod[0]`
+是平台文件签口径，文档本体是官网平台册（挂架档案）的本地镜像源。三种到位方式：
+
+- **自取（形态 A 推荐）**：config 声明 `credential.platformDid`，服务首启从官网 relay 读档落
+  镜像（`provisionPlatformProfile`；纯只读线上，id 严格核对不符=宁拒不写）
+- **注册（形态 B 推荐）**：`scripts/shelf-open.mjs --seed … --yes` 构造生态模板档案上传官网并落镜像
+- **手工**：从官网/开发机复制该 DID 的档案 JSON（= 老办法）
+
+官网链上没有这个 DID 的档案时，签发/领取核心链路可跑（用户档案写的是用户文件签），但平台挂架
+会被 relay 拒（只 warn）——官网侧"该平台是谁、发了哪些卡"不可见。
 
 ## ★配对红线（唯一会静默的雷）
 

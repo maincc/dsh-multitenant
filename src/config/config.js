@@ -43,6 +43,9 @@ const DEFAULTS = {
     // keyFile/profileFile 是"部署者提供区"（因环境而异+敏感，永不移出 data/keys/）；
     // contextFile 是公开固定 schema——2026-10-23 迁进仓 src/assets/ 随代码走（loader
     // 兼容回退旧位置 data/keys/，存量服务器不炸）。装配说明见 README「平台签发身份」。
+    // 平台 DID 显式声明（形态 A 接管常用）：本地 profileFile 缺失时 init 据此
+    // 从官网 relay 自取档案落成镜像（只读线上、零写线上、不动私钥）。留空=不自取。
+    platformDid: '',
     keyFile: 'data/keys/issuer.key',
     profileFile: 'data/keys/issuer-profile.json',
     contextFile: 'src/assets/secp256k1-2019-v1.json',
