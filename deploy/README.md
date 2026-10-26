@@ -17,20 +17,7 @@ SERVER_HOST=1.2.3.4 ./deploy/rsync-upload.sh
 排除清单（node_modules / data / patches / config.json / state.json / 日志等）**同时
 作用于 `--delete`**——服务器现场的文件与数据不会被这次上传抹掉。
 
-### 2. 服务器：装配平台签发身份（install.sh 不管这个，漏了首启签发才报错）
-
-`data/keys/` 只进不出，任何上传都不会携带它。二选一（详见 DEPLOY.md §1-2）：
-
-- **形态 A · 接管现有平台**：放 `issuer.key`（SEC1 PEM 0600；ss seed 用
-  `node scripts/seed-to-pem.mjs` 转），config 声明 `credential.platformDid`，首启自动
-  从官网读档落 profile 镜像（线上 id 与声明不符=宁拒不写）。
-- **形态 B · 新平台一条命令**：
-  `node scripts/shelf-open.mjs --seed '<ss-seed>' --nickname '…'` dry-run 预览核对
-  DID 后加 `--yes`（key + 官网注册 + profile 镜像一步完成）。
-
-缺钥不拦启动——但首次自动签发会失败，装配应在 install 之前做完。
-
-### 3. 服务器：首次安装
+### 2. 服务器：首次安装
 
 ```bash
 ssh root@1.2.3.4
@@ -56,6 +43,59 @@ PUBLIC_HOST=1.2.3.4 \
   `[startup] storage 迁移：{...}`）。`UPLOAD_DATA=1` 只用于"往空服务器注入本地测试
   种子"，且本地文件会覆盖服务器同名文件，日常上传绝不可带。
 
+install 不检查签发身份，缺钥也不拦启动（登录等一切照常，只是不签发）——身份在下一
+步装配；而装配脚本要用 `@swtc/keypairs`，恰好依赖已由 install 的 `npm ci` 就位。
+
+### 3. 服务器：装配平台签发身份（key）
+
+`data/keys/` 下**只有两个文件**，是整个平台的"身份"，git 与 rsync 永不携带（只进不出）：
+
+| 文件                  | 是什么                                                                            | 谁在用                                                                  |
+| --------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `issuer.key`          | 平台签发**私钥**（SEC1 PEM，0600）。派生出 profile 里的 `verificationMethod` 公钥 | 每次给档案卡签发、每次给平台登记册文件签名                              |
+| `issuer-profile.json` | 平台 **DID 公共档案**（标准 DID Document）的线上镜像，`id` 尾部地址 = 平台 DID    | 判权口径（档案卡 `issuer === 本平台 DID` 才算"我签的"）、登记册货架基址 |
+
+**seed（身份的源头）从哪来**——① 测试平台新造一条（形态 B 用）：
+
+```bash
+node -e "const {Keypairs}=require('@swtc/keypairs'); console.log(Keypairs.generateSeed())"
+```
+
+② 或已有平台/钱包导出的 `ss` 开头 seed（形态 A 用）。**seed 就是备份本体**：一条
+`ss` 串可数学还原私钥，抄进密码管理器即可——`.key` 文件丢了用 seed 重转就是。
+
+**二选一装配**（判据：要用的 DID 是否已在官网存在；选型细节见 DEPLOY.md §1-2）：
+
+- **形态 A · 接管现有平台**：把私钥放进 `data/keys/issuer.key`（ss seed 转 PEM：
+  `node scripts/seed-to-pem.mjs '<ss-seed>' > data/keys/issuer.key && chmod 600 data/keys/issuer.key`
+  ——stderr 打出的派生地址必须等于既有 profile `id` 尾部），config 声明
+  `credential.platformDid: "did:swtc:<平台DID>"`，服务首启自动从官网读档落
+  `issuer-profile.json` 镜像（只读线上；线上档案 id 与声明不符=宁拒不写）。
+- **形态 B · 新平台一条命令**（profile 不用手拷，脚本生成并注册）：
+  `node scripts/shelf-open.mjs --seed '<ss-seed>' --nickname 'DSH 测试平台'` 先 dry-run
+  **零写入**预览，人工核对派生出的 DID 后加 `--yes` 落钉：落 key（0600）→ 组 DID
+  档案 → 上传官网注册 → 回读确认后落 profile 镜像。链上已有档/读档不稳=**拒写**
+  （注册是永久身份钉链，宁可重来不可错钉；脚本绝不覆盖现场 keyFile）。
+
+**红线**（为什么这步值得独立编号）：
+
+- DID 由公钥数学推导（ripemd160(sha256(压缩公钥))），**换 key = 换平台**：旧 DID
+  签进用户档案的卡全部不再被本平台认领。注册不可撤，必须显式 `--yes`，服务代码
+  永不自动注册。
+- **seed/私钥丢失 = 平台身份永久丢失**，无找回渠道；形态 B 装完立刻把 `ss` seed 存档。
+- **配对红线**（唯一会静默的雷）：`issuer.key` 派生地址必须等于 profile `id` 尾部。
+  形态 B 同源派生天然成立；形态 A 手工配错 = 领取照常"成功"但链上验真永远 invalid。
+- 装配后核对 + 重启（平台身份是**进程级单例缓存**，装配/更换后必须 restart）：
+
+  ```bash
+  head -3 data/keys/issuer-profile.json   # id = 预期 DID（形态 B 应 ≠ 既有平台 DID）
+  ls -l data/keys/                        # issuer.key 权限 0600
+  systemctl restart dsh-multitenant
+  ```
+
+完整装配、缺钥降级语义与保护矩阵见
+[docs/keys-provisioning.md](../docs/keys-provisioning.md)。
+
 ### 4. 验证
 
 ```bash
@@ -72,7 +112,7 @@ systemctl status dsh-multitenant
 | 文件                                     | 在哪执行   | 作用                                                                                                                                                                                                                          |
 | ---------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `rsync-upload.sh`                        | 本地       | rsync 上传代码（排除项同时保护服务器现场不被 `--delete` 抹掉）                                                                                                                                                                |
-| `install.sh`                             | 服务器     | 首次安装：建目录 → 生成 config.json → 构建镜像 → 构建前端 → 装 systemd 服务。**不同步代码、不检查 keys**（代码靠 rsync/git，keys 靠上文第 2 步）                                                                              |
+| `install.sh`                             | 服务器     | 首次安装：建目录 → 生成 config.json → 构建镜像 → 构建前端 → 装 systemd 服务。**不同步代码、不检查 keys**（代码靠 rsync/git，keys 靠上文第 3 步）                                                                              |
 | `update.sh`                              | 服务器     | 更新：`git pull --ff-only`（远端不可达自动跳过 → 离线全量重建）+ 按需重建前端（`frontend/` 或 `package*` 有 diff 才建）/镜像（Dockerfile 变更或镜像内 DSH_VERSION ≠ 目标才建）+ 重启。版本 tag `IMAGE:DSH_VERSION` 留回滚锚点 |
 | `backup.sh`                              | 服务器     | 备份入口状态（默认目录 `/backup/dsh-multitenant`，`BACKUP_DIR=` 可改）；`VOLUME_BACKUP=1` 连同租户数据卷                                                                                                                      |
 | `dsh-multitenant.service`                | 模板       | systemd 单元，install.sh 填充 `ADMIN_ADDRESS`/`PUBLIC_HOST` 占位符后写入 `/etc/systemd/system/`                                                                                                                               |
