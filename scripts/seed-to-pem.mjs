@@ -24,7 +24,17 @@ if (!secret || !/^[sd][0-9A-Za-z]+$/.test(secret)) {
 const rawHex = String(Keypairs.deriveKeypair(secret).privateKey || '').toLowerCase()
 const privHex = rawHex.length === 66 && rawHex.startsWith('00') ? rawHex.slice(2) : rawHex
 if (!/^[0-9a-f]{64}$/.test(privHex)) throw new Error('派生私钥形态异常（非 64/66 hex）')
-const address = Keypairs.deriveAddress(secret)
+// ★地址口径（2026-10-26 事故修正）：deriveAddress 的输入是**公钥 hex**，不是 seed 字符串——
+// 曾把 seed 直传，base58 字符被按 hex 有损解码，静默打出假地址（fixlog#35 同族教训）。
+// 生态口径 = 压缩公钥（02/03 前缀 66 hex）；与库自己返回的 publicKey 双源互证，不一致即炸。
+// noble 返回 Uint8Array，须转 hex 再与库的 publicKey hex 互证
+const pubCHex = Buffer.from(secp256k1.getPublicKey(privHex, true)).toString('hex')
+const kpPubHex = String(Keypairs.deriveKeypair(secret).publicKey || '').toLowerCase()
+if (kpPubHex && kpPubHex !== pubCHex)
+  throw new Error(
+    `公钥双源不一致（库 ${kpPubHex.slice(0, 8)}… vs noble ${pubCHex.slice(0, 8)}…），中止`,
+  )
+const address = Keypairs.deriveAddress(pubCHex)
 
 // SEC1 EC 私钥 DER 手工封装：SEQUENCE{ ver=1, OCTET priv, [0]{OID secp256k1}, [1]{BITSTRING pub} }
 // 曲线参数必须显式带——node 的 PEM 解析没有 OID 就不知道是哪条曲线
