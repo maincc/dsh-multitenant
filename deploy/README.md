@@ -140,6 +140,11 @@ sudo VOLUME_BACKUP=1 ./deploy/backup.sh   # 连同所有租户数据卷
 已排除不会丢；改了 `Dockerfile` 镜像必重建，**租户数据卷不受影响**。建议上传前先
 `backup.sh`。
 
+**`npm ci` 报 "Missing: … from lock file"（lock 与 package.json 脱节）**：这是保护不是
+故障——lock 是唯一依赖真相。修法在本地：`npm install --package-lock-only` 重新生成
+`package-lock.json`，连同代码一起上传，再重跑 install/update（2026-10-26 实弹：
+VC SDK 传递依赖 @cedar-policy/cedar-wasm、mscrypto 因改 package.json 未刷 lock 而漏记）。
+
 ## 磁盘配额（tiers.\*.disk）：三个实情 + 一条历史
 
 **实情**（设计前必读，别再按 `--storage-opt` 的字面语义理解）：
