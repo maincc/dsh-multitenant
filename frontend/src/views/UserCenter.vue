@@ -875,6 +875,7 @@ import axios from 'axios'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { skillsApi } from '../api/skills.js'
+import { sha256Hex as sha256HexFallback } from '../utils/sha256.js'
 import AdminPanel from './AdminPanel.vue'
 import { buildAdminTabs } from '../admin-tabs'
 import {
@@ -1275,10 +1276,15 @@ const retryCredential = async () => {
 }
 
 const sha256Hex = async (bytes) => {
-  const buf = await crypto.subtle.digest('SHA-256', bytes)
-  return Array.from(new Uint8Array(buf))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
+  // 非安全上下文（http+局域网 IP）没有 crypto.subtle——纯 JS 兜底，输出逐字节一致
+  // （2026-10-26 服务器实弹："存入失败：…digest"；fixlog#5/#27 同族；兜底见 utils/sha256.js）
+  if (window.crypto?.subtle) {
+    const buf = await crypto.subtle.digest('SHA-256', bytes)
+    return Array.from(new Uint8Array(buf))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('')
+  }
+  return sha256HexFallback(bytes)
 }
 
 /**
