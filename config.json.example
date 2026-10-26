@@ -48,7 +48,7 @@
     "didGenUrl": "https://app.ccda.ooo/#/",
     "legacyFile": "data/legacy-cwt.json",
     "exemptCacheMs": 60000,
-    "comment": "v1.4 凭证体系（docs/credential-v1.4.md）：一地址一条互斥凭证（did 普通/cwt 解限），档案是判权权威。★platformDid 何时才需要配：仅'issuer.key 在场 + issuer-profile.json 缺失 + 官网已有该档案'（接管/灾备重建）——声明后首启自动从官网读档落 profile 镜像（只读线上、零写线上；线上档案 id 与声明不符=宁拒不写）；留空=不自取。profile 在场不需要它；全新平台也不需要（跑 scripts/shelf-open.mjs 注册，key+档案+镜像一步落齐，见 README §5 决策表）。keyFile/profileFile 属部署者提供区：git/rsync 永不携带（data/keys/ 只进不出），缺钥不拦启动、首次签发才报错；contextFile 是公开固定 schema，已迁仓随代码走。enterVerifyBudgetMs：判权顺序预算（'先跑档案，出错跑台账'）——enter 等同步等档案活验结论的上限，超预算落台账结论、后台核验照跑，不拖登录。profileProbeTimeoutMs 8s 是实测校准：官网 resolve 冷启动 2.7s 级常态，3s 会误判'没档案'。platformName：官网删卡弹窗展示的签发方名（mintVC 经 issuerObject 槽注入 {id,name}）。legacyFile：旧版 CWT 白名单（命中=直接签 CWT 解限卡）。CWT 申请防洪参数（maxPending/maxTokenBytes）是实现内实例字段、非配置项（docs/fixlog.md 第 36 条）"
+    "comment": "本段整体可省略——默认值全在代码（config.js），config 只写与环境不同项：形态 A 接管仅需一行 platformDid，形态 B 新平台零配置（shelf-open 装配两文件即生效）。v1.4 凭证体系（docs/credential-v1.4.md）：一地址一条互斥凭证（did 普通/cwt 解限），档案是判权权威。★platformDid 何时才需要配：仅'issuer.key 在场 + issuer-profile.json 缺失 + 官网已有该档案'（接管/灾备重建）——声明后首启自动从官网读档落 profile 镜像（只读线上、零写线上；线上档案 id 与声明不符=宁拒不写）；留空=不自取。profile 在场不需要它；全新平台也不需要（跑 scripts/shelf-open.mjs 注册，key+档案+镜像一步落齐，见 README §5 决策表）。keyFile/profileFile 属部署者提供区：git/rsync 永不携带（data/keys/ 只进不出），缺钥不拦启动、首次签发才报错；contextFile 是公开固定 schema，已迁仓随代码走。enterVerifyBudgetMs：判权顺序预算（'先跑档案，出错跑台账'）——enter 等同步等档案活验结论的上限，超预算落台账结论、后台核验照跑，不拖登录。profileProbeTimeoutMs 8s 是实测校准：官网 resolve 冷启动 2.7s 级常态，3s 会误判'没档案'。platformName：官网删卡弹窗展示的签发方名（mintVC 经 issuerObject 槽注入 {id,name}）。legacyFile：旧版 CWT 白名单（命中=直接签 CWT 解限卡）。CWT 申请防洪参数（maxPending/maxTokenBytes）是实现内实例字段、非配置项（docs/fixlog.md 第 36 条）"
   },
   "accessGate": {
     "mode": "credential",
