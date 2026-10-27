@@ -1807,7 +1807,10 @@ describe('v1.5 管理员凭证编排（任命/撤销/对账/判权）', () => {
     expect(r.credential.kind).toBe('cwt')
     expect(r.credential.roles).toContain('admin')
     expect(r.popup).toBe(true) // 新 admin 卡待领取 → 弹窗闭环
-    expect(r.role).toBe('user') // 对账前判权落名册兜底（config 空）——升级期不误显 tab
+    // 2026-10-27 P0 修正推翻旧断言（原文："对账前判权落名册兜底（config 空）——
+    // 升级期不误显 tab"）：那半句只对**还没升签的行**成立；本轮刚签出的
+    // roles:['admin'] 行就是权威结论本身，判权当场生效（复印件压原件正是症状）。
+    expect(r.role).toBe('admin')
     await credentialService.syncAdminProvisioning()
     expect((await credentialService.enter(ADDR)).role).toBe('admin') // 对账后=凭证化快照投影
   })
@@ -1906,6 +1909,69 @@ describe('v1.5 管理员凭证编排（任命/撤销/对账/判权）', () => {
     verifySdkReturn = false // 实卡验签失败=伪造/被覆盖
     await credentialService.onChainVerify(ADDR, { force: true })
     expect(credentialService.isAdmSync(ADDR)).toBe(false) // invalid 才摘
+  })
+})
+
+describe('角色判权当场生效（2026-10-27 用户实测"凭证是 admin 的、角色是普通"回归位）', () => {
+  // 病根：enter 左手把台账结论写好/拿齐，右手算 role 却读可能滞后的内存快照
+  // （复印件压原件）。P0 修正后优先级：撤销在册 > 本轮权威结论合格（并补集）
+  // > 快照原语义。热路径 isAdmSync 不动。
+  it('台账有合格 admin 行、快照故意留空 → 本轮即 admin，且快照当场补集', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    await b.grantCwt(ADDR, {
+      kind: 'cwt',
+      state: 'claimed',
+      roles: ['admin'],
+      source: 'admin-auto',
+      expiresAt: new Date(Date.now() + 864e5).toISOString(),
+    })
+    // 模拟"对账已完成（快照为政）但这行没进快照"——旧代码此刻角色=user（症状）
+    credentialService._provisioned = true
+    credentialService._admSet.delete(ADDR)
+    const r = await credentialService.enter(ADDR)
+    expect(r.role).toBe('admin')
+    expect(credentialService._admSet.has(ADDR)).toBe(true) // 补集：requireAdmin 侧窗口同步归零
+  })
+
+  it('过期 admin 行 → 新结论不续命，回落脚本/名册语义（role user）', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    await b.grantCwt(ADDR, {
+      kind: 'cwt',
+      state: 'claimed',
+      roles: ['admin'],
+      source: 'admin-auto',
+      expiresAt: '2020-01-01T00:00:00.000Z', // 无 vcId：_renewIfExpired 不触发，行保持过期原样
+    })
+    credentialService._provisioned = true
+    const r = await credentialService.enter(ADDR)
+    expect(r.role).toBe('user') // 权限真没了——正确判普通（P2 欠的就是页面说清原因）
+    expect(credentialService._admSet.has(ADDR)).toBe(false) // 不被 cred-fresh 误补集
+  })
+
+  it('撤销当秒（unmark 在册）→ 台账行仍是未过期 admin 也不敌除名事实', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    await credentialService.provisionAdmin(ADDR) // 行 admin + 快照 mark
+    credentialService._unmarkAdmin(ADDR) // 模拟官网摘册/demote 编排的当秒摘除（行未及改）
+    const r = await credentialService.enter(ADDR)
+    expect(r.role).toBe('user') // 撤销事实最大（只减不增），cred 说了也不算
+    expect(credentialService._admSet.has(ADDR)).toBe(false) // roleFor 分支1 先于补集，不复活
+  })
+
+  it('approveApplication 保留 admin roles 的行 → 批准写点即时补集（P1 收口第三处）', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    await credentialService.provisionAdmin(ADDR) // 行 cwt+roles[admin]
+    credentialService._admSet.clear() // 模拟重启后快照丢失、靠水合追认的旧窗口
+    b.apps.push({ _id: 'ap9', address: ADDR, status: 'pending' })
+    await credentialService.approveApplication('ap9', ADDR) // doc.roles 继承 ['admin']
+    expect(credentialService._admSet.has(ADDR)).toBe(true) // 写点 mark，不等下一轮水合
   })
 })
 
