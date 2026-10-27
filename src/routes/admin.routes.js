@@ -27,9 +27,9 @@ import {
 } from '../middleware/admin-signature.middleware.js'
 import { validateSwtcAddress } from '../middleware/validate.middleware.js'
 import { rateLimit } from '../middleware/rate-limit.middleware.js'
-import { normalizeAddress } from '../utils/address.js'
+import { normalizeAddress, swtcContainerName } from '../utils/address.js'
 import { BadRequestError, NotFoundError, handleError } from '../utils/errors.js'
-import { parseBody } from '../utils/parse-body.js'
+import { parseBody, parseJsonBody } from '../utils/parse-body.js'
 
 const PROJECT_ROOT = fileURLToPath(new URL('../..', import.meta.url))
 
@@ -757,6 +757,317 @@ export async function handleAdminRoutes(req, res, path, url) {
       res.end(JSON.stringify(out))
     } catch (err) {
       handleError(err, res)
+    }
+    return true
+  }
+
+  // ---------------------------------------------------------------------------
+  // 环境模板（environment-templates PR1，2026-10-27）
+  // 定格→draft→人审 publish→apply→revoke；digest 不可变钉；下架不驱逐。
+  // docker 面只有管理员碰（形态 B 会审定案）；用户侧自助口子在 PR3 另议。
+  // ---------------------------------------------------------------------------
+
+  // POST /api/admin/env-commit {address, slug, dryRun} —— 定格用户容器为模板草稿
+  if (path === '/api/admin/env-commit' && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return true
+    const body = await parseJsonBody(req, res)
+    if (!body) return true
+    let address = String(body.address || '')
+    if (!validateSwtcAddress(address, res)) return true
+    address = normalizeAddress(address)
+    const slug = String(body.slug || '').trim()
+    if (!/^[a-z0-9][a-z0-9-]{1,40}$/.test(slug)) {
+      res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(
+        JSON.stringify({ error: 'slug 需为小写字母/数字/连字符，2~41 字符（入镜像名，从严）' }),
+      )
+      return true
+    }
+    // 参数合法先于签名检查（promote 同款次序：不让人去签一个注定失败的操作）
+    if (!requireAdminSignature(req, res, 'env-commit', { address, slug }, getAdminSession(req)))
+      return true
+    const name = swtcContainerName(address)
+    try {
+      const info = await dockerService.containerInfo(name)
+      if (!info.exists || info.status !== 'running') {
+        res.writeHead(409, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(
+          JSON.stringify({
+            error: '源容器未在运行——定格需要活容器（执行时代格会停机数十秒并自动起回）',
+          }),
+        )
+        return true
+      }
+      const envs = await dataService.listEnvironments()
+      const mine = envs.filter((e) => e.sourceAddr === address && e.status !== 'revoked')
+      if (mine.length >= 5) {
+        res.writeHead(409, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(
+          JSON.stringify({
+            error: '该来源未下架模板已达 5 个上限（镜像存储不在 tier 配额内，从严治理）',
+          }),
+        )
+        return true
+      }
+      const repo = String(CONFIG.docker?.image || 'dsh-multitenant').split(':')[0]
+      const ts = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)
+      const tag = `${repo}:env-${address.slice(0, 8)}-${slug}-${ts}`
+      if (body.dryRun) {
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(
+          JSON.stringify({
+            dryRun: true,
+            tag,
+            steps: [
+              `停止源容器（优雅 ${15}s 宽限）`,
+              'docker commit → 中间层',
+              '一次性无网容器跑尽力清洗（不碰源容器与卷）',
+              '定格产物校验（体积/DSH 血统）→ 源容器立即起回',
+              '入账本 status=draft（人工审 manifest 后 publish）',
+            ],
+            notices: [
+              '源容器将停机约 15~60 秒（用户在用会感知）',
+              '模板不含 /dsh-home 卷：工作区文件/会话/密钥不会带走',
+              '清洗是尽力清单（shell 史/netrc/npmrc/ssh 私钥/敏感 export），writable layer 内容由定格人与审核人依 manifest 把关',
+            ],
+          }),
+        )
+        return true
+      }
+      const parentImage = await dockerService.containerImageId(name)
+      const out = await dockerService.commitEnvironment(name, tag, {
+        maxBytes: Number(CONFIG.docker?.envMaxBytes) || 2 * 1024 * 1024 * 1024,
+        labels: {
+          'dsh.env.author': address,
+          'dsh.env.slug': slug,
+          'dsh.env.parent': parentImage || 'unknown',
+        },
+      })
+      const doc = {
+        _id: out.tag,
+        sourceAddr: address,
+        slug,
+        imageTag: out.tag,
+        imageId: out.imageId,
+        parentImage: parentImage || null,
+        dshVersion: out.dshVersion,
+        sizeBytes: out.sizeBytes,
+        scrubbed: out.scrubbed,
+        manifest: out.manifest,
+        status: 'draft',
+        pinnedBy: [],
+        createdBy: getAdminSession(req) || 'system',
+        createdAt: new Date().toISOString(),
+      }
+      await dataService.putEnvironment(doc)
+      dataService.logOperation('env_commit', {
+        address,
+        tag: out.tag,
+        imageId: out.imageId,
+        sizeBytes: out.sizeBytes,
+        scrubbed: out.scrubbed,
+        operator: getAdminSession(req) || 'system',
+      })
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(
+        JSON.stringify({
+          template: { ...doc, manifest: undefined, manifestCount: out.manifest.length },
+          notice: out.scrubbed
+            ? '已按尽力清单清洗；请审 manifest 后 publish'
+            : '⚠ 清洗容器未执行成功，产物为未清洗层——请重点审 manifest 后再决定是否 publish',
+        }),
+      )
+    } catch (err) {
+      // commitEnvironment 的 finally 已负责把源容器起回；此处只诚实报断点
+      res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: `定格失败：${err.message}（源容器已确认起回）` }))
+    }
+    return true
+  }
+
+  // GET /api/admin/environments —— 模板账本列表（manifest 折叠，详情按需单查）
+  if (path === '/api/admin/environments' && req.method === 'GET') {
+    if (!requireAdmin(req, res)) return true
+    const envs = await dataService.listEnvironments()
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+    res.end(
+      JSON.stringify({
+        environments: envs
+          .map((e) => ({
+            _id: e._id,
+            sourceAddr: e.sourceAddr,
+            slug: e.slug,
+            imageId: e.imageId,
+            dshVersion: e.dshVersion,
+            sizeBytes: e.sizeBytes,
+            scrubbed: e.scrubbed,
+            status: e.status,
+            pinnedBy: e.pinnedBy || [],
+            manifestCount: (e.manifest || []).length,
+            createdBy: e.createdBy,
+            createdAt: e.createdAt,
+          }))
+          .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))),
+      }),
+    )
+    return true
+  }
+
+  // GET /api/admin/environments/<id> —— 单模板全量（含 manifest 审核面）
+  if (path.startsWith('/api/admin/environments/') && req.method === 'GET') {
+    if (!requireAdmin(req, res)) return true
+    const id = decodeURIComponent(path.slice('/api/admin/environments/'.length))
+    const doc = await dataService.getEnvironment(id)
+    if (!doc) {
+      res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '模板不存在' }))
+      return true
+    }
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+    res.end(JSON.stringify({ template: doc }))
+    return true
+  }
+
+  // POST /api/admin/env-publish {id} —— 审完 manifest 放行（draft→published）
+  if (path === '/api/admin/env-publish' && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return true
+    const body = await parseJsonBody(req, res)
+    if (!body) return true
+    const id = String(body.id || '')
+    if (!requireAdminSignature(req, res, 'env-publish', { id }, getAdminSession(req))) return true
+    const doc = await dataService.getEnvironment(id)
+    if (!doc) {
+      res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '模板不存在' }))
+      return true
+    }
+    if (doc.status !== 'draft') {
+      res.writeHead(409, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(
+        JSON.stringify({
+          error: `状态 ${doc.status} 不可上架（revoked 不可复活——需重新定格重审）`,
+        }),
+      )
+      return true
+    }
+    const next = await dataService.patchEnvironment(id, {
+      status: 'published',
+      publishedAt: new Date().toISOString(),
+      publishedBy: getAdminSession(req) || 'system',
+    })
+    dataService.logOperation('env_publish', { id, operator: getAdminSession(req) || 'system' })
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+    res.end(JSON.stringify({ ok: true, template: next }))
+    return true
+  }
+
+  // POST /api/admin/env-revoke {id} —— 撤 listing：禁新 pin，不驱逐在用者（只减不增）
+  if (path === '/api/admin/env-revoke' && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return true
+    const body = await parseJsonBody(req, res)
+    if (!body) return true
+    const id = String(body.id || '')
+    if (!requireAdminSignature(req, res, 'env-revoke', { id }, getAdminSession(req))) return true
+    const doc = await dataService.getEnvironment(id)
+    if (!doc) {
+      res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '模板不存在' }))
+      return true
+    }
+    if (doc.status === 'revoked') {
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ ok: true, already: true }))
+      return true
+    }
+    const next = await dataService.patchEnvironment(id, {
+      status: 'revoked',
+      revokedAt: new Date().toISOString(),
+      revokedBy: getAdminSession(req) || 'system',
+    })
+    dataService.logOperation('env_revoke', {
+      id,
+      pinnedCount: (doc.pinnedBy || []).length,
+      operator: getAdminSession(req) || 'system',
+    })
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+    res.end(
+      JSON.stringify({
+        ok: true,
+        template: next,
+        note: `已撤 listing；${(doc.pinnedBy || []).length} 个在用租户不受影响（重钉该模板将被拒）`,
+      }),
+    )
+    return true
+  }
+
+  // POST /api/admin/env-apply {id, address, dryRun} —— 分发：digest 逐字校验后
+  // 走既有 applyImageVersion（停机/重建/留痕/重建保持全是现成的）
+  if (path === '/api/admin/env-apply' && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return true
+    const body = await parseJsonBody(req, res)
+    if (!body) return true
+    const id = String(body.id || '')
+    let address = String(body.address || '')
+    if (!validateSwtcAddress(address, res)) return true
+    address = normalizeAddress(address)
+    if (!requireAdminSignature(req, res, 'env-apply', { id, address }, getAdminSession(req)))
+      return true
+    const doc = await dataService.getEnvironment(id)
+    if (!doc) {
+      res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '模板不存在' }))
+      return true
+    }
+    if (doc.status !== 'published') {
+      res.writeHead(409, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(
+        JSON.stringify({
+          error: `模板状态 ${doc.status}：仅 published 可分发（draft 未审、revoked 已撤）`,
+        }),
+      )
+      return true
+    }
+    // digest 不可变钉：tag 可能被后续定格/外力覆盖，ID 不符=货不证
+    const nowId = await dockerService.imageId(doc._id)
+    if (!nowId) {
+      res.writeHead(410, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '模板镜像已不在本机（被清理？）——不可分发' }))
+      return true
+    }
+    if (nowId !== doc.imageId) {
+      res.writeHead(409, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(
+        JSON.stringify({
+          error: '模板 tag 指向的镜像与账本 digest 不符（同名被覆盖），拒发',
+          expected: doc.imageId,
+          actual: nowId,
+        }),
+      )
+      return true
+    }
+    try {
+      const result = await userService.applyImageVersion(address, {
+        image: doc._id,
+        dryRun: !!body.dryRun,
+      })
+      if (!body.dryRun) {
+        const cur = await dataService.getEnvironment(id)
+        const pinnedBy = new Set(cur?.pinnedBy || [])
+        pinnedBy.add(address)
+        await dataService.patchEnvironment(id, { pinnedBy: [...pinnedBy] })
+        dataService.logOperation('env_apply', {
+          id,
+          address,
+          operator: getAdminSession(req) || 'system',
+        })
+      }
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(
+        JSON.stringify({ ...result, userNotices: ['管理员已切换你的容器环境（见容器 tab）'] }),
+      )
+    } catch (err) {
+      res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: `分发失败：${err.message}` }))
     }
     return true
   }

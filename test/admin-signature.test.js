@@ -554,3 +554,22 @@ describe('v1.5 撤销管理员（demote）：签名门禁 + 防锁死 + 凭证�
     expect(data.binding).toBe(`demote:address=${TENANT}`)
   })
 })
+
+describe('环境模板动作签名绑定（environment-templates PR1）', () => {
+  const A = 'jNyJLQkxfYh12wu8jYnwStyZBJUvEDW7jj'
+  it('env-commit 需 address+slug 双全；binding 含 slug（签错环境名即拒）', () => {
+    expect(buildBinding('env-commit', { address: A, slug: 'stock' })).toBe(
+      'env-commit:address=jnyjlqkxfyh12wu8jynwstyzbjuvedw7jj:slug=stock',
+    )
+    expect(buildBinding('env-commit', { address: A })).toBe(null)
+    expect(buildBinding('env-commit', { slug: 'stock' })).toBe(null)
+  })
+  it('env-publish/env-revoke 需 id；env-apply 需 id+address 双全（分发对象签死）', () => {
+    expect(buildBinding('env-publish', { id: 't1' })).toBe('env-publish:id=t1')
+    expect(buildBinding('env-revoke', {})).toBe(null)
+    expect(buildBinding('env-apply', { id: 't1', address: A })).toBe(
+      'env-apply:id=t1:address=jnyjlqkxfyh12wu8jynwstyzbjuvedw7jj',
+    )
+    expect(buildBinding('env-apply', { id: 't1' })).toBe(null)
+  })
+})

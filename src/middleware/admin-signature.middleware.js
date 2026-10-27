@@ -120,6 +120,16 @@ export function buildBinding(operation, payload = {}) {
     case 'remove':
       // keepVolume 会改变"数据卷是否保留"这一破坏性语义，必须签进去
       return addr ? `remove:address=${addr}:keepVolume=${p.keepVolume === true ? '1' : '0'}` : null
+    // 环境模板（2026-10-27 PR1）：定格"谁的环境"、上下架"哪个模板"、
+    // 分发"到哪个人"都是改变世界的动作——slug/id/address 全部进签名面，
+    // 签 A 执行 B 直接拒（promote/remove 同款纪律）。
+    case 'env-commit':
+      return addr && p.slug ? `env-commit:address=${addr}:slug=${String(p.slug)}` : null
+    case 'env-publish':
+    case 'env-revoke':
+      return p.id ? `${operation}:id=${String(p.id)}` : null
+    case 'env-apply':
+      return addr && p.id ? `env-apply:id=${String(p.id)}:address=${addr}` : null
     case 'cleanup-orphan-volumes': {
       // 批量删卷：删哪几个必须签进去（同 prune-images 的规范化：去重+排序，
       // 稳定可比对）。与 prune 不同，**空列表一律拒**——"不签任何东西"不该

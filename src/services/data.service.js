@@ -347,6 +347,67 @@ export class DataService {
     return record
   }
 
+  /* ---- 环境模板账本（environment-templates PR1，2026-10-27）----
+   * 强轨：写失败=操作失败（无账本的环境没意义，管理员当场可见报错）——
+   * 与 audit 尽力轨（logOperation 内部吞错）刻意不同。
+   * mongo=独立集合 environments；json=data/environments.json 数组，双态同构。
+   * 账本字段治理：_id=模板 tag；imageId=docker digest（分发时逐字校验，
+   * 防同名 tag 被后一定格覆盖——digest 不符即拒发）；status 只走
+   * published→revoked（撤 listing 语义，不驱逐在用者）。
+   */
+
+  environmentsFile() {
+    return join(this.dataDir, 'environments.json')
+  }
+
+  async putEnvironment(doc) {
+    if (this.provider !== 'json') {
+      const store = getStore()
+      await store.connect()
+      await store.col('environments').updateOne({ _id: doc._id }, { $set: doc }, { upsert: true })
+      return doc
+    }
+    const all = this.readJson(this.environmentsFile()) || []
+    const i = all.findIndex((d) => d._id === doc._id)
+    if (i >= 0) all[i] = doc
+    else all.push(doc)
+    this.writeWithLock(this.environmentsFile(), all)
+    return doc
+  }
+
+  async listEnvironments() {
+    if (this.provider !== 'json') {
+      const store = getStore()
+      await store.connect()
+      return store.col('environments').find({}).toArray()
+    }
+    return this.readJson(this.environmentsFile()) || []
+  }
+
+  async getEnvironment(id) {
+    if (this.provider !== 'json') {
+      const store = getStore()
+      await store.connect()
+      return store.col('environments').findOne({ _id: id })
+    }
+    return (this.readJson(this.environmentsFile()) || []).find((d) => d._id === id) || null
+  }
+
+  async patchEnvironment(id, set) {
+    if (this.provider !== 'json') {
+      const store = getStore()
+      await store.connect()
+      await store.col('environments').updateOne({ _id: id }, { $set: set })
+      return this.getEnvironment(id)
+    }
+    const all = this.readJson(this.environmentsFile()) || []
+    const doc = all.find((d) => d._id === id)
+    if (!doc) return null
+    Object.assign(doc, set)
+    this.writeWithLock(this.environmentsFile(), all)
+    return doc
+  }
+
   /**
    * 添加管理员
    */

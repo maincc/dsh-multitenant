@@ -972,6 +972,123 @@ export class DockerService {
   }
 
   /**
+   * 环境模板定格（environment-templates PR1，2026-10-27）。
+   *
+   * 四条铁律（方案会审定式，注释即判例）：
+   *  1. **停机定格**：运行中进程正在写 fs，热 commit 会捞进中间态——先优雅
+   *     stop 再 commit，定格的是"安静时刻的环境"。
+   *  2. **源容器必须起回**：commit 失败绝不能赔上用户环境——finally 兜底
+   *     检查状态，任何断点之后都把源容器拉起来。
+   *  3. **清洗非破坏**：清洗脚本跑在定格产物派生的一次性容器里（--network
+   *     none，无网无卷），源容器和它的 volume 一字节都不碰。清洗失败=带
+   *     原始层收下（宁可模板没洗，不可源容器躺平）。
+   *  4. **数据不出门**：卷挂载点 /dsh-home 架构性不入 commit——定格=纯环境，
+   *     会话/密钥/工作区文件物理上带不走（这是全方案的安全前提）。
+   *
+   * 产物校验三关：体积超限即定格即弃（镜像存储不在 tier 配额内，预检是
+   * 唯一闸）；DSH 版本必须可读（血统=applyImageVersion 门的既有校验）；
+   * manifest=docker diff 写层清单（审核与追责的主证据）。
+   *
+   * @param {string} name 源容器名
+   * @param {string} tag 目标模板 tag（路由层治理命名，建议 dsh-multitenant:env-…
+   *   ——落进本平台 repo 镜像空间，repo 归属校验/镜像列表天然兼容）
+   * @param {{maxBytes?:number, labels?:Object<string,string>}} [opts]
+   * @returns {Promise<{tag,imageId,sizeBytes,dshVersion,manifest,scrubbed}>}
+   */
+  async commitEnvironment(name, tag, opts = {}) {
+    const maxBytes = Number(opts.maxBytes) > 0 ? Number(opts.maxBytes) : 2 * 1024 * 1024 * 1024
+    const stamp = Date.now()
+    const stageTag = `dsh-env-stage-${stamp}`
+    const scrubName = `dsh-env-scrub-${stamp}`
+    const labelChanges = Object.entries(opts.labels || {}).flatMap(([k, v]) => [
+      '--change',
+      `LABEL ${k}=${String(v).replace(/["\s]/g, '_')}`,
+    ])
+    // 尽力清洗清单：只清已知泄露面（shell 史/netrc/npmrc token/ssh 私钥/
+    // dotfiles 里的敏感 export）。诚实措辞进路由层提示语，不在此假装穷尽。
+    const SCRUB = [
+      'rm -f /root/.bash_history /root/.netrc /root/.npmrc',
+      'find /root/.ssh -maxdepth 1 -type f -name "id_*" ! -name "*.pub" -delete',
+      'for f in /root/.bashrc /root/.profile /etc/profile; do [ -f "$f" ] && sed -ri' +
+        ' "/^[[:space:]]*export[[:space:]]+[A-Za-z0-9_]*(TOKEN|SECRET|KEY|PASSWD|PASSWORD)[A-Za-z0-9_]*=.*/d" "$f";' +
+        ' done',
+      'true',
+    ].join('; ')
+    const rmiQuiet = async (ref) => {
+      try {
+        await sh('docker', ['rmi', '-f', ref])
+      } catch {
+        /* 已删或被下游层持有：中间 tag 反正只是标签 */
+      }
+    }
+    try {
+      await sh('docker', ['stop', '-t', '15', name])
+      await sh('docker', ['commit', ...labelChanges, name, stageTag])
+      let scrubbed = false
+      try {
+        await sh('docker', [
+          'run',
+          '-d',
+          '--name',
+          scrubName,
+          '--network',
+          'none',
+          '--memory',
+          '256m',
+          '--entrypoint',
+          'sh',
+          stageTag,
+          '-c',
+          SCRUB,
+        ])
+        await sh('docker', ['wait', scrubName])
+        await sh('docker', ['commit', '--change', 'LABEL dsh.env.scrubbed=true', scrubName, tag])
+        scrubbed = true
+      } catch {
+        await sh('docker', ['tag', stageTag, tag]).catch(() => {})
+      }
+      await sh('docker', ['rm', '-f', scrubName]).catch(() => {})
+      await rmiQuiet(stageTag)
+      // 先归还源容器，再做产物校验：体积/血统不满足是模板的失败，
+      // 不该让用户环境多躺一分钟
+      await sh('docker', ['start', name])
+      const imageId = await this.imageId(tag)
+      if (!imageId) throw new Error('定格产物不可读（镜像 ID 缺失）')
+      const sizeOut = await sh('docker', ['image', 'inspect', '--format', '{{.Size}}', tag])
+      const sizeBytes = Number(String(sizeOut).trim()) || 0
+      if (sizeBytes > maxBytes) {
+        await rmiQuiet(tag)
+        throw new Error(
+          `模板体积 ${Math.round(sizeBytes / 1e6)}MB 超过上限 ${Math.round(maxBytes / 1e6)}MB，已弃`,
+        )
+      }
+      const dshVersion = await this.imageDshVersion(tag)
+      if (!dshVersion) {
+        await rmiQuiet(tag)
+        throw new Error('定格镜像读不到 DSH 版本（非合法 DSH 基座），已弃')
+      }
+      let manifest = []
+      try {
+        const diff = await sh('docker', ['diff', name])
+        manifest = diff.split('\n').filter(Boolean).slice(0, 2000)
+      } catch {
+        /* manifest 尽力而为：读不到不否决定格 */
+      }
+      return { tag, imageId, sizeBytes, dshVersion, manifest, scrubbed }
+    } finally {
+      // 兜底中的兜底：成功路径早已 start 回；此处专管中途炸点——
+      // 源容器状态不可读（宿主 docker 都挂了）就不在这里重复报错
+      try {
+        const info = await this.containerInfo(name)
+        if (info.exists && info.status !== 'running') await sh('docker', ['start', name])
+      } catch {
+        /* docker 面不可用：此刻报错也无人执行，留给上层日志 */
+      }
+      await rmiQuiet(stageTag)
+    }
+  }
+
+  /**
    * 把任意本地镜像**钦定为平台默认**。
    *
    * 语义 = `docker tag <ref> <IMAGE>`（IMAGE 即创建容器时 opts.image 缺位的
