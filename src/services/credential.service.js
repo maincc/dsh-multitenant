@@ -1184,11 +1184,14 @@ class CredentialService {
       )
     })
     if (!this._refreshTimer) {
-      // 5 分钟兜底水合（外部直改库/多写入窗口）；unref 绝不误拖测试进程
+      // 兜底水合（外部直改库/多写入窗口）；unref 绝不误拖测试进程。
+      // 2026-10-27 P1：5min→60s——快照"复印件"与台账"原件"的矛盾窗口从最多
+      // 5 分钟压到 1 分钟（requireAdmin 侧的最后防线；签发路径已即时补集，
+      // 这里只兜外部直改库。每分钟两个小 find，开销无感）。
       this._refreshTimer = setInterval(() => {
         this.refreshExemptSet().catch(() => {})
         this.syncAdminProvisioning().catch(() => {})
-      }, 300000)
+      }, 60000)
       this._refreshTimer.unref()
     }
     if (!this._exemptReconcileTimer) {
@@ -1556,7 +1559,7 @@ class CredentialService {
         return {
           credential: this._public(cred),
           popup: true,
-          role: this.roleFor(addrLower),
+          role: this.roleFor(addrLower, cred),
           legacy: { approvedAt: lg.approvedAt || null },
         }
       }
@@ -1599,7 +1602,7 @@ class CredentialService {
     return {
       credential: this._public(renewed.cred),
       popup: renewed.cred.state === 'assigned',
-      role: this.roleFor(addrLower),
+      role: this.roleFor(addrLower, renewed.cred),
       legacy: null,
       renewed: renewed.renewed,
       verifiedBy,
@@ -2017,6 +2020,11 @@ class CredentialService {
     })
     this._markExempt(app.address)
     this._markValid(app.address)
+    // 2026-10-27 P1 补集收口：批准行保留了既有 roles——含 admin 时这是"admin 行
+    // 由本路径写入"的第三个现场（前两个：provisionAdmin/discovery），不 mark 就
+    // 又造出一个"台账已合格、快照靠 60s 水合追认"的窗口（roleFor 新逻辑也救不了
+    // requireAdmin 侧）。后到者胜语义由 _markAdmin 自带。
+    if ((doc.roles || []).includes('admin')) this._markAdmin(normalizeAddress(app.address))
     return { ok: true, credential: this._public(cred) }
   }
 
@@ -2128,9 +2136,32 @@ class CredentialService {
     return { promoted, demoted }
   }
 
-  /** tab 判权字段（credential-status 的 role）：读结论快照；徽章面另见 onChain 字段 */
-  roleFor(address) {
-    return this.isAdmSync(address) ? 'admin' : 'user'
+  /**
+   * tab 判权字段（credential-status 的 role）。
+   * 2026-10-27 P0 修正（用户实测"凭证是 admin 的、角色是普通"的根治）：
+   * enter 自己刚把台账结论拿到/写好，转身却读可能滞后数分钟的内存快照复印件——
+   * 两个数据源打架就是症状本身。新优先级：
+   *   1) _admUnmark 在册（撤销事实最大，只减不增）→ user，cred 说了也不算；
+   *   2) 本轮权威结论合格（claimed ∧ roles∋admin ∧ 未过期）→ admin，
+   *      并当场 _markAdmin 补复印件（requireAdmin 侧的 403 窗口同步归零）；
+   *   3) 无本轮结论 → 原快照语义（isAdmSync：对账前名册兜底/对账后 _admSet）。
+   * cred 缺省时行为与旧版逐字节一致——热路径（isAdmSync/requireAdmin）不动。
+   */
+  roleFor(address, cred = null) {
+    const addrLower = normalizeAddress(address)
+    if (this._admUnmark.has(addrLower)) return 'user'
+    if (
+      this.enabled &&
+      cred &&
+      cred.kind === 'cwt' && // 与快照源 listAdminRows 同口径（kind:'cwt' ∧ roles∋admin
+      Array.isArray(cred.roles) && //  ∧ 未过期；state 不设限——任命生效即 admin 是既有语义，
+      cred.roles.includes('admin') && //  roleFor 私加 claimed 就成了第二个真相）
+      (!cred.expiresAt || new Date(cred.expiresAt).getTime() > Date.now())
+    ) {
+      this._markAdmin(addrLower) // 新结论顺手补齐快照：不靠下轮水合追认
+      return 'admin'
+    }
+    return this.isAdmSync(addrLower) ? 'admin' : 'user'
   }
 
   /* ---- 豁免判定（usage 限制接线）：内存快照 + 周期水合，热路径零 I/O ---- */
