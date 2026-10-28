@@ -1990,11 +1990,29 @@ export class UserService {
 
     const containerImageId = await dockerService.containerImageId(name)
     if (containerImageId === imageId) {
+      // 判例（2026-10 用户报"切换后画面没更新还是默认环境"）：容器实际已
+      // 在目标镜像上（imageId 相等即证），但账本 pin 停在历史脏值——界面
+      // 按 pin 渲染"当前环境"，于是永远显示默认。already-current 必须把
+      // pin 自愈成实物：pin 是"我现在用的是哪个模板"的语义指针，真相优先。
+      const wantPin = targetImage ?? null
+      if ((user.pinnedImage ?? null) !== wantPin) {
+        this.state.swtcUsers[address] = { ...user, pinnedImage: wantPin }
+        await this._saveState()
+        dataService.logOperation('dsh_version_pin', {
+          address,
+          from: user.pinnedImage ?? null,
+          to: wantPin,
+          image: wantPin,
+          port: user.port ?? null,
+          note: '容器已在目标镜像上，pin 按实物自愈（画面与真相收敛）',
+        })
+      }
       return {
         skipped: true,
         reason: 'already-current',
         containerImageId,
         imageId,
+        pinnedImage: wantPin,
         dshVersion: user.baseImageVersion ?? null,
       }
     }

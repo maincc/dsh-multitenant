@@ -426,8 +426,9 @@ async function revertNow() {
   if (!go) return
   busy.value = true
   try {
-    await axios.post('/api/user/environment/revert', {})
-    toast(t('env.reverted'))
+    const r = await axios.post('/api/user/environment/revert', {})
+    // 后端如实说明随行文件残留（只换镜像不删文件）——有则转告，无则原话
+    toast(r.data?.revertNote || t('env.reverted'))
     await loadAll()
   } catch (e) {
     toast(errMsg(e))

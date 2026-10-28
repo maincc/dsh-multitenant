@@ -557,6 +557,10 @@ export async function handleUserRoutes(req, res, path) {
           }
         }
         dataService.logOperation('env_reset_self', { address: addr, operator: addr })
+        // 诚实说明：回退只换镜像，随行文件不自动删（自动删可能误伤接收者
+        // 自己改过的同名文件）——残留的后果就是"再次选用会再问一次覆盖"。
+        result.revertNote =
+          '镜像已回退到平台默认。之前模板随行的文件（插件、技能、保留的工作目录）仍在你的容器卷里，不会被自动删除；再次选用该模板时会提示覆盖确认。'
       }
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify(result))
