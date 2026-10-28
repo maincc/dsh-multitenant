@@ -25,8 +25,11 @@ import { dataService } from './data.service.js'
 import { normalizeAddress, swtcVolumeName } from '../utils/address.js'
 import { scanBundle } from '../utils/env-scan.js'
 
-const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
-const SCRIPTS_DIR = join(ROOT, 'src', 'services')
+// 判例（2026-10 本地真机首测）：曾写 join(ROOT,'src','services') 而 dirname 链
+// 到头就是 src/ —— 拼出 src/src/services，挂载文件不存在，inventory 全 500。
+// 测试链 mock 了 docker 通道永远抓不到路径拼接错——helper 脚本与本模块同目录，
+// 直接取自身所在目录，零二次拼接。
+const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url))
 
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64')
 
