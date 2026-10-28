@@ -1093,7 +1093,7 @@ export async function handleAdminRoutes(req, res, path, url) {
       return true
     }
     try {
-      envBundleService.verifyBundle(id, doc.bundle.files) // 账本↔宿主逐字对，不符拒扫
+      await envBundleService.verifyBundle(id, doc.bundle.files) // 账本↔tar 实体核验，不符拒扫
       const scan = scanBundle(envBundleService.bundleDir(id), doc.bundle.files)
       await dataService.patchEnvironment(id, { scan })
       dataService.logOperation('env_scan', { id, operator: getAdminSession(req) || 'system' })

@@ -15,6 +15,8 @@
  *    sessions/settings 等连 inventory 都不出现（名字就是情报）
  *  - **完整性**：装包前宿主 bundle 文件与账本 sha256 全比对——账本才是权威
  */
+import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
@@ -127,21 +129,44 @@ export class EnvBundleService {
     }
   }
 
-  /** 宿主 bundle 与账本 expected 逐字对（p 集合+sha256）——账本是权威 */
-  verifyBundle(id, expectedFiles) {
+  /**
+   * 账本↔tar 实体核验：解包临时目录后**逐文件对字节数+sha256**——账本是权威。
+   *
+   * 判例（2026-10 用户管理端首点"重跑检测"抓出）：旧实现按"宿主平铺文件"
+   * 核验，可定格导出的产物本就是一个 bundle.tar.gz（文件在包内），于是
+   * 永远报"缺文件"。路由测试把本方法整个 mock 掉，路径形态错配只有真机
+   * 才暴露——mock 绿≠真机通再添一例。
+   */
+  async verifyBundle(id, expectedFiles) {
     const dir = this.bundleDir(id)
-    if (!existsSync(join(dir, 'bundle.tar.gz'))) {
+    const tar = join(dir, 'bundle.tar.gz')
+    if (!existsSync(tar)) {
       throw new Error('bundle-missing')
     }
     const exp = [...expectedFiles].sort((a, b) => a.p.localeCompare(b.p))
-    for (const f of exp) {
-      let st
-      try {
-        st = readFileSync(join(dir, f.p), { flag: 'r' })
-      } catch {
-        throw new Error(`bundle-integrity:缺文件 ${f.p}`)
+    const tmp = join(
+      this.baseDir,
+      `.verify-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    )
+    mkdirSync(tmp, { recursive: true })
+    try {
+      execFileSync('tar', ['-xzf', tar, '-C', tmp], { stdio: 'pipe' })
+      for (const f of exp) {
+        let buf
+        try {
+          buf = readFileSync(join(tmp, f.p))
+        } catch {
+          throw new Error(`bundle-integrity:缺文件 ${f.p}`)
+        }
+        if (buf.length !== f.size) throw new Error(`bundle-integrity:大小不符 ${f.p}`)
+        // 哈希在场才核（导出环节记 sha256；老数据无 sha 时尺寸核验兜底）
+        if (f.sha256) {
+          const got = createHash('sha256').update(buf).digest('hex')
+          if (got !== f.sha256) throw new Error(`bundle-integrity:哈希不符 ${f.p}`)
+        }
       }
-      if (st.length !== f.size) throw new Error(`bundle-integrity:大小不符 ${f.p}`)
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
     }
     return exp.map((f) => f.p) // install 侧按账本清单核验 tar 解出物
   }
@@ -153,7 +178,7 @@ export class EnvBundleService {
    * @param {{dryRun:boolean}} opts
    */
   async installBundle(destAddress, id, files, { dryRun = false } = {}) {
-    this.verifyBundle(id, files)
+    await this.verifyBundle(id, files)
     return this.#volumeRun(
       swtcVolumeName(normalizeAddress(destAddress)),
       'env-install.mjs',
