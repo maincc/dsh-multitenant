@@ -199,3 +199,180 @@ stock-trader          已上架 · v20261027
 ---
 
 _评审点：① 第 2 步"文件夹只到一级"够不够（v2 §9-1 旧议）；② 第 4 步进度用轮询还是 SSE；③ 代格默认全不带是否过保守；④ 驳回即弃 vs 保留草稿（v2 §9-3）。_
+
+---
+
+# 附录 A · 数据结构（模板账本 environments）
+
+## A.1 文档结构（现网实有字段全量一例）
+
+```jsonc
+{
+  "_id":          "dsh-multitenant:env-jga9j9tk-stock-20261027153000", // =imageTag，天然唯一
+  "sourceAddr":   "jga9j9tk…",          // 作者（定格来源容器的主人）
+  "slug":         "stock",              // 技术名（进 tag；PR3 用户端自动生成）
+  "displayName":  "我的炒股环境",        // 展示名（自由文本≤60，缺省回退 slug）
+  "intro":        "装了 akshare + 看盘脚本", // 卡片第二行（≤300，可空）
+  "imageTag":     "…同上",
+  "imageId":      "sha256:9f2c…",       // ★ digest 钉：分发时逐字校验，同名覆盖即拒发
+  "parentImage":  "dsh-multitenant:0.3.3",
+  "dshVersion":   "0.3.3",              // 基座血统（选用面显示 + 落后黄条数据源）
+  "sizeBytes":    879412224,            // >2GiB 定格当场弃（不落账）
+  "scrubbed":     true,                 // 清洗层是否生效（清洗失败 tag 回退时如实 false）
+  "manifest":     ["A /opt/ticker", "C /etc/hosts", …], // ≤2000 行 docker diff；列表面折叠为 manifestCount
+  "status":       "draft",              // 状态机 draft→published→revoked；rejected=PR2
+  "pinnedBy":     ["接收者地址", …],     // apply 成功 addToSet；revoke 只停新增不清此列
+  "createdBy":    "管理员地址",          // 谁操刀定格
+  "createdAt":    "ISO", "publishedAt": "ISO", "revokedAt": "ISO",
+  "revokeNote":   "N 个在用租户不受影响"
+}
+```
+
+## A.2 PR2 规划字段（随行包，标注防混淆——以下尚未落地）
+
+```jsonc
+{
+  "include": {
+    // 作者勾选快照（定格当场冻结，之后不可改）
+    "skills": ["cwt-verify"], // 按名随行：接收者拿平台仓库当前版
+    "plugins": ["my-ticker.ui"], // 按文件随行：作者代码原样进包
+    "folders": ["策略/"],
+    "files": ["ma_cross.py"],
+    "settings": ["ui-theme"], // 字段级白名单，密钥永不在选项内
+  },
+  "bundle": {
+    "path": "data/env-bundles/<id>/",
+    "bytes": 2360000,
+    "files": [{ "p": "plugins/my-ticker.ui", "size": 12288, "sha256": "a1b2…" }],
+  },
+  "scan": {
+    "at": "ISO",
+    "rulesVer": 3,
+    "hits": [{ "rule": "curl-pipe-sh", "file": "…", "line": 66 }],
+    "secrets": [{ "file": "策略/config.py", "pattern": "private-key-header" }],
+  },
+  "reports": [{ "by": "举报者地址", "at": "ISO", "text": "…" }],
+}
+```
+
+## A.3 存储双模式（json 降级面同构）
+
+`data.service.putEnvironment/listEnvironments/getEnvironment/patchEnvironment` 四方法
+provider 双路：mongo 用 `store.col('environments')` upsert；`provider=json` 时落
+`<data>/environments.json` 数组 + `writeWithLock`。**强轨纪律**：写失败=操作失败
+（对比审计 logOperation 的尽力而为——模板账本不许静默丢）。
+
+```js
+// data.service.js:363（节选）
+async putEnvironment(doc) {
+  if (this.provider !== 'json') {
+    const store = getStore()
+    await store.connect()
+    await store.col('environments').updateOne({ _id: doc._id }, { $set: doc }, { upsert: true })
+    return doc
+  }
+  const all = this.readJson(this.environmentsFile()) || []
+  // …json 数组等值替换 + writeWithLock
+}
+```
+
+# 附录 B · MongoDB 集合合同（当前 10 集合）
+
+| 集合                        | 用途                          | 与定格链路的关系                                                       |
+| --------------------------- | ----------------------------- | ---------------------------------------------------------------------- |
+| `credentials`               | v1.4 凭证台账                 | **freezeAllowed** 判格资格（cwt∪admin）                                |
+| `cwt_applications`          | CWT 申请                      | 无资格者的引导出口                                                     |
+| `environments`              | ★ 环境模板账本                | 本文主角（见附录 A）                                                   |
+| `users`                     | 用户档案/容器状态             | apply 后 `pinnedImage` 的落点（经 user.service）                       |
+| `sessions`                  | 登录会话                      | 用户端选用/回退的身份来源（credSession）                               |
+| `audit`                     | 操作审计（90 天 TTL）         | `env_commit/env_publish/env_revoke/env_apply_self/env_reset_self` 留痕 |
+| `skills` / `skill_installs` | 技能仓库元数据/按地址安装清单 | PR2 随行包"技能按名随行"的数据源                                       |
+| `usage`                     | 用量统计                      | 盘占用面板（PR5 并入模板体积）                                         |
+| `meta`                      | 平台元数据/管理员名册         | admin 名册兜底面（isAdmSync 对账前）                                   |
+
+**environments 索引合同**（`mongo.store.js INDEX_SPECS`，§4.1 合同，ensureIndexes 幂等建）：
+
+```js
+environments: [
+  { key: { status: 1 }, options: { name: 'by_status' } }, // 选用面取 published
+  { key: { sourceAddr: 1, status: 1 }, options: { name: 'by_source_status' } }, // 每来源 ≤5 配额
+  { key: { createdAt: -1 }, options: { name: 'by_time' } }, // 列表时间序
+]
+```
+
+> **判例（2026-10-27）**：PR1 交付时 environments 的**读写已在用而集合合同漏登**——
+> `store.col()` 白名单硬拒，但路由测试全 mock 掉 store 所以 907 全绿；真库
+> `ensureIndexes()` 合同测试当场逮住（"未知集合"InternalError）。教训入合同注释：
+> **mock 绿 ≠ 真库通；新集合必须同车过 COLLECTIONS + INDEX_SPECS 两处合同。**
+> 集合合同锁定测试（mongo-store.test.js:37）是刻意设计——扩合同必须显式改锁，不许悄悄多一张表。
+
+# 附录 C · 核心代码地图与关键摘录
+
+## C.1 文件—职责—行号地图（截至本提交）
+
+| 文件:行                                                               | 职责                                                               |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `docker.service.js:998 commitEnvironment(name,tag,{maxBytes,labels})` | 定格原语全链（见 C.2）                                             |
+| `docker.service.js:1009 SCRUB`                                        | 尽力清洗清单（只清已知泄露面，不假装穷尽）                         |
+| `docker.service.js:965 imageId()`                                     | digest 现值查询（分发校验用）                                      |
+| `admin.routes.js:771/901/930/946/979/1019`                            | env-commit / 列表 / 详情(审核面) / publish / revoke / apply 六端点 |
+| `user.routes.js:286/337/397`                                          | 选用面列表（只 published）/ 自助 apply / 自助 revert               |
+| `admin-signature.middleware.js:126-133`                               | env-* 四个 buildBinding（slug/id/address 全进签名面）              |
+| `credential.service.js:1296 freezeAllowed`                            | 定格资格门                                                         |
+| `mongo.store.js:26 COLLECTIONS / :39 INDEX_SPECS`                     | 集合与索引合同                                                     |
+
+## C.2 commitEnvironment 四铁律骨架（docker.service.js:998）
+
+```
+1 stop-then-freeze：先 docker stop -t 15（不拍中间态）
+2 stage commit：dsh-env-stage-<stamp>（不带 repo: 冒号形态——防污染版本列表）
+3 清洗跑在一次性 helper：run -d --network none --memory 256m --entrypoint sh
+    SCRUB：bash_history/netrc/npmrc 删 · .ssh 私钥删 · dotfiles 里
+           export *(TOKEN|SECRET|KEY|PASSWD|PASSWORD)* 行 sed 剥离
+4 ★ 源容器先起回，再校验产物（顺序是刻意的：产物不合格可以弃，
+    人家的容器躺着不等人——finally 再兜一层"非 running 必 start"）
+5 产物校验：imageId 可读 / Size ≤maxBytes（超限 rmi 即弃）/ imageDshVersion 可读
+6 docker diff 生成 manifest（≤2000 行）
+7 helper 失败降级：直接 tag stage（"宁可模板没洗，不可源容器躺平"+scrubbed=false 如实记）
+```
+
+## C.3 分发端 digest 钉（admin.routes.js:1019 区段，user 面同款）
+
+```js
+// digest 不可变钉：tag 可能被后续定格/外力覆盖，ID 不符=货不证
+const nowId = await dockerService.imageId(doc._id)
+if (/* 镜像不存在 */) return 410 // 模板镜像没了：明确" gone"而非含糊 404
+if (nowId !== doc.imageId) return 409 // { error: '…同名被覆盖…拒发', expected, actual }
+const result = await userService.applyImageVersion(address, { image: doc._id, dryRun })
+```
+
+## C.4 freezeAllowed（credential.service.js:1296，全文）
+
+```js
+async freezeAllowed(address) {
+  if (!this.enabled) return false // 凭证体系停用=定格整体关闭（门依附凭证语义）
+  const a = normalizeAddress(address)
+  if (this.isAdmSync(a)) return true   // 管理员（含对账前名册兜底态）
+  return this.isExempt(a)              // cwt 持有者（async：快照未中当场实查回填）
+}
+```
+
+## C.5 buildBinding env-*（签名绑定，middleware:126）
+
+```js
+case 'env-commit': return addr && p.slug ? `env-commit:address=${addr}:slug=${p.slug}` : null
+case 'env-publish': case 'env-revoke': return p.id ? `${operation}:id=${p.id}` : null
+case 'env-apply':  return addr && p.id ? `env-apply:id=${p.id}:address=${addr}` : null
+```
+
+## C.6 工程约束备忘（踩过/避过的坑，动这条线的人必读）
+
+1. **命名劫持判例**：`tenant.routes:479` 会劫持任何 `/api/user/<x>/reset` 结尾的
+   路径去做"毁卷重建"；`user.routes`+`server.js` 对 `/reset|/restart|/remove|/stop`
+   后缀强加签名——所以自助端点叫 `environment/apply`、`environment/revert`。
+   新增用户端路由名**必须避开这四个后缀**。
+2. **parseBody 返回字符串**：JSON 体必须用 `parseJsonBody(req,res)`（返回对象或 null），
+   `if (!body) return true` 是解析失败的早退约定——写死测试钉过。
+3. **stage tag 不带 `repo:` 冒号形态**：`listLocalVersionTags` 按 repo 前缀挑镜像，
+   模板 tag 特意用同 repo（`dsh-multitenant:env-…`）过 apply 面校验，中间态 stage
+   则用裸名（`dsh-env-stage-…`）彻底隐身于版本列表。
