@@ -1283,6 +1283,23 @@ class CredentialService {
     return this._cwtSet.has(normalizeAddress(address))
   }
 
+  /**
+   * 环境模板定格资格门（2026-10-27 用户定式）：**只有 cwt 持有者或管理员可定格**。
+   * 理据：定格=供应链的入口——模板一旦被接收者换用，作者代码就跑进别人容器；
+   * 开口权必须配给担得起责任的人（cwt=实名信任层，admin=管理面）。
+   * fail-closed 在这里正当：这是【授权门】不是【访问门】——被拒不产生上锁
+   * 事故（容器照常用，只是不能定格），文案引导申请 cwt 即可。
+   * 判据复用现成两张面孔：isAdmSync（含对账前名册兜底）∪ async isExempt
+   * （快照命中零 I/O，未中实查+回填——定格低频，值得当场实查，
+   * 刚批准的人不必等下一轮水合；存储抖动保守拒，重试无害）。
+   */
+  async freezeAllowed(address) {
+    if (!this.enabled) return false // 凭证体系停用=定格整体关闭（门依附凭证语义）
+    const a = normalizeAddress(address)
+    if (this.isAdmSync(a)) return true
+    return this.isExempt(a)
+  }
+
   _markExempt(addrLower) {
     this._cwtSet.add(addrLower)
     // 若有一轮刷新正在 fetch 途中，本地址必须在该轮 replace 时保留（见 refreshExemptSet）

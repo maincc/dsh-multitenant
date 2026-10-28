@@ -1973,6 +1973,19 @@ describe('角色判权当场生效（2026-10-27 用户实测"凭证是 admin 的
     await credentialService.approveApplication('ap9', ADDR) // doc.roles 继承 ['admin']
     expect(credentialService._admSet.has(ADDR)).toBe(true) // 写点 mark，不等下一轮水合
   })
+
+  it('freezeAllowed：定格只认 cwt/admin——did 与普通地址拦在供应链入口外', async () => {
+    const b = fakeBackend()
+    installMocks(b)
+    _resetForTest({ legacy: new Map() })
+    expect(await credentialService.freezeAllowed(ADDR)).toBe(false) // 无行
+    await b.assignIfAbsent(ADDR, { kind: 'did', state: 'claimed', roles: [] })
+    expect(await credentialService.freezeAllowed(ADDR)).toBe(false) // did 普通人不行
+    await credentialService.provisionAdmin(ADDR) // 升 admin 卡（cwt∧admin）
+    expect(await credentialService.freezeAllowed(ADDR)).toBe(true) // 快照即中
+    credentialService._cwtSet.delete(ADDR) // 逼 async 实查面（冷快照）
+    expect(await credentialService.freezeAllowed(ADDR)).toBe(true) // isExempt 实查回填
+  })
 })
 
 describe('v1.5 刀5B 准入闸（凭证即准入：did|cwt|admin 三证皆进）', () => {
