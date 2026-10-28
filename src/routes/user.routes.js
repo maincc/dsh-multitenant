@@ -6,6 +6,7 @@ import { CONFIG } from '../config/config.js'
 import { userService } from '../services/user.service.js'
 import { dockerService } from '../services/docker.service.js'
 import { envBundleService } from '../services/env-bundle.service.js'
+import { runEnvCommit, normEnvNames, autoSlug } from '../services/env-commit.service.js'
 import { dataService } from '../services/data.service.js'
 import { resourceExhaustedPayload } from '../utils/resource-exhausted.js'
 import {
@@ -282,6 +283,113 @@ export async function handleUserRoutes(req, res, path) {
   // 选用与回退在用户自己——"自己的容器自己主"。三端点全部只作用于会话地址本人，
   // applyImageVersion 的 dryRun 停机预览/重建/留痕全链路复用。
   // ---------------------------------------------------------------------------
+
+  // —— 定格自助面（PR3）：cwt/admin 本人可格自己的容器（freezeAllowed 前置）。
+  // 流程与管理员代格一字不差（runEnvCommit 共用）；权限差异=会话本人+资格门。
+  const envFreezeDenied = (res, addr) => {
+    res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
+    res.end(
+      JSON.stringify({
+        error: `定格环境需要 CWT 或管理员凭证（当前地址 ${addr ? '未持有' : '无会话'}）`,
+        code: 'FREEZE_REQUIRES_CWT',
+        hint: '容器本身不受影响，照常使用；可在凭证页申请 CWT 后回来定格',
+      }),
+    )
+  }
+
+  // POST /api/user/environment-inventory —— 我可带的东西清单（只读）
+  if (path === '/api/user/environment-inventory' && req.method === 'POST') {
+    const addr = credSession()
+    if (!addr) {
+      res.writeHead(401, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '需要登录（钱包签名会话）', code: 'UNAUTHORIZED' }))
+      return true
+    }
+    if (!(await credentialService.freezeAllowed(addr))) return (envFreezeDenied(res, addr), true)
+    if (!rateLimit(req, res, { max: 10, windowMs: 60000, keyPrefix: 'envinv' })) return true
+    try {
+      const inventory = await envBundleService.inventory(addr)
+      const allowed = await credentialService.freezeAllowed(addr)
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ inventory, canFreeze: allowed }))
+    } catch (err) {
+      res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: `随行内容盘点失败：${err.message}` }))
+    }
+    return true
+  }
+
+  // POST /api/user/environment-browse {dir} —— 选择器的分层浏览（只读）
+  if (path === '/api/user/environment-browse' && req.method === 'POST') {
+    const addr = credSession()
+    if (!addr) {
+      res.writeHead(401, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '需要登录（钱包签名会话）', code: 'UNAUTHORIZED' }))
+      return true
+    }
+    if (!(await credentialService.freezeAllowed(addr))) return (envFreezeDenied(res, addr), true)
+    if (!rateLimit(req, res, { max: 30, windowMs: 60000, keyPrefix: 'envbrowse' })) return true
+    const body = (await parseJsonBody(req, res)) || {}
+    try {
+      const listing = await envBundleService.browse(addr, String(body.dir || ''))
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify(listing))
+    } catch (err) {
+      res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: `浏览失败：${err.message}` }))
+    }
+    return true
+  }
+
+  // POST /api/user/environment-commit {displayName, intro, include, dryRun}
+  // —— 自助定格：slug 平台自动生成（autoSlug），用户只管起名与勾选内容
+  if (path === '/api/user/environment-commit' && req.method === 'POST') {
+    const addr = credSession()
+    if (!addr) {
+      res.writeHead(401, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '需要登录（钱包签名会话）', code: 'UNAUTHORIZED' }))
+      return true
+    }
+    // 定格是重动作（停机几十秒+占盘）：两道防刷——资格门+低频 rateLimit
+    if (!(await credentialService.freezeAllowed(addr))) return (envFreezeDenied(res, addr), true)
+    if (!rateLimit(req, res, { max: 2, windowMs: 600000, keyPrefix: 'envfreeze' })) return true
+    const body = await parseJsonBody(req, res)
+    if (!body) return true
+    const displayName = String(body.displayName || '')
+      .trim()
+      .slice(0, 60)
+    if (!displayName) {
+      res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '定格需要给环境起名（displayName，≤60 字）' }))
+      return true
+    }
+    const intro = String(body.intro || '')
+      .trim()
+      .slice(0, 300)
+    const include = {
+      skills: normEnvNames(body.include && body.include.skills),
+      plugins: normEnvNames(body.include && body.include.plugins),
+      folders: normEnvNames(body.include && body.include.folders),
+    }
+    try {
+      const { status, body: respBody } = await runEnvCommit({
+        address: addr,
+        slug: autoSlug(displayName),
+        displayName,
+        intro,
+        include,
+        dryRun: !!body.dryRun,
+        operator: addr, // 本人自助：审计操作人=会话地址（代格面记管理员）
+        opKind: 'env_commit_self',
+      })
+      res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify(respBody))
+    } catch (err) {
+      res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: `定格失败：${err.message}（源容器已确认起回）` }))
+    }
+    return true
+  }
 
   // GET /api/user/environments - published 模板列表 + 我当前的环境来源
   if (path === '/api/user/environments' && req.method === 'GET') {

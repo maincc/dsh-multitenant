@@ -30,11 +30,24 @@ vi.mock('../src/services/env-bundle.service.js', () => ({
     })),
     installBundle: vi.fn(),
     removeBundle: vi.fn(),
+    exportBundle: vi.fn(async () => ({ files: [], bytes: 0, scan: { rulesVer: 1 } })),
+    inventory: vi.fn(async () => ({
+      skills: [{ name: 'cwt-verify', size: 9 }],
+      plugins: [],
+      roots: [],
+    })),
+    browse: vi.fn(async () => ({ dir: 'plugins', items: [], total: 0 })),
   },
 }))
 
 vi.mock('../src/services/docker.service.js', () => ({
-  dockerService: { imageId: vi.fn() },
+  dockerService: {
+    imageId: vi.fn(),
+    containerInfo: vi.fn(async () => ({ exists: true, status: 'running' })),
+    containerImageId: vi.fn(async () => 'sha256:parent'),
+    commitEnvironment: vi.fn(),
+    removeImage: vi.fn(),
+  },
 }))
 
 vi.mock('../src/services/data.service.js', async (importOriginal) => {
@@ -56,7 +69,7 @@ vi.mock('../src/services/data.service.js', async (importOriginal) => {
 })
 
 vi.mock('../src/services/credential.service.js', () => ({
-  credentialService: { isAdmSync: vi.fn(() => false) },
+  credentialService: { freezeAllowed: vi.fn(async () => true), isAdmSync: vi.fn(() => false) },
 }))
 
 // 限流计数跨用例累积会误伤本文件的语义断言（429 不是被测契约）；
@@ -125,6 +138,10 @@ beforeEach(() => {
   vi.clearAllMocks()
   token = userSessionStore.create(USER)
   globalThis.__envStore = new Map()
+  dataService.putEnvironment = vi.fn(async (doc) => {
+    globalThis.__envStore.set(doc._id, { ...doc })
+    return doc
+  })
   dataService.listEnvironments = vi.fn(async () => [...globalThis.__envStore.values()])
   dataService.getEnvironment = vi.fn(async (id) => globalThis.__envStore.get(id) || null)
   dataService.patchEnvironment = vi.fn(async (id, set) => {
@@ -275,5 +292,96 @@ describe('PR2 随行包：自助选用/回退的包语义', () => {
     expect(res.statusCode).toBe(200)
     expect(envBundleService.installBundle).not.toHaveBeenCalled()
     expect(envBundleService.applyBundleTo).not.toHaveBeenCalled()
+  })
+})
+
+describe('PR3 自助定格（本人面：freezeAllowed + autoSlug + 共用流程）', () => {
+  let credentialService
+  let envBundleService
+  let dockerService
+  beforeEach(async () => {
+    credentialService = (await import('../src/services/credential.service.js')).credentialService
+    envBundleService = (await import('../src/services/env-bundle.service.js')).envBundleService
+    dockerService = (await import('../src/services/docker.service.js')).dockerService
+    dockerService.commitEnvironment.mockImplementation((name, tag) =>
+      Promise.resolve({
+        tag,
+        imageId: 'sha256:abc123',
+        sizeBytes: 1234,
+        dshVersion: '0.1.5',
+        manifest: ['C /root/.bashrc', 'A /usr/local/bin/trader'],
+        scrubbed: true,
+      }),
+    )
+  })
+
+  it('无会话 → 401；无资格 → 403 FREEZE_REQUIRES_CWT（容器不受影响，只锁定格面）', async () => {
+    const anon = await call('/api/user/environment-commit', {
+      method: 'POST',
+      body: {},
+      cookie: false,
+    })
+    expect(anon.statusCode).toBe(401)
+    credentialService.freezeAllowed.mockResolvedValueOnce(false)
+    const denied = await call('/api/user/environment-commit', {
+      method: 'POST',
+      body: { displayName: '我的炒股环境' },
+    })
+    expect(denied.statusCode).toBe(403)
+    expect(JSON.parse(denied.body).code).toBe('FREEZE_REQUIRES_CWT')
+    expect(dockerService.containerInfo).not.toHaveBeenCalled() // 拦在碰 docker 之前
+  })
+
+  it('缺 displayName → 400（起名是定格的语义前提，slug 用户不碰）', async () => {
+    const res = await call('/api/user/environment-commit', {
+      method: 'POST',
+      body: { dryRun: true },
+    })
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('dryRun：中文展示名自动转写 slug=env；步骤/配额/警告全回；零 docker 写', async () => {
+    const res = await call('/api/user/environment-commit', {
+      method: 'POST',
+      body: { displayName: '我的炒股环境', dryRun: true },
+    })
+    expect(res.statusCode).toBe(200)
+    const b = JSON.parse(res.body)
+    expect(b.dryRun).toBe(true)
+    expect(b.tag).toMatch(/:env-[a-z0-9]{8}-env-\d{14}$/)
+    expect(b.quota).toEqual({ used: 0, limit: 5 })
+    expect(b.notices.join('')).toContain('默认清空') // workspace 真相提示语在自助面同样成立
+    expect(dockerService.commitEnvironment).not.toHaveBeenCalled()
+    expect(envBundleService.exportBundle).not.toHaveBeenCalled()
+    expect(globalThis.__envStore.size).toBe(0)
+  })
+
+  it('真定格：入账本 createdBy=本人 + 审计 env_commit_self + manifest 折叠', async () => {
+    const res = await call('/api/user/environment-commit', {
+      method: 'POST',
+      body: { displayName: 'stock desk', intro: 'akshare 看板' },
+    })
+    expect(res.statusCode).toBe(200)
+    const { template } = JSON.parse(res.body)
+    expect(template.slug).toBe('stock-desk') // ascii 可转写时保语义
+    expect(template.displayName).toBe('stock desk')
+    expect(template.createdBy).toBe(USER) // 本人操作人（代格面记管理员，区分追责）
+    expect(template.status).toBe('draft')
+    expect(template.manifestCount).toBe(2)
+    expect(globalThis.__envStore.get(template._id).intro).toBe('akshare 看板')
+    const op = dataService.logOperation.mock.calls.find((c) => c[0] === 'env_commit_self')
+    expect(op[1].operator).toBe(USER)
+  })
+
+  it('inventory/browse：资格门后直通 helper（前端只渲染平台给的安全面）', async () => {
+    const inv = await call('/api/user/environment-inventory', { method: 'POST', body: {} })
+    expect(inv.statusCode).toBe(200)
+    expect(JSON.parse(inv.body).inventory.skills[0].name).toBe('cwt-verify')
+    credentialService.freezeAllowed.mockResolvedValueOnce(false)
+    const denied = await call('/api/user/environment-browse', {
+      method: 'POST',
+      body: { dir: 'plugins' },
+    })
+    expect(denied.statusCode).toBe(403)
   })
 })

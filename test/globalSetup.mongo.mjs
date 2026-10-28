@@ -78,9 +78,22 @@ export async function setup() {
   if (!port) return { env: { DSH_TEST_MONGO: 'mongodb://127.0.0.1:1/?replicaSet=none' } }
   const dbpath = mkdtempSync(join(tmpdir(), 'dsh-mongo-test-'))
 
-  const proc = spawn(bin, ['--replSet', 'dsh-test-rs', '--port', String(port), '--dbpath', dbpath, '--bind_ip', '127.0.0.1'], {
-    stdio: ['ignore', 'ignore', 'pipe'],
-  })
+  const proc = spawn(
+    bin,
+    [
+      '--replSet',
+      'dsh-test-rs',
+      '--port',
+      String(port),
+      '--dbpath',
+      dbpath,
+      '--bind_ip',
+      '127.0.0.1',
+    ],
+    {
+      stdio: ['ignore', 'ignore', 'pipe'],
+    },
+  )
   // 记下句柄供 teardown 回收（vitest 的 globalSetup 只在主进程跑一次，模块级足够）
   spawned = { proc, dbpath, port }
   let stderrTail = ''
@@ -91,9 +104,15 @@ export async function setup() {
   const rsUri = `mongodb://127.0.0.1:${port}/?replicaSet=dsh-test-rs`
   try {
     // initiate（direct 连法，副本集未成形时唯一通路）
-    const direct = new MongoClient(`mongodb://127.0.0.1:${port}/?directConnection=true`, { serverSelectionTimeoutMS: 15000 })
+    const direct = new MongoClient(`mongodb://127.0.0.1:${port}/?directConnection=true`, {
+      serverSelectionTimeoutMS: 15000,
+    })
     await direct.connect()
-    await direct.db('admin').command({ replSetInitiate: { _id: 'dsh-test-rs', members: [{ _id: 0, host: `127.0.0.1:${port}` }] } })
+    await direct
+      .db('admin')
+      .command({
+        replSetInitiate: { _id: 'dsh-test-rs', members: [{ _id: 0, host: `127.0.0.1:${port}` }] },
+      })
     await direct.close()
 
     // 等 PRIMARY 可选（新实例选举完成）

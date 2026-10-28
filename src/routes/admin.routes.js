@@ -7,6 +7,7 @@ import { userService } from '../services/user.service.js'
 import { dataService } from '../services/data.service.js'
 import { dockerService } from '../services/docker.service.js'
 import { envBundleService } from '../services/env-bundle.service.js'
+import { runEnvCommit, normEnvNames } from '../services/env-commit.service.js'
 import { scanBundle } from '../utils/env-scan.js'
 // 镜像归属与可清理性判定的唯一真源（2026-09 从本文件抽出，与 F3 维护定时器共用）
 import { collectPrunableImages, matchImageId } from '../services/image-inventory.service.js'
@@ -769,14 +770,6 @@ export async function handleAdminRoutes(req, res, path, url) {
   // docker 面只有管理员碰（形态 B 会审定案）；用户侧自助口子在 PR3 另议。
   // ---------------------------------------------------------------------------
 
-  // 随行包勾选名单归一：只收单层名（无 / 无控制符），200 条封顶——
-  // 后端硬闸，前端灰显不是防线（export/install 两侧还要各自再验根）
-  const normEnvNames = (list) =>
-    (Array.isArray(list) ? list : [])
-      .map((x) => String(x || '').trim())
-      .filter((x) => x && !x.includes('/') && x !== '.' && x !== '..' && x.length <= 200)
-      .slice(0, 200)
-
   // POST /api/admin/env-commit {address, slug, dryRun} —— 定格用户容器为模板草稿
   if (path === '/api/admin/env-commit' && req.method === 'POST') {
     if (!requireAdmin(req, res)) return true
@@ -814,132 +807,21 @@ export async function handleAdminRoutes(req, res, path, url) {
     // 参数合法先于签名检查（promote 同款次序：不让人去签一个注定失败的操作）
     if (!requireAdminSignature(req, res, 'env-commit', { address, slug }, getAdminSession(req)))
       return true
-    const name = swtcContainerName(address)
+    // 定格全流程在 env-commit.service（admin/user 两面共用同一条链——权限差异
+    // 留在路由层：这里 requireAdmin+签名，user 面是 session+freezeAllowed）
     try {
-      const info = await dockerService.containerInfo(name)
-      if (!info.exists || info.status !== 'running') {
-        res.writeHead(409, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(
-          JSON.stringify({
-            error: '源容器未在运行——定格需要活容器（执行时代格会停机数十秒并自动起回）',
-          }),
-        )
-        return true
-      }
-      const envs = await dataService.listEnvironments()
-      const mine = envs.filter(
-        (e) => e.sourceAddr === address && !['revoked', 'rejected'].includes(e.status),
-      )
-      if (mine.length >= 5) {
-        res.writeHead(409, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(
-          JSON.stringify({
-            error: '该来源未下架模板已达 5 个上限（镜像存储不在 tier 配额内，从严治理）',
-          }),
-        )
-        return true
-      }
-      const repo = String(CONFIG.docker?.image || 'dsh-multitenant').split(':')[0]
-      const ts = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)
-      const tag = `${repo}:env-${address.slice(0, 8)}-${slug}-${ts}`
-      if (body.dryRun) {
-        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(
-          JSON.stringify({
-            dryRun: true,
-            tag,
-            steps: [
-              `停止源容器（优雅 ${15}s 宽限）`,
-              'docker commit → 中间层',
-              '一次性无网容器跑尽力清洗（不碰源容器与卷）',
-              '定格产物校验（体积/DSH 血统）→ 源容器立即起回',
-              '入账本 status=draft（人工审 manifest 后 publish）',
-            ],
-            notices: [
-              '源容器将停机约 15~60 秒（用户在用会感知）',
-              '卷（/dsh-home：会话/密钥/DSH 数据）物理不入像；可写层工作目录 /root/workspace 默认清空，仅保留勾选顶层条目（本次 folders: ' +
-                (include.folders.join(', ') || '未勾选→全清') +
-                '）',
-              '清洗是尽力清单（shell 史/netrc/npmrc/ssh 私钥/敏感 export），writable layer 内容由定格人与审核人依 manifest 把关',
-            ],
-          }),
-        )
-        return true
-      }
-      const parentImage = await dockerService.containerImageId(name)
-      const out = await dockerService.commitEnvironment(name, tag, {
-        maxBytes: Number(CONFIG.docker?.envMaxBytes) || 2 * 1024 * 1024 * 1024,
-        scrubKeep: include.folders,
-        labels: {
-          'dsh.env.author': address,
-          'dsh.env.slug': slug,
-          'dsh.env.parent': parentImage || 'unknown',
-        },
-      })
-      // 随行包导出（plugins 文件进包；skills 不进 tar=按名随行走官方管线）：
-      // 失败=定格整体作废——"勾了却没带上"是最坏的半成功；源容器已在
-      // commitEnvironment 内起回，这里删像删包还世界原位
-      let bundle = null
-      let scan = null
-      const exportItems = include.plugins.map((n) => ({ root: 'plugins', name: n }))
-      if (exportItems.length) {
-        try {
-          const b = await envBundleService.exportBundle(address, out.tag, exportItems)
-          bundle = {
-            path: `env-bundles/${String(out.tag).replace(/[^A-Za-z0-9._-]/g, '_')}`,
-            bytes: b.bytes,
-            files: b.files,
-          }
-          scan = b.scan
-        } catch (err) {
-          await dockerService.removeImage(out.tag)
-          await envBundleService.removeBundle(out.tag)
-          res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
-          res.end(JSON.stringify({ error: `随行包导出失败，本次定格整体作废：${err.message}` }))
-          return true
-        }
-      }
-
-      const doc = {
-        _id: out.tag,
-        sourceAddr: address,
-        slug,
-        displayName: displayName || slug,
-        intro: intro || null,
-        imageTag: out.tag,
-        imageId: out.imageId,
-        parentImage: parentImage || null,
-        dshVersion: out.dshVersion,
-        sizeBytes: out.sizeBytes,
-        scrubbed: out.scrubbed,
-        manifest: out.manifest,
-        include: { ...include },
-        bundle,
-        scan,
-        status: 'draft',
-        pinnedBy: [],
-        createdBy: getAdminSession(req) || 'system',
-        createdAt: new Date().toISOString(),
-      }
-      await dataService.putEnvironment(doc)
-      dataService.logOperation('env_commit', {
+      const { status, body: respBody } = await runEnvCommit({
         address,
-        tag: out.tag,
-        includeSnapshot: include,
-        imageId: out.imageId,
-        sizeBytes: out.sizeBytes,
-        scrubbed: out.scrubbed,
+        slug,
+        displayName,
+        intro,
+        include,
+        dryRun: !!body.dryRun,
         operator: getAdminSession(req) || 'system',
+        opKind: 'env_commit',
       })
-      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(
-        JSON.stringify({
-          template: { ...doc, manifest: undefined, manifestCount: out.manifest.length },
-          notice: out.scrubbed
-            ? '已按尽力清单清洗；请审 manifest 后 publish'
-            : '⚠ 清洗容器未执行成功，产物为未清洗层——请重点审 manifest 后再决定是否 publish',
-        }),
-      )
+      res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify(respBody))
     } catch (err) {
       // commitEnvironment 的 finally 已负责把源容器起回；此处只诚实报断点
       res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
