@@ -276,12 +276,19 @@ describe('env-commit（定格）', () => {
 
   it('成功 → 账本 draft + 审计留痕；发布权在 env-publish 不在这里', async () => {
     const res = await call('/api/admin/env-commit', {
-      body: { address: TENANT, slug: 'stock' },
+      body: {
+        address: TENANT,
+        slug: 'stock',
+        displayName: '我的炒股环境',
+        intro: '装了 akshare',
+      },
       sign,
     })
     expect(res.statusCode).toBe(200)
     const { template, notice } = json(res)
     expect(template.status).toBe('draft')
+    expect(template.displayName).toBe('我的炒股环境') // 展示名自由文本（中文空格无限制）
+    expect(template.intro).toBe('装了 akshare')
     expect(template.imageId).toBe('sha256:abc123')
     expect(template.manifest).toBeUndefined() // 列表面折叠
     expect(template.manifestCount).toBe(2)

@@ -157,6 +157,7 @@ describe('GET /api/user/environments', () => {
     const body = json(res)
     expect(body.environments.length).toBe(1) // draft/revoked 不进选用面
     expect(body.environments[0].id).toBe(TPL)
+    expect(body.environments[0].name).toBe('stock') // 无 displayName 老数据回退 slug
     expect(body.environments[0].manifest).toBeUndefined() // 审核证据不外露
     expect(body.yourCurrent.fromTemplate.slug).toBe('stock')
   })

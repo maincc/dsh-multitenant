@@ -776,6 +776,17 @@ export async function handleAdminRoutes(req, res, path, url) {
     if (!validateSwtcAddress(address, res)) return true
     address = normalizeAddress(address)
     const slug = String(body.slug || '').trim()
+    // 展示名（2026-10-27 用户定式："起名"该是自由的事）：自由文本≤60，人读的
+    // 界面全用它；slug 回归纯技术位（镜像 tag 治理段，用户端 PR3 起平台自动
+    // 生成、不再要求手填）。不进签名绑定：纯展示字段，换不动 id/image/address
+    // 任何权力语义——偷换只伤作者自己，不值得占签名面。缺省回退 slug，永不为空。
+    const displayName = String(body.displayName || '')
+      .trim()
+      .slice(0, 60)
+    // 一句话介绍（向导第 1 步的展示文案；同 displayName：纯展示不进签名）
+    const intro = String(body.intro || '')
+      .trim()
+      .slice(0, 300)
     if (!/^[a-z0-9][a-z0-9-]{1,40}$/.test(slug)) {
       res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
       res.end(
@@ -847,6 +858,8 @@ export async function handleAdminRoutes(req, res, path, url) {
         _id: out.tag,
         sourceAddr: address,
         slug,
+        displayName: displayName || slug,
+        intro: intro || null,
         imageTag: out.tag,
         imageId: out.imageId,
         parentImage: parentImage || null,
@@ -897,6 +910,7 @@ export async function handleAdminRoutes(req, res, path, url) {
             _id: e._id,
             sourceAddr: e.sourceAddr,
             slug: e.slug,
+            name: e.displayName || e.slug,
             imageId: e.imageId,
             dshVersion: e.dshVersion,
             sizeBytes: e.sizeBytes,

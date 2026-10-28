@@ -304,6 +304,8 @@ export async function handleUserRoutes(req, res, path) {
           .map((e) => ({
             id: e._id,
             slug: e.slug,
+            name: e.displayName || e.slug, // 人读处一律展示名（老数据回退 slug）
+            intro: e.intro || null,
             author: e.sourceAddr,
             dshVersion: e.dshVersion,
             sizeBytes: e.sizeBytes,
@@ -314,7 +316,13 @@ export async function handleUserRoutes(req, res, path) {
         yourCurrent: {
           image: pinned,
           // pin 的是版本镜像（平台钉版）而非模板——如实标 null，UI 归"其他"
-          fromTemplate: mine ? { slug: mine.slug, author: mine.sourceAddr } : null,
+          fromTemplate: mine
+            ? {
+                name: mine.displayName || mine.slug,
+                slug: mine.slug,
+                author: mine.sourceAddr,
+              }
+            : null,
         },
       }),
     )
