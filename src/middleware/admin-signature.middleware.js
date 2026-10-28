@@ -127,6 +127,8 @@ export function buildBinding(operation, payload = {}) {
       return addr && p.slug ? `env-commit:address=${addr}:slug=${String(p.slug)}` : null
     case 'env-publish':
     case 'env-revoke':
+    case 'env-reject':
+    case 'env-scan':
       return p.id ? `${operation}:id=${String(p.id)}` : null
     case 'env-apply':
       return addr && p.id ? `env-apply:id=${String(p.id)}:address=${addr}` : null

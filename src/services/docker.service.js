@@ -751,6 +751,15 @@ export class DockerService {
     }
   }
 
+  /** 随行包/驳回即弃面的单镜像删除（静默：已不在不算失败） */
+  async removeImage(ref) {
+    try {
+      await sh('docker', ['rmi', '-f', ref])
+    } catch {
+      /* 已被清理：目标达成即可 */
+    }
+  }
+
   /**
    * 所有容器（含已停止）当前挂载引用的卷名集合
    * （清理孤儿卷时用于排除"仍有容器在用"的卷，避免误删）
@@ -985,6 +994,12 @@ export class DockerService {
    *  4. **数据不出门**：卷挂载点 /dsh-home 架构性不入 commit——定格=纯环境，
    *     会话/密钥/工作区文件物理上带不走（这是全方案的安全前提）。
    *
+   * 布局真相（2026-10-27 实测修正，别信"workspace 在卷里"的想当然）：
+   *   /dsh-home 卷 = settings/credentials/sessions —— 键与登录态，架构性出框 ✓
+   *   /root/workspace = **可写层**（Dockerfile RUN mkdir）——用户工作文件会被
+   *   docker commit 整个拍走！因此清洗层默认**清空 workspace**，仅保留作者
+   *   勾选的顶层条目（scrubKeep）：没勾=不带出，勾了=公开同意。
+   *
    * 产物校验三关：体积超限即定格即弃（镜像存储不在 tier 配额内，预检是
    * 唯一闸）；DSH 版本必须可读（血统=applyImageVersion 门的既有校验）；
    * manifest=docker diff 写层清单（审核与追责的主证据）。
@@ -992,7 +1007,9 @@ export class DockerService {
    * @param {string} name 源容器名
    * @param {string} tag 目标模板 tag（路由层治理命名，建议 dsh-multitenant:env-…
    *   ——落进本平台 repo 镜像空间，repo 归属校验/镜像列表天然兼容）
-   * @param {{maxBytes?:number, labels?:Object<string,string>}} [opts]
+   * @param {{maxBytes?:number, labels?:Object<string,string>, scrubKeep?:string[]}} [opts]
+   *   scrubKeep：/root/workspace 顶层保留名单（作者勾选即公开；含路径分隔符的
+   *   条目直接丢弃——勾选粒度=顶层条目，不给穿透口）
    * @returns {Promise<{tag,imageId,sizeBytes,dshVersion,manifest,scrubbed}>}
    */
   async commitEnvironment(name, tag, opts = {}) {
@@ -1000,6 +1017,16 @@ export class DockerService {
     const stamp = Date.now()
     const stageTag = `dsh-env-stage-${stamp}`
     const scrubName = `dsh-env-scrub-${stamp}`
+    // 保留名单：只收单层名（无 / 无 .. 无引号控制符），shell 单引号安全转义。
+    const shq = (v) => `'${String(v).replace(/'/g, `'\''`)}'`
+    const keepCond = (Array.isArray(opts.scrubKeep) ? opts.scrubKeep : [])
+      .map((x) => String(x).trim())
+      .filter(
+        (x) =>
+          x && x.length <= 255 && !x.includes('/') && !x.includes('\0') && x !== '.' && x !== '..',
+      )
+      .map((x) => `! -name ${shq(x)}`)
+      .join(' ')
     const labelChanges = Object.entries(opts.labels || {}).flatMap(([k, v]) => [
       '--change',
       `LABEL ${k}=${String(v).replace(/["\s]/g, '_')}`,
@@ -1012,6 +1039,10 @@ export class DockerService {
       'for f in /root/.bashrc /root/.profile /etc/profile; do [ -f "$f" ] && sed -ri' +
         ' "/^[[:space:]]*export[[:space:]]+[A-Za-z0-9_]*(TOKEN|SECRET|KEY|PASSWD|PASSWORD)[A-Za-z0-9_]*=.*/d" "$f";' +
         ' done',
+      // workspace 可写层默认清空（见上"布局真相"）：顶层逐条目，不在保留
+      // 名单即删——find 的 ! -name 条件由 scrubKeep 拼接（单引号转义），
+      // 名单空时=无条件全清。
+      `if [ -d /root/workspace ]; then find /root/workspace -mindepth 1 -maxdepth 1 ${keepCond} -delete; fi`,
       'true',
     ].join('; ')
     const rmiQuiet = async (ref) => {
@@ -1596,9 +1627,18 @@ export class DockerService {
     if (opts.networkContainer) {
       args.push('--network', `container:${opts.networkContainer}`)
     }
+    // 随行包管线（PR2）新增三面：卷只读（导出面物理不可写租户卷）；
+    // 宿主输出目录挂入（tar 二进制不走 stdout 字符串通道，写文件才完好）；
+    // 资源限额（helper 是不可信脚本的执行场：断网是默认而非选项）。
+    const volMount = opts.readOnly ? `${volume}:/dsh-home:ro` : `${volume}:/dsh-home`
+    if (opts.noNetwork) args.push('--network', 'none')
+    if (opts.memory) args.push('--memory', opts.memory)
+    if (opts.bindHostDir) {
+      args.push('-v', `${opts.bindHostDir}:${opts.bindHostDirRo ? '/out:ro' : '/out'}`)
+    }
     args.push(
       '-v',
-      `${volume}:/dsh-home`,
+      volMount,
       '-v',
       `${scriptHostPath}:/${scriptName}:ro`,
       IMAGE,

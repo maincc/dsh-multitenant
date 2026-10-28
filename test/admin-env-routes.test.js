@@ -23,6 +23,44 @@ vi.mock('../src/services/docker.service.js', () => ({
     containerImageId: vi.fn(),
     containerInfo: vi.fn(),
     commitEnvironment: vi.fn(),
+    removeImage: vi.fn(),
+  },
+}))
+
+vi.mock('../src/services/env-bundle.service.js', () => ({
+  envBundleService: {
+    exportBundle: vi.fn(async () => ({
+      files: [{ p: 'plugins/a.js', size: 3, sha256: 'aa' }],
+      bytes: 3,
+      scan: {
+        rulesVer: 1,
+        hits: [],
+        secrets: [],
+        stats: { scanned: 1, skipped: 0, longLines: [] },
+      },
+    })),
+    removeBundle: vi.fn(),
+    inventory: vi.fn(async () => ({
+      skills: [{ name: 'cwt-verify', size: 10 }],
+      plugins: [],
+      roots: [],
+    })),
+    browse: vi.fn(async () => ({
+      dir: '',
+      items: [{ name: 'skills', type: 'd', size: 0 }],
+      total: 1,
+    })),
+    verifyBundle: vi.fn(() => ['plugins/a.js']),
+    bundleDir: vi.fn(() => '/tmp/dsh-nonexistent-bundle-dir'),
+    installBundle: vi.fn(async () => ({ ok: true, copied: [], conflicts: [] })),
+    applyBundleTo: vi.fn(async (addr, doc, opts = {}) => ({
+      bundleApplied: !opts.dryRun,
+      conflicts: opts.dryRun ? [{ p: 'plugins/a.js', size: 3 }] : [],
+      skillsInstalled: [],
+      skillsFailed: [],
+      skillsPlanned: opts.dryRun ? doc.include?.skills || [] : [],
+      notices: [],
+    })),
   },
 }))
 
@@ -63,6 +101,7 @@ vi.mock('../src/services/data.service.js', async (importOriginal) => {
 
 import { handleAdminRoutes } from '../src/routes/admin.routes.js'
 import { dockerService } from '../src/services/docker.service.js'
+import { envBundleService } from '../src/services/env-bundle.service.js'
 import { userService } from '../src/services/user.service.js'
 import { dataService } from '../src/services/data.service.js'
 import { adminSessionStore } from '../src/middleware/auth.middleware.js'
@@ -182,7 +221,7 @@ function seedTemplate(over = {}) {
     createdAt: '2026-10-27T12:00:00.000Z',
     ...over,
   }
-  globalThis.__envStore.set(TPL, doc)
+  globalThis.__envStore.set(doc._id, doc) // 键必须是 doc._id（over 带 id 的 seed 曾静默错位）
   return doc
 }
 
@@ -486,5 +525,149 @@ describe('environments 浏览面', () => {
     expect(json(res).template.manifest).toContain('A /usr/local/bin/trader')
     res = await call('/api/admin/environments/nope', { method: 'GET', cookie: true })
     expect(res.statusCode).toBe(404)
+  })
+})
+
+describe('PR2 随行包接线（include/导出/驳回/检测/装包）', () => {
+  it('定格带 include → scrubKeep 进清洗、plugins 导出成包、账本记 bundle/scan、审计留勾选快照', async () => {
+    const res = await call('/api/admin/env-commit', {
+      body: {
+        address: TENANT,
+        slug: 'stock',
+        include: { skills: ['cwt-verify'], plugins: ['a.js'], folders: ['策略'] },
+      },
+      sign: { op: 'env-commit', payload: { address: TENANT, slug: 'stock' } },
+    })
+    expect(res.statusCode).toBe(200)
+    const { template } = json(res)
+    expect(dockerService.commitEnvironment.mock.lastCall[2].scrubKeep).toEqual(['策略'])
+    expect(envBundleService.exportBundle).toHaveBeenCalledWith(TENANT, template._id, [
+      { root: 'plugins', name: 'a.js' },
+    ])
+    expect(template.include).toEqual({
+      skills: ['cwt-verify'],
+      plugins: ['a.js'],
+      folders: ['策略'],
+    })
+    expect(template.bundle.files).toHaveLength(1)
+    expect(template.scan.rulesVer).toBe(1)
+    expect(
+      dataService.logOperation.mock.calls.find((c) => c[0] === 'env_commit')[1].includeSnapshot,
+    ).toEqual({
+      skills: ['cwt-verify'],
+      plugins: ['a.js'],
+      folders: ['策略'],
+    }) // 知情留痕：勾选=公开同意入审计
+  })
+
+  it('导出失败 → 定格整体作废：删像删包、账本零残留', async () => {
+    envBundleService.exportBundle.mockRejectedValueOnce(new Error('bundle-too-big'))
+    const before = globalThis.__envStore.size
+    const res = await call('/api/admin/env-commit', {
+      body: { address: TENANT, slug: 'stock', include: { plugins: ['big.js'] } },
+      sign: { op: 'env-commit', payload: { address: TENANT, slug: 'stock' } },
+    })
+    expect(res.statusCode).toBe(500)
+    expect(res.body).toContain('作废')
+    expect(dockerService.removeImage).toHaveBeenCalled()
+    expect(envBundleService.removeBundle).toHaveBeenCalled()
+    expect(globalThis.__envStore.size).toBe(before)
+  })
+
+  it('env-reject：无理由 400（先于签名）；draft 即弃删像删包；published 409；重复 already', async () => {
+    seedTemplate({ _id: 'TPL_R1', imageTag: 'TPL_R1', status: 'draft' })
+    const noReason = await call('/api/admin/env-reject', { body: { id: 'TPL_R1' } })
+    expect(noReason.statusCode).toBe(400) // 不让人签一个注定失败的操作
+    const res = await call('/api/admin/env-reject', {
+      body: { id: 'TPL_R1', reason: '插件含可疑网络行为' },
+      sign: { op: 'env-reject', payload: { id: 'TPL_R1' } },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(json(res).discarded).toBe(true)
+    expect(globalThis.__envStore.get('TPL_R1').status).toBe('rejected')
+    expect(globalThis.__envStore.get('TPL_R1').rejectReason).toBe('插件含可疑网络行为')
+    expect(dockerService.removeImage).toHaveBeenCalledWith('TPL_R1')
+    expect(envBundleService.removeBundle).toHaveBeenCalledWith('TPL_R1')
+    const again = await call('/api/admin/env-reject', {
+      body: { id: 'TPL_R1', reason: '再驳一次' },
+      sign: { op: 'env-reject', payload: { id: 'TPL_R1' } },
+    })
+    expect(json(again).already).toBe(true)
+    seedTemplate({ _id: 'TPL_R2', imageTag: 'TPL_R2', status: 'published' })
+    const pub = await call('/api/admin/env-reject', {
+      body: { id: 'TPL_R2', reason: 'x' },
+      sign: { op: 'env-reject', payload: { id: 'TPL_R2' } },
+    })
+    expect(pub.statusCode).toBe(409) // published 只能 revoke
+  })
+
+  it('env-scan：无包模板 409；带包 verify 后重扫回账本', async () => {
+    seedTemplate({ _id: 'TPL_S1', imageTag: 'TPL_S1', status: 'published' })
+    const none = await call('/api/admin/env-scan', {
+      body: { id: 'TPL_S1' },
+      sign: { op: 'env-scan', payload: { id: 'TPL_S1' } },
+    })
+    expect(none.statusCode).toBe(409)
+    seedTemplate({
+      _id: 'TPL_S2',
+      imageTag: 'TPL_S2',
+      status: 'published',
+      bundle: { path: 'p', bytes: 3, files: [{ p: 'plugins/a.js', size: 3, sha256: 'aa' }] },
+    })
+    const res = await call('/api/admin/env-scan', {
+      body: { id: 'TPL_S2' },
+      sign: { op: 'env-scan', payload: { id: 'TPL_S2' } },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(json(res).scan.rulesVer).toBe(1)
+    expect(envBundleService.verifyBundle).toHaveBeenCalledWith('TPL_S2', [
+      { p: 'plugins/a.js', size: 3, sha256: 'aa' },
+    ])
+    expect(globalThis.__envStore.get('TPL_S2').scan.rulesVer).toBe(1)
+  })
+
+  it('inventory/browse：只读免签直通 helper', async () => {
+    const res = await call('/api/admin/env-inventory', { body: { address: TENANT } })
+    expect(res.statusCode).toBe(200)
+    expect(json(res).inventory.skills[0].name).toBe('cwt-verify')
+    expect(envBundleService.inventory).toHaveBeenCalledWith(TENANT)
+    const b = await call('/api/admin/env-browse', { body: { address: TENANT, dir: 'plugins' } })
+    expect(json(b).items[0].name).toBe('skills')
+    expect(envBundleService.browse).toHaveBeenCalledWith(TENANT, 'plugins')
+  })
+
+  it('env-apply 带包：dryRun 回冲突与 skillsPlanned；实装走 applyBundleTo(false)；装包炸了如实 bundleError（镜像切换不谎报）', async () => {
+    seedTemplate({
+      _id: 'TPL_A1',
+      imageTag: 'TPL_A1',
+      status: 'published',
+      bundle: { path: 'p', bytes: 3, files: [{ p: 'plugins/a.js', size: 3, sha256: 'aa' }] },
+      include: { skills: ['cwt-verify'], plugins: ['a.js'], folders: [] },
+    })
+    const spy = vi.spyOn(userService, 'applyImageVersion').mockResolvedValue({ applied: true })
+    const dry = await call('/api/admin/env-apply', {
+      body: { id: 'TPL_A1', address: TENANT, dryRun: true },
+      sign: { op: 'env-apply', payload: { id: 'TPL_A1', address: TENANT } },
+    })
+    expect(json(dry).conflicts).toHaveLength(1)
+    expect(json(dry).skillsPlanned).toEqual(['cwt-verify'])
+    const real = await call('/api/admin/env-apply', {
+      body: { id: 'TPL_A1', address: TENANT },
+      sign: { op: 'env-apply', payload: { id: 'TPL_A1', address: TENANT } },
+    })
+    expect(json(real).bundleApplied).toBe(true)
+    expect(envBundleService.applyBundleTo).toHaveBeenCalledWith(
+      TENANT,
+      expect.objectContaining({ _id: 'TPL_A1' }),
+      { dryRun: false },
+    )
+    envBundleService.applyBundleTo.mockRejectedValueOnce(new Error('expect-mismatch'))
+    const boom = await call('/api/admin/env-apply', {
+      body: { id: 'TPL_A1', address: TENANT },
+      sign: { op: 'env-apply', payload: { id: 'TPL_A1', address: TENANT } },
+    })
+    expect(boom.statusCode).toBe(200) // 镜像切换是既成事实，不假装失败回滚
+    expect(json(boom).bundleError).toContain('expect-mismatch')
+    expect(spy).toHaveBeenCalled()
   })
 })

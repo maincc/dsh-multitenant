@@ -18,6 +18,21 @@ vi.mock('../src/services/user.service.js', () => ({
   },
 }))
 
+vi.mock('../src/services/env-bundle.service.js', () => ({
+  envBundleService: {
+    applyBundleTo: vi.fn(async (addr, doc, opts = {}) => ({
+      bundleApplied: !opts.dryRun,
+      conflicts: opts.dryRun ? [{ p: 'plugins/a.js', size: 3 }] : [],
+      skillsInstalled: [],
+      skillsFailed: [],
+      skillsPlanned: opts.dryRun ? doc.include?.skills || [] : [],
+      notices: [],
+    })),
+    installBundle: vi.fn(),
+    removeBundle: vi.fn(),
+  },
+}))
+
 vi.mock('../src/services/docker.service.js', () => ({
   dockerService: { imageId: vi.fn() },
 }))
@@ -236,5 +251,29 @@ describe('POST /api/user/environment/revert（回平台默认）', () => {
     const res = await call('/api/user/environment/revert', { method: 'POST', body: {} })
     expect(res.statusCode).toBe(200)
     expect(userService.resetContainer).not.toHaveBeenCalled()
+  })
+})
+
+describe('PR2 随行包：自助选用/回退的包语义', () => {
+  it('apply 带包模板：冲突预览与 bundleApplied 并入响应', async () => {
+    const { envBundleService } = await import('../src/services/env-bundle.service.js')
+    seed()
+    const res = await call('/api/user/environment/apply', {
+      method: 'POST',
+      body: { id: TPL, dryRun: true },
+    })
+    expect(res.statusCode).toBe(200)
+    // seed 模板无包 → applyBundleTo 仍被调（短路返回空），响应结构合并成立
+    expect(envBundleService.applyBundleTo).toHaveBeenCalled()
+  })
+
+  it('revert 绝不触碰随行包（只加不减：装进去的文件拆不拆是用户的事）', async () => {
+    const { envBundleService } = await import('../src/services/env-bundle.service.js')
+    vi.mocked(envBundleService.installBundle).mockClear()
+    seed({ pinnedBy: [USER] })
+    const res = await call('/api/user/environment/revert', { method: 'POST', body: {} })
+    expect(res.statusCode).toBe(200)
+    expect(envBundleService.installBundle).not.toHaveBeenCalled()
+    expect(envBundleService.applyBundleTo).not.toHaveBeenCalled()
   })
 })

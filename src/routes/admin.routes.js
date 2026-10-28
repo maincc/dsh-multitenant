@@ -6,6 +6,8 @@ import { CONFIG, getAdminAddresses } from '../config/config.js'
 import { userService } from '../services/user.service.js'
 import { dataService } from '../services/data.service.js'
 import { dockerService } from '../services/docker.service.js'
+import { envBundleService } from '../services/env-bundle.service.js'
+import { scanBundle } from '../utils/env-scan.js'
 // 镜像归属与可清理性判定的唯一真源（2026-09 从本文件抽出，与 F3 维护定时器共用）
 import { collectPrunableImages, matchImageId } from '../services/image-inventory.service.js'
 import {
@@ -767,6 +769,14 @@ export async function handleAdminRoutes(req, res, path, url) {
   // docker 面只有管理员碰（形态 B 会审定案）；用户侧自助口子在 PR3 另议。
   // ---------------------------------------------------------------------------
 
+  // 随行包勾选名单归一：只收单层名（无 / 无控制符），200 条封顶——
+  // 后端硬闸，前端灰显不是防线（export/install 两侧还要各自再验根）
+  const normEnvNames = (list) =>
+    (Array.isArray(list) ? list : [])
+      .map((x) => String(x || '').trim())
+      .filter((x) => x && !x.includes('/') && x !== '.' && x !== '..' && x.length <= 200)
+      .slice(0, 200)
+
   // POST /api/admin/env-commit {address, slug, dryRun} —— 定格用户容器为模板草稿
   if (path === '/api/admin/env-commit' && req.method === 'POST') {
     if (!requireAdmin(req, res)) return true
@@ -787,6 +797,13 @@ export async function handleAdminRoutes(req, res, path, url) {
     const intro = String(body.intro || '')
       .trim()
       .slice(0, 300)
+    // 勾选三档（向导第 2 步）：skills=按名随行走官方管线；plugins=文件进包；
+    // folders=/root/workspace 顶层保留（进清洗层 scrubKeep——没勾=默认清空）
+    const include = {
+      skills: normEnvNames(body.include && body.include.skills),
+      plugins: normEnvNames(body.include && body.include.plugins),
+      folders: normEnvNames(body.include && body.include.folders),
+    }
     if (!/^[a-z0-9][a-z0-9-]{1,40}$/.test(slug)) {
       res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
       res.end(
@@ -810,7 +827,9 @@ export async function handleAdminRoutes(req, res, path, url) {
         return true
       }
       const envs = await dataService.listEnvironments()
-      const mine = envs.filter((e) => e.sourceAddr === address && e.status !== 'revoked')
+      const mine = envs.filter(
+        (e) => e.sourceAddr === address && !['revoked', 'rejected'].includes(e.status),
+      )
       if (mine.length >= 5) {
         res.writeHead(409, { 'content-type': 'application/json; charset=utf-8' })
         res.end(
@@ -838,7 +857,9 @@ export async function handleAdminRoutes(req, res, path, url) {
             ],
             notices: [
               '源容器将停机约 15~60 秒（用户在用会感知）',
-              '模板不含 /dsh-home 卷：工作区文件/会话/密钥不会带走',
+              '卷（/dsh-home：会话/密钥/DSH 数据）物理不入像；可写层工作目录 /root/workspace 默认清空，仅保留勾选顶层条目（本次 folders: ' +
+                (include.folders.join(', ') || '未勾选→全清') +
+                '）',
               '清洗是尽力清单（shell 史/netrc/npmrc/ssh 私钥/敏感 export），writable layer 内容由定格人与审核人依 manifest 把关',
             ],
           }),
@@ -848,12 +869,37 @@ export async function handleAdminRoutes(req, res, path, url) {
       const parentImage = await dockerService.containerImageId(name)
       const out = await dockerService.commitEnvironment(name, tag, {
         maxBytes: Number(CONFIG.docker?.envMaxBytes) || 2 * 1024 * 1024 * 1024,
+        scrubKeep: include.folders,
         labels: {
           'dsh.env.author': address,
           'dsh.env.slug': slug,
           'dsh.env.parent': parentImage || 'unknown',
         },
       })
+      // 随行包导出（plugins 文件进包；skills 不进 tar=按名随行走官方管线）：
+      // 失败=定格整体作废——"勾了却没带上"是最坏的半成功；源容器已在
+      // commitEnvironment 内起回，这里删像删包还世界原位
+      let bundle = null
+      let scan = null
+      const exportItems = include.plugins.map((n) => ({ root: 'plugins', name: n }))
+      if (exportItems.length) {
+        try {
+          const b = await envBundleService.exportBundle(address, out.tag, exportItems)
+          bundle = {
+            path: `env-bundles/${String(out.tag).replace(/[^A-Za-z0-9._-]/g, '_')}`,
+            bytes: b.bytes,
+            files: b.files,
+          }
+          scan = b.scan
+        } catch (err) {
+          await dockerService.removeImage(out.tag)
+          await envBundleService.removeBundle(out.tag)
+          res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
+          res.end(JSON.stringify({ error: `随行包导出失败，本次定格整体作废：${err.message}` }))
+          return true
+        }
+      }
+
       const doc = {
         _id: out.tag,
         sourceAddr: address,
@@ -867,6 +913,9 @@ export async function handleAdminRoutes(req, res, path, url) {
         sizeBytes: out.sizeBytes,
         scrubbed: out.scrubbed,
         manifest: out.manifest,
+        include: { ...include },
+        bundle,
+        scan,
         status: 'draft',
         pinnedBy: [],
         createdBy: getAdminSession(req) || 'system',
@@ -876,6 +925,7 @@ export async function handleAdminRoutes(req, res, path, url) {
       dataService.logOperation('env_commit', {
         address,
         tag: out.tag,
+        includeSnapshot: include,
         imageId: out.imageId,
         sizeBytes: out.sizeBytes,
         scrubbed: out.scrubbed,
@@ -1064,6 +1114,13 @@ export async function handleAdminRoutes(req, res, path, url) {
         image: doc._id,
         dryRun: !!body.dryRun,
       })
+      // 随行进卷+技能随行（镜像先行包后行；失败如实标注不谎报整单）
+      let bundleOut = {}
+      try {
+        bundleOut = await envBundleService.applyBundleTo(address, doc, { dryRun: !!body.dryRun })
+      } catch (err) {
+        bundleOut = { bundleError: `随行包装入失败（镜像切换本身已完成）：${err.message}` }
+      }
       if (!body.dryRun) {
         const cur = await dataService.getEnvironment(id)
         const pinnedBy = new Set(cur?.pinnedBy || [])
@@ -1077,12 +1134,140 @@ export async function handleAdminRoutes(req, res, path, url) {
       }
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(
-        JSON.stringify({ ...result, userNotices: ['管理员已切换你的容器环境（见容器 tab）'] }),
+        JSON.stringify({
+          ...result,
+          ...bundleOut,
+          userNotices: ['管理员已切换你的容器环境（见容器 tab）'],
+        }),
       )
     } catch (err) {
       res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify({ error: `分发失败：${err.message}` }))
     }
+    return true
+  }
+
+  // POST /api/admin/env-inventory {address} —— 代格前内容盘点（只读；免签）
+  if (path === '/api/admin/env-inventory' && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return true
+    const body = await parseJsonBody(req, res)
+    if (!body) return true
+    let address = String(body.address || '')
+    if (!validateSwtcAddress(address, res)) return true
+    address = normalizeAddress(address)
+    try {
+      const inventory = await envBundleService.inventory(address)
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ inventory }))
+    } catch (err) {
+      res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: `随行内容盘点失败：${err.message}` }))
+    }
+    return true
+  }
+
+  // POST /api/admin/env-browse {address, dir} —— 选择器的分层列表（只读；免签）
+  if (path === '/api/admin/env-browse' && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return true
+    const body = await parseJsonBody(req, res)
+    if (!body) return true
+    let address = String(body.address || '')
+    if (!validateSwtcAddress(address, res)) return true
+    address = normalizeAddress(address)
+    try {
+      const listing = await envBundleService.browse(address, String(body.dir || ''))
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify(listing))
+    } catch (err) {
+      res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: `浏览失败：${err.message}` }))
+    }
+    return true
+  }
+
+  // POST /api/admin/env-scan {id} —— 重跑随行包检测（规则库升级后全量再扫；
+  // 结果写账本=审核底稿的版本化。写账本故签名，同 publish 形态）
+  if (path === '/api/admin/env-scan' && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return true
+    const body = await parseJsonBody(req, res)
+    if (!body) return true
+    const id = String(body.id || '')
+    if (!requireAdminSignature(req, res, 'env-scan', { id }, getAdminSession(req))) return true
+    const doc = await dataService.getEnvironment(id)
+    if (!doc) {
+      res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '模板不存在' }))
+      return true
+    }
+    if (!doc.bundle || !doc.bundle.files || !doc.bundle.files.length) {
+      res.writeHead(409, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '该模板无随行包（纯镜像定格）——无扫描对象' }))
+      return true
+    }
+    try {
+      envBundleService.verifyBundle(id, doc.bundle.files) // 账本↔宿主逐字对，不符拒扫
+      const scan = scanBundle(envBundleService.bundleDir(id), doc.bundle.files)
+      await dataService.patchEnvironment(id, { scan })
+      dataService.logOperation('env_scan', { id, operator: getAdminSession(req) || 'system' })
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ scan }))
+    } catch (err) {
+      res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: `检测失败：${err.message}` }))
+    }
+    return true
+  }
+
+  // POST /api/admin/env-reject {id, reason} —— 驳回即弃（方案 §9-3 拍板）：
+  // 只作用于 draft；镜像与包当场删除，理由回传作者面；留账本摘要可追责。
+  if (path === '/api/admin/env-reject' && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return true
+    const body = await parseJsonBody(req, res)
+    if (!body) return true
+    const id = String(body.id || '')
+    const reason = String(body.reason || '')
+      .trim()
+      .slice(0, 500)
+    if (!reason) {
+      res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '驳回必须附理由（作者可见的反馈，不许沉默毙掉）' }))
+      return true
+    }
+    if (!requireAdminSignature(req, res, 'env-reject', { id }, getAdminSession(req))) return true
+    const doc = await dataService.getEnvironment(id)
+    if (!doc) {
+      res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '模板不存在' }))
+      return true
+    }
+    if (doc.status === 'rejected') {
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ ok: true, already: true, id }))
+      return true
+    }
+    if (doc.status !== 'draft') {
+      res.writeHead(409, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(
+        JSON.stringify({ error: `状态 ${doc.status}：驳回只作用于 draft（published 走 revoke）` }),
+      )
+      return true
+    }
+    await dockerService.removeImage(doc.imageTag) // 即弃：删像
+    await Promise.resolve(envBundleService.removeBundle(id)) // 删包（幂等）
+    await dataService.patchEnvironment(id, {
+      status: 'rejected',
+      rejectedAt: new Date().toISOString(),
+      rejectedBy: getAdminSession(req) || 'system',
+      rejectReason: reason,
+    })
+    dataService.logOperation('env_reject', {
+      id,
+      address: doc.sourceAddr,
+      reason,
+      operator: getAdminSession(req) || 'system',
+    })
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+    res.end(JSON.stringify({ ok: true, id, discarded: true, notice: '镜像与随行包已当场删除' }))
     return true
   }
 

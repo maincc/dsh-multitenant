@@ -5,6 +5,7 @@
 import { CONFIG } from '../config/config.js'
 import { userService } from '../services/user.service.js'
 import { dockerService } from '../services/docker.service.js'
+import { envBundleService } from '../services/env-bundle.service.js'
 import { dataService } from '../services/data.service.js'
 import { resourceExhaustedPayload } from '../utils/resource-exhausted.js'
 import {
@@ -373,6 +374,12 @@ export async function handleUserRoutes(req, res, path) {
         image: doc._id,
         dryRun: !!body.dryRun,
       })
+      let bundleOut = {}
+      try {
+        bundleOut = await envBundleService.applyBundleTo(addr, doc, { dryRun: !!body.dryRun })
+      } catch (err) {
+        bundleOut = { bundleError: `随行包装入失败（镜像切换本身已完成）：${err.message}` }
+      }
       if (!body.dryRun) {
         const cur = await dataService.getEnvironment(id)
         const pinnedBy = new Set(cur?.pinnedBy || [])
@@ -385,7 +392,7 @@ export async function handleUserRoutes(req, res, path) {
         })
       }
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify(result))
+      res.end(JSON.stringify({ ...result, ...bundleOut }))
     } catch (err) {
       handleError(err, res)
     }
