@@ -310,12 +310,20 @@ export async function handleUserRoutes(req, res, path) {
     try {
       // 卷侧（helper：技能/插件/目录）与可写层侧（exec：workspace 顶层）并行，
       // 向导第 2 步两档各有真实数据源
-      const [inventory, workspace] = await Promise.all([
+      const [inventory, workspace, info] = await Promise.all([
         envBundleService.inventory(addr),
         dockerService.listWorkspaceTop(swtcContainerName(addr)),
+        dockerService.containerInfo(swtcContainerName(addr)),
       ])
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ inventory, workspace, canFreeze: true }))
+      res.end(
+        JSON.stringify({
+          inventory,
+          workspace,
+          canFreeze: true,
+          containerRunning: !!(info.exists && info.status === 'running'),
+        }),
+      )
     } catch (err) {
       res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify({ error: `随行内容盘点失败：${err.message}` }))

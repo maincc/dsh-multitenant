@@ -303,6 +303,7 @@ const list = ref([])
 const drafts = ref([])
 const current = ref(null)
 const canFreeze = ref(false)
+const elig = ref({ status: 'loading', containerRunning: true, msg: '' })
 const loadingInv = ref(true)
 const busy = ref(false)
 const expanded = ref('')
@@ -338,7 +339,19 @@ async function loadFreezeEligibility() {
   try {
     const res = await axios.post('/api/user/environment-inventory', {})
     canFreeze.value = !!res.data.canFreeze
-  } catch {
+    // 状态分道：ok 才信 canFreeze/运行态；denied 走拒绝卡；error 走故障卡+重试
+    // ——错误归错原因=让用户去修没坏的东西（本地测试亲历的坑）
+    elig.value = {
+      status: 'ok',
+      containerRunning: res.data.containerRunning !== false,
+    }
+  } catch (e) {
+    const code = e?.response?.status
+    elig.value = {
+      status: code === 403 ? 'denied' : 'error',
+      containerRunning: true,
+      msg: e?.response?.data?.error || e?.message || 'error',
+    }
     canFreeze.value = false
   } finally {
     loadingInv.value = false

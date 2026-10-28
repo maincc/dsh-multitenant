@@ -585,6 +585,11 @@ export default {
     rejectReason: '驳回理由：{reason}',
     freezeBtn: '把当前容器定格为环境',
     needCwt: '自助定格需要 CWT 或管理员凭证；容器本身不受影响，可在凭证页申请 CWT 后回来。',
+    eligFailTitle: '定格资格暂时查不了',
+    eligFailSafe: '你的容器和数据不受影响；下面这个原因修好后点重试即可',
+    eligRetry: '重试',
+    needRunning:
+      '定格需要容器正在运行（拍的就是运行中的环境）——先去「容器管理」启动容器，回来按钮就亮了',
     whatTitle: '「定格环境」是什么？',
     whatP1:
       '把你容器里装好的软件环境打包保存一份，别人点一下就能把他的容器换成同款——比如你搭好的炒股环境分享给用同平台的人',
