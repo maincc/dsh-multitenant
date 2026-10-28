@@ -1,6 +1,6 @@
 /**
  * MongoDB 存储层（M0 地基）
- * 见 docs/storage-design.md —— 9 集合合同 + 单成员副本集事务。
+ * 见 docs/storage-design.md —— 集合合同（users/sessions/audit/…/environments，见 COLLECTIONS）+ 单成员副本集事务。
  *
  * 设计要点：
  * - **惰性**：provider='json'（默认）时，本模块 import 不产生任何连接；只有
@@ -33,6 +33,10 @@ const COLLECTIONS = Object.freeze([
   'skill_installs',
   'credentials',
   'cwt_applications',
+  'environments',
+  // 环境模板账本（定格）：_id=镜像 tag。2026-10-27 补登——PR1 写入面已在用而
+  // 合同漏了，测试全 mock store 掩盖、真库 ensureIndexes 当场逮住（实弹缺陷判例：
+  // mock 绿≠真库通，新集合必须同车过 COLLECTIONS+INDEX_SPECS 两处合同）。
 ])
 
 /** 索引合同（storage-design §4.1）。TTL 秒数按拍板：audit 90 天(P4)。 */
@@ -54,6 +58,13 @@ const INDEX_SPECS = Object.freeze({
   cwt_applications: [
     { key: { status: 1, submittedAt: -1 }, options: { name: 'by_status_time' } },
     { key: { address: 1, submittedAt: -1 }, options: { name: 'by_addr_time' } },
+  ],
+  // 环境模板（定格）：_id=镜像 tag 天然唯一（同名覆盖物理不可能）；
+  // 选用面按状态取 published、配额按来源计数（每来源 ≤5）、列表时间序。
+  environments: [
+    { key: { status: 1 }, options: { name: 'by_status' } },
+    { key: { sourceAddr: 1, status: 1 }, options: { name: 'by_source_status' } },
+    { key: { createdAt: -1 }, options: { name: 'by_time' } },
   ],
 })
 
@@ -129,7 +140,7 @@ export class MongoStore {
   /** 白名单集合访问器（不含事务会话参数时用于常规读写） */
   col(name) {
     if (!COLLECTIONS.includes(name)) {
-      throw new InternalError(`未知集合 "${name}"（不在 9 集合合同内）`)
+      throw new InternalError(`未知集合 "${name}"（不在 ${COLLECTIONS.length} 集合合同内）`)
     }
     if (!this._db) throw new InternalError('MongoStore 未连接，先 await connect()')
     return this._db.collection(name)
