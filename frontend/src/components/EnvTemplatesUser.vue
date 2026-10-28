@@ -1,5 +1,15 @@
 <template>
   <div class="env-page">
+    <!-- 定格是什么：三句大白话，所有人可见 -->
+    <div class="env-what">
+      <b>{{ $t('env.whatTitle') }}</b>
+      <ul>
+        <li>{{ $t('env.whatP1') }}</li>
+        <li>{{ $t('env.whatP2') }}</li>
+        <li>{{ $t('env.whatP3') }}</li>
+      </ul>
+    </div>
+
     <!-- 当前来源条 -->
     <div class="env-current">
       <span class="env-current-label">{{ $t('env.currentSource') }}</span>
@@ -607,6 +617,51 @@ const totalBundleBytes = computed(() => {
 }
 .env-freeze-zone {
   margin-top: 22px;
+}
+.env-premise {
+  font-size: 12px;
+  opacity: 0.8;
+  margin: 8px 0 0;
+}
+.env-what {
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 10px;
+  background: var(--bg-secondary, rgba(255, 255, 255, 0.03));
+}
+.env-what b {
+  font-size: 13px;
+}
+.env-what ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  opacity: 0.85;
+  line-height: 1.7;
+}
+.env-wall {
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.14));
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.env-wall-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+.env-wall-why,
+.env-wall-steps {
+  font-size: 13px;
+  line-height: 1.65;
+  margin: 0;
+}
+.env-wall-safe {
+  font-size: 13px;
+  color: var(--ok-color, #57b874);
+  margin: 0;
 }
 .env-wizard {
   margin-top: 14px;

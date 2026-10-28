@@ -308,7 +308,9 @@ describe('env-commit（定格）', () => {
     const body = json(res)
     expect(body.dryRun).toBe(true)
     expect(body.tag).toMatch(/^dsh-multitenant:env-jga9j9tk-stock-\d{14}$/)
-    expect(body.notices.join('')).toContain('/dsh-home')
+    // 大白话承诺行（判例文案变更随 UI：隔离承诺必须在场，载体是人话不是路径名）
+    expect(body.notices.join('')).toContain('不会被带走')
+    expect(body.notices.join('')).toContain('/root/workspace')
     expect(dockerService.commitEnvironment).not.toHaveBeenCalled()
     expect(globalThis.__envStore.size).toBe(0)
   })
