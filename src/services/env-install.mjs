@@ -41,6 +41,10 @@ function main() {
     return { error: 'bad-arg' }
   }
   spawnSync('rm', ['-rf', TMP])
+  // 判例（2026-10 装包首跑）：tar 的 -C 目录不存在直接 "Cannot open" 退出——
+  // rm 之后必须把暂存目录建回来（export 侧同款肌肉，这里曾漏写）
+  const mk = spawnSync('mkdir', ['-p', TMP])
+  if (mk.status !== 0) return { error: `mkdir-tmp-failed:${String(mk.stderr || '').slice(0, 120)}` }
   const u = spawnSync('tar', ['-xzf', '/out/bundle.tar.gz', '-C', TMP])
   if (u.status !== 0) return { error: `untar-failed:${String(u.stderr || '').slice(0, 200)}` }
   const files = listFiles(TMP, TMP).sort()
