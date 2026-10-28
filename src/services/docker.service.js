@@ -1070,6 +1070,11 @@ export class DockerService {
       // 名单即删——find 的 ! -name 条件由 scrubKeep 拼接（单引号转义），
       // 名单空时=无条件全清。
       `if [ -d /root/workspace ]; then find /root/workspace -mindepth 1 -maxdepth 1 ${keepCond} -delete; fi`,
+      // 判例（2026-10 同夜第二层）：docker commit 会把**运行期 bind 挂载点**
+      // 烘焙成 0 字节占位文件——/patches/tenant.patch.yml 的占位混进产物后，
+      // CMD 的 [ -f ] 分支成立，dsh 把空文件当 YAML patch 读，直接崩。
+      // 运行期平台会挂真文件覆盖，占位删除无副作用；顺带清一切挂载残留。
+      'rm -f /patches/tenant.patch.yml',
       'true',
     ].join('; ')
     const rmiQuiet = async (ref) => {
@@ -1082,6 +1087,21 @@ export class DockerService {
     try {
       await sh('docker', ['stop', '-t', '15', name])
       await sh('docker', ['commit', ...labelChanges, name, stageTag])
+      // 判例（2026-10 用户选用模板后容器永久起不来）：scrub 用
+      // `--entrypoint sh -c SCRUB` 起一次性容器，docker commit 默认把
+      // **"容器最后执行的命令"烘焙成新镜像的启动命令**——定格产物变成
+      // "跑一遍清洗脚本然后退出 0"，dsh 永不启动。修复：定格前抓取原始
+      // boot config，scrub commit 时显式 --change 写回。
+      const bootCfg = JSON.parse(
+        String(await sh('docker', ['inspect', name, '--format', '{{json .Config}}'])),
+      )
+      const bootChanges = []
+      if (Array.isArray(bootCfg?.Entrypoint) && bootCfg.Entrypoint.length) {
+        bootChanges.push('--change', `ENTRYPOINT ${JSON.stringify(bootCfg.Entrypoint)}`)
+      }
+      if (Array.isArray(bootCfg?.Cmd) && bootCfg.Cmd.length) {
+        bootChanges.push('--change', `CMD ${JSON.stringify(bootCfg.Cmd)}`)
+      }
       let scrubbed = false
       try {
         await sh('docker', [
@@ -1100,7 +1120,14 @@ export class DockerService {
           SCRUB,
         ])
         await sh('docker', ['wait', scrubName])
-        await sh('docker', ['commit', '--change', 'LABEL dsh.env.scrubbed=true', scrubName, tag])
+        await sh('docker', [
+          'commit',
+          '--change',
+          'LABEL dsh.env.scrubbed=true',
+          ...bootChanges,
+          scrubName,
+          tag,
+        ])
         scrubbed = true
       } catch {
         await sh('docker', ['tag', stageTag, tag]).catch(() => {})
@@ -1112,6 +1139,14 @@ export class DockerService {
       await sh('docker', ['start', name])
       const imageId = await this.imageId(tag)
       if (!imageId) throw new Error('定格产物不可读（镜像 ID 缺失）')
+      // 护栏：定格产物的启动命令必须还是"起 dsh"，不是 scrub 的残留——
+      // 本判例的自动化回归位（SCRUB 特征串出现在 Cmd 即作废本次定格）
+      const finalBoot = String(
+        await sh('docker', ['image', 'inspect', '--format', '{{json .Config.Cmd}}', tag]),
+      )
+      if (/bash_history|\.netrc/.test(finalBoot)) {
+        throw new Error('定格产物的启动命令被清洗过程覆盖（内部错误，本次定格作废）')
+      }
       const sizeOut = await sh('docker', ['image', 'inspect', '--format', '{{.Size}}', tag])
       const sizeBytes = Number(String(sizeOut).trim()) || 0
       if (sizeBytes > maxBytes) {
