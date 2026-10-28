@@ -80,6 +80,10 @@ export async function runEnvCommit(p) {
   const repo = String(CONFIG.docker?.image || 'dsh-multitenant').split(':')[0]
   const ts = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)
   const tag = `${repo}:env-${address.slice(0, 8)}-${slug}-${ts}`
+  // 定格是"新建"不是"修改"：同名旧模板与它的使用者不受任何影响。但货架
+  // 上出现两个同名模板会让接收者犯迷糊——预览时如实提醒一句（不禁止：
+  // 禁止作者再定格=禁止他更新环境，方向反了）。
+  const sameName = mine.filter((e) => e.displayName === displayName)
   if (dryRun) {
     return {
       status: 200,
@@ -100,6 +104,11 @@ export async function runEnvCommit(p) {
             (include.folders.join(', ') || '未勾选→全清') +
             '）',
           '清理是"尽力而为"，不是保证——复制品里有什么，以管理员逐条核对的清单为准，请如实勾选',
+          ...(sameName.length
+            ? [
+                `注意：你已经有一个叫「${displayName}」的在架/待审模板——定格会生成全新的一个，旧模板和正在用它的人完全不受影响；新模板上架后建议撤销旧的，免得货架上出现两个同名`,
+              ]
+            : []),
         ],
       },
     }
