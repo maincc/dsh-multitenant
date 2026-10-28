@@ -4,6 +4,7 @@
 
 import { CONFIG } from '../config/config.js'
 import { userService } from '../services/user.service.js'
+import { dockerService } from '../services/docker.service.js'
 import { dataService } from '../services/data.service.js'
 import { resourceExhaustedPayload } from '../utils/resource-exhausted.js'
 import {
@@ -269,6 +270,148 @@ export async function handleUserRoutes(req, res, path) {
       const app = await credentialService.myApplication(addr)
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify({ ok: true, application: app }))
+    } catch (err) {
+      handleError(err, res)
+    }
+    return true
+  }
+
+  // ---------------------------------------------------------------------------
+  // 环境模板自助面（方案③，2026-10-27）：定格/发布权在管理员（PR1 审核闸），
+  // 选用与回退在用户自己——"自己的容器自己主"。三端点全部只作用于会话地址本人，
+  // applyImageVersion 的 dryRun 停机预览/重建/留痕全链路复用。
+  // ---------------------------------------------------------------------------
+
+  // GET /api/user/environments - published 模板列表 + 我当前的环境来源
+  if (path === '/api/user/environments' && req.method === 'GET') {
+    const addr = credSession()
+    if (!addr) {
+      res.writeHead(401, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '需要登录（钱包签名会话）', code: 'UNAUTHORIZED' }))
+      return true
+    }
+    const envs = await dataService.listEnvironments()
+    const published = envs.filter((e) => e.status === 'published')
+    const pinned = userService.state.swtcUsers?.[addr]?.pinnedImage ?? null
+    const mine = published.find((e) => e._id === pinned) || null
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+    res.end(
+      JSON.stringify({
+        ok: true,
+        // 只展示审核放行的；manifest 不外露（用户选用面=作者+版本+大小，
+        // 审核证据留在管理端）
+        environments: published
+          .map((e) => ({
+            id: e._id,
+            slug: e.slug,
+            author: e.sourceAddr,
+            dshVersion: e.dshVersion,
+            sizeBytes: e.sizeBytes,
+            scrubbed: e.scrubbed,
+            createdAt: e.createdAt,
+          }))
+          .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))),
+        yourCurrent: {
+          image: pinned,
+          // pin 的是版本镜像（平台钉版）而非模板——如实标 null，UI 归"其他"
+          fromTemplate: mine ? { slug: mine.slug, author: mine.sourceAddr } : null,
+        },
+      }),
+    )
+    return true
+  }
+
+  // POST /api/user/environment/apply {id, dryRun} - 自助换到自己的容器。
+  // 命名避坑：不叫 -reset/-apply 后缀——/reset 后缀被 tenant.routes 卷删除端点
+  // 劫持，/restart|/reset|/remove|/stop 后缀都在签名强制名单里（:541-544）。
+  // 校验与 admin env-apply 同口径（published + digest 逐字），差别只在目标
+  // 地址恒等于会话本人——不存在"用别人的会话换别人的容器"面。
+  if (path === '/api/user/environment/apply' && req.method === 'POST') {
+    const addr = credSession()
+    if (!addr) {
+      res.writeHead(401, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '需要登录（钱包签名会话）', code: 'UNAUTHORIZED' }))
+      return true
+    }
+    if (!rateLimit(req, res, { max: 5, windowMs: 600000, keyPrefix: 'envapply' })) return true
+    const body = await parseJsonBody(req, res)
+    if (!body) return true
+    const id = String(body.id || '')
+    const doc = await dataService.getEnvironment(id)
+    if (!doc) {
+      res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '模板不存在' }))
+      return true
+    }
+    if (doc.status !== 'published') {
+      res.writeHead(409, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '该模板未上架或已下架' }))
+      return true
+    }
+    // digest 不可变钉（与 admin 面同一道供应链闸）
+    const nowId = await dockerService.imageId(doc._id)
+    if (!nowId) {
+      res.writeHead(410, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '模板镜像已不在本机，不可选用' }))
+      return true
+    }
+    if (nowId !== doc.imageId) {
+      res.writeHead(409, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '模板与账本 digest 不符（同名被覆盖），拒用' }))
+      return true
+    }
+    try {
+      const result = await userService.applyImageVersion(addr, {
+        image: doc._id,
+        dryRun: !!body.dryRun,
+      })
+      if (!body.dryRun) {
+        const cur = await dataService.getEnvironment(id)
+        const pinnedBy = new Set(cur?.pinnedBy || [])
+        pinnedBy.add(addr)
+        await dataService.patchEnvironment(id, { pinnedBy: [...pinnedBy] })
+        dataService.logOperation('env_apply_self', {
+          id,
+          address: addr,
+          operator: addr, // 本人自助：操作人=会话地址（与管理员代发区分审计）
+        })
+      }
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify(result))
+    } catch (err) {
+      handleError(err, res)
+    }
+    return true
+  }
+
+  // POST /api/user/environment-reset {dryRun} - 一键回平台默认环境
+  // （applyImageVersion(image=null)=摘 pin 回 latest 语义；引用账本同步清）
+  if (path === '/api/user/environment/revert' && req.method === 'POST') {
+    const addr = credSession()
+    if (!addr) {
+      res.writeHead(401, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '需要登录（钱包签名会话）', code: 'UNAUTHORIZED' }))
+      return true
+    }
+    const body = (await parseJsonBody(req, res)) || {}
+    try {
+      const result = await userService.applyImageVersion(addr, {
+        image: null,
+        dryRun: !!body.dryRun,
+      })
+      if (!body.dryRun) {
+        const envs = await dataService.listEnvironments()
+        for (const e of envs) {
+          if ((e.pinnedBy || []).includes(addr)) {
+            await dataService.patchEnvironment(e._id, {
+              pinnedBy: (e.pinnedBy || []).filter((a) => a !== addr),
+            })
+          }
+        }
+        dataService.logOperation('env_reset_self', { address: addr, operator: addr })
+      }
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify(result))
     } catch (err) {
       handleError(err, res)
     }
