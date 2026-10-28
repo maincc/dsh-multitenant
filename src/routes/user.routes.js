@@ -15,7 +15,7 @@ import {
   buildSignedMessage,
 } from '../services/tenant-config.service.js'
 import { userSessionStore } from '../middleware/user-auth.middleware.js'
-import { normalizeAddress } from '../utils/address.js'
+import { normalizeAddress, swtcContainerName } from '../utils/address.js'
 import { rateLimit } from '../middleware/rate-limit.middleware.js'
 import { getAdminSession, getRequestAddress } from '../middleware/auth.middleware.js'
 import { credentialService } from '../services/credential.service.js'
@@ -308,10 +308,14 @@ export async function handleUserRoutes(req, res, path) {
     if (!(await credentialService.freezeAllowed(addr))) return (envFreezeDenied(res, addr), true)
     if (!rateLimit(req, res, { max: 10, windowMs: 60000, keyPrefix: 'envinv' })) return true
     try {
-      const inventory = await envBundleService.inventory(addr)
-      const allowed = await credentialService.freezeAllowed(addr)
+      // 卷侧（helper：技能/插件/目录）与可写层侧（exec：workspace 顶层）并行，
+      // 向导第 2 步两档各有真实数据源
+      const [inventory, workspace] = await Promise.all([
+        envBundleService.inventory(addr),
+        dockerService.listWorkspaceTop(swtcContainerName(addr)),
+      ])
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ inventory, canFreeze: allowed }))
+      res.end(JSON.stringify({ inventory, workspace, canFreeze: true }))
     } catch (err) {
       res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify({ error: `随行内容盘点失败：${err.message}` }))
@@ -409,6 +413,19 @@ export async function handleUserRoutes(req, res, path) {
         ok: true,
         // 只展示审核放行的；manifest 不外露（用户选用面=作者+版本+大小，
         // 审核证据留在管理端）
+        myDrafts: envs
+          .filter((e) => e.sourceAddr === addr && e.status !== 'published')
+          .map((e) => ({
+            id: e._id,
+            name: e.displayName || e.slug,
+            slug: e.slug,
+            status: e.status,
+            rejectReason: e.rejectReason || null, // 驳回理由回传作者（改起来才有方向）
+            pinnedByCount: (e.pinnedBy || []).length,
+            sizeBytes: e.sizeBytes,
+            createdAt: e.createdAt,
+          }))
+          .sort((a2, b2) => String(b2.createdAt).localeCompare(String(a2.createdAt))),
         environments: published
           .map((e) => ({
             id: e._id,

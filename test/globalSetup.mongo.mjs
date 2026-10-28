@@ -108,11 +108,9 @@ export async function setup() {
       serverSelectionTimeoutMS: 15000,
     })
     await direct.connect()
-    await direct
-      .db('admin')
-      .command({
-        replSetInitiate: { _id: 'dsh-test-rs', members: [{ _id: 0, host: `127.0.0.1:${port}` }] },
-      })
+    await direct.db('admin').command({
+      replSetInitiate: { _id: 'dsh-test-rs', members: [{ _id: 0, host: `127.0.0.1:${port}` }] },
+    })
     await direct.close()
 
     // 等 PRIMARY 可选（新实例选举完成）

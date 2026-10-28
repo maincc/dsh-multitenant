@@ -850,6 +850,12 @@ export async function handleAdminRoutes(req, res, path, url) {
             status: e.status,
             pinnedBy: e.pinnedBy || [],
             manifestCount: (e.manifest || []).length,
+            hasBundle: !!e.bundle,
+            hasScan: !!e.scan,
+            // 检测计数上列表（审核队列徽标）；命中细节只在详情面，不外露全量
+            secretCount: (e.scan?.secrets || []).length,
+            hitCount: (e.scan?.hits || []).length,
+            rejectReason: e.rejectReason || null,
             createdBy: e.createdBy,
             createdAt: e.createdAt,
           }))

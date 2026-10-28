@@ -544,6 +544,13 @@
         </div>
 
         <!-- ════════ DSH 版本管理 ════════ -->
+        <div v-else-if="activeTab === 'envtpl'" class="tab-content">
+          <div class="tab-head">
+            <h4>{{ $t('admin.tabEnv') }}</h4>
+            <p class="tab-hint">{{ $t('env.admin.hint') }}</p>
+          </div>
+          <EnvTemplatesAdmin />
+        </div>
         <div v-else-if="activeTab === 'dsh'" class="tab-content">
           <div class="tab-head">
             <div class="tab-head-text">
@@ -1355,6 +1362,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import axios from 'axios'
 import { useI18n } from 'vue-i18n'
 import { buildAdminTabs } from '../admin-tabs'
+import EnvTemplatesAdmin from '../components/EnvTemplatesAdmin.vue'
 import {
   requestAccounts,
   signMessage,

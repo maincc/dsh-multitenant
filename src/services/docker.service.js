@@ -751,6 +751,33 @@ export class DockerService {
     }
   }
 
+  /**
+   * 可写层 /root/workspace 顶层条目（定格向导"文件夹勾选档"的数据源）：
+   * inventory helper 只挂卷看不到可写层，这里走活容器 exec——读语义、
+   * 限量 100 项、单项 du KB 容错为 0（du 挂不拖全表）。
+   */
+  async listWorkspaceTop(name) {
+    try {
+      const out = await sh('docker', [
+        'exec',
+        name,
+        'sh',
+        '-c',
+        'find /root/workspace -mindepth 1 -maxdepth 1 2>/dev/null | head -100 | while read -r p; do sz=$(du -sk "$p" 2>/dev/null | cut -f1); printf "%s\\t%s\\n" "$(basename "$p")" "${sz:-0}"; done',
+      ])
+      return String(out)
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => {
+          const [nm, kb] = line.split('\t')
+          return { name: String(nm || '').trim(), sizeBytes: (Number(kb) || 0) * 1024 }
+        })
+        .filter((x) => x.name)
+    } catch {
+      return [] // 容器停着/无 workspace：空列表，向导如实显示"读不到"
+    }
+  }
+
   /** 随行包/驳回即弃面的单镜像删除（静默：已不在不算失败） */
   async removeImage(ref) {
     try {

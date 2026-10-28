@@ -44,6 +44,7 @@ vi.mock('../src/services/docker.service.js', () => ({
   dockerService: {
     imageId: vi.fn(),
     containerInfo: vi.fn(async () => ({ exists: true, status: 'running' })),
+    listWorkspaceTop: vi.fn(async () => [{ name: '策略', sizeBytes: 1024 }]),
     containerImageId: vi.fn(async () => 'sha256:parent'),
     commitEnvironment: vi.fn(),
     removeImage: vi.fn(),

@@ -709,6 +709,13 @@
              role='admin'（官网活验证属实）才装配；内嵌复用独立版 AdminPanel（源码不合并，
              同一组件两用：externalTab 驱动子页、自带侧栏隐藏）。操作仍要 admin_session 当场
              签名——tab 可见=凭证判权，可操作=会话+钱包双门禁（刀2B 模型一字不松） -->
+        <div v-else-if="activeTab === 'envtpl'" class="tab-content">
+          <div class="tab-head">
+            <h4>{{ $t('user.tabEnv') }}</h4>
+            <p class="tab-hint">{{ $t('env.envTabHint') }}</p>
+          </div>
+          <EnvTemplatesUser />
+        </div>
         <div v-else-if="isSystemTab" class="tab-content admin-embed">
           <AdminPanel embedded :external-tab="systemSubTab" />
         </div>
@@ -877,6 +884,7 @@ import { useRoute } from 'vue-router'
 import { skillsApi } from '../api/skills.js'
 import { sha256Hex as sha256HexFallback } from '../utils/sha256.js'
 import AdminPanel from './AdminPanel.vue'
+import EnvTemplatesUser from '../components/EnvTemplatesUser.vue'
 import { buildAdminTabs } from '../admin-tabs'
 import {
   requestAccounts,
@@ -921,6 +929,11 @@ const sidebarTabs = computed(() => {
       key: 'skills',
       label: t('user.tabSkills'),
       icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>',
+    },
+    {
+      key: 'envtpl',
+      label: t('user.tabEnv'),
+      icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M12 22V12"/></svg>',
     },
   ]
   if (role.value === 'admin') {
