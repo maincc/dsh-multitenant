@@ -112,17 +112,49 @@
       </div>
     </template>
 
-    <!-- 定格入口（资格由 inventory 的 canFreeze 判，无资格=出路文案不是死墙） -->
+    <!-- 定格入口（四态：套来的环境要先回退 / 故障≠无资格 / CWT 墙 / 可定格） -->
     <div class="env-freeze-zone">
-      <button
-        v-if="!wz.active"
-        class="btn btn-primary"
-        :disabled="!canFreeze || busy"
-        @click="openWizard"
-      >
-        {{ $t('env.freezeBtn') }}
-      </button>
-      <p v-if="!canFreeze && !loadingInv" class="env-muted">{{ $t('env.needCwt') }}</p>
+      <template v-if="!wz.active">
+        <div v-if="elig.status === 'ok' && elig.onTemplate" class="env-wall">
+          <div class="env-wall-title">{{ $t('env.onTplTitle') }}</div>
+          <div class="env-wall-why">
+            {{ $t('env.onTplWhy', { name: elig.onTemplate.name }) }}
+          </div>
+          <div class="env-wall-steps">{{ $t('env.onTplGo') }}</div>
+        </div>
+        <div v-else-if="elig.status === 'error'" class="env-wall">
+          <div class="env-wall-title">{{ $t('env.eligFailTitle') }}</div>
+          <div class="env-wall-why">{{ elig.msg }}</div>
+          <div class="env-wall-steps">
+            <button
+              class="btn btn-small btn-secondary"
+              :disabled="busy"
+              @click="loadFreezeEligibility"
+            >
+              {{ $t('env.eligRetry') }}
+            </button>
+          </div>
+        </div>
+        <div v-else-if="elig.status === 'denied'" class="env-wall">
+          <div class="env-wall-title">{{ $t('env.wallTitle') }}</div>
+          <div class="env-wall-why">{{ $t('env.wallWhy') }}</div>
+          <div class="env-wall-safe">{{ $t('env.wallNoLock') }}</div>
+          <div class="env-wall-steps">{{ $t('env.wallSteps') }}</div>
+        </div>
+        <template v-else-if="elig.status === 'ok'">
+          <button
+            class="btn btn-primary"
+            :disabled="!canFreeze || busy || elig.containerRunning === false"
+            @click="openWizard"
+          >
+            {{ $t('env.freezeBtn') }}
+          </button>
+          <p v-if="!canFreeze && !loadingInv" class="env-muted">{{ $t('env.needCwt') }}</p>
+          <p v-else-if="canFreeze && elig.containerRunning === false" class="env-muted">
+            {{ $t('env.needRunning') }}
+          </p>
+        </template>
+      </template>
     </div>
 
     <!-- ================= 定格向导（对齐 docs/env-template-wizard.md 六步） ================= -->
@@ -303,7 +335,7 @@ const list = ref([])
 const drafts = ref([])
 const current = ref(null)
 const canFreeze = ref(false)
-const elig = ref({ status: 'loading', containerRunning: true, msg: '' })
+const elig = ref({ status: 'loading', containerRunning: true, msg: '', onTemplate: null })
 const loadingInv = ref(true)
 const busy = ref(false)
 const expanded = ref('')
@@ -344,6 +376,7 @@ async function loadFreezeEligibility() {
     elig.value = {
       status: 'ok',
       containerRunning: res.data.containerRunning !== false,
+      onTemplate: res.data.onTemplate || null,
     }
   } catch (e) {
     const code = e?.response?.status

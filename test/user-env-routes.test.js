@@ -374,6 +374,42 @@ describe('PR3 自助定格（本人面：freezeAllowed + autoSlug + 共用流程
     expect(op[1].operator).toBe(USER)
   })
 
+  it('套来的环境上禁止再定格：按实物镜像 ID 亮 409 TEMPLATE_IN_USE（回退后可恢复）', async () => {
+    // 容器实物镜像='sha256:parent'（mock），放一条"别人的模板恰好是这个镜像"的账本
+    const fakeTpl = {
+      _id: 'dsh-multitenant:env-other008-x-1',
+      sourceAddr: 'other008xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+      slug: 'x',
+      displayName: '别人的炒股环境',
+      imageId: 'sha256:parent',
+      status: 'published',
+      pinnedBy: [],
+    }
+    globalThis.__envStore.set(fakeTpl._id, fakeTpl)
+    const res = await call('/api/user/environment-commit', {
+      method: 'POST',
+      body: { displayName: '我的二版', dryRun: true },
+    })
+    expect(res.statusCode).toBe(409)
+    const b = JSON.parse(res.body)
+    expect(b.code).toBe('TEMPLATE_IN_USE')
+    expect(b.error).toContain('别人的炒股环境')
+    expect(b.error).toContain('翻版') // 判例原话入断言：通俗文案即最终文案
+    expect(b.error).toContain('回退到默认') // 拒绝必须给出路
+    expect(dockerService.commitEnvironment).not.toHaveBeenCalled()
+    // inventory 同一事实给前端侦察字段（亮"先回退"卡而不是灰按钮）
+    const inv = await call('/api/user/environment-inventory', { method: 'POST', body: {} })
+    const j = JSON.parse(inv.body)
+    expect(j.onTemplate).toEqual({ name: '别人的炒股环境', byMe: false })
+    // 拿走（=回退后镜像不再是模板）→ 定格恢复可用
+    globalThis.__envStore.delete(fakeTpl._id)
+    const after = await call('/api/user/environment-commit', {
+      method: 'POST',
+      body: { displayName: '我的二版', dryRun: true },
+    })
+    expect(after.statusCode).toBe(200)
+  })
+
   it('inventory/browse：资格门后直通 helper（前端只渲染平台给的安全面）', async () => {
     const inv = await call('/api/user/environment-inventory', { method: 'POST', body: {} })
     expect(inv.statusCode).toBe(200)

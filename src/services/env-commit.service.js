@@ -77,6 +77,25 @@ export async function runEnvCommit(p) {
       },
     }
   }
+  // 判例（2026-10 用户："已经套用了环境还能点定格，这不合理"）：定格复制的是
+  // "容器现在的样子"——现在这个样子若来自某个模板，格出来就是它的翻版（插件
+  // 还会按文件原样进包、作者栏却写你的名），对原作者和你都不公平。硬闸按
+  // **实物镜像 ID** 判定（真相优先——pin 指针可能过期），出路只有一条：回退。
+  const curImage = await dockerService.containerImageId(name)
+  const usedTpl = curImage ? envs.find((e) => e.imageId === curImage) : null
+  if (usedTpl) {
+    const nm = usedTpl.displayName || '套来的环境'
+    return {
+      status: 409,
+      body: {
+        code: 'TEMPLATE_IN_USE',
+        error:
+          opKind === 'env_commit_self'
+            ? `你的容器正在跑「${nm}」这个套来的环境——在它上面定格只会格出它的翻版。想定格自己搭的环境：先点「回退到默认」，重新装好你的东西，再定格。`
+            : `该租户的容器正在跑「${nm}」——替他定格只会格出这个模板的翻版。如需换代：让他（或你在管理端）先回退到默认，装好新东西再格。`,
+      },
+    }
+  }
   const repo = String(CONFIG.docker?.image || 'dsh-multitenant').split(':')[0]
   const ts = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)
   const tag = `${repo}:env-${address.slice(0, 8)}-${slug}-${ts}`

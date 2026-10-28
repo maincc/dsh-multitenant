@@ -310,11 +310,15 @@ export async function handleUserRoutes(req, res, path) {
     try {
       // 卷侧（helper：技能/插件/目录）与可写层侧（exec：workspace 顶层）并行，
       // 向导第 2 步两档各有真实数据源
-      const [inventory, workspace, info] = await Promise.all([
+      const [inventory, workspace, info, envsAll, curImage] = await Promise.all([
         envBundleService.inventory(addr),
         dockerService.listWorkspaceTop(swtcContainerName(addr)),
         dockerService.containerInfo(swtcContainerName(addr)),
+        dataService.listEnvironments(),
+        dockerService.containerImageId(swtcContainerName(addr)),
       ])
+      // 正在跑某模板的镜像（按实物 ID 认，不按 pin）——前端据此亮"先回退"卡
+      const runningTpl = curImage ? envsAll.find((e) => e.imageId === curImage) : null
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(
         JSON.stringify({
@@ -322,6 +326,12 @@ export async function handleUserRoutes(req, res, path) {
           workspace,
           canFreeze: true,
           containerRunning: !!(info.exists && info.status === 'running'),
+          onTemplate: runningTpl
+            ? {
+                name: runningTpl.displayName || runningTpl.slug,
+                byMe: runningTpl.sourceAddr === addr,
+              }
+            : null,
         }),
       )
     } catch (err) {
