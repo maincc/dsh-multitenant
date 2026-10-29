@@ -656,8 +656,9 @@ const totalBundleBytes = computed(() => {
   font-size: 13px;
   opacity: 0.75;
 }
-/* 与市场技能卡同一副皮（用户验收：环境模板卡与技能卡要一致）：
-   280px 网格、12px 圆角、1rem 内距、浅色硬编码与 SkillMarket 对齐 */
+/* 与市场技能卡同一副皮（用户验收：卡片统一；改这里请同步 SkillMarket 的
+   .skill-card/.skill-card-head/.skill-meta/.skill-description/.skill-card-actions
+   ——规格逐值镜像：280px 网格、无阴影无悬停、标题 1.05rem mono、meta 0.78rem 灰） */
 .env-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -671,10 +672,6 @@ const totalBundleBytes = computed(() => {
   flex-direction: column;
   gap: 0.5rem;
   background: #fff;
-  transition: box-shadow 0.15s ease;
-}
-.env-card:hover {
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
 }
 .env-card-head {
   display: flex;
@@ -683,19 +680,28 @@ const totalBundleBytes = computed(() => {
   flex-wrap: wrap;
 }
 .env-card-name {
-  font-weight: 600;
   font-size: 1.05rem;
   color: #1e293b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .env-card-meta {
-  font-size: 0.9rem;
-  color: #475569;
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  color: #94a3b8;
+}
+.env-card-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
 }
 .env-card-intro {
+  margin: 0;
+  color: #475569;
   font-size: 0.9rem;
   line-height: 1.5;
-  color: #475569;
-  min-height: 2.2rem;
   flex: 1;
 }
 .env-preview {
