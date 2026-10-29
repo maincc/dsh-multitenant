@@ -629,7 +629,7 @@ async function revertNow() {
   pending.value = 'revert'
   try {
     const r = await axios.post('/api/user/environment/revert', { alsoClean: revertClean.value })
-    // 后端如实说明随行文件残留（只换镜像不删文件）——有则转告，无则原话
+    // 后端如实说明随行物处置（保留或按清单清除）——有则转告，无则原话
     toast(
       (r.data?.revertNote || t('env.reverted')) + (r.data?.cleanNote ? ' ' + r.data.cleanNote : ''),
     )

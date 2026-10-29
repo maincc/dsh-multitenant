@@ -582,7 +582,7 @@ export default {
     revertCleanTip: '只删该模板清单点名的技能/插件目录（工作文件与别的都不碰）；默认不勾。',
     revertBtn: '回退默认环境',
     revertConfirm: '回退到平台默认环境？你的卷数据不会动。',
-    reverted: '已回退：下次连接回到默认环境',
+    reverted: '已回退到默认环境。DSH 页面会自动刷新；没动静就刷一下',
     usedBy: '{n} 人使用中',
     rejectReason: '驳回理由：{reason}',
     freezeBtn: '把当前容器定格为环境',

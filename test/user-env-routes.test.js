@@ -306,6 +306,80 @@ describe('POST /api/user/environment/revert（回平台默认）', () => {
     expect(json(res).cleanNote).toContain('账本同步销记')
   })
 
+  it(
+    '审查B⑤：dot 目录名（' + '"' + '..' + '"' + '/.' + '"' + '）出闸——rm -rf plugins/.. 端整卷案防',
+    async () => {
+      seed({
+        pinnedBy: [USER],
+        include: { skills: ['..', '.', 'good-skill'], plugins: ['..'], folders: [] },
+      })
+      const res = await call('/api/user/environment/revert', {
+        method: 'POST',
+        body: { alsoClean: true },
+      })
+      expect(res.statusCode).toBe(200)
+      const { dockerService } = await import('../src/services/docker.service.js')
+      const { skillService } = await import('../src/services/skill.service.js')
+      expect(skillService.uninstall).toHaveBeenCalledTimes(1)
+      expect(skillService.uninstall).toHaveBeenCalledWith(USER, 'good-skill')
+      expect(dockerService.execSh).not.toHaveBeenCalled() // 过滤后插件清单为空，execSh 根本不该进
+      expect(json(res).cleanNote).toContain('1 项')
+    },
+  )
+
+  it('审查B③：清除清单以实物 pin 为源——先后套过 A/B 不按旧账清', async () => {
+    seed({ pinnedBy: [USER], include: { skills: ['s-A'], plugins: [], folders: [] } })
+    const aDoc = globalThis.__envStore.get(TPL)
+    globalThis.__envStore.set('tpl-B', {
+      ...aDoc,
+      _id: 'tpl-B',
+      name: 'B',
+      pinnedBy: [USER],
+      include: { skills: ['s-B'], plugins: [], folders: [] },
+    })
+    const { userService } = await import('../src/services/user.service.js')
+    userService.state.swtcUsers[USER] = { pinnedImage: 'tpl-B' }
+    try {
+      const res = await call('/api/user/environment/revert', {
+        method: 'POST',
+        body: { alsoClean: true },
+      })
+      expect(res.statusCode).toBe(200)
+      const { skillService } = await import('../src/services/skill.service.js')
+      expect(skillService.uninstall).toHaveBeenCalledWith(USER, 's-B')
+      expect(skillService.uninstall).not.toHaveBeenCalledWith(USER, 's-A')
+    } finally {
+      delete userService.state.swtcUsers[USER] // 别把 pin 遗案留给下一个用例
+    }
+  })
+
+  it('审查B4：换钉即迁账——A→B 后 A 的引用账不再挂本人', async () => {
+    seed({ pinnedBy: [USER] })
+    const aDoc = globalThis.__envStore.get(TPL)
+    globalThis.__envStore.set('tpl-B', { ...aDoc, _id: 'tpl-B', name: 'B', pinnedBy: [] })
+    const res = await call('/api/user/environment/apply', { method: 'POST', body: { id: 'tpl-B' } })
+    expect(res.statusCode).toBe(200)
+    expect(globalThis.__envStore.get('tpl-B').pinnedBy).toContain(USER)
+    expect(globalThis.__envStore.get(TPL).pinnedBy || []).not.toContain(USER)
+    globalThis.__envStore.delete('tpl-B')
+  })
+
+  it('审查B8：勾了清除但查无套用记录——勾选不被无声吞', async () => {
+    seed({ pinnedBy: [] })
+    const { userService } = await import('../src/services/user.service.js')
+    userService.state.swtcUsers[USER] = { pinnedImage: null }
+    try {
+      const res = await call('/api/user/environment/revert', {
+        method: 'POST',
+        body: { alsoClean: true },
+      })
+      expect(res.statusCode).toBe(200)
+      expect(json(res).cleanNote).toContain('查无套用模板')
+    } finally {
+      delete userService.state.swtcUsers[USER]
+    }
+  })
+
   it('命名防劫持钉：revert 绝不落入删卷重建（resetContainer 零调用）', async () => {
     const res = await call('/api/user/environment/revert', { method: 'POST', body: {} })
     expect(res.statusCode).toBe(200)

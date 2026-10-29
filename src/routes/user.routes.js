@@ -249,7 +249,8 @@ export async function handleUserRoutes(req, res, path) {
       res.end(JSON.stringify({ error: '需要登录（钱包签名会话）', code: 'UNAUTHORIZED' }))
       return true
     }
-    const body = (await parseJsonBody(req, res)) || {}
+    const body = await parseJsonBody(req, res)
+    if (!body) return true
     try {
       const out = await credentialService.applyCwt(addr, body)
       dataService.logOperation('cwt_apply', { address: addr, id: out.id })
@@ -319,7 +320,15 @@ export async function handleUserRoutes(req, res, path) {
         dockerService.containerImageId(swtcContainerName(addr)),
       ])
       // 正在跑某模板的镜像（按实物 ID 认，不按 pin）——前端据此亮"先回退"卡
-      const runningTpl = curImage ? envsAll.find((e) => e.imageId === curImage) : null
+      const runningTpl = curImage
+        ? envsAll.find(
+            (e) =>
+              e.imageId === curImage &&
+              (e.status === 'published' ||
+                e.sourceAddr === addr ||
+                (e.pinnedBy || []).includes(addr)),
+          ) || null
+        : null
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(
         JSON.stringify({
@@ -352,7 +361,8 @@ export async function handleUserRoutes(req, res, path) {
     }
     if (!(await credentialService.freezeAllowed(addr))) return (envFreezeDenied(res, addr), true)
     if (!rateLimit(req, res, { max: 30, windowMs: 60000, keyPrefix: 'envbrowse' })) return true
-    const body = (await parseJsonBody(req, res)) || {}
+    const body = await parseJsonBody(req, res)
+    if (!body) return true
     try {
       const listing = await envBundleService.browse(addr, String(body.dir || ''))
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
@@ -434,7 +444,11 @@ export async function handleUserRoutes(req, res, path) {
       const curImage = await dockerService.containerImageId(swtcContainerName(addr))
       runningTpl = curImage
         ? published.find((e) => e.imageId === curImage) ||
-          envs.find((e) => e.imageId === curImage && e.sourceAddr === addr) ||
+          envs.find(
+            (e) =>
+              e.imageId === curImage &&
+              (e.sourceAddr === addr || (e.pinnedBy || []).includes(addr)),
+          ) ||
           null
         : null
     } catch {
@@ -555,6 +569,15 @@ export async function handleUserRoutes(req, res, path) {
         const pinnedBy = new Set(cur?.pinnedBy || [])
         pinnedBy.add(addr)
         await dataService.patchEnvironment(id, { pinnedBy: [...pinnedBy] })
+        // 换钉即迁账：A→B 后 A 的 pinnedBy 还挂着本人 = 幽灵引用（下架回执
+        // usingCount 虚高、GC"被引用"护栏被撑大、hadTpl 兜底清错清单）
+        for (const other of await dataService.listEnvironments()) {
+          if (other._id !== id && (other.pinnedBy || []).includes(addr)) {
+            await dataService.patchEnvironment(other._id, {
+              pinnedBy: other.pinnedBy.filter((a) => a !== addr),
+            })
+          }
+        }
         dataService.logOperation('env_apply_self', {
           id,
           address: addr,
@@ -583,7 +606,9 @@ export async function handleUserRoutes(req, res, path) {
       res.end(JSON.stringify({ error: '需要登录（钱包签名会话）', code: 'UNAUTHORIZED' }))
       return true
     }
-    const body = (await parseJsonBody(req, res)) || {}
+    if (!rateLimit(req, res, { max: 10, windowMs: 60000, keyPrefix: 'envmeta' })) return true
+    const body = await parseJsonBody(req, res)
+    if (!body) return true
     try {
       const doc = await dataService.getEnvironment(String(body.id || ''))
       if (!doc) {
@@ -618,7 +643,9 @@ export async function handleUserRoutes(req, res, path) {
       res.end(JSON.stringify({ error: '需要登录（钱包签名会话）', code: 'UNAUTHORIZED' }))
       return true
     }
-    const body = (await parseJsonBody(req, res)) || {}
+    if (!rateLimit(req, res, { max: 10, windowMs: 60000, keyPrefix: 'envmeta' })) return true
+    const body = await parseJsonBody(req, res)
+    if (!body) return true
     try {
       const doc = await dataService.getEnvironment(String(body.id || ''))
       if (!doc) {
@@ -655,11 +682,20 @@ export async function handleUserRoutes(req, res, path) {
       res.end(JSON.stringify({ error: '需要登录（钱包签名会话）', code: 'UNAUTHORIZED' }))
       return true
     }
-    const body = (await parseJsonBody(req, res)) || {}
+    if (!rateLimit(req, res, { max: 5, windowMs: 600000, keyPrefix: 'envrevert' })) return true
+    const body = await parseJsonBody(req, res)
+    if (!body) return true
     try {
       // 先读账本：我现在钉在谁身上（hadTpl 必须在解绑与换容器之前拿到）
       const envs = body.dryRun ? [] : await dataService.listEnvironments()
-      const hadTpl = envs.find((e) => (e.pinnedBy || []).includes(addr)) || null
+      const recNow = userService.state?.swtcUsers?.[addr]
+      // 清除清单的源头必须是**现在钉着的镜像**所属模板（判例：先后套过 A/B 的
+      // 人，pinnedBy 双挂时按旧账 A 的清单清除 = 清错世界）；pinnedBy 只兜底。
+      const hadTpl =
+        (recNow?.pinnedImage && envs.find((e) => e._id === recNow.pinnedImage)) ||
+        envs.find((e) => (e.pinnedBy || []).includes(addr)) ||
+        null
+      let cleanedCount = 0
       // 「一并清除」必须在**换容器之前**做（判例 2026-10-29 雷达竞态：代际在
       // 容器重建那刻翻转、雷达随即刷新页面——清除若排在换容器之后，页面刷
       // 出来看到的是"半干净"世界，插件明明删了还显示）。在旧容器里先清干净，
@@ -668,7 +704,7 @@ export async function handleUserRoutes(req, res, path) {
       if (hadTpl && body.alsoClean) {
         // 技能必须走 skillService.uninstall 正路（判例：只 rm 文件不销安装账，
         // 「我的技能」读账本显示装了个空气）；插件无账本，按名单 rm 目录。
-        const NAME_OK = /^[A-Za-z0-9._-]{1,64}$/
+        const NAME_OK = /^(?!\.{1,2}$)[A-Za-z0-9._-]{1,64}$/
         const removed = []
         const failed = []
         for (const n of hadTpl.include?.skills || []) {
@@ -698,6 +734,9 @@ export async function handleUserRoutes(req, res, path) {
               ? `已清除 ${removed.length} 项，${failed.length} 项未成（${failed.join('、')}），可重试。`
               : `已按清单清除 ${removed.length} 项随行技能/插件（账本同步销记）。`
             : '该模板清单里没有登记在册的随行技能/插件，无需清除。'
+        cleanedCount = removed.length
+      } else if (body.alsoClean && !hadTpl) {
+        cleanNote = '查无套用模板的记录，无需清除。'
       }
       const result = await userService.applyImageVersion(addr, {
         image: null,
@@ -707,22 +746,39 @@ export async function handleUserRoutes(req, res, path) {
       })
       if (!body.dryRun) {
         for (const e of envs) {
-          if ((e.pinnedBy || []).includes(addr)) {
+          if (!(e.pinnedBy || []).includes(addr)) continue
+          // 新鲜读再摘（判例：apply 侧已改新鲜读，这里用陈旧数组覆写会在
+          // 重建窗口内吞掉别人刚挂上去的引用账）
+          const fresh = await dataService.getEnvironment(e._id)
+          if (fresh && (fresh.pinnedBy || []).includes(addr)) {
             await dataService.patchEnvironment(e._id, {
-              pinnedBy: (e.pinnedBy || []).filter((a) => a !== addr),
+              pinnedBy: fresh.pinnedBy.filter((a) => a !== addr),
             })
           }
         }
         dataService.logOperation('env_reset_self', { address: addr, operator: addr })
-        result.revertNote = cleanNote
-          ? '已回退到默认环境，随行技能/插件同步清除。DSH 页面会自动刷新。'
+        result.revertNote = cleanedCount
+          ? `已回退到默认环境，随行技能/插件同步清除（${cleanedCount} 项）。DSH 页面会自动刷新。`
           : '已回退到默认环境（随行技能/插件保留，可在列表卸载）。DSH 页面会自动刷新。'
         if (cleanNote) result.cleanNote = cleanNote
       }
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify(result))
     } catch (err) {
-      handleError(err, res)
+      if (cleanNote) {
+        // 随行物已经清了、容器却没换成——只报 500 会丢知情权（判例④）：
+        // 已删的东西必须如实上报（remove-skill 幂等，重试安全）
+        res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(
+          JSON.stringify({
+            error: `清除已生效但回退未完成：${String(err?.message || err)}。可重试。`,
+            cleanNote,
+            code: 'REBUILD_FAILED_AFTER_CLEAN',
+          }),
+        )
+      } else {
+        handleError(err, res)
+      }
     }
     return true
   }
