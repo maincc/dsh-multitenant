@@ -447,9 +447,20 @@ const LIVE_JS = `/* dsh-live radar (platform-injected): watch for container swap
 (function () {
   var epoch = null
   var flipping = false
+  function banner() {
+    if (document.getElementById('__dsh_live_tip')) return
+    var d = document.createElement('div')
+    d.id = '__dsh_live_tip'
+    d.textContent = '环境已切换，正在自动重连新环境…（无需手动刷新）'
+    d.setAttribute('style', 'position:fixed;top:12px;left:50%;transform:translateX(-50%);' +
+      'z-index:99999;background:#0f172a;color:#fff;padding:8px 16px;border-radius:999px;' +
+      'font:13px/1.4 system-ui;box-shadow:0 4px 16px rgba(0,0,0,.25)')
+    ;(document.body || document.documentElement).appendChild(d)
+  }
   function reloadWhenReady() {
     if (flipping) return
     flipping = true
+    try { banner() } catch (e) {}
     // 代际一变先试水首页：重建中的容器答 502，就每 2 秒再问，探活成功才刷新——
     // 绝不在半路上把用户摔进白屏
     function probe() {
