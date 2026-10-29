@@ -770,7 +770,7 @@
             <h4>{{ $t('env.mineSectionTitle') }}</h4>
             <p class="tab-hint">{{ $t('env.mineSectionHint') }}</p>
           </div>
-          <EnvTemplatesUser />
+          <EnvTemplatesUser mode="mine" />
         </div>
 
         <!-- ════════ 我的技能 ════════ -->
@@ -783,7 +783,24 @@
         </div>
 
         <div v-else class="tab-content">
-          <SkillMarket embedded external-tab="market" />
+          <div class="action-buttons">
+            <button
+              class="btn btn-small"
+              :class="marketCat === 'skills' ? 'btn-primary' : 'btn-secondary'"
+              @click="marketCat = 'skills'"
+            >
+              {{ $t('env.catSkills') }}
+            </button>
+            <button
+              class="btn btn-small"
+              :class="marketCat === 'env' ? 'btn-primary' : 'btn-secondary'"
+              @click="marketCat = 'env'"
+            >
+              {{ $t('env.catEnv') }}
+            </button>
+          </div>
+          <SkillMarket v-if="marketCat === 'skills'" embedded external-tab="market" />
+          <EnvTemplatesUser v-if="marketCat === 'env'" mode="market" />
         </div>
       </section>
 
@@ -905,6 +922,8 @@ const route = useRoute()
 // v1.5 用户验收②修订：进用户中心**不再自动建容器**，容器可能不存在——
 // 首屏停在"容器管理"会直面一片未就绪；改默认「账户信息」（凭证/角色第一眼看，反馈③）。
 const activeTab = ref('account')
+// 市场页签内品类（用户终审 IA）：市场=挑（技能/环境）；容器管理=经营（定格/显示/回退/技能装卸）
+const marketCat = ref('skills')
 // v1.5 刀5C：判权面（credential-status 的 role，服务端活验证 admin 凭证属实才为 'admin'）。
 // tab 注册表按 role 装配——管理页签对普通用户不存在（数据面砍掉，不是 CSS 隐藏）；
 // 对管理员则与用户页签**平级并列**（验收反馈①：消灭"系统管理"嵌套壳，同一侧栏）。
