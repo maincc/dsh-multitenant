@@ -455,6 +455,16 @@ export async function handleUserRoutes(req, res, path) {
             sizeBytes: e.sizeBytes,
             scrubbed: e.scrubbed,
             createdAt: e.createdAt,
+            // 详情页要料（用户验收：市场里的环境模板要有详情）——随行清单
+            // 本来就是分发事实，展示不算泄密；manifest 全文仍留管理端
+            include: {
+              skills: (e.include?.skills || []).slice(0, 50),
+              plugins: (e.include?.plugins || []).slice(0, 50),
+              folders: (e.include?.folders || []).slice(0, 200),
+            },
+            bundleFiles: (e.bundle?.files || []).length,
+            bundleBytes: e.bundle?.bytes || 0,
+            pinnedByCount: (e.pinnedBy || []).length,
           }))
           .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))),
         yourCurrent: {

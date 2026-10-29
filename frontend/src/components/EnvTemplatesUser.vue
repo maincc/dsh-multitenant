@@ -51,6 +51,9 @@
           </div>
           <div class="env-card-intro">{{ tpl.intro || $t('env.noIntro') }}</div>
           <div class="env-card-actions">
+            <button class="btn btn-small btn-secondary" :disabled="busy" @click="detailFor = tpl">
+              {{ $t('env.detailBtn') }}
+            </button>
             <button
               class="btn btn-small btn-primary"
               :disabled="busy || (expanded === tpl.id && !preview)"
@@ -160,6 +163,66 @@
           </p>
         </template>
       </template>
+    </div>
+
+    <!-- 详情弹窗：先看清商品再动手（技能详情先例：安装前必须能看全） -->
+    <div v-if="detailFor" class="modal-mask" @click.self="detailFor = null">
+      <div class="modal-panel detail-panel">
+        <div class="detail-head">
+          <h3>{{ detailFor.name }}</h3>
+          <button class="btn btn-small" @click="detailFor = null">✕</button>
+        </div>
+        <div class="env-card-meta">
+          {{ $t('env.author') }} {{ shortAddr(detailFor.author) }} · DSH
+          {{ detailFor.dshVersion }} · {{ fmtBytes(detailFor.sizeBytes) }} ·
+          {{ new Date(detailFor.createdAt).toLocaleString() }} ·
+          {{ $t('env.detailUsers', { n: detailFor.pinnedByCount }) }}
+          <span v-if="!detailFor.scrubbed" class="badge badge-warning">{{
+            $t('env.unscrubbed')
+          }}</span>
+        </div>
+        <p class="env-card-intro">{{ detailFor.intro || $t('env.noIntro') }}</p>
+        <div class="detail-cols">
+          <div>
+            <b>{{ $t('env.dSkills') }}</b>
+            <ul v-if="detailFor.include.skills.length">
+              <li v-for="n in detailFor.include.skills" :key="n">{{ n }}</li>
+            </ul>
+            <span v-else class="env-muted">{{ $t('env.dNone') }}</span>
+          </div>
+          <div>
+            <b>{{ $t('env.dPlugins') }}</b>
+            <ul v-if="detailFor.include.plugins.length">
+              <li v-for="n in detailFor.include.plugins" :key="n">{{ n }}</li>
+            </ul>
+            <span v-else class="env-muted">{{ $t('env.dNone') }}</span>
+            <div class="env-muted">
+              {{
+                $t('env.dBundle', {
+                  files: detailFor.bundleFiles,
+                  size: fmtBytes(detailFor.bundleBytes),
+                })
+              }}
+            </div>
+          </div>
+          <div>
+            <b>{{ $t('env.dFolders') }}</b>
+            <ul v-if="detailFor.include.folders.length">
+              <li v-for="n in detailFor.include.folders" :key="n">{{ n }}</li>
+            </ul>
+            <span v-else class="env-muted">{{ $t('env.dNone') }}</span>
+          </div>
+        </div>
+        <p class="env-muted">{{ $t('env.dPromise') }}</p>
+        <div class="detail-actions">
+          <button class="btn btn-primary" :disabled="busy" @click="detailToApply">
+            {{ current?.image === detailFor.id ? $t('env.alreadyUsing') : $t('env.applyBtn') }}
+          </button>
+          <button class="btn btn-secondary" @click="detailFor = null">
+            {{ $t('env.cancelBtn') }}
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- ================= 定格向导（对齐 docs/env-template-wizard.md 六步） ================= -->
@@ -419,6 +482,13 @@ const fmtBytes = (n) => {
     i++
   }
   return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)} ${u[i]}`
+}
+
+const detailFor = ref(null)
+function detailToApply() {
+  const tpl = detailFor.value
+  detailFor.value = null
+  if (tpl && current.value?.image !== tpl.id) togglePreview(tpl) // 展开该卡的选用预览
 }
 
 async function togglePreview(tpl) {
@@ -708,6 +778,57 @@ const totalBundleBytes = computed(() => {
   font-size: 12px;
   opacity: 0.85;
   line-height: 1.7;
+}
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.modal-panel {
+  background: #fff;
+  border-radius: 16px;
+  padding: 1.5rem;
+  max-width: 720px;
+  width: calc(100% - 2rem);
+  max-height: 86vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  box-shadow: 0 20px 50px rgba(0, 0, 42, 0.25);
+  color: #1e293b;
+}
+.detail-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.detail-head h3 {
+  margin: 0;
+  color: #1e293b;
+}
+.detail-cols {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.75rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 0.9rem 1rem;
+  font-size: 0.9rem;
+}
+.detail-cols ul {
+  margin: 0.35rem 0 0;
+  padding-left: 1.1rem;
+}
+.detail-actions {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: flex-end;
 }
 .env-wall {
   border: 1px solid var(--border-color, rgba(255, 255, 255, 0.14));
