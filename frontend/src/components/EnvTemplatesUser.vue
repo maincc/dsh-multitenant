@@ -586,37 +586,47 @@ const totalBundleBytes = computed(() => {
   font-size: 13px;
   opacity: 0.75;
 }
+/* 与市场技能卡同一副皮（用户验收：环境模板卡与技能卡要一致）：
+   280px 网格、12px 圆角、1rem 内距、浅色硬编码与 SkillMarket 对齐 */
 .env-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
 }
 .env-card {
-  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
-  border-radius: 10px;
-  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 1rem;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 0.5rem;
+  background: #fff;
+  transition: box-shadow 0.15s ease;
+}
+.env-card:hover {
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
 }
 .env-card-head {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  gap: 6px;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 .env-card-name {
   font-weight: 600;
-  font-size: 14px;
+  font-size: 1.05rem;
+  color: #1e293b;
 }
 .env-card-meta {
-  font-size: 12px;
-  opacity: 0.65;
+  font-size: 0.9rem;
+  color: #475569;
 }
 .env-card-intro {
-  font-size: 12px;
-  min-height: 18px;
-  opacity: 0.85;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: #475569;
+  min-height: 2.2rem;
+  flex: 1;
 }
 .env-preview {
   border-top: 1px dashed var(--border-color, rgba(255, 255, 255, 0.12));
