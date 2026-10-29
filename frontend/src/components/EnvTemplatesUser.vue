@@ -136,6 +136,14 @@
           >{{ $t('env.status.' + d.status) }}</span
         >
         <span class="env-muted">{{ $t('env.usedBy', { n: d.pinnedByCount }) }}</span>
+        <button
+          v-if="d.status === 'draft'"
+          class="btn btn-small btn-secondary"
+          :disabled="busy"
+          @click="resubmit(d)"
+        >
+          {{ $t('env.resubmitBtn') }}
+        </button>
         <div v-if="d.status === 'rejected' && d.rejectReason" class="env-reject-reason">
           {{ $t('env.rejectReason', { reason: d.rejectReason }) }}
         </div>
@@ -569,6 +577,19 @@ async function applyForReal(tpl) {
   } finally {
     busy.value = false
     pending.value = ''
+  }
+}
+
+async function resubmit(d) {
+  busy.value = true
+  try {
+    await axios.post('/api/user/environment/submit', { id: d.id })
+    toast(t('env.resubmitted'))
+    await loadAll()
+  } catch (e) {
+    toast(errMsg(e))
+  } finally {
+    busy.value = false
   }
 }
 

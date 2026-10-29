@@ -574,6 +574,43 @@ export async function handleUserRoutes(req, res, path) {
   // POST /api/user/environment/unpublish {id} - 作者自助下架：published 回到
   // 自己的草稿箱（draft）。判例：下架≠删除——被引用之物不可物理删，正在用的
   // 人（含作者自己）不受影响，只是市场不再展示、不再接受新的选用。
+  // POST /api/user/environment/submit {id} - 作者重新提交审核（draft→pending）。
+  // 出口律：下架有去路——草稿能再次排队过审，不能一降不回。
+  if (path === '/api/user/environment/submit' && req.method === 'POST') {
+    const addr = credSession()
+    if (!addr) {
+      res.writeHead(401, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '需要登录（钱包签名会话）', code: 'UNAUTHORIZED' }))
+      return true
+    }
+    const body = (await parseJsonBody(req, res)) || {}
+    try {
+      const doc = await dataService.getEnvironment(String(body.id || ''))
+      if (!doc) {
+        res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: '模板不存在' }))
+        return true
+      }
+      if (doc.sourceAddr !== addr) {
+        res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: '只能提交自己定格的模板' }))
+        return true
+      }
+      if (doc.status !== 'draft') {
+        res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: '只有草稿可以提交审核' }))
+        return true
+      }
+      await dataService.patchEnvironment(doc._id, { status: 'pending' })
+      dataService.logOperation('env_submit_self', { address: addr, id: doc._id })
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ ok: true, status: 'pending' }))
+    } catch (err) {
+      handleError(err, res)
+    }
+    return true
+  }
+
   if (path === '/api/user/environment/unpublish' && req.method === 'POST') {
     const addr = credSession()
     if (!addr) {

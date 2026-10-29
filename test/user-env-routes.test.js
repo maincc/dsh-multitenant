@@ -487,6 +487,30 @@ describe('POST /api/user/environment/unpublish（作者自助下架：published�
     expect(res.statusCode).toBe(400)
   })
 
+  it('重新提交（出口律：下架有去路）：draft→pending 走通并留审计', async () => {
+    seed({ sourceAddr: USER, status: 'draft' })
+    const res = await call('/api/user/environment/submit', { method: 'POST', body: { id: TPL } })
+    expect(res.statusCode).toBe(200)
+    expect(globalThis.__envStore.get(TPL).status).toBe('pending')
+    expect(dataService.logOperation).toHaveBeenCalledWith(
+      'env_submit_self',
+      expect.objectContaining({ address: USER, id: TPL }),
+    )
+  })
+
+  it('非草稿不许重复提交 → 400；不是自己的 → 403', async () => {
+    seed({ sourceAddr: USER, status: 'pending' })
+    expect(
+      (await call('/api/user/environment/submit', { method: 'POST', body: { id: TPL } }))
+        .statusCode,
+    ).toBe(400)
+    seed({ sourceAddr: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', status: 'draft' })
+    expect(
+      (await call('/api/user/environment/submit', { method: 'POST', body: { id: TPL } }))
+        .statusCode,
+    ).toBe(403)
+  })
+
   it('作者下架：状态回草稿、引用账本原样保留（下架≠删除，绝不上锁）、审计在案', async () => {
     seed({ sourceAddr: USER, pinnedBy: ['other008xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', USER] })
     const res = await call('/api/user/environment/unpublish', { method: 'POST', body: { id: TPL } })

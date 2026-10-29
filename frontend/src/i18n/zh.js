@@ -602,6 +602,8 @@ export default {
     applying: '选用中…（容器重启，约半分钟）',
     reverting: '回退中…（容器重启，约半分钟）',
     freezing: '定格中…（给环境拍照，稍等）',
+    resubmitBtn: '重新提交审核',
+    resubmitted: '已提交，等管理员过审',
     unpublishBtn: '下架',
     unpublishConfirm:
       '下架后市场不再展示、不能选用；已在用的人不受影响，模板回到你的草稿箱。确定？',
