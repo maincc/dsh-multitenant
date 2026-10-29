@@ -702,6 +702,13 @@
               {{ $t('user.resetContainerFlow') }}
             </div>
           </div>
+
+          <!-- ════════ 环境·我的现场（货架/选用在「市场」的环境品类）════════ -->
+          <div class="tab-head">
+            <h4>{{ $t('env.mineSectionTitle') }}</h4>
+            <p class="tab-hint">{{ $t('env.mineSectionHint') }}</p>
+          </div>
+          <EnvTemplatesUser mode="mine" />
         </div>
 
         <!-- ════════ 我的技能 ════════ -->
@@ -709,81 +716,93 @@
              role='admin'（官网活验证属实）才装配；内嵌复用独立版 AdminPanel（源码不合并，
              同一组件两用：externalTab 驱动子页、自带侧栏隐藏）。操作仍要 admin_session 当场
              签名——tab 可见=凭证判权，可操作=会话+钱包双门禁（刀2B 模型一字不松） -->
-        <div v-else-if="activeTab === 'envtpl'" class="tab-content">
-          <div class="tab-head">
-            <h4>{{ $t('user.tabEnv') }}</h4>
-            <p class="tab-hint">{{ $t('env.envTabHint') }}</p>
-          </div>
-          <EnvTemplatesUser />
-        </div>
         <div v-else-if="isSystemTab" class="tab-content admin-embed">
           <AdminPanel embedded :external-tab="systemSubTab" />
         </div>
 
         <div v-else class="tab-content">
-          <div class="tab-head">
-            <h4>{{ $t('user.mySkills') }}</h4>
-            <p class="tab-hint">{{ $t('user.mySkillsHint') }}</p>
-          </div>
           <div class="action-buttons">
-            <button class="btn btn-primary" @click="openImportDialog">
-              {{ $t('user.importSkill') }}
-            </button>
-            <button class="btn btn-primary" @click="openShareDialog">
-              {{ $t('user.shareSkill') }}
-            </button>
-            <router-link to="/skills" class="btn btn-secondary">{{
-              $t('user.skillMarketLink')
-            }}</router-link>
-          </div>
-
-          <div v-if="mySkillsLoading" class="config-loading">
-            <div class="mini-spinner"></div>
-            <span>{{ $t('user.mySkillsLoading') }}</span>
-          </div>
-          <template v-else>
-            <div v-if="mineData.published.length > 0" class="skill-subsection">
-              <h3>{{ $t('user.myPublished') }}</h3>
-              <div v-for="s in mineData.published" :key="'p-' + s.name" class="skill-row">
-                <div class="skill-row-main">
-                  <strong>{{ s.name }}</strong>
-                  <span class="skill-desc">{{ s.description }}</span>
-                </div>
-                <button class="btn btn-small btn-danger" @click="unpublishSkill(s.name)">
-                  {{ $t('user.unpublish') }}
-                </button>
-              </div>
-            </div>
-            <div v-if="mineData.installed.length > 0" class="skill-subsection">
-              <h3>{{ $t('user.myInstalled') }}</h3>
-              <div v-for="s in mineData.installed" :key="'i-' + s.name" class="skill-row">
-                <div class="skill-row-main">
-                  <strong>{{ s.name }}</strong>
-                  <span class="skill-desc">
-                    {{
-                      s.description ||
-                      $t('user.installedSource', {
-                        source: s.source,
-                        date: new Date(s.installedAt).toLocaleString(),
-                      })
-                    }}
-                  </span>
-                  <span v-if="s.hasUpdate" class="badge badge-warning">{{
-                    $t('user.hasUpdate')
-                  }}</span>
-                </div>
-                <button class="btn btn-small btn-danger" @click="uninstallSkill(s.name)">
-                  {{ $t('user.uninstall') }}
-                </button>
-              </div>
-            </div>
-            <p
-              v-if="mineData.published.length === 0 && mineData.installed.length === 0"
-              class="hint"
+            <button
+              class="btn btn-small"
+              :class="marketCat === 'skills' ? 'btn-primary' : 'btn-secondary'"
+              @click="marketCat = 'skills'"
             >
-              {{ $t('user.noSkillsHint') }}
-            </p>
-          </template>
+              {{ $t('env.catSkills') }}
+            </button>
+            <button
+              class="btn btn-small"
+              :class="marketCat === 'env' ? 'btn-primary' : 'btn-secondary'"
+              @click="marketCat = 'env'"
+            >
+              {{ $t('env.catEnv') }}
+            </button>
+          </div>
+          <EnvTemplatesUser v-if="marketCat === 'env'" mode="market" />
+          <div v-show="marketCat === 'skills'">
+            <div class="tab-head">
+              <h4>{{ $t('user.mySkills') }}</h4>
+              <p class="tab-hint">{{ $t('user.mySkillsHint') }}</p>
+            </div>
+            <div class="action-buttons">
+              <button class="btn btn-primary" @click="openImportDialog">
+                {{ $t('user.importSkill') }}
+              </button>
+              <button class="btn btn-primary" @click="openShareDialog">
+                {{ $t('user.shareSkill') }}
+              </button>
+              <router-link to="/skills" class="btn btn-secondary">{{
+                $t('user.skillMarketLink')
+              }}</router-link>
+            </div>
+
+            <div v-if="mySkillsLoading" class="config-loading">
+              <div class="mini-spinner"></div>
+              <span>{{ $t('user.mySkillsLoading') }}</span>
+            </div>
+            <template v-else>
+              <div v-if="mineData.published.length > 0" class="skill-subsection">
+                <h3>{{ $t('user.myPublished') }}</h3>
+                <div v-for="s in mineData.published" :key="'p-' + s.name" class="skill-row">
+                  <div class="skill-row-main">
+                    <strong>{{ s.name }}</strong>
+                    <span class="skill-desc">{{ s.description }}</span>
+                  </div>
+                  <button class="btn btn-small btn-danger" @click="unpublishSkill(s.name)">
+                    {{ $t('user.unpublish') }}
+                  </button>
+                </div>
+              </div>
+              <div v-if="mineData.installed.length > 0" class="skill-subsection">
+                <h3>{{ $t('user.myInstalled') }}</h3>
+                <div v-for="s in mineData.installed" :key="'i-' + s.name" class="skill-row">
+                  <div class="skill-row-main">
+                    <strong>{{ s.name }}</strong>
+                    <span class="skill-desc">
+                      {{
+                        s.description ||
+                        $t('user.installedSource', {
+                          source: s.source,
+                          date: new Date(s.installedAt).toLocaleString(),
+                        })
+                      }}
+                    </span>
+                    <span v-if="s.hasUpdate" class="badge badge-warning">{{
+                      $t('user.hasUpdate')
+                    }}</span>
+                  </div>
+                  <button class="btn btn-small btn-danger" @click="uninstallSkill(s.name)">
+                    {{ $t('user.uninstall') }}
+                  </button>
+                </div>
+              </div>
+              <p
+                v-if="mineData.published.length === 0 && mineData.installed.length === 0"
+                class="hint"
+              >
+                {{ $t('user.noSkillsHint') }}
+              </p>
+            </template>
+          </div>
         </div>
       </section>
 
@@ -904,6 +923,8 @@ const route = useRoute()
 // v1.5 用户验收②修订：进用户中心**不再自动建容器**，容器可能不存在——
 // 首屏停在"容器管理"会直面一片未就绪；改默认「账户信息」（凭证/角色第一眼看，反馈③）。
 const activeTab = ref('account')
+// 市场页签内的品类开关（用户验收 IA：逛与挑在市场的「技能|环境」，现场在容器管理）
+const marketCat = ref('skills')
 // v1.5 刀5C：判权面（credential-status 的 role，服务端活验证 admin 凭证属实才为 'admin'）。
 // tab 注册表按 role 装配——管理页签对普通用户不存在（数据面砍掉，不是 CSS 隐藏）；
 // 对管理员则与用户页签**平级并列**（验收反馈①：消灭"系统管理"嵌套壳，同一侧栏）。
@@ -929,11 +950,6 @@ const sidebarTabs = computed(() => {
       key: 'skills',
       label: t('user.tabSkills'),
       icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>',
-    },
-    {
-      key: 'envtpl',
-      label: t('user.tabEnv'),
-      icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M12 22V12"/></svg>',
     },
   ]
   if (role.value === 'admin') {

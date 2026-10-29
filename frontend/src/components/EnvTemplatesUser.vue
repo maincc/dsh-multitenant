@@ -1,7 +1,7 @@
 <template>
   <div class="env-page">
-    <!-- 定格是什么：三句大白话，所有人可见 -->
-    <div class="env-what">
+    <!-- 定格是什么：三句大白话（货架上给挑东西的人看） -->
+    <div v-if="mode !== 'mine'" class="env-what">
       <b>{{ $t('env.whatTitle') }}</b>
       <ul>
         <li>{{ $t('env.whatP1') }}</li>
@@ -10,8 +10,8 @@
       </ul>
     </div>
 
-    <!-- 当前来源条 -->
-    <div class="env-current">
+    <!-- 当前来源条（我的现场） -->
+    <div v-if="mode !== 'market'" class="env-current">
       <span class="env-current-label">{{ $t('env.currentSource') }}</span>
       <template v-if="current?.fromTemplate">
         <span class="badge badge-info">{{
@@ -31,66 +31,71 @@
     </div>
 
     <!-- 模板卡片列表 -->
-    <h4 class="env-h4">{{ $t('env.marketTitle') }}</h4>
-    <p v-if="!list.length" class="env-empty">{{ $t('env.empty') }}</p>
-    <div class="env-grid">
-      <div v-for="tpl in list" :key="tpl.id" class="env-card">
-        <div class="env-card-head">
-          <span class="env-card-name">{{ tpl.name }}</span>
-          <span v-if="!tpl.scrubbed" class="badge badge-warning" :title="$t('env.unscrubbedTip')">{{
-            $t('env.unscrubbed')
-          }}</span>
-        </div>
-        <div class="env-card-meta">
-          {{ $t('env.author') }} {{ shortAddr(tpl.author) }} · DSH {{ tpl.dshVersion }} ·
-          {{ fmtBytes(tpl.sizeBytes) }}
-        </div>
-        <div class="env-card-intro">{{ tpl.intro || $t('env.noIntro') }}</div>
-        <div class="env-card-actions">
-          <button
-            class="btn btn-small btn-primary"
-            :disabled="busy || (expanded === tpl.id && !preview)"
-            @click="togglePreview(tpl)"
-          >
-            {{
-              expanded === tpl.id
-                ? $t('env.cancelBtn')
-                : current?.image === tpl.id
-                  ? $t('env.alreadyUsing')
-                  : $t('env.applyBtn')
-            }}
-          </button>
-        </div>
-        <!-- 确认面板：dryRun 预览（停机/冲突/承诺行）——数据全来自服务端，不美化 -->
-        <div v-if="expanded === tpl.id" class="env-preview">
-          <div v-if="!preview" class="env-muted">{{ $t('env.previewLoading') }}</div>
-          <template v-else-if="preview && !preview.__fail">
-            <ul class="env-notice-list">
-              <li v-for="(n, i) in preview.notices || []" :key="'n' + i">{{ n }}</li>
-              <li
-                v-if="preview.bundleApplied === false && preview.conflicts?.length"
-                class="env-danger"
-              >
-                {{ $t('env.conflicts', { n: preview.conflicts.length }) }}
-                <div v-for="c in preview.conflicts" :key="c.p" class="env-conflict-item">
-                  {{ c.p }}（{{ fmtBytes(c.size) }}）
-                </div>
-              </li>
-              <li v-if="preview.skillsPlanned?.length">
-                {{ $t('env.skillsPlanned', { list: preview.skillsPlanned.join('、') }) }}
-              </li>
-            </ul>
-            <p class="env-promise">{{ $t('env.promiseLine') }}</p>
-            <button class="btn btn-small btn-primary" :disabled="busy" @click="applyForReal(tpl)">
-              {{ $t('env.confirmApply', { name: tpl.name }) }}
+    <template v-if="mode !== 'mine'">
+      <h4 class="env-h4">{{ $t('env.marketTitle') }}</h4>
+      <p v-if="!list.length" class="env-empty">{{ $t('env.empty') }}</p>
+      <div class="env-grid">
+        <div v-for="tpl in list" :key="tpl.id" class="env-card">
+          <div class="env-card-head">
+            <span class="env-card-name">{{ tpl.name }}</span>
+            <span
+              v-if="!tpl.scrubbed"
+              class="badge badge-warning"
+              :title="$t('env.unscrubbedTip')"
+              >{{ $t('env.unscrubbed') }}</span
+            >
+          </div>
+          <div class="env-card-meta">
+            {{ $t('env.author') }} {{ shortAddr(tpl.author) }} · DSH {{ tpl.dshVersion }} ·
+            {{ fmtBytes(tpl.sizeBytes) }}
+          </div>
+          <div class="env-card-intro">{{ tpl.intro || $t('env.noIntro') }}</div>
+          <div class="env-card-actions">
+            <button
+              class="btn btn-small btn-primary"
+              :disabled="busy || (expanded === tpl.id && !preview)"
+              @click="togglePreview(tpl)"
+            >
+              {{
+                expanded === tpl.id
+                  ? $t('env.cancelBtn')
+                  : current?.image === tpl.id
+                    ? $t('env.alreadyUsing')
+                    : $t('env.applyBtn')
+              }}
             </button>
-          </template>
+          </div>
+          <!-- 确认面板：dryRun 预览（停机/冲突/承诺行）——数据全来自服务端，不美化 -->
+          <div v-if="expanded === tpl.id" class="env-preview">
+            <div v-if="!preview" class="env-muted">{{ $t('env.previewLoading') }}</div>
+            <template v-else-if="preview && !preview.__fail">
+              <ul class="env-notice-list">
+                <li v-for="(n, i) in preview.notices || []" :key="'n' + i">{{ n }}</li>
+                <li
+                  v-if="preview.bundleApplied === false && preview.conflicts?.length"
+                  class="env-danger"
+                >
+                  {{ $t('env.conflicts', { n: preview.conflicts.length }) }}
+                  <div v-for="c in preview.conflicts" :key="c.p" class="env-conflict-item">
+                    {{ c.p }}（{{ fmtBytes(c.size) }}）
+                  </div>
+                </li>
+                <li v-if="preview.skillsPlanned?.length">
+                  {{ $t('env.skillsPlanned', { list: preview.skillsPlanned.join('、') }) }}
+                </li>
+              </ul>
+              <p class="env-promise">{{ $t('env.promiseLine') }}</p>
+              <button class="btn btn-small btn-primary" :disabled="busy" @click="applyForReal(tpl)">
+                {{ $t('env.confirmApply', { name: tpl.name }) }}
+              </button>
+            </template>
+          </div>
         </div>
       </div>
-    </div>
+    </template>
 
     <!-- 我的模板（作者可见全状态，驳回理由回传） -->
-    <template v-if="drafts.length">
+    <template v-if="mode !== 'market' && drafts.length">
       <h4 class="env-h4">{{ $t('env.mineTitle') }}</h4>
       <div v-for="d in drafts" :key="d.id" class="env-mine-row">
         <span class="env-card-name">{{ d.name }}</span>
@@ -113,7 +118,7 @@
     </template>
 
     <!-- 定格入口（四态：套来的环境要先回退 / 故障≠无资格 / CWT 墙 / 可定格） -->
-    <div class="env-freeze-zone">
+    <div v-if="mode !== 'market'" class="env-freeze-zone">
       <template v-if="!wz.active">
         <div v-if="elig.status === 'ok' && elig.onTemplate" class="env-wall">
           <div class="env-wall-title">{{ $t('env.onTplTitle') }}</div>
@@ -158,7 +163,7 @@
     </div>
 
     <!-- ================= 定格向导（对齐 docs/env-template-wizard.md 六步） ================= -->
-    <div v-if="wz.active" class="env-wizard">
+    <div v-if="wz.active && mode !== 'market'" class="env-wizard">
       <div class="env-wz-head">
         <span
           v-for="(s, i) in ['name', 'pick', 'confirm']"
@@ -326,6 +331,13 @@
  * 不算冲突、不美化承诺）；勾选默认全不选；体积只展示服务端算好的数。
  */
 import { ref, computed, onMounted } from 'vue'
+
+// 一个组件两张脸（IA 重排：市场=逛与选用；容器管理=我的现场）：
+//   mode='market' 货架段（讲解+模板卡片+dryRun 预览+选用）
+//   mode='mine'   现场段（来源条+我的模板+定格区+向导）
+//   默认 'both'   全量（独立路由/兼容）
+const props = defineProps({ mode: { type: String, default: 'both' } })
+const mode = props.mode
 import { useI18n } from 'vue-i18n'
 import axios from 'axios'
 import { toast, askConfirm } from '../composables/useDialog'
@@ -392,7 +404,7 @@ async function loadFreezeEligibility() {
 }
 onMounted(() => {
   loadAll().catch((e) => toast(errMsg(e)))
-  loadFreezeEligibility()
+  if (mode !== 'market') loadFreezeEligibility() // 货架面不摸定格资格（少一次探测）
 })
 
 const errMsg = (e) => e?.response?.data?.error || e?.message || 'error'
