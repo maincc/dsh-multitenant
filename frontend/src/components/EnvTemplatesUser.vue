@@ -21,7 +21,8 @@
           })
         }}</span>
         <button class="btn btn-small btn-secondary" :disabled="busy" @click="revertNow">
-          {{ $t('env.revertBtn') }}
+          <span v-if="pending === 'revert'" class="btn-spin"></span>
+          {{ pending === 'revert' ? $t('env.reverting') : $t('env.revertBtn') }}
         </button>
         <label class="env-clean-opt" :title="$t('env.revertCleanTip')">
           <input v-model="revertClean" type="checkbox" :disabled="busy" />
@@ -63,12 +64,15 @@
               :disabled="busy || (expanded === tpl.id && !preview)"
               @click="togglePreview(tpl)"
             >
+              <span v-if="pending === 'preview' && expanded === tpl.id" class="btn-spin"></span>
               {{
-                expanded === tpl.id
-                  ? $t('env.cancelBtn')
-                  : current?.image === tpl.id
-                    ? $t('env.alreadyUsing')
-                    : $t('env.applyBtn')
+                pending === 'preview' && expanded === tpl.id
+                  ? $t('env.previewing')
+                  : expanded === tpl.id
+                    ? $t('env.cancelBtn')
+                    : current?.image === tpl.id
+                      ? $t('env.alreadyUsing')
+                      : $t('env.applyBtn')
               }}
             </button>
           </div>
@@ -93,7 +97,12 @@
               </ul>
               <p class="env-promise">{{ $t('env.promiseLine') }}</p>
               <button class="btn btn-small btn-primary" :disabled="busy" @click="applyForReal(tpl)">
-                {{ $t('env.confirmApply', { name: tpl.name }) }}
+                <span v-if="pending === 'apply'" class="btn-spin"></span>
+                {{
+                  pending === 'apply'
+                    ? $t('env.applying')
+                    : $t('env.confirmApply', { name: tpl.name })
+                }}
               </button>
             </template>
           </div>
@@ -220,7 +229,14 @@
         <p class="env-muted">{{ $t('env.dPromise') }}</p>
         <div class="detail-actions">
           <button class="btn btn-primary" :disabled="busy" @click="detailToApply">
-            {{ current?.image === detailFor.id ? $t('env.alreadyUsing') : $t('env.applyBtn') }}
+            <span v-if="pending === 'preview'" class="btn-spin"></span>
+            {{
+              pending === 'preview'
+                ? $t('env.previewing')
+                : current?.image === detailFor.id
+                  ? $t('env.alreadyUsing')
+                  : $t('env.applyBtn')
+            }}
           </button>
           <button class="btn btn-secondary" @click="detailFor = null">
             {{ $t('env.cancelBtn') }}
@@ -363,7 +379,8 @@
               {{ $t('env.backBtn') }}
             </button>
             <button class="btn btn-primary" :disabled="!wz.consent || wz.running" @click="doFreeze">
-              {{ $t('env.freezeGo') }}
+              <span v-if="wz.running" class="btn-spin"></span>
+              {{ wz.running ? $t('env.freezing') : $t('env.freezeGo') }}
             </button>
           </div>
         </template>
@@ -417,6 +434,8 @@ const canFreeze = ref(false)
 const elig = ref({ status: 'loading', containerRunning: true, msg: '', onTemplate: null })
 const loadingInv = ref(true)
 const busy = ref(false)
+// 中间态（用户验收：按了钮要有动静）：哪个动作在跑，对应按钮就转圈+说人话
+const pending = ref('')
 const expanded = ref('')
 const preview = ref(null)
 
@@ -504,6 +523,7 @@ async function togglePreview(tpl) {
   expanded.value = tpl.id
   preview.value = null
   busy.value = true
+  pending.value = 'preview'
   try {
     const res = await axios.post('/api/user/environment/apply', { id: tpl.id, dryRun: true })
     preview.value = res.data
@@ -513,11 +533,13 @@ async function togglePreview(tpl) {
     expanded.value = ''
   } finally {
     busy.value = false
+    pending.value = ''
   }
 }
 
 async function applyForReal(tpl) {
   busy.value = true
+  pending.value = 'apply'
   try {
     const res = await axios.post('/api/user/environment/apply', { id: tpl.id })
     expanded.value = ''
@@ -537,6 +559,7 @@ async function applyForReal(tpl) {
     toast(errMsg(e))
   } finally {
     busy.value = false
+    pending.value = ''
   }
 }
 
@@ -549,6 +572,7 @@ async function revertNow() {
   })
   if (!go) return
   busy.value = true
+  pending.value = 'revert'
   try {
     const r = await axios.post('/api/user/environment/revert', { alsoClean: revertClean.value })
     // 后端如实说明随行文件残留（只换镜像不删文件）——有则转告，无则原话
@@ -560,6 +584,7 @@ async function revertNow() {
     toast(errMsg(e))
   } finally {
     busy.value = false
+    pending.value = ''
   }
 }
 
@@ -846,6 +871,28 @@ const totalBundleBytes = computed(() => {
   display: flex;
   gap: 0.6rem;
   justify-content: flex-end;
+}
+.btn-spin {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+  vertical-align: -1px;
+  border: 2px solid rgba(255, 255, 255, 0.45);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: env-spin 0.8s linear infinite;
+}
+.env-card-actions .btn-secondary .btn-spin,
+.env-current .btn-spin,
+.btn-secondary .btn-spin {
+  border-color: rgba(100, 116, 139, 0.35);
+  border-top-color: #475569;
+}
+@keyframes env-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 .env-clean-opt {
   display: inline-flex;
