@@ -575,7 +575,7 @@ export default {
     skillsPlanned: '技能按名装到你的容器：{list}',
     promiseLine: '只换环境：你的卷（数据/密钥/登录态）不动分毫；确认完成后下次连接生效。',
     confirmApply: '确认切换到「{name}」',
-    appliedOk: '切换成功：下次连接即生效（容器若重启则立刻）',
+    appliedOk: '环境已切换，容器已重启——开着的 DSH 页面刷新一下，就连上新环境（不用重新登录）',
     appliedWithConflicts: '切换成功，但 {n} 个同名文件被覆盖',
     skillsFailed: '部分技能安装失败：{list}（镜像已生效；可重试或联系作者）',
     revertCleanOpt: '一并清除随行技能/插件',
