@@ -46,3 +46,17 @@
 37. **seed-to-pem 打印"派生地址"是假地址（差点误判 seed/钱包错配）** - `Keypairs.deriveAddress(secret)` 把 **seed 字符串**直传给了期待**公钥 hex** 的函数：base58 字符被按 hex 有损解码（fixlog #35 同族教训，这次踩在自家工具上），得到一个**确定性但无意义**的地址并打给使用者做"配对核对"。用户实测：钱包真实地址 `jNyJLQ…`，脚本打印 `jMD4XX…`——一度看似 seed 与钱包错位的严重身份事故。排查：四变体实验证明库本体口径（`deriveAddress(deriveKeypair(seed).publicKey)`，压缩 66 hex）能完美复现钱包地址——**密钥与 PEM 全程正确**（私钥来自 deriveKeypair，PEM 有往返自证；`shelf-open` 用的是正确口径），死的只有打印行。已修：改为 `deriveAddress(bytesToHex(noble压缩公钥))` + **双源互证**（库返回的 publicKey hex 与 noble 重算不一致即中止，本次修复过程中该互证立刻抓到第二层错——noble 默认返回 Uint8Array 而非 hex，双源比对打印出 `3,93,199…` 逗号串）。教训：**凡把字符串喂给 hex/base58 解码器，非法字符不报错只静默截断**；任何"核对用"的派生值必须与权威来源（钱包 UI）对得上才算数，工具打印本身不是权威。
 
 38. **领取凭证在局域网 http 下炸 "reading 'digest'"（非安全上下文缺口第二弹）** - `UserCenter.vue` 的文件签前置哈希用 `crypto.subtle.digest`：该 API **只在安全上下文存在**（https/localhost/127.0.0.1），浏览器经 `http://<局域网IP>:8090` 访问时 `crypto.subtle` 为 undefined。本地 127.0.0.1 永远复现不出来——与 #5/#27、`docs/crypto-randomuuid.md` 同族（那次死 randomUUID，这次死 subtle）。修复：`frontend/src/utils/sha256.js` 兜底封装。过程自纠三连值得留档：**手写 FIPS 实现连续出偏**（DataView 默认小端忘传 true → 常数表手敲 K[55] 错值 → 修完仍不对），且"拿 Math.cbrt 重算常数自证"本身不可信（浮点精度不足以校验 32 位小数常数）——**密码原语不该自造**，最终收敛为复用生产依赖 `@noble/hashes`（vite 向父级解析 node_modules，前端零新增依赖）。对拍测试（test/sha256.test.js，node 原生 crypto 为权威）4/4 过，手写版三轮全红的教训被永久钉死。判权含义：KB 级档案字节的 sha256 错一格，签出的文件签官网必验不过——兜底路径与 native 输出必须逐字节一致。
+
+39. **三路独立审查员"仔仔细细检查"27 案——修 22、证伪 1、知情保留 4**（2831ad6/73535e8/dcc172b + 954 全绿）- 对网关雷达、环境端点群、快照/代际链做 fresh-eyes 全量读码 + 本人前端/流程自查。本册新增判例性质的条目：
+    - **报错不空跑回退**：revert/submit/unpublish 收到非法 body 时 `parseJsonBody` 已回 400，处理器却拿 `|| {}` 继续跑**完整破坏性回退**——客户端见"报错"而世界已变（apply 路由本来就是对的，这三处漏同款守卫）。改 `if (!body) return true`，一处模式五处齐（另两处 envinv/envbrowse 顺手）。
+    - **下架不谎报来源**：作者下架被别人用着的模板后，"别人"来源条称默认环境（实物明明跑着模板镜像）——runningTpl 改认"我同意过的账"（published / 本人所著 / pinnedBy 含本人）。inventory 探针此前**无任何过滤**，他人 draft 亦可按 imageId 匹配亮名——同一谓词收口。fromTemplate 只回 name/slug/author，不构成未上架 intro 泄露。
+    - **`rm -rf plugins/..` 端整层**：清除白名单 `[A-Za-z0-9._-]` 放行 `.`/`..`——加负向前瞻 `^(?!\.{1,2}$)`。上游 normEnvNames 滤过不算数，**exec 点是最后闸门**。
+    - **清除清单清错世界 + 换钉即迁账**：hadTpl 取 pinnedBy 首个命中，先后套过 A/B 的人按旧账 A 的清单清除——源头改为实物 pin 所在模板（pinnedBy 只兜底）。apply 从不清旧账：A→B 后 A 的 pinnedBy 永久挂本人（usingCount 虚高、GC"被引用"护栏被撑大、清错清单的共犯）——换钉时逐户新鲜读摘除本人。pinnedBy 清理循环同步改新鲜读（陈旧覆写吞他人账，apply 侧判例同款）。
+    - **重建失败不失明**：清除已执行、applyImageVersion 抛错时回执只剩"失败"——已删的东西必须上报（cleanNote 随 500 走，remove-skill 幂等、重试安全）。
+    - **压缩页面永无雷达（潜在雷拆信）**：注入条件要求未压缩，而网关原样透传 accept-encoding——上游哪天开 gzip，雷达静默消失。文档请求一并剥 accept-encoding 逼 identity（已 grep 现行 DSH 全仓无压缩中间件，属防患于未然）；注入窗口 [200,300) 收紧为 `===200`（206 往 partial HTML 尾拼 script、204 空响应拼 body 还虚记一笔）；headersSent 后上游出错改 `res.destroy()`——往半截页拼纯文本比截断更糟。
+    - **回退语义不分入口**：管理员把租户打回默认同传 archive-only——"回退=干净默认"是天地律，不是用户自助专利。
+    - **代际账不回拨**：rebuildEpoch 写完内存立刻落盘（旧顺序等 finalize 的 _saveState；崩在中间 = 重启后重绑揣旧代号，旧页面雷达永不再刷）。
+    - **快照链五刀**：拆前存改**停机定格**（热导运行中目录会捞撕裂文件、下次代合回——本仓库为 template commit 立过的规矩，apply 路径自己忘了守）；存档失败**不烧旧 active**（两次失败绝不清零唯一留存），失败残壳/0 字节壳一律扫掉；active 的 tmp 名带 pid+时刻（同地址并发快照交织写坏 tar——多进程双写判例同族）；purge 边界匹配 `ws-<addr>` 后必须紧跟 `.` 或 `-`（地址是**变长** base32 30~35 位，裸前缀理论连坐删邻居档——"定长32"旧假设是我想当然）+ 单文件失败不中断整轮；destroy 删卷时快照槽与安装账**双跟葬**（keepVolume 则账档都留）。
+    - **daemon 挂起不拖死全平台**：export/import 三处 spawnSync 补 timeout（同步阻塞的 catch 兜不住"挂起"，规矩 c 的形态盲区）。
+    - **证伪一例**：F5"探针误判"被真机演练证据驳回——`docker cp <dir> -` 的 tar 恒以目录名作外壳（导出→合回落位实证在案）；审查员也是"凭记忆"学派，实物证据面前认错。**教训双向**：给审查员下任务书时的自家假设（"地址定长32"）同样要验——结果它不成立，判例照修不误。
+    - 测试隔离又踩一格：新用例把邻居用例依赖的 listen 残留翻了（③④ 案等旧 e1）——用例必须**自带布景**，不得继承邻居世界。
