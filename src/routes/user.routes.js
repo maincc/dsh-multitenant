@@ -613,9 +613,9 @@ export async function handleUserRoutes(req, res, path) {
         cleanNote =
           removed.length || failed.length
             ? failed.length
-              ? `已按「${hadTpl.displayName || hadTpl.slug}」的清单清除 ${removed.length} 项随行技能/插件（账本同步销记）；${failed.length} 项未成（${failed.join('、')}），可再点一次勾选清除。`
-              : `已按「${hadTpl.displayName || hadTpl.slug}」的清单清除 ${removed.length} 项随行技能/插件（账本同步销记）。`
-            : '该模板的清单里没有登记在册的随行技能/插件，无需清除。'
+              ? `已清除 ${removed.length} 项，${failed.length} 项未成（${failed.join('、')}），可重试。`
+              : `已按清单清除 ${removed.length} 项随行技能/插件（账本同步销记）。`
+            : '该模板清单里没有登记在册的随行技能/插件，无需清除。'
       }
       const result = await userService.applyImageVersion(addr, {
         image: null,
@@ -632,12 +632,9 @@ export async function handleUserRoutes(req, res, path) {
           }
         }
         dataService.logOperation('env_reset_self', { address: addr, operator: addr })
-        result.revertNote =
-          '镜像已回退到平台默认，新容器是干净默认环境。开着的 DSH 页面会自动感知切换并重连（旧页面刷一下即连上，不用重新登录）。' +
-          '回退前你的工作目录已整体存档（想找回随时说一声）；' +
-          (cleanNote
-            ? '模板随行的技能/插件已在换容器前同步清除。'
-            : '模板随行的技能/插件仍在卷里——要一并清除，勾上「一并清除」再点一次回退。')
+        result.revertNote = cleanNote
+          ? '已回退到默认环境，随行技能/插件同步清除。DSH 页面会自动刷新。'
+          : '已回退到默认环境（随行技能/插件保留，可在列表卸载）。DSH 页面会自动刷新。'
         if (cleanNote) result.cleanNote = cleanNote
       }
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })

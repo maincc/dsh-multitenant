@@ -869,7 +869,12 @@ class TenantGateway {
           'content-type': 'application/json; charset=utf-8',
           'cache-control': 'no-store',
         })
-        res.end(JSON.stringify({ ok: true, epoch: this.routes.get(publicPort)?.epoch ?? null }))
+        const liveRoute = this.routes.get(publicPort)
+        if (liveRoute && liveRoute.lastBeatEpoch !== liveRoute.epoch) {
+          liveRoute.lastBeatEpoch = liveRoute.epoch
+          console.log(`[radar] :${publicPort} 收到页面心跳（雷达在跑，epoch=${liveRoute.epoch}）`)
+        }
+        res.end(JSON.stringify({ ok: true, epoch: liveRoute?.epoch ?? null }))
         return
       }
       res.writeHead(200, {
@@ -1116,7 +1121,14 @@ class TenantGateway {
           return
         }
         ures.on('data', (c) => res.write(c))
-        ures.on('end', () => res.end('\n<script src="/__dsh-live/live.js" defer></script>\n'))
+        ures.on('end', () => {
+          res.end('\n<script src="/__dsh-live/live.js" defer></script>\n')
+          const route = opts.publicPort ? this.routes.get(opts.publicPort) : null
+          if (route && route.lastInjectedEpoch !== route.epoch) {
+            route.lastInjectedEpoch = route.epoch
+            console.log(`[radar] :${opts.publicPort} 雷达已注入页面（epoch=${route.epoch}）`)
+          }
+        })
         ures.on('error', () => res.destroy())
       },
     )
