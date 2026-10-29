@@ -1029,6 +1029,21 @@ class TenantGateway {
   forward(req, res, internalPort, authCookie = null, opts = {}) {
     const headers = { ...req.headers }
     for (const h of HOP_BY_HOP) delete headers[h]
+    // 文档请求禁用条件再验证（判例：浏览器刷新带 if-none-match → 上游 304 →
+    // 缓存旧页原样复用 → 网关注入的雷达永远进不了页面）。牺牲一个几 KB 的
+    // 重复下载，换"每次载入都带雷达"的确定性。
+    const docPath = (() => {
+      try {
+        const pn = new URL(req.url, 'http://x').pathname
+        return pn === '/' || pn.endsWith('.html')
+      } catch {
+        return false
+      }
+    })()
+    if (docPath && (req.method === 'GET' || req.method === 'HEAD')) {
+      delete headers['if-none-match']
+      delete headers['if-modified-since']
+    }
     headers['x-forwarded-for'] = req.socket?.remoteAddress ?? ''
     headers['x-forwarded-host'] = req.headers.host
     // Cookie 处理（**无条件执行**，不能只在 authCookie 存在时才做）：
@@ -1078,7 +1093,7 @@ class TenantGateway {
           ct.includes('text/html') &&
           !ures.headers['content-encoding'] &&
           ures.statusCode >= 200 &&
-          ures.statusCode < 400
+          ures.statusCode < 300
         if (inject) {
           for (const k of Object.keys(finalHeaders))
             if (k.toLowerCase() === 'content-length') delete finalHeaders[k]

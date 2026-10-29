@@ -39,6 +39,17 @@ let upPort
 
 beforeAll(async () => {
   upstream = createServer((req, res) => {
+    if (req.url === '/') {
+      // 模拟带条件再验证的 SPA 文档请求：有 if-none-match 就答 304
+      if (req.headers['if-none-match'] || req.headers['if-modified-since']) {
+        res.writeHead(304)
+        res.end()
+        return
+      }
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', etag: '"idx"' })
+      res.end('<html><body>SPA首页</body></html>')
+      return
+    }
     if (req.url === '/page') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
       res.end('<html><body>容器页</body></html>')
@@ -110,6 +121,21 @@ describe('租户网关·环境切换雷达', () => {
     // 换容器（apply/revert 重建后 finalize 带新 rebuildEpoch 重绑）→ 状态变
     await tenantGateway.listen(PUB, upPort, ADDR, { requiresToken: false, version: 'test' }, 'e2')
     expect((await (await get('/__dsh-live/status')).json()).epoch).toBe('e2')
+  })
+
+  it('④½ 文档刷新不再被 304 劫走：网关剥再验证头，雷达必达', async () => {
+    const { Agent } = await import('undici')
+    const agent = new Agent()
+    // 模拟浏览器"刷新"语义：带 if-none-match 来问变没变
+    const res = await fetch(`http://127.0.0.1:${PUB}/`, {
+      headers: { cookie: `user_session=${ADDR}`, 'if-none-match': '"idx"' },
+      dispatcher: agent,
+    })
+    await agent.close()
+    const text = await res.text()
+    expect(res.status).toBe(200) // 不许 304：缓存再验证被网关拦下，换回真页
+    expect(text).toContain('SPA首页')
+    expect(text).toContain('<script src="/__dsh-live/live.js"')
   })
 
   it('⑤ 门禁：无会话访问雷达端点 403', async () => {
