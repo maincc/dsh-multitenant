@@ -303,6 +303,39 @@ describe('applyImageVersion：安全护栏', () => {
     expect(dockerService.removeVolume).not.toHaveBeenCalled()
   })
 
+  it('审查 F4：回退存档失败绝不烧掉唯一旧档（active 留存、残壳扫净）', async () => {
+    injectTenant()
+    const dir = userService._snapDir()
+    const active = join(dir, `ws-${TENANT}.tar`)
+    writeFileSync(active, 'old-precious')
+    dockerService.exportWorkspaceDir.mockImplementationOnce(async (n, src, file) => {
+      writeFileSync(file, 'half-baked') // 半截残壳
+      return { ok: false, missing: false, error: 'boom' }
+    })
+    await userService.applyImageVersion(TENANT, {
+      backup: false,
+      workspaceSnapshot: 'archive-only',
+    })
+    expect(existsSync(active)).toBe(true) // 旧档还在——两次失败不清零唯一留存
+    const leftovers = readdirSync(dir).filter(
+      (f) => f.startsWith(`ws-${TENANT}`) && f !== `ws-${TENANT}.tar`,
+    )
+    expect(leftovers.length).toBe(0) // 失败残壳一个不留
+  })
+
+  it('审查 F8：purge 边界匹配——变长地址前缀连坐不误删他人档', () => {
+    const dir = userService._snapDir()
+    const victim = `${TENANT}x` // 变长 base32：短地址可能是长地址的前缀
+    writeFileSync(join(dir, `ws-${TENANT}.tar`), 'a')
+    writeFileSync(join(dir, `ws-${TENANT}-999.archived.tar`), 'b')
+    writeFileSync(join(dir, `ws-${victim}.tar`), 'precious-B')
+    userService._purgeWorkspaceSnapshots(TENANT)
+    expect(existsSync(join(dir, `ws-${TENANT}.tar`))).toBe(false)
+    expect(existsSync(join(dir, `ws-${TENANT}-999.archived.tar`))).toBe(false)
+    expect(existsSync(join(dir, `ws-${victim}.tar`))).toBe(true) // 邻居的档一根毫毛不碰
+    rmSync(join(dir, `ws-${victim}.tar`), { force: true })
+  })
+
   it('判例 2026-10-29：拆前必存工作目录、新建后合回（快照连环）', async () => {
     injectTenant()
     dockerService.exportWorkspaceDir.mockClear()

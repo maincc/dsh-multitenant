@@ -55,6 +55,23 @@ beforeAll(async () => {
       res.end('<html><body>容器页</body></html>')
       return
     }
+    if (req.url === '/enc.html') {
+      // 只有请求真带了 accept-encoding 才压缩——网关若剥得干净，这里收到的
+      // 就是 identity 请求，出明文页
+      if (String(req.headers['accept-encoding'] || '').includes('gzip')) {
+        res.writeHead(200, { 'content-type': 'text/html', 'content-encoding': 'gzip' })
+        res.end(gzipSync(Buffer.from('<html>ENC-GZ</html>')))
+      } else {
+        res.writeHead(200, { 'content-type': 'text/html' })
+        res.end('<html>ENC-PLAIN</html>')
+      }
+      return
+    }
+    if (req.url === '/n204.html') {
+      res.writeHead(204, { 'content-type': 'text/html' })
+      res.end()
+      return
+    }
     if (req.url === '/gz') {
       const body = gzipSync(Buffer.from('压缩内容测试'))
       res.writeHead(200, {
@@ -104,6 +121,22 @@ describe('租户网关·环境切换雷达', () => {
     expect(res.headers.get('content-length')).toBeNull()
   })
 
+  it('审查C①：文档请求剥 accept-encoding——gzip 上游被逼出明文，雷达必在场', async () => {
+    await tenantGateway.listen(PUB, upPort, ADDR, { requiresToken: false, version: 'test' }, 'e7')
+    const res = await get('/enc.html') // undici 自带 accept-encoding: gzip
+    const text = await res.text()
+    expect(text).toContain('ENC-PLAIN') // 网关剥头 → 上游走 identity 分支
+    expect(text).toContain('<script src="/__dsh-live/live.js"')
+    expect(res.headers.get('content-encoding')).toBeNull()
+  })
+
+  it('审查C②：204 不注入不拼 body（===200 收紧）', async () => {
+    await tenantGateway.listen(PUB, upPort, ADDR, { requiresToken: false, version: 'test' }, 'e8')
+    const res = await get('/n204.html')
+    expect(res.status).toBe(204)
+    expect(await res.text()).toBe('') // 旧 <300 宽窗会往 204 空响应后拼 script
+  })
+
   it('② 压缩流与非 HTML 一律不碰（fail-open）', async () => {
     const gz = await get('/gz')
     expect(await gz.text()).toBe('压缩内容测试') // 解压后即原文——尾部没被追加 script
@@ -113,6 +146,8 @@ describe('租户网关·环境切换雷达', () => {
   })
 
   it('③④ 雷达端点：status 报代际、live.js 网关自答、换容器即变', async () => {
+    // 自带布景：用例不得依赖邻居的 listen 残留
+    await tenantGateway.listen(PUB, upPort, ADDR, { requiresToken: false, version: 'test' }, 'e1')
     const st = await get('/__dsh-live/status')
     expect((await st.json()).epoch).toBe('e1')
     const js = await get('/__dsh-live/live.js')

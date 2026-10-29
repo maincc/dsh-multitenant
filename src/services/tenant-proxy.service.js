@@ -460,6 +460,7 @@ const LIVE_JS = `/* dsh-live radar (platform-injected): watch for container swap
   function reloadWhenReady() {
     if (flipping) return
     flipping = true
+    setTimeout(function () { flipping = false }, 20000) // 保险丝：reload 被拦则该页雷达不许永久报废
     try { banner() } catch (e) {}
     // 代际一变先试水首页：重建中的容器答 502，就每 2 秒再问，探活成功才刷新——
     // 绝不在半路上把用户摔进白屏
@@ -1058,6 +1059,9 @@ class TenantGateway {
     })()
     if (docPath && (req.method === 'GET' || req.method === 'HEAD')) {
       delete headers['if-none-match']
+      // 同判例族（C 审查#1）：透传 accept-encoding 会让上游 gzip 页面，注入
+      // 条件（!content-encoding）就永远跳过——文档请求逼上游出 identity 编码。
+      delete headers['accept-encoding']
       delete headers['if-modified-since']
     }
     headers['x-forwarded-for'] = req.socket?.remoteAddress ?? ''
@@ -1108,8 +1112,7 @@ class TenantGateway {
           req.method === 'GET' &&
           ct.includes('text/html') &&
           !ures.headers['content-encoding'] &&
-          ures.statusCode >= 200 &&
-          ures.statusCode < 300
+          ures.statusCode === 200
         if (inject) {
           for (const k of Object.keys(finalHeaders))
             if (k.toLowerCase() === 'content-length') delete finalHeaders[k]
@@ -1133,9 +1136,14 @@ class TenantGateway {
       },
     )
     upstream.on('error', () => {
-      if (!res.headersSent) {
-        res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' })
+      if (res.headersSent) {
+        // 页已流出一半：往半截 HTML 后拼纯文本比截断更糟——断流让浏览器自显中断
+        try {
+          res.destroy()
+        } catch {}
+        return
       }
+      res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' })
       res.end('gateway: upstream unreachable')
     })
     // 2026-10 审计（流生命周期泄漏，两端各堵）：

@@ -1804,6 +1804,9 @@ export async function handleAdminRoutes(req, res, path, url) {
             const result = await userService.applyImageVersion(address, {
               dryRun,
               image: targetImage,
+              // 审查 F9：管理员把租户打回默认 = 同一"回退"语义，工作目录同样
+              // 只存档不塞回（判例 b：回退=干净默认，不分入口）
+              ...(targetImage ? {} : { workspaceSnapshot: 'archive-only' }),
             })
             results.push({ address, ok: true, ...result })
           } catch (err) {
@@ -1838,7 +1841,10 @@ export async function handleAdminRoutes(req, res, path, url) {
       ;(async () => {
         for (const address of targets) {
           try {
-            const result = await userService.applyImageVersion(address, { image: targetImage })
+            const result = await userService.applyImageVersion(address, {
+              image: targetImage,
+              ...(targetImage ? {} : { workspaceSnapshot: 'archive-only' }),
+            })
             imageApplyTask.results.push({ address, ok: true, ...result })
           } catch (err) {
             // 单个失败不中断整轮：批量场景必须把其余租户处理完

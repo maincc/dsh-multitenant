@@ -353,7 +353,8 @@ export class DataService {
    * mongo=独立集合 environments；json=data/environments.json 数组，双态同构。
    * 账本字段治理：_id=模板 tag；imageId=docker digest（分发时逐字校验，
    * 防同名 tag 被后一定格覆盖——digest 不符即拒发）；status 只走
-   * published→revoked（撤 listing 语义，不驱逐在用者）。
+   * published→revoked（管理员撤板）与 published→draft→pending（作者自助
+   * 下架/重提）并存——两条出板边都只撤 listing 语义，不驱逐在用者。
    */
 
   environmentsFile() {

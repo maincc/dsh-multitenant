@@ -1524,6 +1524,11 @@ export class UserService {
         })
         // 换容器是"代际事件"：记入 rebuildEpoch，网关雷达据此让旧页面自愈
         if (this.state.swtcUsers[address]) this.state.swtcUsers[address].rebuildEpoch = Date.now()
+        // 审查 F6：立刻落盘。旧顺序要等 finalize 的 _saveState——崩在那之前就
+        // 等于 epoch 回拨，重启后重绑的网关揣着旧代号，旧页面雷达永不再刷
+        try {
+          await this._saveState()
+        } catch {}
         this.state.nextPort = Math.max(this.state.nextPort ?? CONFIG.docker.basePort, port + 1)
         // 新容器 = 可还原画面：active 快照合回（不覆盖已有文件；判例 2026-10-29）
         await this._restoreWorkspace(address, name)
@@ -1952,19 +1957,22 @@ export class UserService {
       if (archiveOnly) {
         const arch = join(dir, `ws-${address}-${Date.now()}.archived.tar`)
         const r = await dockerService.exportWorkspaceDir(name, '/root/workspace', arch)
-        try {
-          rmSync(active, { force: true })
-        } catch {}
         if (!r.ok) {
-          if (!r.missing) {
-            rmSync(arch, { force: true })
-            console.warn(`[ws] ${address} 回退前存档失败（回退照常）：${r.error}`)
-          }
+          try {
+            rmSync(arch, { force: true }) // 半截档/0 字节壳都别留垃圾（审查 F4）
+          } catch {}
+          if (!r.missing)
+            console.warn(`[ws] ${address} 回退前存档失败（回退照常，active 槽保留）：${r.error}`)
           return null
         }
+        try {
+          rmSync(active, { force: true }) // 新档落定才拆旧档——绝不让两次失败清零唯一留存
+        } catch {}
         return arch
       }
-      const tmp = `${active}.tmp`
+      // 审查 F7：同地址并发快照（闲置销毁 vs 管理员 apply 撞车）共用 .tmp 会
+      // 交织写坏 tar——tmp 名唯一化，rename 覆盖仍是原子
+      const tmp = join(dir, `ws-${address}.${process.pid}-${Date.now()}.tar.tmp`)
       const r = await dockerService.exportWorkspaceDir(name, '/root/workspace', tmp)
       if (!r.ok) {
         try {
@@ -2016,10 +2024,19 @@ export class UserService {
   }
 
   _purgeWorkspaceSnapshots(address) {
+    // 审查 F8：地址是变长 base32（30~35 位），`ws-<A>` 裸前缀理论上连坐
+    // `ws-<A>x…` 的 B 档——边界字符必须紧跟 . 或 -；单文件抛错也别中断整轮
     try {
       const dir = this._snapDir()
-      for (const f of readdirSync(dir))
-        if (f.startsWith(`ws-${address}`)) rmSync(join(dir, f), { force: true })
+      const base = `ws-${address}`
+      for (const f of readdirSync(dir)) {
+        if (!f.startsWith(base)) continue
+        const rest = f.slice(base.length)
+        if (rest && rest[0] !== '.' && rest[0] !== '-') continue
+        try {
+          rmSync(join(dir, f), { force: true })
+        } catch {}
+      }
     } catch {
       // 尽力清理
     }
@@ -2177,42 +2194,14 @@ export class UserService {
       }
     }
 
-    // ①.5 工作目录快照：拆之前必存（判例：不存就重建 = 抹文件）
-    await this._snapshotWorkspace(address, name, {
-      archiveOnly: opts.workspaceSnapshot === 'archive-only',
-    })
-
-    // ② 结算当前运行段（2026-10 审计：挪到"旧容器确认离场"之后——原顺序在
-    // stop 失败被吞 + remove 失败中止时清掉表针，旧容器还活着从此不计费；
-    // 也不会在半途失败时重复结算。rm 成功 = 运行段确定终结，此刻结最准）
-
-    // ③ 保护对外端口：重建窗口内不能被回收池分给别的租户（否则 URL 会变）
+    // ② 意图先入账（判例 2026-10-29 真机第八案的**字面补全**，审查 F10：原实现
+    // 把这段落在 rm 之后——崩溃落在 rm~入账之间时旧 pin 复活、回退意图丢）。
+    // 定规：**动手改世界之前，意图先入账**。记录此刻宣告新代；stop/rm 失败留
+    // "记录 stopped + 容器犹活"的半态，connect 时按实物自愈（takeover 路径）。
     const keptPort = user.port ?? null
-
-    // ④ 停容器 → 删容器（保数据卷）
-    try {
-      await dockerService.stopContainer(name, 30)
-    } catch (err) {
-      console.error(`[apply] ${address} stop failed:`, err.message)
-    }
-    try {
-      await dockerService.removeContainer(name) // 不删卷
-    } catch (err) {
-      throw new Error(`移除旧容器失败，已中止：${err.message}`)
-    }
-    this.settleUsage(address)
-
-    if (keptPort !== null && Array.isArray(this.state.availablePorts)) {
-      this.state.availablePorts = this.state.availablePorts.filter((p) => p !== keptPort)
-    }
-    // 标记为待重建，同时保留 port 供 ensureContainer 复用
     this.state.swtcUsers[address] = {
       ...user,
       port: keptPort,
-      // 判例 2026-10-29（真机第八案·账本劫持参数）：回退（image=null）时旧 pin
-      // 还挂在记录里，ensureContainer 的 `if (pinned) image = pinned` 把
-      // "回默认"劫持回了模板镜像——账清了、容器没换，回退无限次都修不好。
-      // 定规：**动手改世界之前，意图先入账**。
       pinnedImage: targetImage,
       containerStatus: 'stopped',
       stoppedAt: Date.now(),
@@ -2220,6 +2209,33 @@ export class UserService {
     }
     delete this.state.swtcUsers[address].usageStartedAt
     await this._saveState()
+
+    // ③ 停容器（失败被吞：下面的快照对仍在跑的容器照样可导，行为不比旧版差）
+    try {
+      await dockerService.stopContainer(name, 30)
+    } catch (err) {
+      console.error(`[apply] ${address} stop failed:`, err.message)
+    }
+
+    // ③.5 拆前必存（判例：不存就重建 = 抹文件）。挪到 stop 之后取**停机定格**
+    //（审查 F3：热导运行中目录会捞到撕裂文件，下次代 merge 回新容器）
+    await this._snapshotWorkspace(address, name, {
+      archiveOnly: opts.workspaceSnapshot === 'archive-only',
+    })
+
+    // ④ 删容器（保数据卷）；rm 成功 = 运行段确定终结，此刻结算最准（审计判例：
+    // stop 被吞 + remove 中止时清表针 = 旧容器还活却从此不计费）
+    try {
+      await dockerService.removeContainer(name) // 不删卷
+    } catch (err) {
+      throw new Error(`移除旧容器失败，已中止：${err.message}`)
+    }
+    this.settleUsage(address)
+
+    // 保护对外端口：重建窗口内不能被回收池分给别的租户（否则 URL 会变）
+    if (keptPort !== null && Array.isArray(this.state.availablePorts)) {
+      this.state.availablePorts = this.state.availablePorts.filter((p) => p !== keptPort)
+    }
 
     // ⑤ 重建容器（ensureContainer 会复用记录里的 port → 对外 URL 不变）
     let newPort
@@ -2411,6 +2427,8 @@ export class UserService {
       if (volumeStatus === 'deleted' || volumeStatus === 'absent') {
         // 卷没了（或被证实本来就没有）→ 账本跟葬；管理员选择留卷则账也留着
         await this._clearInstallsSafe(address, 'tenant_removed')
+        // 快照槽同理（审查 F2）：户籍与卷都没了还留个人文件存档 = 磁盘泄漏+隐私面
+        this._purgeWorkspaceSnapshots(address)
       }
 
       // 将端口回收到可用端口池

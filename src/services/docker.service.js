@@ -1011,6 +1011,7 @@ export class DockerService {
       const r = spawnSync('docker', ['cp', `${name}:${srcPath}`, '-'], {
         stdio: ['ignore', fd, 'pipe'],
         encoding: 'utf8',
+        timeout: 180_000, // daemon 挂起不能拖死全平台事件循环（审查 F1）
       })
       if (r.status !== 0) {
         const err = String(r.stderr || '')
@@ -1031,12 +1032,24 @@ export class DockerService {
   importWorkspaceMerge(name, tarFile, destPath) {
     const tmp = mkdtempSync(join(tmpdir(), 'ws-import-'))
     try {
-      let r = spawnSync('tar', ['-xf', tarFile, '-C', tmp], { encoding: 'utf8' })
+      let r = spawnSync('tar', ['-xf', tarFile, '-C', tmp], { encoding: 'utf8', timeout: 120_000 })
       if (r.status !== 0)
-        return { ok: false, error: String(r.stderr || 'untar-failed').slice(0, 200) }
+        return {
+          ok: false,
+          error: String(r.stderr || r.error?.message || 'untar-failed').slice(0, 200),
+        }
+      // docker cp <dir> - 的 tar 恒以目录名作外壳（2026-10-29 真机演练证实：
+      // 导出→合回后文件落位正确）。兜底分支只防外壳假设失效，非常态。
       const root = existsSync(join(tmp, 'workspace')) ? join(tmp, 'workspace') : tmp
-      r = spawnSync('docker', ['cp', root, `${name}:/.ws-import`], { encoding: 'utf8' })
-      if (r.status !== 0) return { ok: false, error: String(r.stderr || 'cp-failed').slice(0, 200) }
+      r = spawnSync('docker', ['cp', root, `${name}:/.ws-import`], {
+        encoding: 'utf8',
+        timeout: 120_000,
+      })
+      if (r.status !== 0)
+        return {
+          ok: false,
+          error: String(r.stderr || r.error?.message || 'cp-failed').slice(0, 200),
+        }
       r = spawnSync(
         'docker',
         [
