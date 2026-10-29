@@ -443,16 +443,34 @@ function buildVerifyPage(req, gwToken) {
 
 // 环境切换自感知（用户验收：回退/选用后不刷新，平台捕捉到）：容器一换，
 // 挂在网关上的页面雷达发现代际变化就自动 reload——网关知道真相，浏览器听令。
-const LIVE_JS = `/* dsh-live radar (platform-injected): watch for container swaps, auto-reload */
+const LIVE_JS = `/* dsh-live radar (platform-injected): watch for container swaps, auto-reload when ready */
 (function () {
   var epoch = null
+  var flipping = false
+  function reloadWhenReady() {
+    if (flipping) return
+    flipping = true
+    // 代际一变先试水首页：重建中的容器答 502，就每 2 秒再问，探活成功才刷新——
+    // 绝不在半路上把用户摔进白屏
+    function probe() {
+      fetch('/', { credentials: 'same-origin', cache: 'no-store' })
+        .then(function (r) {
+          if (r.status < 500) { location.reload(); return }
+          setTimeout(probe, 2000)
+        })
+        .catch(function () {
+          setTimeout(probe, 2000)
+        })
+    }
+    probe()
+  }
   function tick() {
     fetch('/__dsh-live/status', { credentials: 'same-origin', cache: 'no-store' })
       .then(function (r) { return r.ok ? r.json() : null })
       .then(function (d) {
         if (!d || !d.epoch) return
         if (epoch === null) { epoch = d.epoch; return }
-        if (d.epoch !== epoch) location.reload()
+        if (d.epoch !== epoch) reloadWhenReady()
       })
       .catch(function () {})
   }
