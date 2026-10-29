@@ -463,3 +463,48 @@ describe('PR3 自助定格（本人面：freezeAllowed + autoSlug + 共用流程
     expect(denied.statusCode).toBe(403)
   })
 })
+
+describe('POST /api/user/environment/unpublish（作者自助下架：published→draft）', () => {
+  it('无会话 → 401', async () => {
+    const res = await call('/api/user/environment/unpublish', {
+      method: 'POST',
+      body: { id: TPL },
+      cookie: false,
+    })
+    expect(res.statusCode).toBe(401)
+  })
+
+  it('不是作者 → 403（只能下架自己的东西）', async () => {
+    seed({ sourceAddr: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' })
+    const res = await call('/api/user/environment/unpublish', { method: 'POST', body: { id: TPL } })
+    expect(res.statusCode).toBe(403)
+    expect(globalThis.__envStore.get(TPL).status).toBe('published')
+  })
+
+  it('非上架态 → 400（本就不在市场里，无从下架）', async () => {
+    seed({ sourceAddr: USER, status: 'draft' })
+    const res = await call('/api/user/environment/unpublish', { method: 'POST', body: { id: TPL } })
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('作者下架：状态回草稿、引用账本原样保留（下架≠删除，绝不上锁）、审计在案', async () => {
+    seed({ sourceAddr: USER, pinnedBy: ['other008xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', USER] })
+    const res = await call('/api/user/environment/unpublish', { method: 'POST', body: { id: TPL } })
+    expect(res.statusCode).toBe(200)
+    const doc = globalThis.__envStore.get(TPL)
+    expect(doc.status).toBe('draft')
+    expect(doc.pinnedBy.length).toBe(2) // 在用的人不受影响，账本一个字不动
+    expect(json(res).usingCount).toBe(2)
+    expect(dataService.logOperation).toHaveBeenCalledWith(
+      'env_unpublish_self',
+      expect.objectContaining({ address: USER, id: TPL }),
+    )
+  })
+
+  it('货架给作者卡标 isMine（前端下架入口的凭据）', async () => {
+    seed({ sourceAddr: USER })
+    expect(json(await call('/api/user/environments')).environments[0].isMine).toBe(true)
+    seed({ sourceAddr: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' })
+    expect(json(await call('/api/user/environments')).environments[0].isMine).toBe(false)
+  })
+})

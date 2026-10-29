@@ -432,7 +432,11 @@ export async function handleUserRoutes(req, res, path) {
     let runningTpl = null
     try {
       const curImage = await dockerService.containerImageId(swtcContainerName(addr))
-      runningTpl = curImage ? published.find((e) => e.imageId === curImage) || null : null
+      runningTpl = curImage
+        ? published.find((e) => e.imageId === curImage) ||
+          envs.find((e) => e.imageId === curImage && e.sourceAddr === addr) ||
+          null
+        : null
     } catch {
       // 实物探测失败不拦列表：退回按账本认领
     }
@@ -463,6 +467,7 @@ export async function handleUserRoutes(req, res, path) {
             name: e.displayName || e.slug, // 人读处一律展示名（老数据回退 slug）
             intro: e.intro || null,
             author: e.sourceAddr,
+            isMine: e.sourceAddr === addr, // 作者标记：我的模板卡上给「下架」入口
             dshVersion: e.dshVersion,
             sizeBytes: e.sizeBytes,
             scrubbed: e.scrubbed,
@@ -566,6 +571,46 @@ export async function handleUserRoutes(req, res, path) {
 
   // POST /api/user/environment-reset {dryRun} - 一键回平台默认环境
   // （applyImageVersion(image=null)=摘 pin 回 latest 语义；引用账本同步清）
+  // POST /api/user/environment/unpublish {id} - 作者自助下架：published 回到
+  // 自己的草稿箱（draft）。判例：下架≠删除——被引用之物不可物理删，正在用的
+  // 人（含作者自己）不受影响，只是市场不再展示、不再接受新的选用。
+  if (path === '/api/user/environment/unpublish' && req.method === 'POST') {
+    const addr = credSession()
+    if (!addr) {
+      res.writeHead(401, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '需要登录（钱包签名会话）', code: 'UNAUTHORIZED' }))
+      return true
+    }
+    const body = (await parseJsonBody(req, res)) || {}
+    try {
+      const doc = await dataService.getEnvironment(String(body.id || ''))
+      if (!doc) {
+        res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: '模板不存在' }))
+        return true
+      }
+      if (doc.sourceAddr !== addr) {
+        res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: '只能下架自己定格的模板' }))
+        return true
+      }
+      if (doc.status !== 'published') {
+        res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: '只有已上架的模板需要下架（其他状态本就不在市场里）' }))
+        return true
+      }
+      await dataService.patchEnvironment(doc._id, { status: 'draft' })
+      dataService.logOperation('env_unpublish_self', { address: addr, id: doc._id })
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(
+        JSON.stringify({ ok: true, backToDrafts: true, usingCount: (doc.pinnedBy || []).length }),
+      )
+    } catch (err) {
+      handleError(err, res)
+    }
+    return true
+  }
+
   if (path === '/api/user/environment/revert' && req.method === 'POST') {
     const addr = credSession()
     if (!addr) {

@@ -60,6 +60,15 @@
               {{ $t('env.detailBtn') }}
             </button>
             <button
+              v-if="tpl.isMine"
+              class="btn btn-small btn-secondary"
+              :disabled="busy"
+              :title="$t('env.unpublishConfirm')"
+              @click="unpublishNow(tpl)"
+            >
+              {{ $t('env.unpublishBtn') }}
+            </button>
+            <button
               class="btn btn-small btn-primary"
               :disabled="busy || (expanded === tpl.id && !preview)"
               @click="togglePreview(tpl)"
@@ -560,6 +569,28 @@ async function applyForReal(tpl) {
   } finally {
     busy.value = false
     pending.value = ''
+  }
+}
+
+// 作者自助下架：published 回到草稿箱。下架≠删除——被引用之物不可物理删，
+// 已在用的人（含作者自己）不受影响，只是市场不再展示、不再接受新的选用。
+async function unpublishNow(tpl) {
+  const go = await askConfirm({
+    message: t('env.unpublishConfirm'),
+    confirmLabel: t('env.unpublishBtn'),
+  })
+  if (!go) return
+  busy.value = true
+  try {
+    const r = await axios.post('/api/user/environment/unpublish', { id: tpl.id })
+    const n = r.data?.usingCount || 0
+    toast(n ? t('env.unpublishedUsing', { n }) : t('env.unpublished'))
+    detailFor.value = null
+    await loadAll()
+  } catch (e) {
+    toast(errMsg(e))
+  } finally {
+    busy.value = false
   }
 }
 
