@@ -306,6 +306,26 @@ describe('POST /api/user/environment/revert（回平台默认）', () => {
     expect(json(res).cleanNote).toContain('账本同步销记')
   })
 
+  it('作者已上架的作品也在 myWorks 全状态账里（下架入口不断头）', async () => {
+    seed({ status: 'published', sourceAddr: USER })
+    globalThis.__envStore.set('other-pub', {
+      _id: 'other-pub',
+      name: '别人家',
+      slug: 'stock',
+      status: 'published',
+      sourceAddr: 'someoneelseaddrnotmine0000000000000',
+      pinnedBy: [],
+      include: {},
+      createdAt: new Date(),
+    })
+    const res = await call('/api/user/environments', { method: 'GET' })
+    expect(res.statusCode).toBe(200)
+    const mine = json(res).myWorks
+    expect(mine.some((w) => w.id === TPL && w.status === 'published')).toBe(true)
+    expect(mine.some((w) => w.id === 'other-pub')).toBe(false)
+    globalThis.__envStore.delete('other-pub')
+  })
+
   it(
     '审查B⑤：dot 目录名（' + '"' + '..' + '"' + '/.' + '"' + '）出闸——rm -rf plugins/.. 端整卷案防',
     async () => {

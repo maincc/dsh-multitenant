@@ -131,7 +131,9 @@
               ? 'badge-warning'
               : d.status === 'rejected'
                 ? 'badge-danger'
-                : 'badge-info'
+                : d.status === 'published'
+                  ? 'badge-success'
+                  : 'badge-info'
           "
           >{{ $t('env.status.' + d.status) }}</span
         >
@@ -143,6 +145,15 @@
           @click="resubmit(d)"
         >
           {{ $t('env.resubmitBtn') }}
+        </button>
+        <!-- 已上架的作品在自己的账本里就能下架——不必绕去市场找卡片 -->
+        <button
+          v-if="d.status === 'published'"
+          class="btn btn-small btn-secondary"
+          :disabled="busy"
+          @click="unpublishNow(d)"
+        >
+          {{ $t('env.unpublishBtn') }}
         </button>
         <div v-if="d.status === 'rejected' && d.rejectReason" class="env-reject-reason">
           {{ $t('env.rejectReason', { reason: d.rejectReason }) }}
@@ -478,7 +489,7 @@ const stepOrder = (s) => steps.indexOf(s)
 async function loadAll() {
   const res = await axios.get('/api/user/environments')
   list.value = res.data.environments || []
-  drafts.value = res.data.myDrafts || []
+  drafts.value = res.data.myWorks || []
   current.value = res.data.yourCurrent || null
 }
 

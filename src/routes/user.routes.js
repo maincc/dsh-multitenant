@@ -461,8 +461,11 @@ export async function handleUserRoutes(req, res, path) {
         ok: true,
         // 只展示审核放行的；manifest 不外露（用户选用面=作者+版本+大小，
         // 审核证据留在管理端）
-        myDrafts: envs
-          .filter((e) => e.sourceAddr === addr && e.status !== 'published')
+        // 我的作品**全状态**（判例 2026-10-29：曾滤掉 published，作者已上架的
+        // 东西在市场卡与自留地两头都不见，"下架"入口只剩市场卡一张——切换账号
+        // 后找不到自己的环境。名也改 myWorks：账目如实，键名不再撒谎）
+        myWorks: envs
+          .filter((e) => e.sourceAddr === addr)
           .map((e) => ({
             id: e._id,
             name: e.displayName || e.slug,
