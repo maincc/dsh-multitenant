@@ -550,6 +550,7 @@ export class UserService {
         internalPort,
         address,
         await this.resolveTenantCapability(address),
+        this.state.swtcUsers?.[address]?.rebuildEpoch ?? null,
       )
     } catch (err) {
       // bind 失败不能把状态留在 running（2026-10 审计：与创建路径同纪律，
@@ -1515,6 +1516,8 @@ export class UserService {
         await dockerService.createContainer(name, internalPort, volume, patchFile, limits, {
           image,
         })
+        // 换容器是"代际事件"：记入 rebuildEpoch，网关雷达据此让旧页面自愈
+        if (this.state.swtcUsers[address]) this.state.swtcUsers[address].rebuildEpoch = Date.now()
         this.state.nextPort = Math.max(this.state.nextPort ?? CONFIG.docker.basePort, port + 1)
         // 新容器 = 可还原画面：active 快照合回（不覆盖已有文件；判例 2026-10-29）
         await this._restoreWorkspace(address, name)
@@ -1722,11 +1725,17 @@ export class UserService {
     //    能力随路由一起交给网关：网关据此决定"放行即进"还是"明确拒绝"，
     //    网关刻意不 import 本模块（会成环），只保留这一份快照。
     try {
-      await tenantGateway.listen(port, internalPort, address, {
-        requiresToken: cap.requiresToken,
-        version: cap.version,
-        tokenAuthSince: cap.tokenAuthSince,
-      })
+      await tenantGateway.listen(
+        port,
+        internalPort,
+        address,
+        {
+          requiresToken: cap.requiresToken,
+          version: cap.version,
+          tokenAuthSince: cap.tokenAuthSince,
+        },
+        this.state.swtcUsers?.[address]?.rebuildEpoch ?? null,
+      )
     } catch (err) {
       // PORT_TAKEN（2026-10 审计）：端口正在为**另一租户**服务——把号留在记录里
       // 会让重连永远撞同一个占位（restart 路径也照记录 port 重绑），必须弃号，
@@ -2539,6 +2548,7 @@ export class UserService {
           internalPort,
           address,
           await this.resolveTenantCapability(address),
+          this.state.swtcUsers?.[address]?.rebuildEpoch ?? null,
         )
         restored++
         console.log(
@@ -2647,6 +2657,7 @@ export class UserService {
           internalPort,
           address,
           await this.resolveTenantCapability(address),
+          this.state.swtcUsers?.[address]?.rebuildEpoch ?? null,
         )
       } catch (err) {
         console.error(`[restore] gateway bind failed for ${address} :${port}:`, err.message)

@@ -441,6 +441,25 @@ function buildVerifyPage(req, gwToken) {
   )
 }
 
+// 环境切换自感知（用户验收：回退/选用后不刷新，平台捕捉到）：容器一换，
+// 挂在网关上的页面雷达发现代际变化就自动 reload——网关知道真相，浏览器听令。
+const LIVE_JS = `/* dsh-live radar (platform-injected): watch for container swaps, auto-reload */
+(function () {
+  var epoch = null
+  function tick() {
+    fetch('/__dsh-live/status', { credentials: 'same-origin', cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null })
+      .then(function (d) {
+        if (!d || !d.epoch) return
+        if (epoch === null) { epoch = d.epoch; return }
+        if (d.epoch !== epoch) location.reload()
+      })
+      .catch(function () {})
+  }
+  setInterval(tick, 3000)
+})()
+`
+
 class TenantGateway {
   constructor() {
     /** publicPort -> { server, address, internalPort } */
@@ -642,7 +661,7 @@ class TenantGateway {
    *   网关刻意不 import user.service（会形成循环依赖），只在路由表里保存这一份。
    * @returns {Promise<void>}
    */
-  listen(publicPort, internalPort, address, capability = null) {
+  listen(publicPort, internalPort, address, capability = null, epoch = null) {
     // 2026-10 全面审计：owner 门。此前无条件先 close 再绑——端口分配一旦竞态
     // （两个租户拿到同一个对外端口），后来者会**静默关掉前一个租户的监听**，
     // 把前者的用户流量转到自己的容器上 = 跨租户数据泄露。同一租户重启/换镜像
@@ -733,7 +752,15 @@ class TenantGateway {
         server.on('error', (err) => {
           console.error(`[gateway] :${publicPort} runtime error:`, err.message)
         })
-        this.routes.set(publicPort, { server, address, internalPort, capability })
+        this.routes.set(publicPort, {
+          server,
+          address,
+          internalPort,
+          capability,
+          // 容器代际：调用方传 rebuildEpoch（真正的换容器动作才会变）；没传
+          // 的兜底按 attach 时刻算——宁可多发一次 reload，不可漏发
+          epoch: epoch != null ? String(epoch) : 'attach-' + Date.now(),
+        })
         console.log(`[gateway] :${publicPort} -> 127.0.0.1:${internalPort} (${address})`)
         // listen 只发生在"容器就绪"时（新建/重启/换镜像/启动恢复）—— 这正是
         // 丢弃旧代激活 cookie 的时机。DSH 的 cookie 由租户卷 .credentials.yaml
@@ -800,6 +827,28 @@ class TenantGateway {
       pathname = new URL(req.url, 'http://x').pathname
     } catch {
       pathname = String(req.url || '')
+    }
+    // ---- 环境切换雷达（网关自答：绝不转发给容器；门禁与页面同权）----
+    if (pathname === '/__dsh-live/status' || pathname === '/__dsh-live/live.js') {
+      if (!this.authorize(req, publicPort)) {
+        res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' })
+        res.end('gateway: forbidden')
+        return
+      }
+      if (pathname.endsWith('/status')) {
+        res.writeHead(200, {
+          'content-type': 'application/json; charset=utf-8',
+          'cache-control': 'no-store',
+        })
+        res.end(JSON.stringify({ ok: true, epoch: this.routes.get(publicPort)?.epoch ?? null }))
+        return
+      }
+      res.writeHead(200, {
+        'content-type': 'text/javascript; charset=utf-8',
+        'cache-control': 'no-store',
+      })
+      res.end(LIVE_JS)
+      return
     }
     if (pathname === '/__gw__/session-info' && (req.method || 'GET') === 'GET') {
       const cookie = req.headers.cookie || ''
@@ -1003,8 +1052,28 @@ class TenantGateway {
         for (const [k, v] of Object.entries(outHeaders)) {
           finalHeaders[k] = Array.isArray(v) ? v : String(v)
         }
+        // HTML 注入雷达：只碰 GET+text/html+未压缩的中性状态码——压缩流
+        // 尾加明文会破 gzip 帧（跳过注入=fail-open），重定向不碰。
+        const ct = String(ures.headers['content-type'] || '')
+        const inject =
+          req.method === 'GET' &&
+          ct.includes('text/html') &&
+          !ures.headers['content-encoding'] &&
+          ures.statusCode >= 200 &&
+          ures.statusCode < 400
+        if (inject) {
+          for (const k of Object.keys(finalHeaders))
+            if (k.toLowerCase() === 'content-length') delete finalHeaders[k]
+          finalHeaders['transfer-encoding'] = 'chunked'
+        }
         res.writeHead(ures.statusCode, finalHeaders)
-        ures.pipe(res)
+        if (!inject) {
+          ures.pipe(res)
+          return
+        }
+        ures.on('data', (c) => res.write(c))
+        ures.on('end', () => res.end('\n<script src="/__dsh-live/live.js" defer></script>\n'))
+        ures.on('error', () => res.destroy())
       },
     )
     upstream.on('error', () => {

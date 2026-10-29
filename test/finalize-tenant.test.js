@@ -87,11 +87,25 @@ describe('finalizeTenant：成功路径', () => {
       containerName: NAME,
     })
     // 能力随路由交给网关（网关不 import user.service，避免循环依赖）
-    expect(tenantGateway.listen).toHaveBeenCalledWith(PORT, INTERNAL_PORT, ADDR, {
-      requiresToken: false,
-      version: '0.1.1-rc.2',
-      tokenAuthSince: '0.1.2-alpha.2',
-    })
+    expect(tenantGateway.listen).toHaveBeenCalledWith(
+      PORT,
+      INTERNAL_PORT,
+      ADDR,
+      { requiresToken: false, version: '0.1.1-rc.2', tokenAuthSince: '0.1.2-alpha.2' },
+      null,
+    )
+
+    // 代际透传：换过容器的租户重绑时必须把 rebuildEpoch 递给网关（雷达自愈的根）
+    userService.state.swtcUsers[ADDR].rebuildEpoch = 1234567890
+    userService.state.swtcUsers[ADDR].containerStatus = 'starting'
+    await userService.finalizeTenant(ADDR, NAME, PORT, INTERNAL_PORT)
+    expect(tenantGateway.listen).toHaveBeenLastCalledWith(
+      PORT,
+      INTERNAL_PORT,
+      ADDR,
+      expect.objectContaining({ requiresToken: false }),
+      1234567890,
+    )
     expect(userService.state.swtcUsers[ADDR].containerStatus).toBe('running')
     expect(userService.state.swtcUsers[ADDR].internalPort).toBe(INTERNAL_PORT)
     // 能力落盘：网关重启/恢复时不需重新探测镜像
