@@ -40,6 +40,14 @@ vi.mock('../src/services/env-bundle.service.js', () => ({
   },
 }))
 
+vi.mock('../src/services/skill.service.js', async (io) => {
+  const m = await io()
+  return {
+    ...m,
+    skillService: { ...m.skillService, uninstall: vi.fn(async () => ({ ok: true })) },
+  }
+})
+
 vi.mock('../src/services/docker.service.js', () => ({
   dockerService: {
     imageId: vi.fn(),
@@ -285,12 +293,17 @@ describe('POST /api/user/environment/revert（回平台默认）', () => {
     })
     expect(res.statusCode).toBe(200)
     const { dockerService } = await import('../src/services/docker.service.js')
+    const { skillService } = await import('../src/services/skill.service.js')
+    // 技能走正路：uninstall=删文件+销安装账（判例：只 rm 不销账=UI 显示装了个空气）
+    expect(skillService.uninstall).toHaveBeenCalledWith(USER, 'stock-advisor')
+    expect(skillService.uninstall).not.toHaveBeenCalledWith(USER, expect.stringContaining('bad'))
     expect(dockerService.execSh).toHaveBeenCalledTimes(1)
     const cmd = String(dockerService.execSh.mock.calls[0][1])
-    expect(cmd).toContain('rm -rf /dsh-home/skills/stock-advisor')
     expect(cmd).toContain('rm -rf /dsh-home/plugins/stock-close-notify')
-    expect(cmd).not.toContain('bad name') // 非法名一条都不能进命令
+    expect(cmd).not.toContain('skills/')
+    expect(cmd).not.toContain('bad name')
     expect(json(res).cleanNote).toContain('2 项')
+    expect(json(res).cleanNote).toContain('账本同步销记')
   })
 
   it('命名防劫持钉：revert 绝不落入删卷重建（resetContainer 零调用）', async () => {

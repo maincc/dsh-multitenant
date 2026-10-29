@@ -8,6 +8,7 @@ import { dockerService } from '../services/docker.service.js'
 import { envBundleService } from '../services/env-bundle.service.js'
 import { runEnvCommit, normEnvNames, autoSlug } from '../services/env-commit.service.js'
 import { dataService } from '../services/data.service.js'
+import { skillService } from '../services/skill.service.js'
 import { resourceExhaustedPayload } from '../utils/resource-exhausted.js'
 import {
   tenantConfigService,
@@ -597,23 +598,38 @@ export async function handleUserRoutes(req, res, path) {
         result.revertNote =
           '镜像已回退到平台默认，新容器是干净默认环境。回退前你的工作目录已整体存档（想找回随时说一声）；模板随行的技能/插件仍在卷里——要一并清除，勾上「一并清除」再点一次回退。'
         if (body.alsoClean && hadTpl) {
-          // 按模板清单清除随行技能/插件：只删清单点名的目录，白名单校验，
-          // 绝不在容器里乱走别的 rm
-          const rm = []
-          for (const [base, list] of [
-            ['skills', hadTpl.include?.skills || []],
-            ['plugins', hadTpl.include?.plugins || []],
-          ]) {
-            for (const n of list)
-              if (/^[A-Za-z0-9._-]{1,64}$/.test(n)) rm.push(`rm -rf /dsh-home/${base}/${n}`)
-          }
-          if (rm.length) {
+          // 按模板清单清除随行技能/插件。**技能必须走 skillService.uninstall 正路**
+          // （判例 2026-10-29：只 rm 文件不销安装账，「我的技能」读账本显示装了个
+          // 空气——画面与真相分叉）；插件无账本，才按名单 rm 目录。白名单校验不变，
+          // 清单外一律不碰。
+          const NAME_OK = /^[A-Za-z0-9._-]{1,64}$/
+          const removed = []
+          const failed = []
+          for (const n of hadTpl.include?.skills || []) {
+            if (!NAME_OK.test(n)) continue
             try {
-              await dockerService.execSh(swtcContainerName(addr), rm.join(' && '))
-              result.cleanNote = `已按「${hadTpl.displayName || hadTpl.slug}」的清单清除 ${rm.length} 项随行技能/插件。`
-            } catch (err) {
-              result.cleanNote = `随行物清除失败（${String(err?.message || err).slice(0, 80)}），可再点一次勾选清除。`
+              await skillService.uninstall(addr, n)
+              removed.push(n)
+            } catch {
+              failed.push(n)
             }
+          }
+          const plugins = (hadTpl.include?.plugins || []).filter((n) => NAME_OK.test(n))
+          if (plugins.length) {
+            try {
+              await dockerService.execSh(
+                swtcContainerName(addr),
+                plugins.map((n) => `rm -rf /dsh-home/plugins/${n}`).join(' && '),
+              )
+              removed.push(...plugins)
+            } catch {
+              failed.push(...plugins)
+            }
+          }
+          if (removed.length || failed.length) {
+            result.cleanNote = failed.length
+              ? `已按「${hadTpl.displayName || hadTpl.slug}」的清单清除 ${removed.length} 项随行技能/插件（账本同步销记）；${failed.length} 项未成（${failed.join('、')}），可再点一次勾选清除。`
+              : `已按「${hadTpl.displayName || hadTpl.slug}」的清单清除 ${removed.length} 项随行技能/插件（账本同步销记）。`
           } else {
             result.cleanNote = '该模板没有登记在册的随行技能/插件，无需清除。'
           }
