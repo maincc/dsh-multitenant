@@ -24,6 +24,12 @@ vi.mock('../src/services/docker.service.js', () => ({
     containerImageId: vi.fn(),
     imageDshVersion: vi.fn(),
     backupVolume: vi.fn(),
+    exportWorkspaceDir: vi.fn(async (n, src, file) => {
+      writeFileSync(file, 'fake-tar')
+      return { ok: true, missing: false }
+    }),
+    importWorkspaceMerge: vi.fn(async () => ({ ok: true })),
+    execSh: vi.fn(async () => ''),
     stopContainer: vi.fn(),
     removeContainer: vi.fn(),
     removeVolume: vi.fn(),
@@ -71,7 +77,7 @@ import { adminSessionStore } from '../src/middleware/auth.middleware.js'
 import { tenantConfigService } from '../src/services/tenant-config.service.js'
 import { isAdmin, CONFIG } from '../src/config/config.js'
 import { EventEmitter } from 'node:events'
-import { mkdtempSync, rmSync, existsSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, writeFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -286,6 +292,60 @@ describe('applyImageVersion：安全护栏', () => {
     await userService.applyImageVersion(TENANT)
 
     expect(dockerService.removeVolume).not.toHaveBeenCalled()
+  })
+
+  it('判例 2026-10-29：拆前必存工作目录、新建后合回（快照连环）', async () => {
+    injectTenant()
+    dockerService.exportWorkspaceDir.mockClear()
+    dockerService.importWorkspaceMerge.mockClear()
+    userService.ensureContainer.mockImplementation(async () => {
+      await userService._restoreWorkspace(TENANT, 'x') // 模拟创建路径的合回钩子
+      return PORT
+    })
+
+    await userService.applyImageVersion(TENANT, { backup: false })
+
+    expect(dockerService.exportWorkspaceDir).toHaveBeenCalledWith(
+      expect.any(String),
+      '/root/workspace',
+      expect.stringContaining('.tar.tmp'),
+    )
+    expect(
+      dockerService.exportWorkspaceDir.mock.invocationCallOrder[0] <
+        dockerService.removeContainer.mock.invocationCallOrder[0],
+    ).toBe(true) // 存必须在拆前
+    expect(dockerService.importWorkspaceMerge).toHaveBeenCalledWith(
+      'x',
+      expect.stringContaining(`ws-${TENANT}.tar`),
+      '/root/workspace',
+    )
+    rmSync(join(userService._snapDir(), `ws-${TENANT}.tar`), { force: true })
+  })
+
+  it('archive-only（回退）：进存档槽、active 不留——下次新建才是干净的', async () => {
+    injectTenant()
+    const active = userService._snapActive(TENANT)
+    writeFileSync(active, 'old') // 历史 active（比如上次快照）
+    dockerService.importWorkspaceMerge.mockClear()
+    let dest = ''
+    dockerService.exportWorkspaceDir.mockImplementation(async (n, src, file) => {
+      dest = file
+      writeFileSync(file, 'fake-tar')
+      return { ok: true, missing: false }
+    })
+
+    await userService.applyImageVersion(TENANT, {
+      image: null,
+      backup: false,
+      workspaceSnapshot: 'archive-only',
+    })
+
+    expect(dest).toMatch(/ws-[a-z0-9]+-\d+\.archived\.tar$/)
+    expect(existsSync(active)).toBe(false) // active 清空：新容器无文件可合=真干净
+    expect(dockerService.importWorkspaceMerge).not.toHaveBeenCalled()
+    for (const f of readdirSync(userService._snapDir())) {
+      if (f.startsWith(`ws-${TENANT}`)) rmSync(join(userService._snapDir(), f), { force: true })
+    }
   })
 
   it('sync 状态：容器删除后状态为 stopped（与"容器已删"一致）', async () => {

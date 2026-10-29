@@ -578,6 +578,8 @@ export default {
     appliedOk: '切换成功：下次连接即生效（容器若重启则立刻）',
     appliedWithConflicts: '切换成功，但 {n} 个同名文件被覆盖',
     skillsFailed: '部分技能安装失败：{list}（镜像已生效；可重试或联系作者）',
+    revertCleanOpt: '一并清除随行技能/插件',
+    revertCleanTip: '只删该模板清单点名的技能/插件目录（工作文件与别的都不碰）；默认不勾。',
     revertBtn: '回退默认环境',
     revertConfirm: '回退到平台默认环境？你的卷数据不会动。',
     reverted: '已回退：下次连接回到默认环境',

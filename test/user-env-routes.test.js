@@ -48,6 +48,7 @@ vi.mock('../src/services/docker.service.js', () => ({
     containerImageId: vi.fn(async () => 'sha256:parent'),
     commitEnvironment: vi.fn(),
     removeImage: vi.fn(),
+    execSh: vi.fn(async () => ''),
   },
 }))
 
@@ -257,12 +258,39 @@ describe('POST /api/user/environment/revert（回平台默认）', () => {
     seed({ pinnedBy: [USER] })
     const res = await call('/api/user/environment/revert', { method: 'POST', body: {} })
     expect(res.statusCode).toBe(200)
-    expect(userService.applyImageVersion).toHaveBeenCalledWith(USER, { image: null, dryRun: false })
+    expect(userService.applyImageVersion).toHaveBeenCalledWith(USER, {
+      image: null,
+      dryRun: false,
+      workspaceSnapshot: 'archive-only', // 回退=干净默认：工作目录只存档不合回
+    })
     expect(globalThis.__envStore.get(TPL).pinnedBy).not.toContain(USER)
     expect(dataService.logOperation).toHaveBeenCalledWith(
       'env_reset_self',
       expect.objectContaining({ address: USER }),
     )
+  })
+
+  it('勾「一并清除」：只 rm 清单点名目录（白名单校验，别的都不碰）', async () => {
+    seed({
+      pinnedBy: [USER],
+      include: {
+        skills: ['stock-advisor', 'bad name; rm -rf /'],
+        plugins: ['stock-close-notify'],
+        folders: [],
+      },
+    })
+    const res = await call('/api/user/environment/revert', {
+      method: 'POST',
+      body: { alsoClean: true },
+    })
+    expect(res.statusCode).toBe(200)
+    const { dockerService } = await import('../src/services/docker.service.js')
+    expect(dockerService.execSh).toHaveBeenCalledTimes(1)
+    const cmd = String(dockerService.execSh.mock.calls[0][1])
+    expect(cmd).toContain('rm -rf /dsh-home/skills/stock-advisor')
+    expect(cmd).toContain('rm -rf /dsh-home/plugins/stock-close-notify')
+    expect(cmd).not.toContain('bad name') // 非法名一条都不能进命令
+    expect(json(res).cleanNote).toContain('2 项')
   })
 
   it('命名防劫持钉：revert 绝不落入删卷重建（resetContainer 零调用）', async () => {

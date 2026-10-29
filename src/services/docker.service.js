@@ -3,7 +3,10 @@
  * 封装所有 Docker CLI 操作
  */
 
-import { execFile } from 'node:child_process'
+import { execFile, spawnSync } from 'node:child_process'
+import { join } from 'node:path'
+import { openSync, closeSync, mkdtempSync, existsSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { CONFIG } from '../config/config.js'
 import { requiresToken, DSH_TOKEN_AUTH_SINCE } from './dsh-version.service.js'
@@ -996,6 +999,66 @@ export class DockerService {
       }
     }
     return { removed, failed }
+  }
+
+  // ═══ 工作目录快照三件套（判例 2026-10-29：/root/workspace 在镜像层，回退/升级/
+  // 闲置销毁/换模板等一切重建都会连坐丢掉用户攒的文件——拆前存、建后合）═══
+
+  // 把容器内目录导出为 tar 文件（docker cp 流直写磁盘；停止中的容器同样可导）。
+  exportWorkspaceDir(name, srcPath, tarFile) {
+    const fd = openSync(tarFile, 'w')
+    try {
+      const r = spawnSync('docker', ['cp', `${name}:${srcPath}`, '-'], {
+        stdio: ['ignore', fd, 'pipe'],
+        encoding: 'utf8',
+      })
+      if (r.status !== 0) {
+        const err = String(r.stderr || '')
+        return {
+          ok: false,
+          missing: /no such file|not found|could not find/i.test(err),
+          error: err.slice(0, 200),
+        }
+      }
+      return { ok: true, missing: false }
+    } finally {
+      closeSync(fd)
+    }
+  }
+
+  // 把 tar 合回容器目标目录：宿主机解包 → 放逐处暂存 → `cp -rn` 合并——
+  // 只填空位不覆盖：新镜像/模板带来的同名文件优先，用户旧文件补位。
+  importWorkspaceMerge(name, tarFile, destPath) {
+    const tmp = mkdtempSync(join(tmpdir(), 'ws-import-'))
+    try {
+      let r = spawnSync('tar', ['-xf', tarFile, '-C', tmp], { encoding: 'utf8' })
+      if (r.status !== 0)
+        return { ok: false, error: String(r.stderr || 'untar-failed').slice(0, 200) }
+      const root = existsSync(join(tmp, 'workspace')) ? join(tmp, 'workspace') : tmp
+      r = spawnSync('docker', ['cp', root, `${name}:/.ws-import`], { encoding: 'utf8' })
+      if (r.status !== 0) return { ok: false, error: String(r.stderr || 'cp-failed').slice(0, 200) }
+      r = spawnSync(
+        'docker',
+        [
+          'exec',
+          name,
+          'sh',
+          '-c',
+          `mkdir -p ${destPath} && cp -rn /.ws-import/. ${destPath}/ ; rm -rf /.ws-import`,
+        ],
+        { encoding: 'utf8' },
+      )
+      if (r.status !== 0)
+        return { ok: false, error: String(r.stderr || 'merge-failed').slice(0, 200) }
+      return { ok: true }
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  }
+
+  // 容器内最小远程命令（回退「一并清除」按清单 rm -rf；名单校验在调用方）
+  execSh(name, cmd) {
+    return sh('docker', ['exec', name, 'sh', '-c', cmd])
   }
 
   async imageId(image = IMAGE) {

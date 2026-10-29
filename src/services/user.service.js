@@ -12,6 +12,9 @@ import {
   readFileSync,
   accessSync,
   constants,
+  rmSync,
+  renameSync,
+  readdirSync,
 } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { execFile } from 'node:child_process'
@@ -703,6 +706,7 @@ export class UserService {
     // 2. 删除数据卷
     try {
       await dockerService.removeVolume(volume)
+      this._purgeWorkspaceSnapshots(address)
       console.log(`[reset] Volume ${volume} deleted`)
     } catch (err) {
       const msg = String(err?.message || err)
@@ -1205,6 +1209,7 @@ export class UserService {
     // 删除数据卷
     try {
       await dockerService.removeVolume(volume)
+      this._purgeWorkspaceSnapshots(address)
       console.log(`[delete-volume] Volume ${volume} deleted for ${address}`)
     } catch (err) {
       // 卷已被"移除用户"流程删过 → 重复点清除数据应静默成功，不该弹 500
@@ -1511,6 +1516,8 @@ export class UserService {
           image,
         })
         this.state.nextPort = Math.max(this.state.nextPort ?? CONFIG.docker.basePort, port + 1)
+        // 新容器 = 可还原画面：active 快照合回（不覆盖已有文件；判例 2026-10-29）
+        await this._restoreWorkspace(address, name)
         return await this.finalizeTenant(address, name, port, internalPort)
       } catch (err) {
         const msg = String(err.stderr)
@@ -1910,6 +1917,87 @@ export class UserService {
    * @param {{mode?: 'rebuild'|'inplace', dryRun?: boolean, backup?: boolean,
    *          skipQueueCheck?: boolean}} opts
    */
+  // ═══ 工作目录快照（判例 2026-10-29：workspace 在镜像层，任何拆建都连坐丢文件）═══
+  _snapDir() {
+    const d = join(dataService.dataDir, 'workspace-snapshots')
+    mkdirSync(d, { recursive: true })
+    return d
+  }
+
+  _snapActive(address) {
+    return join(this._snapDir(), `ws-${address}.tar`)
+  }
+
+  // 默认进 active 槽（下次容器创建时自动合回）；archiveOnly=true 只进存档槽并
+  // 清空 active——**回退语义 = 干净默认**：个人文件存档可寻，但不塞回新容器
+  async _snapshotWorkspace(address, name, { archiveOnly = false } = {}) {
+    try {
+      const dir = this._snapDir()
+      const active = this._snapActive(address)
+      if (archiveOnly) {
+        const arch = join(dir, `ws-${address}-${Date.now()}.archived.tar`)
+        const r = await dockerService.exportWorkspaceDir(name, '/root/workspace', arch)
+        try {
+          rmSync(active, { force: true })
+        } catch {}
+        if (!r.ok) {
+          if (!r.missing) {
+            rmSync(arch, { force: true })
+            console.warn(`[ws] ${address} 回退前存档失败（回退照常）：${r.error}`)
+          }
+          return null
+        }
+        return arch
+      }
+      const tmp = `${active}.tmp`
+      const r = await dockerService.exportWorkspaceDir(name, '/root/workspace', tmp)
+      if (!r.ok) {
+        try {
+          rmSync(tmp, { force: true })
+        } catch {}
+        if (!r.missing)
+          console.warn(`[ws] ${address} 快照失败（重建照常，下次合并的可能是旧快照）：${r.error}`)
+        return null
+      }
+      renameSync(tmp, active)
+      return active
+    } catch (err) {
+      console.warn(
+        `[ws] ${address} 快照异常（不阻塞重建）：${String(err?.message || err).slice(0, 160)}`,
+      )
+      return null
+    }
+  }
+
+  async _restoreWorkspace(address, name) {
+    try {
+      const active = this._snapActive(address)
+      if (!existsSync(active)) return null
+      const r = await dockerService.importWorkspaceMerge(name, active, '/root/workspace')
+      if (!r.ok)
+        console.warn(
+          `[ws] ${address} 快照恢复失败（容器照常可用，画面为新镜像的文件态）：${r.error}`,
+        )
+      else console.log(`[ws] ${address} 工作文件已从快照合回（不覆盖，已有文件优先）`)
+      return r.ok
+    } catch (err) {
+      console.warn(
+        `[ws] ${address} 恢复异常（不阻塞）：${String(err?.message || err).slice(0, 160)}`,
+      )
+      return null
+    }
+  }
+
+  _purgeWorkspaceSnapshots(address) {
+    try {
+      const dir = this._snapDir()
+      for (const f of readdirSync(dir))
+        if (f.startsWith(`ws-${address}`)) rmSync(join(dir, f), { force: true })
+    } catch {
+      // 尽力清理
+    }
+  }
+
   async applyImageVersion(address, opts = {}) {
     address = normalizeAddress(address)
     const { mode = 'rebuild', dryRun = false, skipQueueCheck = true } = opts
@@ -2061,6 +2149,11 @@ export class UserService {
         throw new Error(`数据卷备份失败，已中止（未改动容器）：${err.message}`)
       }
     }
+
+    // ①.5 工作目录快照：拆之前必存（判例：不存就重建 = 抹文件）
+    await this._snapshotWorkspace(address, name, {
+      archiveOnly: opts.workspaceSnapshot === 'archive-only',
+    })
 
     // ② 结算当前运行段（2026-10 审计：挪到"旧容器确认离场"之后——原顺序在
     // stop 失败被吞 + remove 失败中止时清掉表针，旧容器还活着从此不计费；
@@ -2789,6 +2882,8 @@ export class UserService {
         const stoppedDuration = now - (user.stoppedAt || user.lastSeenAt)
         if (stoppedDuration > this.state.cleanupPolicy.destroyTimeoutMs) {
           try {
+            // 闲置销毁也要先存工作目录——否则"销毁保卷"名不副实（卷里没有 workspace）
+            await this._snapshotWorkspace(address, name)
             await dockerService.removeContainer(name)
             user.containerStatus = 'destroyed'
             // 清理不相关字段

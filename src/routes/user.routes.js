@@ -577,9 +577,12 @@ export async function handleUserRoutes(req, res, path) {
       const result = await userService.applyImageVersion(addr, {
         image: null,
         dryRun: !!body.dryRun,
+        // 回退=干净默认（判例语义定规）：工作目录只存档不进新容器
+        workspaceSnapshot: 'archive-only',
       })
       if (!body.dryRun) {
         const envs = await dataService.listEnvironments()
+        const hadTpl = envs.find((e) => (e.pinnedBy || []).includes(addr)) || null
         for (const e of envs) {
           if ((e.pinnedBy || []).includes(addr)) {
             await dataService.patchEnvironment(e._id, {
@@ -590,8 +593,31 @@ export async function handleUserRoutes(req, res, path) {
         dataService.logOperation('env_reset_self', { address: addr, operator: addr })
         // 诚实说明：回退只换镜像，随行文件不自动删（自动删可能误伤接收者
         // 自己改过的同名文件）——残留的后果就是"再次选用会再问一次覆盖"。
+        // 如实交代新语义：工作目录已存档（可找回）、随行动作二选一
         result.revertNote =
-          '镜像已回退到平台默认。之前模板随行的文件（插件、技能、保留的工作目录）仍在你的容器卷里，不会被自动删除；再次选用该模板时会提示覆盖确认。'
+          '镜像已回退到平台默认，新容器是干净默认环境。回退前你的工作目录已整体存档（想找回随时说一声）；模板随行的技能/插件仍在卷里——要一并清除，勾上「一并清除」再点一次回退。'
+        if (body.alsoClean && hadTpl) {
+          // 按模板清单清除随行技能/插件：只删清单点名的目录，白名单校验，
+          // 绝不在容器里乱走别的 rm
+          const rm = []
+          for (const [base, list] of [
+            ['skills', hadTpl.include?.skills || []],
+            ['plugins', hadTpl.include?.plugins || []],
+          ]) {
+            for (const n of list)
+              if (/^[A-Za-z0-9._-]{1,64}$/.test(n)) rm.push(`rm -rf /dsh-home/${base}/${n}`)
+          }
+          if (rm.length) {
+            try {
+              await dockerService.execSh(swtcContainerName(addr), rm.join(' && '))
+              result.cleanNote = `已按「${hadTpl.displayName || hadTpl.slug}」的清单清除 ${rm.length} 项随行技能/插件。`
+            } catch (err) {
+              result.cleanNote = `随行物清除失败（${String(err?.message || err).slice(0, 80)}），可再点一次勾选清除。`
+            }
+          } else {
+            result.cleanNote = '该模板没有登记在册的随行技能/插件，无需清除。'
+          }
+        }
       }
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify(result))

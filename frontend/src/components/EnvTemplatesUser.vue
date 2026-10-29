@@ -23,6 +23,10 @@
         <button class="btn btn-small btn-secondary" :disabled="busy" @click="revertNow">
           {{ $t('env.revertBtn') }}
         </button>
+        <label class="env-clean-opt" :title="$t('env.revertCleanTip')">
+          <input v-model="revertClean" type="checkbox" :disabled="busy" />
+          {{ $t('env.revertCleanOpt') }}
+        </label>
       </template>
       <span v-else-if="current?.image" class="badge badge-warning">{{
         $t('env.pinnedVersion')
@@ -536,14 +540,21 @@ async function applyForReal(tpl) {
   }
 }
 
+const revertClean = ref(false)
+
 async function revertNow() {
-  const go = await askConfirm({ message: t('env.revertConfirm'), confirmLabel: t('env.revertBtn') })
+  const go = await askConfirm({
+    message: t('env.revertConfirm') + (revertClean.value ? ' ' + t('env.revertCleanOpt') : ''),
+    confirmLabel: t('env.revertBtn'),
+  })
   if (!go) return
   busy.value = true
   try {
-    const r = await axios.post('/api/user/environment/revert', {})
+    const r = await axios.post('/api/user/environment/revert', { alsoClean: revertClean.value })
     // 后端如实说明随行文件残留（只换镜像不删文件）——有则转告，无则原话
-    toast(r.data?.revertNote || t('env.reverted'))
+    toast(
+      (r.data?.revertNote || t('env.reverted')) + (r.data?.cleanNote ? ' ' + r.data.cleanNote : ''),
+    )
     await loadAll()
   } catch (e) {
     toast(errMsg(e))
@@ -835,6 +846,15 @@ const totalBundleBytes = computed(() => {
   display: flex;
   gap: 0.6rem;
   justify-content: flex-end;
+}
+.env-clean-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: #64748b;
+  cursor: pointer;
+  user-select: none;
 }
 .env-wall {
   border: 1px solid var(--border-color, rgba(255, 255, 255, 0.14));
