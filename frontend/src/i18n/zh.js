@@ -136,7 +136,7 @@ export default {
     tabContainer: '容器管理',
     tabIdentity: '数字身份',
     tabCwt: 'CWT 验证',
-    tabSkills: '我的技能',
+    tabSkills: '技能市场',
     tabEnv: '环境模板',
     // v1.5 验收反馈①：管理页签并入用户侧栏（不再有独立"系统管理"tab/页）
     adminGroup: '管理',
@@ -598,9 +598,9 @@ export default {
     preGoPromise: '放心点：定格只是"复制一份环境出去"，你的容器照常运行；带走的每一样都要你亲手勾',
     catSkills: '技能',
     catEnv: '环境模板',
-    mineSectionTitle: '环境 · 我的现场',
+    mineSectionTitle: '环境模板',
     mineSectionHint:
-      '套来的与格出的都在这里看；挑新环境去「市场 → 环境模板」。回退只换镜像，随行文件不自动删。',
+      '货架与现场同处一页：逛、选用、回退、经营自己定格的环境都在这里。回退只换镜像，随行文件不自动删。',
     onTplTitle: '这个环境是套来的，先别在它上面定格',
     onTplWhy:
       '你的容器现在跑的是「{name}」——定格复制的是容器此刻的样子，在套来的环境上按定格，格出来的只是它的翻版（插件文件还会被原样打包，作者栏却会写上你的名字）。',
