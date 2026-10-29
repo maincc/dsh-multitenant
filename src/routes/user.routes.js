@@ -575,6 +575,48 @@ export async function handleUserRoutes(req, res, path) {
     }
     const body = (await parseJsonBody(req, res)) || {}
     try {
+      // 先读账本：我现在钉在谁身上（hadTpl 必须在解绑与换容器之前拿到）
+      const envs = body.dryRun ? [] : await dataService.listEnvironments()
+      const hadTpl = envs.find((e) => (e.pinnedBy || []).includes(addr)) || null
+      // 「一并清除」必须在**换容器之前**做（判例 2026-10-29 雷达竞态：代际在
+      // 容器重建那刻翻转、雷达随即刷新页面——清除若排在换容器之后，页面刷
+      // 出来看到的是"半干净"世界，插件明明删了还显示）。在旧容器里先清干净，
+      // 页面刷新那一眼就是终态。
+      let cleanNote = null
+      if (hadTpl && body.alsoClean) {
+        // 技能必须走 skillService.uninstall 正路（判例：只 rm 文件不销安装账，
+        // 「我的技能」读账本显示装了个空气）；插件无账本，按名单 rm 目录。
+        const NAME_OK = /^[A-Za-z0-9._-]{1,64}$/
+        const removed = []
+        const failed = []
+        for (const n of hadTpl.include?.skills || []) {
+          if (!NAME_OK.test(n)) continue
+          try {
+            await skillService.uninstall(addr, n)
+            removed.push(n)
+          } catch {
+            failed.push(n)
+          }
+        }
+        const plugins = (hadTpl.include?.plugins || []).filter((n) => NAME_OK.test(n))
+        if (plugins.length) {
+          try {
+            await dockerService.execSh(
+              swtcContainerName(addr),
+              plugins.map((n) => `rm -rf /dsh-home/plugins/${n}`).join(' && '),
+            )
+            removed.push(...plugins)
+          } catch {
+            failed.push(...plugins)
+          }
+        }
+        cleanNote =
+          removed.length || failed.length
+            ? failed.length
+              ? `已按「${hadTpl.displayName || hadTpl.slug}」的清单清除 ${removed.length} 项随行技能/插件（账本同步销记）；${failed.length} 项未成（${failed.join('、')}），可再点一次勾选清除。`
+              : `已按「${hadTpl.displayName || hadTpl.slug}」的清单清除 ${removed.length} 项随行技能/插件（账本同步销记）。`
+            : '该模板的清单里没有登记在册的随行技能/插件，无需清除。'
+      }
       const result = await userService.applyImageVersion(addr, {
         image: null,
         dryRun: !!body.dryRun,
@@ -582,8 +624,6 @@ export async function handleUserRoutes(req, res, path) {
         workspaceSnapshot: 'archive-only',
       })
       if (!body.dryRun) {
-        const envs = await dataService.listEnvironments()
-        const hadTpl = envs.find((e) => (e.pinnedBy || []).includes(addr)) || null
         for (const e of envs) {
           if ((e.pinnedBy || []).includes(addr)) {
             await dataService.patchEnvironment(e._id, {
@@ -592,48 +632,13 @@ export async function handleUserRoutes(req, res, path) {
           }
         }
         dataService.logOperation('env_reset_self', { address: addr, operator: addr })
-        // 诚实说明：回退只换镜像，随行文件不自动删（自动删可能误伤接收者
-        // 自己改过的同名文件）——残留的后果就是"再次选用会再问一次覆盖"。
-        // 如实交代新语义：工作目录已存档（可找回）、随行动作二选一
         result.revertNote =
-          '镜像已回退到平台默认，新容器是干净默认环境。开着的 DSH 页面刷新一下即连上新环境（不用重新登录）。回退前你的工作目录已整体存档（想找回随时说一声）；模板随行的技能/插件仍在卷里——要一并清除，勾上「一并清除」再点一次回退。'
-        if (body.alsoClean && hadTpl) {
-          // 按模板清单清除随行技能/插件。**技能必须走 skillService.uninstall 正路**
-          // （判例 2026-10-29：只 rm 文件不销安装账，「我的技能」读账本显示装了个
-          // 空气——画面与真相分叉）；插件无账本，才按名单 rm 目录。白名单校验不变，
-          // 清单外一律不碰。
-          const NAME_OK = /^[A-Za-z0-9._-]{1,64}$/
-          const removed = []
-          const failed = []
-          for (const n of hadTpl.include?.skills || []) {
-            if (!NAME_OK.test(n)) continue
-            try {
-              await skillService.uninstall(addr, n)
-              removed.push(n)
-            } catch {
-              failed.push(n)
-            }
-          }
-          const plugins = (hadTpl.include?.plugins || []).filter((n) => NAME_OK.test(n))
-          if (plugins.length) {
-            try {
-              await dockerService.execSh(
-                swtcContainerName(addr),
-                plugins.map((n) => `rm -rf /dsh-home/plugins/${n}`).join(' && '),
-              )
-              removed.push(...plugins)
-            } catch {
-              failed.push(...plugins)
-            }
-          }
-          if (removed.length || failed.length) {
-            result.cleanNote = failed.length
-              ? `已按「${hadTpl.displayName || hadTpl.slug}」的清单清除 ${removed.length} 项随行技能/插件（账本同步销记）；${failed.length} 项未成（${failed.join('、')}），可再点一次勾选清除。`
-              : `已按「${hadTpl.displayName || hadTpl.slug}」的清单清除 ${removed.length} 项随行技能/插件（账本同步销记）。`
-          } else {
-            result.cleanNote = '该模板没有登记在册的随行技能/插件，无需清除。'
-          }
-        }
+          '镜像已回退到平台默认，新容器是干净默认环境。开着的 DSH 页面会自动感知切换并重连（旧页面刷一下即连上，不用重新登录）。' +
+          '回退前你的工作目录已整体存档（想找回随时说一声）；' +
+          (cleanNote
+            ? '模板随行的技能/插件已在换容器前同步清除。'
+            : '模板随行的技能/插件仍在卷里——要一并清除，勾上「一并清除」再点一次回退。')
+        if (cleanNote) result.cleanNote = cleanNote
       }
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify(result))
