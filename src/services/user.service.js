@@ -1022,8 +1022,12 @@ export class UserService {
       if (host) {
         const threshold = CONFIG.docker?.maintenance?.lowFreeBytes ?? 4 * 1024 * 1024 * 1024
         lowFree = host.availableKB * 1024 < threshold
+        // dockerDiskSummary 实物返 {items}；历史上有的调用方按裸数组消费
+        // （判例十一：mock 数组绿、真机 {items} 崩——低盘告警形同虚设，
+        // 可回收 21GB 报成"无回收项"）。宽容双契约，再不让形状分歧说谎。
+        const dockerList = Array.isArray(docker) ? docker : (docker?.items ?? [])
         if (lowFree) {
-          const reclaim = (docker || [])
+          const reclaim = dockerList
             .filter((d) => d.reclaimable && !/^0B$/i.test(String(d.reclaimable)))
             .slice(0, 3)
             .map((d) => `${d.name}:${d.reclaimable}`)
