@@ -215,6 +215,15 @@ afterEach(() => {
     }
     backupDir = null
   }
+  // 快照槽位也是测试动过的"世界"：残留会让下一个用例的合回钩子凭空生效
+  // （自检揪出的跨用例污染：'sync 状态'老用例跑真实 apply 落了 8 字节 active）
+  try {
+    const sd = userService._snapDir()
+    for (const f of readdirSync(sd))
+      if (f.startsWith(`ws-${TENANT}`)) rmSync(join(sd, f), { force: true })
+  } catch {
+    // 尽力打扫
+  }
 })
 
 describe('applyImageVersion：跳过场景', () => {
