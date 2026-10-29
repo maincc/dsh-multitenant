@@ -425,6 +425,17 @@ export async function handleUserRoutes(req, res, path) {
     const published = envs.filter((e) => e.status === 'published')
     const pinned = userService.state.swtcUsers?.[addr]?.pinnedImage ?? null
     const mine = published.find((e) => e._id === pinned) || null
+    // 画面与真相收敛（第八案连带修正）：容器实物命中模板就算"套来的"，
+    // 账本 pin 只在容器不在线时兜底——否则半途中止的回退会让来源条说谎，
+    // 用户连"再点一次回退"的按钮都摸不到
+    let runningTpl = null
+    try {
+      const curImage = await dockerService.containerImageId(swtcContainerName(addr))
+      runningTpl = curImage ? published.find((e) => e.imageId === curImage) || null : null
+    } catch {
+      // 实物探测失败不拦列表：退回按账本认领
+    }
+    const shownTpl = runningTpl || mine
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
     res.end(
       JSON.stringify({
@@ -470,11 +481,11 @@ export async function handleUserRoutes(req, res, path) {
         yourCurrent: {
           image: pinned,
           // pin 的是版本镜像（平台钉版）而非模板——如实标 null，UI 归"其他"
-          fromTemplate: mine
+          fromTemplate: shownTpl
             ? {
-                name: mine.displayName || mine.slug,
-                slug: mine.slug,
-                author: mine.sourceAddr,
+                name: shownTpl.displayName || shownTpl.slug,
+                slug: shownTpl.slug,
+                author: shownTpl.sourceAddr,
               }
             : null,
         },

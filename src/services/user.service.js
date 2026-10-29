@@ -2089,6 +2089,11 @@ export class UserService {
     this.state.swtcUsers[address] = {
       ...user,
       port: keptPort,
+      // 判例 2026-10-29（真机第八案·账本劫持参数）：回退（image=null）时旧 pin
+      // 还挂在记录里，ensureContainer 的 `if (pinned) image = pinned` 把
+      // "回默认"劫持回了模板镜像——账清了、容器没换，回退无限次都修不好。
+      // 定规：**动手改世界之前，意图先入账**。
+      pinnedImage: targetImage,
       containerStatus: 'stopped',
       stoppedAt: Date.now(),
       lastDshVersion: user.baseImageVersion ?? null,

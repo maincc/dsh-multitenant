@@ -298,6 +298,26 @@ describe('applyImageVersion：安全护栏', () => {
     // 第三个参数是目标镜像：null = 平台默认 latest（未指定版本选择时）
     expect(userService.ensureContainer).toHaveBeenCalledWith(TENANT, true, null)
   })
+
+  it('判例·回退不得被旧账本劫持（2026-10-29 真机第八案）：动手前意图先入账', async () => {
+    // 复现真机故障链：记录里 pinnedImage=模板，revert 调 applyImageVersion
+    // (image=null)——旧实现 rm 完容器才在 ⑥ 清 pin，ensureContainer 中途读
+    // 到旧 pin 就把"回默认"劫持回模板镜像。修复=④ 落账意图先于动手。
+    injectTenant()
+    userService.state.swtcUsers[TENANT].pinnedImage = 'dsh-multitenant:env-x'
+    dockerService.containerImageId.mockResolvedValue('sha:tpl') // 容器在模板上
+    dockerService.imageId.mockResolvedValue('sha:default')
+    let pinAtRebuild = 'ensureContainer 未被调用'
+    userService.ensureContainer.mockImplementation(async () => {
+      pinAtRebuild = userService.state.swtcUsers[TENANT].pinnedImage
+      return PORT
+    })
+
+    await userService.applyImageVersion(TENANT, { image: null, backup: false })
+
+    expect(pinAtRebuild).toBe(null) // 重建那一刻，账本已按新意图落账
+    expect(userService.state.swtcUsers[TENANT].pinnedImage).toBe(null)
+  })
 })
 
 describe('applyImageVersion：端口保护', () => {
