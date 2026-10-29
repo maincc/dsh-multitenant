@@ -437,6 +437,7 @@ import { ref, computed, onMounted } from 'vue'
 //   mode='market' 货架段（讲解+模板卡片+dryRun 预览+选用）
 //   mode='mine'   现场段（来源条+我的模板+定格区+向导）
 //   默认 'both'   全量（独立路由/兼容）
+const emit = defineEmits(['mine-changed'])
 const props = defineProps({ mode: { type: String, default: 'both' } })
 const mode = props.mode
 import { useI18n } from 'vue-i18n'
@@ -572,6 +573,7 @@ async function applyForReal(tpl) {
     ;(res.data.notices || []).forEach((n) => warns.push(n))
     toast(warns.length ? warns.join('；') : t('env.appliedOk'))
     await loadAll()
+    emit('mine-changed') // apply 按清单装了技能——同页的「我的技能」账本视图跟着重载
   } catch (e) {
     toast(errMsg(e))
   } finally {
@@ -631,7 +633,9 @@ async function revertNow() {
     toast(
       (r.data?.revertNote || t('env.reverted')) + (r.data?.cleanNote ? ' ' + r.data.cleanNote : ''),
     )
+    revertClean.value = false // 危险勾选不留在按钮上——每次清除都要当面再确认一次
     await loadAll()
+    if (r.data?.cleanNote) emit('mine-changed') // 销了账的行不能再挂在「我的技能」里当证据
   } catch (e) {
     toast(errMsg(e))
   } finally {

@@ -770,7 +770,7 @@
             <h4>{{ $t('env.mineSectionTitle') }}</h4>
             <p class="tab-hint">{{ $t('env.mineSectionHint') }}</p>
           </div>
-          <EnvTemplatesUser mode="mine" />
+          <EnvTemplatesUser mode="mine" @mine-changed="loadMine" />
         </div>
 
         <!-- ════════ 我的技能 ════════ -->
@@ -1178,9 +1178,6 @@ const loadCredentialStatus = async (address) => {
   // 用户拍板恢复方式：**检测到账户切换即自动发起重签**（钱包弹一次，零操作自愈）；
   // 拒签/重签未完成才落到被动引导态（"重新登录并重载凭证"按钮出口）。
   if (data.address && String(data.address).toLowerCase() !== String(address).toLowerCase()) {
-    console.log(
-      `[flow] F9 会话主人=${String(data.address).slice(0, 10)}…（上次签名登录的钱包）≠ 当前账户=${String(address).slice(0, 10)}…，自动重签发起（钱包只弹一次）`,
-    )
     const fresh = await resignSessionTo(address)
     if (fresh) {
       data = fresh
@@ -1872,9 +1869,6 @@ const loginOnly = async (address) => {
 // 处理地址变化的通用函数
 const handleAddressChange = async (newAddress, isInitialLoad = false) => {
   const oldAddress = localStorage.getItem('swtc_address')
-  console.log(
-    `[flow] F3 handleAddressChange 进入 (${isInitialLoad ? '初始加载' : '按钮/事件'}, old=${oldAddress}, new=${newAddress})`,
-  )
 
   if (isInitialLoad) {
     console.log('[UserCenter] 初始加载，恢复地址:', newAddress)
@@ -1904,7 +1898,6 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
 
   try {
     // 显示加载页面
-    console.log('[flow] L1 loading=10% 验证地址')
     showLoading(t('user.loadingConnect'), t('user.loadingVerify'), 10)
 
     // ★v1.5 验收反馈②：进入用户中心 = **登录**，不再顺手建容器。
@@ -1940,9 +1933,7 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
     }
 
     // 切换/连接后刷新"我的技能"为当前地址的个人视图
-    console.log('[flow] F13 loadMine 开始（loading 已结束）')
     await loadMine()
-    console.log('[flow] F13b loadMine 完成')
   } catch (err) {
     console.error('[UserCenter] 处理地址失败:', err)
     hideLoading()
@@ -1953,7 +1944,6 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
 }
 
 const connectWallet = async () => {
-  console.log('[flow] F1 connectWallet 进入')
   if (!hasCCDAO.value) return
 
   connecting.value = true
@@ -1964,7 +1954,6 @@ const connectWallet = async () => {
     rememberPluginCase(pluginAddress)
     // 统一转小写
     const address = pluginAddress.toLowerCase()
-    console.log('[flow] F2 拿到地址:', address)
     console.log('[UserCenter] 连接钱包，地址:', address)
 
     // 使用通用处理函数
@@ -1991,7 +1980,6 @@ const connectWallet = async () => {
 // 避免重复弹签名窗、重复创建容器。
 let ownershipInFlight = false
 const connectWithOwnership = async (address, opts = {}) => {
-  console.log('[flow] F6 connectWithOwnership 进入（签名链路）')
   // quiet=后台自动拉起（进入用户中心触发）：钱包签名弹窗照常（归属闸不放松），
   // 但不糊全屏 loading——用户可继续浏览，进度由容器 tab 的加载图标承担
   const quiet = !!opts.quiet
@@ -2024,12 +2012,10 @@ const connectWithOwnership = async (address, opts = {}) => {
     if (!nonce || !message) {
       throw new Error(challenge.error || '领取连接挑战失败，请重试')
     }
-    console.log('[flow] F7 挑战获取完成 nonce.length=' + (nonce ? String(nonce).length : 0))
     // 2) 插件签名（用户确认弹窗，可能等待较久）：签的是用途绑定消息（hex）
     if (!quiet) showLoading(title, t('user.loadingSign'), Math.max(progress0, 45))
     const signature = await signMessage(pluginAddress, message)
     const publicKey = await getPublicKey(pluginAddress)
-    console.log('[flow] F8 钱包签名+公钥完成')
     // 3) 带签名访问 /connect（已存在容器同样验签并发 cookie）
     // format=json：浏览器 fetch 的 redirect:manual 会把 302 包成 opaque (status 0)，
     // 取不到 location → 后端直接回 200 JSON {url}，前端 window.open。
@@ -2044,9 +2030,7 @@ const connectWithOwnership = async (address, opts = {}) => {
       format: 'json',
       ...(opts.action ? { action: opts.action } : {}),
     })
-    console.log('[flow] F9a 发起 /connect（带签名）')
     const cRes = await fetch(`/connect?${params}`)
-    console.log('[flow] F9b /connect 返回 status=' + cRes.status)
     return cRes
   } finally {
     ownershipInFlight = false
@@ -2075,7 +2059,6 @@ const enterDsh = async () => {
     if (res.status === 200) {
       const data = await res.json()
       if (data?.url) {
-        console.log('[flow] F14 打开容器页: ' + data.url)
         window.open(data.url, '_blank', 'noopener')
         return
       }
@@ -2085,7 +2068,6 @@ const enterDsh = async () => {
     if (res.status === 302) {
       const loc = res.headers.get('location')
       if (loc) {
-        console.log('[flow] F14 302 打开容器页: ' + loc)
         window.open(loc, '_blank', 'noopener')
       }
       return
@@ -2105,13 +2087,9 @@ const enterDsh = async () => {
 // 最近一次 /connect 202 的后端提示（资源不足/额度用完），供上层展示
 let lastConnect202Message = ''
 const ensureContainer = async (address, opts = {}) => {
-  console.log('[flow] F4a ensureContainer 进入')
   // 先检查容器状态
   try {
     const statusRes = await axios.get(`/connect-status?address=${encodeURIComponent(address)}`)
-    console.log(
-      `[flow] F4b /connect-status 返回 exists=${statusRes.data.exists} status=${statusRes.data.status}`,
-    )
 
     // 如果在等待队列中
     if (statusRes.data.status === 'waiting') {
@@ -2126,7 +2104,6 @@ const ensureContainer = async (address, opts = {}) => {
 
     // 如果容器不存在或已销毁，创建新容器
     if (!statusRes.data.exists || statusRes.data.status === 'destroyed') {
-      console.log('[flow] F5 容器不存在 → 签名并创建')
       console.log('[UserCenter] 容器不存在，正在创建...')
       const connectRes = await connectWithOwnership(address, {
         title: t('user.loadingCreateContainer'),
@@ -2253,19 +2230,12 @@ const cancelWaiting = () => {
 }
 
 const fetchUserInfo = async (address) => {
-  console.log('[flow] F11 fetchUserInfo 开始')
   // 门控 loading：仅当调用方没有在展示 loading 时才自己开/关，
   // 避免打断 handleAddressChange 的整体加载流程（它自己会 hide）
   const opened = !loading.value
   if (opened) showLoading(t('user.loadingFetchInfo'), t('user.loadingAccountData'), 80)
   try {
     const res = await axios.get(`/api/user/${address}`)
-    console.log(
-      '[flow] F12 用户信息返回 OK, address=' +
-        (res.data?.address || '(空)') +
-        ', status=' +
-        res.data?.status,
-    )
     // 未建档新用户空态：后端以 200+USER_NOT_FOUND 表达（根治浏览器网络层红字
     // 404；catch 里的 404 分支保留兼容旧服务端）。空态不发 usage/config 请求；
     // 装配必须先于 userInfo 落位——领取弹窗由装配触发，若后于容器管理块的
@@ -2364,7 +2334,6 @@ const autoBootContainer = async (data) => {
   // 归属签名重建）；none 未建档/waiting 已在排队页/未知态都不自动造轮子
   if (st !== 'stopped' && st !== 'destroyed') return
   containerBooting.value = true
-  console.log('[flow] F14 后台自动拉起容器, status=' + st)
   try {
     if (st === 'stopped') {
       await axios.post(`/api/user/${address}/restart`)

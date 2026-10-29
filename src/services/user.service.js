@@ -708,6 +708,7 @@ export class UserService {
     try {
       await dockerService.removeVolume(volume)
       this._purgeWorkspaceSnapshots(address)
+      await this._clearInstallsSafe(address, 'reset')
       console.log(`[reset] Volume ${volume} deleted`)
     } catch (err) {
       const msg = String(err?.message || err)
@@ -1215,6 +1216,7 @@ export class UserService {
     try {
       await dockerService.removeVolume(volume)
       this._purgeWorkspaceSnapshots(address)
+      await this._clearInstallsSafe(address, 'volume_deleted')
       console.log(`[delete-volume] Volume ${volume} deleted for ${address}`)
     } catch (err) {
       // 卷已被"移除用户"流程删过 → 重复点清除数据应静默成功，不该弹 500
@@ -2001,6 +2003,18 @@ export class UserService {
     }
   }
 
+  /** 拆卷后销安装账（异步容错：账清失败只吼不动主流程——实物已随卷离场，
+   *  幽灵行等下次对账/重装自愈；绝不为销账失败回滚已完成的卷删除） */
+  async _clearInstallsSafe(address, reason) {
+    try {
+      const { skillService } = await import('./skill.service.js')
+      const n = await skillService.clearInstalls(address, reason)
+      if (n) console.log(`[ledger] ${address} 安装账本销记 ${n} 行（${reason}）`)
+    } catch (err) {
+      console.error(`[ledger] ${address} 销账失败（${reason}）：`, err?.message || err)
+    }
+  }
+
   _purgeWorkspaceSnapshots(address) {
     try {
       const dir = this._snapDir()
@@ -2394,6 +2408,10 @@ export class UserService {
       }
 
       delete this.state.swtcUsers[address]
+      if (volumeStatus === 'deleted' || volumeStatus === 'absent') {
+        // 卷没了（或被证实本来就没有）→ 账本跟葬；管理员选择留卷则账也留着
+        await this._clearInstallsSafe(address, 'tenant_removed')
+      }
 
       // 将端口回收到可用端口池
       if (!this.state.availablePorts) this.state.availablePorts = []

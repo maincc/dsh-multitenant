@@ -589,6 +589,22 @@ export class SkillService {
     }
   }
 
+  /**
+   * 拆卷必销账（判例 2026-10-29，第九案的镜像面：账比实物活得久）。
+   * reset / 管理端清除数据 / 彻底删除用户——卷里的实物没了，安装账本就
+   * 成了幽灵：同地址重新注册会看见上辈子的技能"装着"。整户销记，返回行数。
+   */
+  async clearInstalls(address, reason = 'reset') {
+    address = normalizeAddress(address)
+    const all = this.readInstalls()
+    const list = Array.isArray(all[address]) ? all[address] : []
+    if (!list.length) return 0
+    delete all[address]
+    await this.writeInstalls(all)
+    dataService.logOperation('skill_installs_cleared', { address, n: list.length, reason })
+    return list.length
+  }
+
   checkInstallRate(address) {
     const now = Date.now()
     const rec = this.installRate.get(address)

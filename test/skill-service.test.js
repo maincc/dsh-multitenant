@@ -178,3 +178,43 @@ describe('市场安装供应链边界', () => {
     expect(written).toBe(local) // 原样，不加强制
   })
 })
+
+describe('clearInstalls：拆卷必销账（第九案镜像——账比实物活得久）', () => {
+  const A1 = 'jhfamgqipxtakkdnamduoppim4shcdztea'
+  const A2 = 'jndwretndumoqbt2uauclmfmx7xbqjykva'
+
+  it('整户销记：返回行数、该地址从账本消失、别人的账一字不碰、审计在案', async () => {
+    writeFileSync(
+      join(dir, 'installs.json'),
+      JSON.stringify({
+        [A1]: [
+          { name: 'stock-advisor', source: 'market' },
+          { name: 'another', source: 'import' },
+        ],
+        [A2]: [{ name: 'keepme', source: 'market' }],
+      }),
+    )
+    const spy = vi.spyOn(dataService, 'logOperation').mockImplementation(() => {})
+    const n = await svc.clearInstalls(A1, 'reset')
+    expect(n).toBe(2)
+    const after = JSON.parse(readFileSync(join(dir, 'installs.json'), 'utf8'))
+    expect(after).not.toHaveProperty(A1)
+    expect(after[A2][0].name).toBe('keepme')
+    expect(spy).toHaveBeenCalledWith(
+      'skill_installs_cleared',
+      expect.objectContaining({ address: A1, n: 2, reason: 'reset' }),
+    )
+    spy.mockRestore()
+  })
+
+  it('空账=无操作：返回 0、不写文件、不产审计（无痕原则）', async () => {
+    writeFileSync(join(dir, 'installs.json'), JSON.stringify({ [A2]: [{ name: 'keepme' }] }))
+    const spy = vi.spyOn(dataService, 'logOperation').mockImplementation(() => {})
+    const n = await svc.clearInstalls(A1, 'volume_deleted')
+    expect(n).toBe(0)
+    const after = JSON.parse(readFileSync(join(dir, 'installs.json'), 'utf8'))
+    expect(Object.keys(after)).toEqual([A2])
+    expect(spy).not.toHaveBeenCalled()
+    spy.mockRestore()
+  })
+})
