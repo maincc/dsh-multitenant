@@ -349,13 +349,34 @@
             </p>
             <p v-else-if="!wz.workspace.length" class="env-muted">{{ $t('env.wsEmpty') }}</p>
             <p v-if="wz.workspace.length" class="env-muted env-small">{{ $t('env.wsTreeNote') }}</p>
-            <label v-for="w in wz.workspace" :key="w.name" class="env-check">
-              <input type="checkbox" v-model="wz.folders" :value="w.name" />
-              {{ w.dir ? '📁' : '📄' }} {{ w.name }}{{ w.dir ? '/' : '' }}
-              <span class="env-muted">
-                {{ fmtBytes(w.sizeBytes) }}{{ w.dir ? $t('env.wsDirNote', { n: w.children }) : '' }}
-              </span>
-            </label>
+            <div v-for="w in wz.workspace" :key="w.name" class="env-ws-row">
+              <label class="env-check">
+                <input type="checkbox" v-model="wz.folders" :value="w.name" />
+                <button
+                  v-if="w.dir && (w.children || []).length"
+                  type="button"
+                  class="env-ws-caret"
+                  @click.prevent="toggleWs(w.name)"
+                >
+                  {{ openWs.includes(w.name) ? '▾' : '▸' }}
+                </button>
+                <span v-else class="env-ws-caret env-ws-caret-void">·</span>
+                {{ w.dir ? '📁' : '📄' }} {{ w.name }}{{ w.dir ? '/' : '' }}
+                <span class="env-muted">
+                  {{ fmtBytes(w.sizeBytes)
+                  }}{{ w.dir ? $t('env.wsDirNote', { n: (w.children || []).length }) : '' }}
+                </span>
+              </label>
+              <ul
+                v-if="w.dir && openWs.includes(w.name) && (w.children || []).length"
+                class="env-ws-children"
+              >
+                <li v-for="c in w.children" :key="c.name">
+                  {{ c.dir ? '📁' : '📄' }} {{ c.name }}
+                  <span class="env-muted">{{ fmtBytes(c.sizeBytes) }}</span>
+                </li>
+              </ul>
+            </div>
             <div class="env-danger env-small">{{ $t('env.workspaceWarn') }}</div>
           </div>
           <div class="env-pick-block env-forbid">
@@ -692,6 +713,12 @@ function exitWizard(quiet) {
   if (!quiet) return
   loadAll().catch(() => {})
 }
+const openWs = ref([])
+function toggleWs(n) {
+  const i = openWs.value.indexOf(n)
+  if (i < 0) openWs.value.push(n)
+  else openWs.value.splice(i, 1)
+}
 async function loadInventory() {
   wzStep.value = 'pick'
   wz.value.invLoading = true
@@ -753,6 +780,31 @@ const totalBundleBytes = computed(() => {
 </script>
 
 <style scoped>
+.env-ws-row {
+  margin: 2px 0;
+}
+.env-ws-caret {
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+  width: 16px;
+  padding: 0;
+}
+.env-ws-caret-void {
+  cursor: default;
+  opacity: 0.35;
+}
+.env-ws-children {
+  list-style: none;
+  margin: 2px 0 4px 30px;
+  padding: 0;
+}
+.env-ws-children li {
+  font-size: 13px;
+  opacity: 0.82;
+}
 .env-page {
   padding: 4px 2px;
 }

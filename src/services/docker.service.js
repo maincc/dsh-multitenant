@@ -766,24 +766,34 @@ export class DockerService {
         name,
         'sh',
         '-c',
-        'find /root/workspace -mindepth 1 -maxdepth 1 2>/dev/null | head -100 | while read -r p; do sz=$(du -sk "$p" 2>/dev/null | cut -f1); if [ -d "$p" ]; then n=$(find "$p" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l); printf "%s\\t%s\\td\\t%s\\n" "$(basename "$p")" "${sz:-0}" "$n"; else printf "%s\\t%s\\tf\\t0\\n" "$(basename "$p")" "${sz:-0}"; fi; done',
+        'find /root/workspace -mindepth 1 -maxdepth 2 2>/dev/null | head -300 | while read -r p; do sz=$(du -sk "$p" 2>/dev/null | cut -f1); k=f; [ -d "$p" ] && k=d; rel="${p#/root/workspace/}"; printf "%s\\t%s\\t%s\\n" "$rel" "${sz:-0}" "$k"; done',
       ])
-      return String(out)
-        .split('\n')
-        .filter(Boolean)
-        .map((line) => {
-          const [nm, kb, kind, kids] = line.split('\t')
-          return {
-            name: String(nm || '').trim(),
-            sizeBytes: (Number(kb) || 0) * 1024,
-            // 层级如实：目录=整体单位（含子项数可见），文件=单体
-            dir: kind === 'd',
-            children: Number(kids) || 0,
-          }
-        })
-        .filter((x) => x.name)
+      // 两层树：顶层=勾选单位，子项=只读预览——层级可视化但取舍粒度不变，
+      // 目录整体随行这条语义没被界面花招动摇（定格=现状快照，拆目录=扯谎）
+      const tops = new Map()
+      for (const line of String(out).split('\n')) {
+        if (!line) continue
+        const [rel, kb, kind] = line.split('\t')
+        const segs = String(rel || '').split('/')
+        const top = (segs[0] || '').trim()
+        if (!top) continue
+        if (!tops.has(top)) tops.set(top, { name: top, sizeBytes: 0, dir: false, children: [] })
+        const t = tops.get(top)
+        const item = {
+          name: segs.length > 1 ? segs.slice(1).join('/') : top,
+          sizeBytes: (Number(kb) || 0) * 1024,
+          dir: kind === 'd',
+        }
+        if (segs.length === 1) {
+          t.sizeBytes = item.sizeBytes
+          t.dir = item.dir
+        } else if (t.dir) {
+          t.children.push(item)
+        }
+      }
+      return [...tops.values()]
     } catch {
-      return [] // 容器停着/无 workspace：空列表，向导如实显示"读不到"
+      return [] // 容器停着/无 workspace：空列表——向导按运行状态分说"没起"与"真空"
     }
   }
 
