@@ -133,7 +133,9 @@
                 ? 'badge-danger'
                 : d.status === 'published'
                   ? 'badge-success'
-                  : 'badge-info'
+                  : d.status === 'pending'
+                    ? 'badge-warning'
+                    : 'badge-info'
           "
           >{{ $t('env.status.' + d.status) }}</span
         >

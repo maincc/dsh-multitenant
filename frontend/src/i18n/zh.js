@@ -678,7 +678,8 @@ export default {
     loadingDetail: '加载审件……',
     previewBtn: '预览',
     status: {
-      draft: '待审核',
+      draft: '草稿',
+      pending: '待审核',
       published: '已上架',
       revoked: '已下架',
       rejected: '已驳回',
