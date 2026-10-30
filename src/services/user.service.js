@@ -2042,6 +2042,34 @@ export class UserService {
     }
   }
 
+  /**
+   * 定格完结账（2026-10-30 判例）：作者把自己容器定格成模板的那一刻，
+   * 他"当前用的"就是这套定格物——物理容器内容一字不差（快照正是从它
+   * 导出的），只是镜像引用还是母镜像；按 pin 认账即真话。换钉即迁账
+   * （与 apply 面同款纪律）：从旧钉模板的引用账里摘掉自己。
+   */
+  async adoptCommitAsOwn(address, templateId) {
+    const rec = this.state.swtcUsers?.[address]
+    if (!rec) return { skipped: true, reason: '无该租户记录' }
+    const prev = rec.pinnedImage ?? null
+    if (prev && prev !== templateId) {
+      const envs = await dataService.listEnvironments()
+      const old = envs.find((e) => String(e._id) === String(prev))
+      if (old && Array.isArray(old.pinnedBy) && old.pinnedBy.includes(address)) {
+        old.pinnedBy = old.pinnedBy.filter((x) => x !== address)
+        await dataService.putEnvironment(old)
+      }
+    }
+    this.state.swtcUsers[address] = { ...rec, pinnedImage: templateId }
+    await this._saveState()
+    dataService.logOperation('env_adopt_on_commit', {
+      address,
+      from: prev,
+      to: templateId,
+    })
+    return { from: prev, to: templateId }
+  }
+
   async applyImageVersion(address, opts = {}) {
     address = normalizeAddress(address)
     const { mode = 'rebuild', dryRun = false, skipQueueCheck = true } = opts

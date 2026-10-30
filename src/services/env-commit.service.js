@@ -180,11 +180,42 @@ export async function runEnvCommit(p) {
     bundle,
     scan,
     status: 'draft',
-    pinnedBy: [],
+    // 作者即首位使用者：格的正是他此刻的容器，内容一字不差（判例 2026-10-30）
+    pinnedBy: [address],
     createdBy: operator,
     createdAt: new Date().toISOString(),
   }
   await dataService.putEnvironment(doc)
+  // 判例 2026-10-30：定格=自采纳闭环。自己格容器，自己的"当前环境"立刻就是
+  // 这套定格物——来源条按 pin 认账（pin 存 tag=文档 id，本就是同一串）。
+  // 过去只入账本不采纳：作者格完仍见"默认环境"，像白格了一趟。
+  // 换钉即迁账（与 apply 面同款纪律）：从旧钉模板的引用账里摘掉自己。
+  const { userService } = await import('./user.service.js')
+  const rec = userService.state?.swtcUsers?.[address] ?? null
+  const prevPin = rec?.pinnedImage ?? null
+  if (rec && prevPin !== doc._id) {
+    if (prevPin) {
+      const oldDoc = (await dataService.listEnvironments()).find(
+        (e) => String(e._id) === String(prevPin),
+      )
+      if (oldDoc && (oldDoc.pinnedBy || []).includes(address)) {
+        oldDoc.pinnedBy = oldDoc.pinnedBy.filter((x) => x !== address)
+        await dataService.putEnvironment(oldDoc)
+      }
+    }
+    userService.state.swtcUsers[address] = { ...rec, pinnedImage: doc._id }
+    if (typeof userService._saveState === 'function') {
+      try {
+        await userService._saveState()
+      } catch {}
+    }
+    dataService.logOperation('env_autopin_on_commit', {
+      address,
+      from: prevPin,
+      to: doc._id,
+      operator,
+    })
+  }
   dataService.logOperation(opKind, {
     address,
     tag: out.tag,
@@ -194,6 +225,21 @@ export async function runEnvCommit(p) {
     scrubbed: out.scrubbed,
     operator,
   })
+
+  // 定格完结账（判例 2026-10-30）：作者格完，其"当前环境"即刻就是这套定格物。
+  // 尽力轨——模板已安全入账本，采纳环节炸了不反杀定格结果，只记审计偏差。
+  try {
+    const { userService } = await import('./user.service.js')
+    if (typeof userService.adoptCommitAsOwn === 'function') {
+      await userService.adoptCommitAsOwn(address, doc._id)
+    }
+  } catch (err) {
+    dataService.logOperation('env_adopt_failed', {
+      address,
+      to: doc._id,
+      error: err.message,
+    })
+  }
   return {
     status: 200,
     body: {

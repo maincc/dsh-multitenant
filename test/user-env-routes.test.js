@@ -14,6 +14,12 @@ vi.mock('../src/services/user.service.js', () => ({
   userService: {
     applyImageVersion: vi.fn(),
     resetContainer: vi.fn(),
+    // 判例 2026-10-30 定格完结账：service 动态导入后按 typeof 探测调用
+    adoptCommitAsOwn: vi.fn(async (addr, id) => {
+      const st = (await import('../src/services/user.service.js')).userService.state.swtcUsers
+      st[addr] = { ...(st[addr] || {}), pinnedImage: id }
+      return { from: null, to: id }
+    }),
     state: { swtcUsers: {}, cleanupPolicy: {} },
   },
 }))
@@ -515,6 +521,24 @@ describe('PR3 自助定格（本人面：freezeAllowed + autoSlug + 共用流程
     expect(globalThis.__envStore.size).toBe(0)
   })
 
+  it('判例 2026-10-30：定格=自采纳——格完本人 pin 即这套、引用账记名、旧钉迁账', async () => {
+    const { userService } = await import('../src/services/user.service.js')
+    userService.state.swtcUsers[USER] = { pinnedImage: 'OLDPIN' }
+    try {
+      const res = await call('/api/user/environment-commit', {
+        method: 'POST',
+        body: { displayName: '闭环验证环境' },
+      })
+      expect(res.statusCode).toBe(200)
+      const { template } = JSON.parse(res.body)
+      expect(userService.adoptCommitAsOwn).toHaveBeenCalledWith(USER, template._id)
+      expect(userService.state.swtcUsers[USER].pinnedImage).toBe(template._id) // 来源条从此认这套
+      expect(globalThis.__envStore.get(template._id).pinnedBy).toEqual([USER]) // 作者=首位使用者
+    } finally {
+      delete userService.state.swtcUsers[USER]
+    }
+  })
+
   it('真定格：入账本 createdBy=本人 + 审计 env_commit_self + manifest 折叠', async () => {
     const res = await call('/api/user/environment-commit', {
       method: 'POST',
@@ -526,6 +550,7 @@ describe('PR3 自助定格（本人面：freezeAllowed + autoSlug + 共用流程
     expect(template.displayName).toBe('stock desk')
     expect(template.createdBy).toBe(USER) // 本人操作人（代格面记管理员，区分追责）
     expect(template.status).toBe('draft')
+    expect(globalThis.__envStore.get(template._id).pinnedBy).toEqual([USER])
     expect(template.manifestCount).toBe(2)
     expect(globalThis.__envStore.get(template._id).intro).toBe('akshare 看板')
     const op = dataService.logOperation.mock.calls.find((c) => c[0] === 'env_commit_self')

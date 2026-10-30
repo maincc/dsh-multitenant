@@ -726,6 +726,8 @@ async function doFreeze() {
   try {
     const res = await axios.post('/api/user/environment-commit', commitBody())
     wz.value.result = res.data
+    await loadAll() // 我的作品即刻见新名字
+    emit('mine-changed') // 来源条立刻改口认这套定格物（定格完结账——不该等刷新才见真相）
   } catch (e) {
     wz.value.error = errMsg(e)
   } finally {
