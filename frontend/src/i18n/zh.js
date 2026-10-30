@@ -707,7 +707,7 @@ export default {
       revokeConfirm: '下架「{name}」？使用者 {n} 人将被回退默认环境（只减不增）',
       published: '已发布：整平台可用',
       rejected: '已驳回，产物即弃（不留改天再审的债）',
-      revoked: '已撤板：使用者已回退，镜像待清',
+      revoked: '已撤板：禁新选用，在用者不受影响',
       rescanBtn: '重跑检测',
       rescanDone: '检测完成：密钥残留 {sec} 项 / 行为提示 {hits} 项',
       targetAddr: '目标用户地址',
