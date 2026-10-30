@@ -106,7 +106,7 @@
                     {{ $t('env.cancelBtn') }}
                   </button>
                   <button
-                    class="btn btn-small btn-danger"
+                    class="btn btn-small btn-danger enva-confirm-danger"
                     :disabled="!rejecting.reason || busy"
                     @click="rejectFlow(detail, rejecting.reason)"
                   >
@@ -535,6 +535,15 @@ async function cdGo() {
 .enva-danger {
   color: var(--danger-color, #d96b6b);
   font-size: 12px;
+}
+/* 主行动钮与确认弹窗的红钮同款配方：实红底白字，暗底浅底都读得清 */
+.enva-confirm-danger {
+  background: #dc2626;
+  border-color: #dc2626;
+  color: #fff;
+}
+.enva-confirm-danger:hover:not(:disabled) {
+  background: #b91c1c;
 }
 .enva-danger-btn {
   color: var(--danger-color, #d96b6b);
