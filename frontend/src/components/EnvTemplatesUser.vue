@@ -371,6 +371,7 @@
                 v-if="w.dir && openWs.includes(w.name) && (w.children || []).length"
                 class="env-ws-children"
               >
+                <li class="env-ws-hint">{{ $t('env.wsChildHint') }}</li>
                 <li v-for="c in w.children" :key="c.name">
                   {{ c.dir ? '📁' : '📄' }} {{ c.name }}
                   <span class="env-muted">{{ fmtBytes(c.sizeBytes) }}</span>
