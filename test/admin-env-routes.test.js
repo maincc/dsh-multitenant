@@ -389,6 +389,23 @@ describe('env-publish / env-revoke（审核闸与下架语义）', () => {
     expect(res.statusCode).toBe(409)
   })
 
+  it('判例：已下架(unlisted)可改判撤板——封死"重新提交审核"去路（后端本允许，补入口即闭环）', async () => {
+    seedTemplate({ status: 'unlisted', pinnedBy: [TENANT] })
+    const res = await call('/api/admin/env-revoke', {
+      body: { id: TPL },
+      sign: { op: 'env-revoke', payload: { id: TPL } },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(json(res).template.status).toBe('revoked')
+    expect(json(res).note).toContain('不受影响')
+    // 管理员也无绕行上架门：revoked 不可复活
+    const pub = await call('/api/admin/env-publish', {
+      body: { id: TPL },
+      sign: { op: 'env-publish', payload: { id: TPL } },
+    })
+    expect(pub.statusCode).toBe(409)
+  })
+
   it('revoke：撤 listing、在用者写进 note；重复 revoke 幂等', async () => {
     seedTemplate({ status: 'published', pinnedBy: [TENANT] })
     let res = await call('/api/admin/env-revoke', {

@@ -703,8 +703,12 @@ export default {
       rejectPh:
         '驳回理由（必填，会原样回传给作者）：如 插件X含未说明的网络外发 / workspace 与环境用途无关',
       rejectConfirmBtn: '确认驳回并即弃产物',
-      revokeBtn: '下架',
-      revokeConfirm: '下架「{name}」？使用者 {n} 人将被回退默认环境（只减不增）',
+      revokeBtn: '撤板',
+      // 真相与 handler 对表：不驱逐、只禁新增（旧文案"将被回退"是谎）
+      revokeConfirm:
+        '撤板「{name}」？此后不可复活（要回来需重新定格重审）；在用 {n} 人不受影响，仅禁新选用',
+      revokeUnlistedConfirm:
+        '改判撤板「{name}」？该作品已被作者自己下架——撤板将封死"重新提交审核"的去路，不可复活。在用 {n} 人不受影响',
       published: '已发布：整平台可用',
       rejected: '已驳回，产物即弃（不留改天再审的债）',
       revoked: '已撤板：禁新选用，在用者不受影响',

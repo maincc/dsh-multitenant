@@ -78,8 +78,8 @@
                   {{ $t('env.admin.rejectBtn') }}
                 </button>
                 <button
-                  v-if="detail.status === 'published'"
-                  class="btn btn-small btn-secondary"
+                  v-if="detail.status === 'published' || detail.status === 'unlisted'"
+                  class="btn btn-small btn-secondary enva-danger-btn"
                   :disabled="busy"
                   @click="revoke(detail)"
                 >
@@ -349,10 +349,14 @@ async function rejectFlow(doc, reason) {
 }
 async function revoke(doc) {
   const go = await askConfirm({
-    message: t('env.admin.revokeConfirm', {
-      name: doc.displayName || doc.slug,
-      n: (doc.pinnedBy || []).length,
-    }),
+    message: t(
+      // 已下架之物改判撤板=封死重提去路，措辞必须说清这一刀切的是什么
+      doc.status === 'unlisted' ? 'env.admin.revokeUnlistedConfirm' : 'env.admin.revokeConfirm',
+      {
+        name: doc.displayName || doc.slug,
+        n: (doc.pinnedBy || []).length,
+      },
+    ),
     confirmLabel: t('env.admin.revokeBtn'),
   })
   if (!go) return
