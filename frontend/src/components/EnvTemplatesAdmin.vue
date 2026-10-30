@@ -106,7 +106,7 @@
                     {{ $t('env.cancelBtn') }}
                   </button>
                   <button
-                    class="btn btn-small btn-primary enva-danger-btn"
+                    class="btn btn-small btn-danger"
                     :disabled="!rejecting.reason || busy"
                     @click="rejectFlow(detail, rejecting.reason)"
                   >
