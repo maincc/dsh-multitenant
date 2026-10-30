@@ -137,7 +137,7 @@ export default {
     tabIdentity: '数字身份',
     tabCwt: 'CWT 验证',
     tabSkills: '市场',
-    tabEnv: '环境审批',
+    tabEnv: '环境模板',
     // v1.5 验收反馈①：管理页签并入用户侧栏（不再有独立"系统管理"tab/页）
     adminGroup: '管理',
     // v1.5 验收反馈③：账号详情区分角色
@@ -796,6 +796,9 @@ export default {
     tabUsers: '用户管理',
     tabQuota: '配额配置',
     tabMonitor: '资源监控',
+    // 判例 2026-10-30：admin.tabEnv 曾根本不存在——vue-i18n 缺键回显
+    // 裸键名，侧栏显示的就是 'admin.tabEnv' 字面。正名=补键，改名=改空气。
+    tabEnv: '环境审批',
     tabCwt: 'CWT 授权',
     vcReconcileBtn: '立即对账',
     vcReconcileDone: '对账完成：摘过期{expired} 摘无主{orphan} 补架{added}',
