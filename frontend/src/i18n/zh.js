@@ -664,6 +664,8 @@ export default {
     wsEmpty: '工作目录是空的——没有要保留的目录，产物即容器现状',
     wsDirNote: ' · 目录含 {n} 子项，勾选即整体随行',
     wsTreeNote: '📁 目录按整体取舍（子项随行）；📄 文件单独取舍；未勾选的顶层条目会从镜像里清空',
+    wsChildHint:
+      '↑ 展开仅供预览：子项不可单独勾选——要整目录随行就勾它，想只留一部分请先把容器里的实物理顺再定格',
     bundleTotal: '随行包：{plugins} 个插件共 {size}（上限 {cap}）',
     quotaUsed: '该来源定格占用：{used}/{limit}（一次定格=一个镜像+可能的包，占平台盘）',
     consentLine:

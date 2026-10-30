@@ -780,6 +780,10 @@ const totalBundleBytes = computed(() => {
 </script>
 
 <style scoped>
+.env-ws-hint {
+  opacity: 0.6;
+  font-size: 12px;
+}
 .env-ws-row {
   margin: 2px 0;
 }
