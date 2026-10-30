@@ -137,7 +137,7 @@ export default {
     tabIdentity: '数字身份',
     tabCwt: 'CWT 验证',
     tabSkills: '市场',
-    tabEnv: '环境模板',
+    tabEnv: '环境审批',
     // v1.5 验收反馈①：管理页签并入用户侧栏（不再有独立"系统管理"tab/页）
     adminGroup: '管理',
     // v1.5 验收反馈③：账号详情区分角色
@@ -686,8 +686,6 @@ export default {
       all: '全部',
     },
     admin: {
-      tabEnv: '环境模板',
-      tabTitle: '环境模板',
       hint: '定格环境账本：草稿需人工审 manifest 与随行包源码后 publish；已上架=整平台可选用；下架只减不增',
       commitBtn: '代格（管理员）',
       empty: '模板账本为空',
