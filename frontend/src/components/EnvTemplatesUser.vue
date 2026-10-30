@@ -675,12 +675,19 @@ async function unpublishNow(tpl) {
   }
 }
 
-const revertClean = ref(false)
+const revertClean = ref(true) // 回退=倾向干净（裁定 2026-10-30：默认勾上，想留当面取消）
 
 async function revertNow() {
   const go = await askConfirm({
-    message: t('env.revertConfirm') + (revertClean.value ? ' ' + t('env.revertCleanOpt') : ''),
+    message: [
+      t('env.revertConfirm'),
+      t('env.revertKeepLine'),
+      t('env.revertImageLine'),
+      t('env.revertWsLine'),
+      revertClean.value ? t('env.revertCleanYes') : t('env.revertCleanNo'),
+    ].join('\n'),
     confirmLabel: t('env.revertBtn'),
+    danger: true,
   })
   if (!go) return
   busy.value = true
@@ -691,7 +698,7 @@ async function revertNow() {
     toast(
       (r.data?.revertNote || t('env.reverted')) + (r.data?.cleanNote ? ' ' + r.data.cleanNote : ''),
     )
-    revertClean.value = false // 危险勾选不留在按钮上——每次清除都要当面再确认一次
+    revertClean.value = true // 复位到默认（回退=干净默认的家规），不是复位到 false
     await loadAll()
     if (r.data?.cleanNote) emit('mine-changed') // 销了账的行不能再挂在「我的技能」里当证据
   } catch (e) {
