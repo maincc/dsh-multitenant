@@ -344,7 +344,10 @@
           </div>
           <div class="env-pick-block">
             <div class="env-pick-title">{{ $t('env.col.folders') }}</div>
-            <p v-if="!wz.workspace.length" class="env-muted">{{ $t('env.noWorkspace') }}</p>
+            <p v-if="!wz.workspace.length && wz.running === false" class="env-muted">
+              {{ $t('env.wsNotRunning') }}
+            </p>
+            <p v-else-if="!wz.workspace.length" class="env-muted">{{ $t('env.wsEmpty') }}</p>
             <label v-for="w in wz.workspace" :key="w.name" class="env-check">
               <input type="checkbox" v-model="wz.folders" :value="w.name" /> {{ w.name }}
               <span class="env-muted">{{ fmtBytes(w.sizeBytes) }}</span>
@@ -476,6 +479,7 @@ const wz = ref({
   intro: '',
   inv: null,
   workspace: [],
+  running: true,
   invLoading: false,
   preview: null,
   previewLoading: false,
@@ -668,6 +672,7 @@ function openWizard() {
     folders: [],
     inv: null,
     workspace: [],
+    running: true,
     invLoading: false,
     preview: null,
     previewLoading: false,
@@ -690,6 +695,7 @@ async function loadInventory() {
     const res = await axios.post('/api/user/environment-inventory', {})
     wz.value.inv = res.data.inventory
     wz.value.workspace = res.data.workspace || []
+    wz.value.running = res.data.containerRunning !== false
   } catch (e) {
     toast(errMsg(e))
     wzStep.value = 'name'
