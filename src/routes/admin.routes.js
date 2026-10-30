@@ -22,7 +22,8 @@ import { credentialService } from '../services/credential.service.js'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { requireAdmin, getAdminSession, adminSessionStore } from '../middleware/auth.middleware.js'
+import { requireAdmin, getAdminSession } from '../middleware/auth.middleware.js'
+import { userSessionStore } from '../middleware/user-auth.middleware.js'
 import {
   attachAdminSignature,
   issueAdminSignatureChallenge,
@@ -124,8 +125,8 @@ export async function handleAdminRoutes(req, res, path, url) {
           res.end(
             JSON.stringify({
               error:
-                '签名钱包与管理员登录会话不是同一账户（防会话劫持，与操作对象是谁无关）。' +
-                '请在 CCDAO 插件切回登录管理面板时的账户，或退出后重新登录再试。',
+                '签名钱包与登录会话不是同一账户（防会话劫持，与操作对象是谁无关）。' +
+                '请在 CCDAO 插件切回登录时的账户，或退出后重新签名登录再试。',
               code: 'FORBIDDEN',
             }),
           )
@@ -205,11 +206,12 @@ export async function handleAdminRoutes(req, res, path, url) {
         return true
       }
 
-      // ④ 签发服务端随机会话（Cookie 值 = token，非地址）
-      const token = adminSessionStore.create(addrLower)
+      // ④ 签发服务端随机会话（判例 2026-10-30：admin_session 已废止——管理票
+      // 与租户票合流为唯一 user_session；isAdmSync 的登录闸留在 ③，非管理员签不进）
+      const token = userSessionStore.create(addrLower)
       res.writeHead(200, {
         'content-type': 'application/json; charset=utf-8',
-        'set-cookie': `admin_session=${token}; path=/; max-age=43200; httponly; samesite=strict`,
+        'set-cookie': `user_session=${token}; path=/; max-age=43200; httponly; samesite=strict`,
       })
       res.end(JSON.stringify({ ok: true, address: addrLower, isAdmin: true }))
 
@@ -224,21 +226,26 @@ export async function handleAdminRoutes(req, res, path, url) {
     return true
   }
 
-  // POST /api/admin/logout - 吊销当前会话（P0-1）
+  // POST /api/admin/logout - 吊销当前会话（单源 user_session；旧 admin_session
+  // cookie 一并下发清除指令，做浏览器卫生）
   if (path === '/api/admin/logout' && req.method === 'POST') {
     const cookie = req.headers.cookie || ''
-    const match = cookie.match(/admin_session=([^;]+)/)
+    const match = cookie.match(/user_session=([^;]+)/)
     const who = getAdminSession(req) // 先取操作人：吊销之后就查不到了
     if (match) {
       try {
-        await adminSessionStore.revoke(decodeURIComponent(match[1]))
+        await userSessionStore.revoke(decodeURIComponent(match[1]))
         // 会话吊销也是"改变世界的动作"——进录像
         dataService.logOperation('admin_logout', { address: who })
       } catch {
         // 忽略损坏的 token
       }
     }
-    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+    res.writeHead(200, {
+      'content-type': 'application/json; charset=utf-8',
+      'set-cookie':
+        'user_session=; path=/; max-age=0; httponly; samesite=strict, admin_session=; path=/; max-age=0; httponly; samesite=strict',
+    })
     res.end(JSON.stringify({ ok: true }))
     return true
   }

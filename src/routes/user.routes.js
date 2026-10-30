@@ -149,9 +149,9 @@ export async function handleUserRoutes(req, res, path) {
   // （admin 优先）矫枉过正——管理员浏览器遗留的 admin_session 会**抢占**凭证身份：
   // 插件切到账户 B、自动重签换的是 user_session=B，但端点恒返回旧管理员 A，前端守卫
   // 反复判"会话主人≠当前账户"且重签不掉 admin_session，F9 陷入循环。
-  // 正解：身份 = **user_session 优先，admin_session 仅作无用户会话回退**——循环根因
-  // 正是双 cookie 并存时 admin 抢先；已由 auth.middleware.getRequestAddress 源头翻正
-  // （两段事故复盘注释钉在那边），此处单源复用，凭证端点与 restart/logout 等同构。
+  // 终局（判例 2026-10-30）：admin_session **整体废止**，双票抢占的根子拔除——
+  // 身份 = user_session 唯一。两段事故复盘的病理（抢占/循环）随单源化成为历史；
+  // 凭证端点与 restart/logout 同构复用 getRequestAddress。
   const credSession = () => getRequestAddress(req)
 
   // GET /api/user/credential-status - 进入用户中心的判定钩子：

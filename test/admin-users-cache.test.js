@@ -117,7 +117,7 @@ describe('管理端列表：短 TTL 缓存', () => {
 describe('/api/stats：下发管理端刷新间隔', () => {
   it('响应里带 uiConfig.refreshIntervalMs（默认 15000）', async () => {
     const { handleAdminRoutes } = await import('../src/routes/admin.routes.js')
-    const { adminSessionStore } = await import('../src/middleware/auth.middleware.js')
+    const { userSessionStore } = await import('../src/middleware/user-auth.middleware.js')
     const { CONFIG } = await import('../src/config/config.js')
     const { createHash } = await import('node:crypto')
 
@@ -125,7 +125,7 @@ describe('/api/stats：下发管理端刷新间隔', () => {
     const adminAddr = (CONFIG.admin?.addresses ?? [])[0]
     expect(adminAddr, 'config.json 需要至少一个管理员地址').toBeTruthy()
     const token = 'ab'.repeat(32)
-    adminSessionStore.sessions[createHash('sha256').update(token).digest('hex')] = {
+    userSessionStore.sessions[createHash('sha256').update(token).digest('hex')] = {
       address: adminAddr,
       expiresAt: Date.now() + 3600_000,
     }
@@ -141,7 +141,7 @@ describe('/api/stats：下发管理端刷新间隔', () => {
         this.body = b ?? ''
       },
     }
-    const req = { method: 'GET', headers: { cookie: `admin_session=${token}` }, socket: {} }
+    const req = { method: 'GET', headers: { cookie: `user_session=${token}` }, socket: {} }
 
     await handleAdminRoutes(req, res, '/api/stats', new URL('http://127.0.0.1:8090/api/stats'))
     const body = JSON.parse(res.body)

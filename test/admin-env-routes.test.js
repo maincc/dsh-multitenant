@@ -104,7 +104,7 @@ import { dockerService } from '../src/services/docker.service.js'
 import { envBundleService } from '../src/services/env-bundle.service.js'
 import { userService } from '../src/services/user.service.js'
 import { dataService } from '../src/services/data.service.js'
-import { adminSessionStore } from '../src/middleware/auth.middleware.js'
+import { userSessionStore } from '../src/middleware/user-auth.middleware.js'
 import { isAdmin } from '../src/config/config.js'
 import { tenantConfigService } from '../src/services/tenant-config.service.js'
 
@@ -183,8 +183,8 @@ async function adminSignatureHeaders(operation, payload) {
 }
 
 function adminCookie() {
-  const token = adminSessionStore.create(ADMIN_ADDR, 3600_000)
-  return `admin_session=${token}`
+  const token = userSessionStore.create(ADMIN_ADDR, 3600_000)
+  return `user_session=${token}`
 }
 
 const json = (res) => JSON.parse(res.body)
@@ -229,7 +229,7 @@ beforeEach(() => {
   vi.restoreAllMocks()
   vi.clearAllMocks()
   isAdmin.mockReturnValue(true)
-  adminSessionStore.sessions = {}
+  userSessionStore.sessions = {}
   userService.state.swtcUsers = {}
 
   globalThis.__envStore = new Map()
@@ -268,7 +268,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  adminSessionStore.sessions = {}
+  userSessionStore.sessions = {}
   userService.state.swtcUsers = {}
 })
 

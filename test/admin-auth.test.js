@@ -5,7 +5,7 @@
  *   （签发/解析/过期/吊销/伪造拒绝/旧"地址即会话"废止）
  * 组 2「端到端」：真实 @swtc/keypairs 生成钱包 + 真实 challenge/验签，
  *   验证完整登录链路密码学可用。
- * 会话存储方法 mock 为内存，不触碰真实 data/config/sessions.json。
+ * 会话存储方法 mock 为内存（单源 user_session），不触碰真实 data/config/*.json。
  */
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { Keypairs } from '@swtc/keypairs'
@@ -35,11 +35,8 @@ vi.mock('../src/services/data.service.js', async (importOriginal) => {
 
 import { handleAdminRoutes } from '../src/routes/admin.routes.js'
 import { tenantConfigService, SIGN_PURPOSE } from '../src/services/tenant-config.service.js'
-import {
-  requireAdmin,
-  getAdminSession,
-  adminSessionStore,
-} from '../src/middleware/auth.middleware.js'
+import { requireAdmin, getAdminSession } from '../src/middleware/auth.middleware.js'
+import { userSessionStore } from '../src/middleware/user-auth.middleware.js'
 import { isAdmin } from '../src/config/config.js'
 
 const ADMIN_ADDR = 'jndwretndumoqbt2uauclmfmx7xbqjykva'
@@ -77,10 +74,10 @@ function makeRes() {
   }
 }
 
-/** 从响应 header 提取 set-cookie 中的 admin_session 值 */
+/** 从响应 header 提取 set-cookie 中的 user_session 值（单源）*/
 function sessionTokenFrom(res) {
   const sc = res.headers['set-cookie'] || ''
-  const m = String(sc).match(/admin_session=([^;]+)/)
+  const m = String(sc).match(/user_session=([^;]+)/)
   return m ? decodeURIComponent(m[1]) : null
 }
 
@@ -93,12 +90,12 @@ describe('管理员签名登录（P0-1）', () => {
     vi.spyOn(tenantConfigService, 'verifySignature').mockReturnValue(true)
     vi.spyOn(tenantConfigService, 'consumeChallenge').mockReturnValue(true)
     isAdmin.mockReturnValue(true)
-    adminSessionStore.sessions = {}
+    userSessionStore.sessions = {}
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
-    adminSessionStore.sessions = {}
+    userSessionStore.sessions = {}
   })
 
   it('验签失败 → 403', async () => {
@@ -167,7 +164,7 @@ describe('管理员签名登录（P0-1）', () => {
     expect(token).not.toBe(ADMIN_ADDR)
     expect(token).toMatch(/^[0-9a-f]{64}$/)
     // 会话可解析回地址
-    expect(adminSessionStore.resolve(token)).toBe(ADMIN_ADDR)
+    expect(userSessionStore.resolve(token)).toBe(ADMIN_ADDR)
   })
 
   it('凭随机会话可访问受保护接口（requireAdmin 通过）', async () => {
@@ -184,20 +181,20 @@ describe('管理员签名登录（P0-1）', () => {
     const token = sessionTokenFrom(loginRes)
 
     const res = makeRes()
-    const req = makeReq({ cookie: `admin_session=${token}` })
+    const req = makeReq({ cookie: `user_session=${token}` })
     expect(requireAdmin(req, res)).toBe(true)
     expect(res.headersSent).toBe(false) // 未被拒绝
     expect(getAdminSession(req)).toBe(ADMIN_ADDR)
   })
 
-  it('伪造 admin_session=<地址> → 受保护接口拒绝（旧行为废止）', async () => {
+  it('admin_session cookie 彻底出局（单源裁定）：值=本人地址也不认', async () => {
     const res = makeRes()
     const ok = requireAdmin(makeReq({ cookie: `admin_session=${ADMIN_ADDR}` }), res)
     expect(ok).toBe(false)
     expect(res.statusCode).toBe(403)
   })
 
-  it('伪造随机 admin_session → 403', async () => {
+  it('随机 admin_session 不再进任何门（cookie 废止）→ 403', async () => {
     const res = makeRes()
     const ok = requireAdmin(makeReq({ cookie: 'admin_session=a1b2c3d4e5f6' }), res)
     expect(ok).toBe(false)
@@ -219,27 +216,27 @@ describe('管理员签名登录（P0-1）', () => {
 
     const out = makeRes()
     await handleAdminRoutes(
-      makeReq({ method: 'POST', url: '/api/admin/logout', cookie: `admin_session=${token}` }),
+      makeReq({ method: 'POST', url: '/api/admin/logout', cookie: `user_session=${token}` }),
       out,
       '/api/admin/logout',
     )
     expect(out.statusCode).toBe(200)
 
     const check = makeRes()
-    const ok = requireAdmin(makeReq({ cookie: `admin_session=${token}` }), check)
+    const ok = requireAdmin(makeReq({ cookie: `user_session=${token}` }), check)
     expect(ok).toBe(false)
     expect(check.statusCode).toBe(403)
   })
 
   it('过期会话 → 自动失效（resolve null / requireAdmin 403）', async () => {
     const token = 'deadbeef'.repeat(8)
-    adminSessionStore.sessions[sha256(token)] = {
+    userSessionStore.sessions[sha256(token)] = {
       address: ADMIN_ADDR,
       expiresAt: Date.now() - 1000,
     }
-    expect(adminSessionStore.resolve(token)).toBeNull()
+    expect(userSessionStore.resolve(token)).toBeNull()
     const res = makeRes()
-    const ok = requireAdmin(makeReq({ cookie: `admin_session=${token}` }), res)
+    const ok = requireAdmin(makeReq({ cookie: `user_session=${token}` }), res)
     expect(ok).toBe(false)
   })
 })
@@ -248,12 +245,12 @@ describe('端到端：真实钱包签名登录（P0-1）', () => {
   beforeEach(() => {
     vi.restoreAllMocks() // 恢复真实 tenantConfigService（challenge/验签）
     isAdmin.mockReturnValue(true)
-    adminSessionStore.sessions = {}
+    userSessionStore.sessions = {}
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
-    adminSessionStore.sessions = {}
+    userSessionStore.sessions = {}
   })
 
   it('无签名材料直接登录 → 403（真实验签拒绝，旧"地址即凭证"失效）', async () => {
@@ -311,7 +308,7 @@ describe('端到端：真实钱包签名登录（P0-1）', () => {
     expect(token).toMatch(/^[0-9a-f]{64}$/)
 
     // 3) 会话可解析（且是签名的那个地址）
-    expect(adminSessionStore.resolve(token)).toBe(wallet.address)
+    expect(userSessionStore.resolve(token)).toBe(wallet.address)
 
     // 4) 同一 nonce 重放登录 → 403（一次性）
     const replayRes = makeRes()
@@ -356,6 +353,6 @@ describe('端到端：真实钱包签名登录（P0-1）', () => {
       '/api/admin/login',
     )
     expect(res.statusCode).toBe(403)
-    expect(adminSessionStore.sessions).toEqual({}) // 绝不下发会话
+    expect(userSessionStore.sessions).toEqual({}) // 绝不下发会话
   })
 })

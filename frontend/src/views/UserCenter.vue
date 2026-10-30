@@ -776,7 +776,7 @@
         <!-- ════════ 我的技能 ════════ -->
         <!-- ════════ v1.5 管理员页签（验收反馈①：与用户页签平级并列，无嵌套壳）════════
              role='admin'（官网活验证属实）才装配；内嵌复用独立版 AdminPanel（源码不合并，
-             同一组件两用：externalTab 驱动子页、自带侧栏隐藏）。操作仍要 admin_session 当场
+             同一组件两用：externalTab 驱动子页、自带侧栏隐藏）。操作仍要登录会话+当场签名
              签名——tab 可见=凭证判权，可操作=会话+钱包双门禁（刀2B 模型一字不松） -->
         <div v-else-if="isSystemTab" class="tab-content admin-embed">
           <AdminPanel embedded :external-tab="systemSubTab" />

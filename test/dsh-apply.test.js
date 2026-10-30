@@ -73,7 +73,7 @@ import { handleAdminRoutes } from '../src/routes/admin.routes.js'
 import { userService } from '../src/services/user.service.js'
 import { dockerService } from '../src/services/docker.service.js'
 import { dataService } from '../src/services/data.service.js'
-import { adminSessionStore } from '../src/middleware/auth.middleware.js'
+import { userSessionStore } from '../src/middleware/user-auth.middleware.js'
 import { tenantConfigService } from '../src/services/tenant-config.service.js'
 import { isAdmin, CONFIG } from '../src/config/config.js'
 import { EventEmitter } from 'node:events'
@@ -128,7 +128,7 @@ function makeRes() {
 }
 
 const json = (res) => JSON.parse(res.body)
-const adminCookie = () => `admin_session=${adminSessionStore.create(ADMIN_ADDR, 3600_000)}`
+const adminCookie = () => `user_session=${userSessionStore.create(ADMIN_ADDR, 3600_000)}`
 
 /**
  * 为一个 dsh/apply 请求生成有效的签名请求头。
@@ -174,7 +174,7 @@ beforeEach(() => {
   vi.restoreAllMocks()
   vi.clearAllMocks() // vitest4: 模块级vi.mock工厂的fn不被restore覆盖，需显式清调用历史
   isAdmin.mockReturnValue(true)
-  adminSessionStore.sessions = {}
+  userSessionStore.sessions = {}
   userService.state.swtcUsers = {}
   userService.state.availablePorts = []
 
@@ -205,7 +205,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  adminSessionStore.sessions = {}
+  userSessionStore.sessions = {}
   userService.state.swtcUsers = {}
   if (backupDir) {
     try {

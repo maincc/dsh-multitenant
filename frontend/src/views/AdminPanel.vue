@@ -1375,7 +1375,8 @@ const { t } = useI18n()
 
 // v1.5 刀5C/用户验收①：可被用户中心内嵌挂载（源码不合并，同一组件两用）。
 // embedded=true 时不渲染自带侧栏——管理页签由用户中心左栏统一驱动（externalTab 传子页
-// key，与用户 tab 平级并列，消灭"系统管理"嵌套壳）。admin_session 的钱包签名登录
+// key，与用户 tab 平级并列，消灭"系统管理"嵌套壳）。登录会话（user_session
+// 单源，判例 2026-10-30）的钱包签名登录
 // **照旧要**（刀2B 安全模型一字不松：tab 可见=凭证判权，可操作=会话+当场签名）。
 const props = defineProps({
   embedded: { type: Boolean, default: false },
@@ -1837,7 +1838,7 @@ const signLogin = async (pluginAddress) => {
 /**
  * 破坏性操作的当场钱包签名（P0 加固）。
  *
- * 背景：`admin_session` 是 12 小时有效的 bearer token，只做查表不验签；而平台
+ * 背景：登录会话 token 是 12 小时有效的 bearer token（user_session 单源），只做查表不验签；而平台
  * 会把浏览器 cookie 原样转发进租户容器（`path=/` 的 cookie 不按端口隔离），
  * 所以"管理员访问过的租户"能拿到它并重放。钱包侧（改配置 / 装 skill / 进容器）
  * 本来就是**每次操作当场签一个一次性 nonce**，这里把那套样板搬到管理侧。

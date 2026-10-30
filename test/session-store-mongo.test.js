@@ -12,7 +12,6 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { CONFIG } from '../src/config/config.js'
 import { getStore } from '../src/services/mongo.store.js'
 import { SessionMirror } from '../src/services/session.store.js'
-import { adminSessionStore } from '../src/middleware/auth.middleware.js'
 import { userSessionStore } from '../src/middleware/user-auth.middleware.js'
 import { dataService } from '../src/services/data.service.js'
 
@@ -34,7 +33,6 @@ beforeAll(async () => {
     available = (await store.health()).topology === 'replset'
     if (available) {
       await store._db.dropDatabase()
-      adminSessionStore.sessions = {} // 不把本机 json 缓存带进测试
       userSessionStore.sessions = {}
     }
   } catch {
@@ -133,16 +131,17 @@ describe('mongodb 形态·中间件 store 真实接线', () => {
     expect(userSessionStore.sessions).toEqual({}) // 空库水合=清空，不带旧态
   })
 
-  it('admin 端惰性删除（resolve 命中过期）走镜像队列：库里行最终消失', async (ctx) => {
+  // 判例 2026-10-30：会话只剩 user 一源（admin_session 废止），惰性删除语义照验
+  it('惰性删除（resolve 命中过期）走镜像队列：库里行最终消失', async (ctx) => {
     if (!skip(ctx)) return
     const { createHash } = await import('node:crypto')
-    const token = adminSessionStore.create('jtestadm000000000000000000000000000000', 60_000)
-    await adminSessionStore._mirror.flush()
+    const token = userSessionStore.create('jtestadm000000000000000000000000000000', 60_000)
+    await userSessionStore._mirror.flush()
     const hash = createHash('sha256').update(token).digest('hex')
     expect(await col().findOne({ _id: hash })).not.toBeNull() // 先确认镜像里真有行
-    adminSessionStore.sessions[hash].expiresAt = Date.now() - 1000 // 手动置过期
-    expect(adminSessionStore.resolve(token)).toBeNull() // 惰性删除：缓存删+enqueue
-    await adminSessionStore._mirror.flush()
+    userSessionStore.sessions[hash].expiresAt = Date.now() - 1000 // 手动置过期
+    expect(userSessionStore.resolve(token)).toBeNull() // 惰性删除：缓存删+enqueue
+    await userSessionStore._mirror.flush()
     expect(await col().findOne({ _id: hash })).toBeNull() // 删除方向最终落库
   })
 })
