@@ -344,7 +344,7 @@
           </div>
           <div class="env-pick-block">
             <div class="env-pick-title">{{ $t('env.col.folders') }}</div>
-            <p v-if="!wz.workspace.length && wz.running === false" class="env-muted">
+            <p v-if="!wz.workspace.length && wz.containerUp === false" class="env-muted">
               {{ $t('env.wsNotRunning') }}
             </p>
             <p v-else-if="!wz.workspace.length" class="env-muted">{{ $t('env.wsEmpty') }}</p>
@@ -519,12 +519,12 @@ const wz = ref({
   intro: '',
   inv: null,
   workspace: [],
-  running: true,
+  containerUp: true,
   wsExcludes: [],
   invLoading: false,
   preview: null,
   previewLoading: false,
-  consent: false,
+  // 定格进行锁（与 containerUp 判例分明：一个是实物状态探针，一个是本动作进度）
   running: false,
   result: null,
   error: '',
@@ -713,7 +713,7 @@ function openWizard() {
     folders: [],
     inv: null,
     workspace: [],
-    running: true,
+    containerUp: true,
     wsExcludes: [],
     invLoading: false,
     preview: null,
@@ -749,7 +749,7 @@ async function loadInventory() {
     const res = await axios.post('/api/user/environment-inventory', {})
     wz.value.inv = res.data.inventory
     wz.value.workspace = res.data.workspace || []
-    wz.value.running = res.data.containerRunning !== false
+    wz.value.containerUp = res.data.containerRunning !== false
   } catch (e) {
     toast(errMsg(e))
     wzStep.value = 'name'
