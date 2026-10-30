@@ -226,7 +226,7 @@ import { toast, askConfirm } from '../composables/useDialog'
 import { requestAccounts, signMessage, getPublicKey } from '../api/wallet'
 
 const { t } = useI18n()
-const FILTERS = ['all', 'draft', 'published', 'revoked', 'rejected']
+const FILTERS = ['all', 'draft', 'published', 'unlisted', 'revoked', 'rejected']
 const all = ref([])
 const filter = ref('all')
 const openedId = ref('')
@@ -273,6 +273,7 @@ const badgeCls = (st) =>
   ({
     draft: 'badge-info',
     published: 'badge-success',
+    unlisted: 'badge-warning',
     revoked: 'badge-warning',
     rejected: 'badge-danger',
     all: '',

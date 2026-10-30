@@ -133,7 +133,7 @@
                 ? 'badge-danger'
                 : d.status === 'published'
                   ? 'badge-success'
-                  : d.status === 'pending'
+                  : d.status === 'unlisted'
                     ? 'badge-warning'
                     : 'badge-info'
           "
@@ -141,7 +141,7 @@
         >
         <span class="env-muted">{{ $t('env.usedBy', { n: d.pinnedByCount }) }}</span>
         <button
-          v-if="d.status === 'draft'"
+          v-if="d.status === 'unlisted'"
           class="btn btn-small btn-secondary"
           :disabled="busy"
           @click="resubmit(d)"

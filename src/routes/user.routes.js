@@ -597,11 +597,15 @@ export async function handleUserRoutes(req, res, path) {
 
   // POST /api/user/environment-reset {dryRun} - 一键回平台默认环境
   // （applyImageVersion(image=null)=摘 pin 回 latest 语义；引用账本同步清）
-  // POST /api/user/environment/unpublish {id} - 作者自助下架：published 回到
-  // 自己的草稿箱（draft）。判例：下架≠删除——被引用之物不可物理删，正在用的
-  // 人（含作者自己）不受影响，只是市场不再展示、不再接受新的选用。
-  // POST /api/user/environment/submit {id} - 作者重新提交审核（draft→pending）。
-  // 出口律：下架有去路——草稿能再次排队过审，不能一降不回。
+  // POST /api/user/environment/unpublish {id} - 作者自助下架：published → unlisted
+  // （已下架·自己摘的）。判例 2026-10-30：下架**不是**回到待审核（draft）——
+  // 摘了就该安静待着，作者想回来才重新排队；也绝不复用 'draft' 字面，否则
+  // 管理队列里凭空长出没人提交的"待审核"。下架≠删除：被引用之物不可物理删，
+  // 正在用的人（含作者自己）不受影响，只是市场不再展示、不再接受新的选用。
+  // POST /api/user/environment/submit {id} - 作者重新提交审核（unlisted → draft）。
+  // 出口律：下架有去路。'draft' 就是定格入队本体的字面（env-commit 造它，
+  // 管理端过审/驳回只认它）——重提必须回到这个真队列，不能回 'pending' 那种
+  // 管理端不认的幽灵态（判例：曾写 pending，重提=从队列消失）。
   if (path === '/api/user/environment/submit' && req.method === 'POST') {
     const addr = credSession()
     if (!addr) {
@@ -624,15 +628,15 @@ export async function handleUserRoutes(req, res, path) {
         res.end(JSON.stringify({ error: '只能提交自己定格的模板' }))
         return true
       }
-      if (doc.status !== 'draft') {
+      if (doc.status !== 'unlisted') {
         res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ error: '只有草稿可以提交审核' }))
+        res.end(JSON.stringify({ error: '只有已下架的作品可以重新提交审核' }))
         return true
       }
-      await dataService.patchEnvironment(doc._id, { status: 'pending' })
+      await dataService.patchEnvironment(doc._id, { status: 'draft' })
       dataService.logOperation('env_submit_self', { address: addr, id: doc._id })
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ ok: true, status: 'pending' }))
+      res.end(JSON.stringify({ ok: true, status: 'draft' }))
     } catch (err) {
       handleError(err, res)
     }
@@ -666,11 +670,11 @@ export async function handleUserRoutes(req, res, path) {
         res.end(JSON.stringify({ error: '只有已上架的模板需要下架（其他状态本就不在市场里）' }))
         return true
       }
-      await dataService.patchEnvironment(doc._id, { status: 'draft' })
+      await dataService.patchEnvironment(doc._id, { status: 'unlisted' })
       dataService.logOperation('env_unpublish_self', { address: addr, id: doc._id })
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(
-        JSON.stringify({ ok: true, backToDrafts: true, usingCount: (doc.pinnedBy || []).length }),
+        JSON.stringify({ ok: true, status: 'unlisted', usingCount: (doc.pinnedBy || []).length }),
       )
     } catch (err) {
       handleError(err, res)

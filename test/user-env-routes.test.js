@@ -558,7 +558,7 @@ describe('PR3 自助定格（本人面：freezeAllowed + autoSlug + 共用流程
   })
 })
 
-describe('POST /api/user/environment/unpublish（作者自助下架：published→draft）', () => {
+describe('POST /api/user/environment/unpublish（作者自助下架：published→unlisted）', () => {
   it('无会话 → 401', async () => {
     const res = await call('/api/user/environment/unpublish', {
       method: 'POST',
@@ -581,19 +581,19 @@ describe('POST /api/user/environment/unpublish（作者自助下架：published�
     expect(res.statusCode).toBe(400)
   })
 
-  it('重新提交（出口律：下架有去路）：draft→pending 走通并留审计', async () => {
-    seed({ sourceAddr: USER, status: 'draft' })
+  it('重新提交（出口律：下架有去路）：unlisted→draft 走通并留审计（管理端只认 draft 队列）', async () => {
+    seed({ sourceAddr: USER, status: 'unlisted' })
     const res = await call('/api/user/environment/submit', { method: 'POST', body: { id: TPL } })
     expect(res.statusCode).toBe(200)
-    expect(globalThis.__envStore.get(TPL).status).toBe('pending')
+    expect(globalThis.__envStore.get(TPL).status).toBe('draft')
     expect(dataService.logOperation).toHaveBeenCalledWith(
       'env_submit_self',
       expect.objectContaining({ address: USER, id: TPL }),
     )
   })
 
-  it('非草稿不许重复提交 → 400；不是自己的 → 403', async () => {
-    seed({ sourceAddr: USER, status: 'pending' })
+  it('不在下架态不许提交 → 400；不是自己的 → 403', async () => {
+    seed({ sourceAddr: USER, status: 'published' })
     expect(
       (await call('/api/user/environment/submit', { method: 'POST', body: { id: TPL } }))
         .statusCode,
@@ -605,12 +605,12 @@ describe('POST /api/user/environment/unpublish（作者自助下架：published�
     ).toBe(403)
   })
 
-  it('作者下架：状态回草稿、引用账本原样保留（下架≠删除，绝不上锁）、审计在案', async () => {
+  it('作者下架：published→unlisted、引用账本原样保留（下架≠删除，绝不上锁）、审计在案', async () => {
     seed({ sourceAddr: USER, pinnedBy: ['other008xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', USER] })
     const res = await call('/api/user/environment/unpublish', { method: 'POST', body: { id: TPL } })
     expect(res.statusCode).toBe(200)
     const doc = globalThis.__envStore.get(TPL)
-    expect(doc.status).toBe('draft')
+    expect(doc.status).toBe('unlisted')
     expect(doc.pinnedBy.length).toBe(2) // 在用的人不受影响，账本一个字不动
     expect(json(res).usingCount).toBe(2)
     expect(dataService.logOperation).toHaveBeenCalledWith(
