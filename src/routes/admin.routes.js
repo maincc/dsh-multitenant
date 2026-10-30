@@ -1154,11 +1154,16 @@ export async function handleAdminRoutes(req, res, path, url) {
     }
     await dockerService.removeImage(doc.imageTag) // 即弃：删像
     await Promise.resolve(envBundleService.removeBundle(id)) // 删包（幂等）
+    // 判例 2026-10-30：像没了钉必须卸——否则被钉者下次重建容器吊空炸。
+    // 驳回不是撤板（撤板对象还在、不驱逐在用者；驳回是物理消失）。
+    const holders =
+      typeof userService.unpinHolders === 'function' ? await userService.unpinHolders(id) : []
     await dataService.patchEnvironment(id, {
       status: 'rejected',
       rejectedAt: new Date().toISOString(),
       rejectedBy: getAdminSession(req) || 'system',
       rejectReason: reason,
+      pinnedBy: [], // 钉册随像作废（解绑名数已录 env_unpin_on_reject 审计）
     })
     dataService.logOperation('env_reject', {
       id,
@@ -1167,7 +1172,16 @@ export async function handleAdminRoutes(req, res, path, url) {
       operator: getAdminSession(req) || 'system',
     })
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-    res.end(JSON.stringify({ ok: true, id, discarded: true, notice: '镜像与随行包已当场删除' }))
+    res.end(
+      JSON.stringify({
+        ok: true,
+        id,
+        discarded: true,
+        notice:
+          '镜像与随行包已当场删除' +
+          (holders.length ? `；${holders.length} 人的钉选已随之解绑（下次回默认环境）` : ''),
+      }),
+    )
     return true
   }
 

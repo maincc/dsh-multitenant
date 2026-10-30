@@ -595,6 +595,29 @@ describe('PR2 随行包接线（include/导出/驳回/检测/装包）', () => {
     expect(globalThis.__envStore.size).toBe(before)
   })
 
+  it('驳回即弃同时解绑所有钉（判例 2026-10-30：像没了钉还挂着=重建吊空炸）', async () => {
+    seedTemplate({
+      _id: 'TPL_R2',
+      imageTag: 'TPL_R2',
+      status: 'draft',
+      pinnedBy: ['addrholder1', 'addrholder2'],
+    })
+    userService.state.swtcUsers = userService.state.swtcUsers || {}
+    userService.state.swtcUsers.addrholder1 = { pinnedImage: 'TPL_R2' }
+    userService.state.swtcUsers.addrholder2 = { pinnedImage: 'OTHER' }
+    const r = await call('/api/admin/env-reject', {
+      body: { id: 'TPL_R2', reason: '测试驳回' },
+      sign: { op: 'env-reject', payload: { id: 'TPL_R2' } },
+    })
+    expect(r.statusCode).toBe(200)
+    expect(userService.state.swtcUsers.addrholder1.pinnedImage).toBe(null)
+    expect(userService.state.swtcUsers.addrholder2.pinnedImage).toBe('OTHER') // 不相干的不动
+    expect(globalThis.__envStore.get('TPL_R2').pinnedBy).toEqual([])
+    expect(JSON.parse(r.body).notice).toContain('解绑')
+    delete userService.state.swtcUsers.addrholder1
+    delete userService.state.swtcUsers.addrholder2
+  })
+
   it('env-reject：无理由 400（先于签名）；draft 即弃删像删包；published 409；重复 already', async () => {
     seedTemplate({ _id: 'TPL_R1', imageTag: 'TPL_R1', status: 'draft' })
     const noReason = await call('/api/admin/env-reject', { body: { id: 'TPL_R1' } })

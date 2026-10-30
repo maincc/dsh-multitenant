@@ -2070,6 +2070,27 @@ export class UserService {
     return { from: prev, to: templateId }
   }
 
+  /**
+   * 驳回解钉：镜像即弃之后，钉必须跟着卸——被吊空引用的人下次重建容器
+   * 会直接炸。驳回不同于撤板（撤板不驱逐在用者，对象还在；驳回对象物理
+   * 消失，吊着的钉是断头账）。返回解绑地址清单，审计如实留痕。
+   */
+  async unpinHolders(templateId, reason = 'env_reject') {
+    const holders = Object.keys(this.state.swtcUsers || {}).filter(
+      (a) => String(this.state.swtcUsers[a]?.pinnedImage) === String(templateId),
+    )
+    for (const a of holders) {
+      this.state.swtcUsers[a] = { ...this.state.swtcUsers[a], pinnedImage: null }
+    }
+    if (holders.length) await this._saveState()
+    dataService.logOperation('env_unpin_on_reject', {
+      id: String(templateId),
+      count: holders.length,
+      reason,
+    })
+    return holders
+  }
+
   async applyImageVersion(address, opts = {}) {
     address = normalizeAddress(address)
     const { mode = 'rebuild', dryRun = false, skipQueueCheck = true } = opts
