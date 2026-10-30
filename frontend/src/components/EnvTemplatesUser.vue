@@ -665,9 +665,13 @@ async function unpublishNow(tpl) {
   try {
     const r = await axios.post('/api/user/environment/unpublish', { id: tpl.id })
     const n = r.data?.usingCount || 0
-    toast(n ? t('env.unpublishedUsing', { n }) : t('env.unpublished'))
+    toast(
+      (n ? t('env.unpublishedUsing', { n }) : t('env.unpublished')) +
+        (r.data?.selfUnpinned ? t('env.unpublishSelfDefault') : ''),
+    )
     detailFor.value = null
     await loadAll()
+    if (r.data?.selfUnpinned) emit('mine-changed') // 来源条立刻改口认默认（定格完结账的镜像面）
   } catch (e) {
     toast(errMsg(e))
   } finally {

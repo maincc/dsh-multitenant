@@ -693,10 +693,25 @@ export async function handleUserRoutes(req, res, path) {
         return true
       }
       await dataService.patchEnvironment(doc._id, { status: 'unlisted' })
+      // 裁定 2026-10-30：下架者不再住进下架物——作者本人的钉回落默认环境（在用的
+      // 别人一律不动）；从此重连不回滚到定格点，攒好的改动下次定格就是现在。
+      const off =
+        typeof userService.unpinAuthorOnOffshelf === 'function'
+          ? await userService.unpinAuthorOnOffshelf(addr, doc._id, 'unpublish')
+          : { skipped: true }
+      // 账实一致：回读账本再计数（doc 是解钉前的陈旧引用）；作者既已回落默认，
+      // 任何记账时序下都不该被算进"仍在用"——filter 对已摘/未摘幂等
+      const postPin = (await dataService.getEnvironment(doc._id))?.pinnedBy || []
+      const usingLeft = off.unpinned ? postPin.filter((a) => a !== addr).length : postPin.length
       dataService.logOperation('env_unpublish_self', { address: addr, id: doc._id })
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(
-        JSON.stringify({ ok: true, status: 'unlisted', usingCount: (doc.pinnedBy || []).length }),
+        JSON.stringify({
+          ok: true,
+          status: 'unlisted',
+          usingCount: usingLeft,
+          selfUnpinned: Boolean(off.unpinned),
+        }),
       )
     } catch (err) {
       handleError(err, res)

@@ -955,9 +955,21 @@ export async function handleAdminRoutes(req, res, path, url) {
       revokedAt: new Date().toISOString(),
       revokedBy: getAdminSession(req) || 'system',
     })
+    // 裁定 2026-10-30：撤板不驱逐"在用的人"判例不变，但**作者本人**不再住进
+    // 被撤的模板——他的钉回落默认环境（文件零风险，快照三件套与 pin 无关）。
+    const off =
+      typeof userService.unpinAuthorOnOffshelf === 'function' && doc.sourceAddr
+        ? await userService.unpinAuthorOnOffshelf(doc.sourceAddr, id, 'revoke')
+        : { skipped: true }
+    // 账实一致：回读账本计数；作者既已回落默认，任何时序下都不算"仍在用"（幂等 filter）
+    const postPin = (await dataService.getEnvironment(id))?.pinnedBy || []
+    const usingLeft = off.unpinned
+      ? postPin.filter((a) => a !== doc.sourceAddr).length
+      : postPin.length
     dataService.logOperation('env_revoke', {
       id,
       pinnedCount: (doc.pinnedBy || []).length,
+      authorUnpinned: Boolean(off.unpinned),
       operator: getAdminSession(req) || 'system',
     })
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
@@ -965,7 +977,10 @@ export async function handleAdminRoutes(req, res, path, url) {
       JSON.stringify({
         ok: true,
         template: next,
-        note: `已撤 listing；${(doc.pinnedBy || []).length} 个在用租户不受影响（重钉该模板将被拒）`,
+        selfUnpinned: Boolean(off.unpinned),
+        note:
+          `已撤 listing；${usingLeft} 个在用租户不受影响（重钉该模板将被拒）` +
+          (off.unpinned ? '；作者已回落默认环境（文件原封不动）' : ''),
       }),
     )
     return true

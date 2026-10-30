@@ -14,6 +14,8 @@ vi.mock('../src/services/user.service.js', () => ({
   userService: {
     applyImageVersion: vi.fn(),
     resetContainer: vi.fn(),
+    // 裁定 2026-10-30：下架/撤板作者回落默认——mock 给可控回执
+    unpinAuthorOnOffshelf: vi.fn(async () => ({ skipped: true })),
     // 判例 2026-10-30 定格完结账：service 动态导入后按 typeof 探测调用
     adoptCommitAsOwn: vi.fn(async (addr, id) => {
       const st = (await import('../src/services/user.service.js')).userService.state.swtcUsers
@@ -653,6 +655,24 @@ describe('POST /api/user/environment/unpublish（作者自助下架：published�
     expect(res.statusCode).toBe(400)
   })
 
+  it('下架即作者回落默认（裁定 2026-10-30）：selfUnpinned 回执、usingCount 排除自己', async () => {
+    const { userService } = await import('../src/services/user.service.js')
+    const origUnpin = userService.unpinAuthorOnOffshelf
+    userService.unpinAuthorOnOffshelf = vi.fn(async () => ({ unpinned: true }))
+    seed({
+      sourceAddr: USER,
+      status: 'published',
+      pinnedBy: [USER, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'],
+    })
+    const res = await call('/api/user/environment/unpublish', { method: 'POST', body: { id: TPL } })
+    expect(res.statusCode).toBe(200)
+    expect(json(res).selfUnpinned).toBe(true)
+    expect(json(res).usingCount).toBe(1)
+    expect(userService.unpinAuthorOnOffshelf.mock.lastCall[0]).toBe(USER)
+    expect(userService.unpinAuthorOnOffshelf.mock.lastCall[2]).toBe('unpublish')
+    userService.unpinAuthorOnOffshelf = origUnpin // 还原：mock 手术刀不留血
+  })
+
   it('重新提交（出口律：下架有去路）：unlisted→draft 走通并留审计（管理端只认 draft 队列）', async () => {
     seed({ sourceAddr: USER, status: 'unlisted' })
     const res = await call('/api/user/environment/submit', { method: 'POST', body: { id: TPL } })
@@ -683,7 +703,7 @@ describe('POST /api/user/environment/unpublish（作者自助下架：published�
     expect(res.statusCode).toBe(200)
     const doc = globalThis.__envStore.get(TPL)
     expect(doc.status).toBe('unlisted')
-    expect(doc.pinnedBy.length).toBe(2) // 在用的人不受影响，账本一个字不动
+    expect(doc.pinnedBy.length).toBe(2) // 作者未钉着此模板（mock skipped）：账本一个字不动
     expect(json(res).usingCount).toBe(2)
     expect(dataService.logOperation).toHaveBeenCalledWith(
       'env_unpublish_self',

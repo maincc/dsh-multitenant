@@ -103,6 +103,7 @@ import { handleAdminRoutes } from '../src/routes/admin.routes.js'
 import { dockerService } from '../src/services/docker.service.js'
 import { envBundleService } from '../src/services/env-bundle.service.js'
 import { userService } from '../src/services/user.service.js'
+import { userService } from '../src/services/user.service.js'
 import { dataService } from '../src/services/data.service.js'
 import { userSessionStore } from '../src/middleware/user-auth.middleware.js'
 import { isAdmin } from '../src/config/config.js'
@@ -420,6 +421,29 @@ describe('env-publish / env-revoke（审核闸与下架语义）', () => {
       sign: { op: 'env-revoke', payload: { id: TPL } },
     })
     expect(json(res).already).toBe(true)
+  })
+
+  it('裁定 2026-10-30：撤板作者回落默认——只解作者的钉，在用他人不驱逐（判例并存）', async () => {
+    const OTHER = 'j2otherpinholder000000000000000000' // 必须真·异于 TENANT（自撞测试曾假摔）
+    expect(OTHER).not.toBe(TENANT)
+    seedTemplate({ status: 'published', pinnedBy: [TENANT, OTHER] })
+    userService.state.swtcUsers = {
+      [TENANT]: { pinnedImage: TPL },
+      [OTHER]: { pinnedImage: TPL },
+    }
+    const res = await call('/api/admin/env-revoke', {
+      body: { id: TPL },
+      sign: { op: 'env-revoke', payload: { id: TPL } },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(json(res).selfUnpinned).toBe(true)
+    expect(json(res).note).toContain('作者已回落默认环境')
+    expect(json(res).note).toContain('1 个在用租户不受影响')
+    expect(userService.state.swtcUsers[TENANT].pinnedImage).toBe(null)
+    expect(userService.state.swtcUsers[OTHER].pinnedImage).toBe(TPL) // 在用者不驱逐
+    expect(globalThis.__envStore.get(TPL).pinnedBy).toEqual([OTHER])
+    delete userService.state.swtcUsers[TENANT]
+    delete userService.state.swtcUsers[OTHER]
   })
 
   it('签名绑定偷换：签 A 模板发布 B 模板 → 拒', async () => {

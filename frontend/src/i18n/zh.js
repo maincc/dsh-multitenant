@@ -614,7 +614,8 @@ export default {
     unpublishConfirm:
       '下架后市场不再展示、不能选用；已在用的人不受影响，模板回到你的草稿箱。确定？',
     unpublished: '已下架。想回来时点重新提交审核',
-    unpublishedUsing: '已下架，回到草稿箱（{n} 人仍在用，含你自己）',
+    unpublishedUsing: '已下架，回到草稿箱（{n} 人仍在用）',
+    unpublishSelfDefault: '；你的当前环境已回到默认——文件原封不动，下次定格就定现在的样子',
     detailBtn: '详情',
     detailUsers: '{n} 人正在使用',
     dSkills: '随行技能（按名安装最新版）',

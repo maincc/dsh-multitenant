@@ -2091,6 +2091,32 @@ export class UserService {
     return holders
   }
 
+  /**
+   * 下架/撤板时作者回落默认（裁定 2026-10-30）：作者不该继续"住进下架物"。
+   * 只动作者本人且只当他当前钉的正是这张模板；其他在用者的钉一律不动
+   * （撤板不驱逐在用者的判例保持原样）。文件零风险——重建保文件靠工作目录
+   * 快照三件套（拆前存建后合），与 pin 归属无关；变的只是重连不再"回滚到
+   * 定格点"，下次定格直接定现在的样子。
+   */
+  async unpinAuthorOnOffshelf(address, templateId, via = 'offshelf') {
+    const rec = this.state.swtcUsers?.[address]
+    if (!rec || String(rec.pinnedImage) !== String(templateId)) return { skipped: true }
+    this.state.swtcUsers[address] = { ...rec, pinnedImage: null }
+    await this._saveState()
+    const fresh = await dataService.getEnvironment(String(templateId))
+    if (fresh && Array.isArray(fresh.pinnedBy) && fresh.pinnedBy.includes(address)) {
+      await dataService.patchEnvironment(String(templateId), {
+        pinnedBy: fresh.pinnedBy.filter((a) => a !== address),
+      })
+    }
+    dataService.logOperation('env_offshelf_unpin', {
+      address,
+      id: String(templateId),
+      via,
+    })
+    return { unpinned: true }
+  }
+
   async applyImageVersion(address, opts = {}) {
     address = normalizeAddress(address)
     const { mode = 'rebuild', dryRun = false, skipQueueCheck = true } = opts
