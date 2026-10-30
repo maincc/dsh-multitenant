@@ -570,7 +570,7 @@ export default {
     applyBtn: '选用此环境',
     alreadyUsing: '使用中',
     cancelBtn: '取消',
-    previewLoading: '正在预览将发生什么……',
+    previewLoading: '预览生成中——这一页还没开始定格，你的容器和镜像都不会动',
     conflicts: '{n} 个同名文件将被覆盖（你的容器里也有）',
     skillsPlanned: '技能按名装到你的容器：{list}',
     promiseLine: '只换环境：你的卷（数据/密钥/登录态）不动分毫；确认完成后下次连接生效。',
@@ -669,11 +669,13 @@ export default {
       '▾ 勾目录=整棵随行，子项可逐个摘除——被摘除的只留在你的容器，不进镜像（密钥、隐私件就靠这招）',
     bundleTotal: '随行包：{plugins} 个插件共 {size}（上限 {cap}）',
     quotaUsed: '该来源定格占用：{used}/{limit}（一次定格=一个镜像+可能的包，占平台盘）',
+    consentGate: '勾上方面知情确认，右钮才会亮起——此页仅为预览，定格尚未开始',
     consentLine:
       '我确认：勾上的内容（{skills} 技能 / {plugins} 插件 / {folders} 工作目录条目）将进包并整平台可见，勾选即同意公开',
     freezeGo: '执行定格',
     previewFirst: '先预览步骤',
-    running: '定格执行中：源容器将停机约 15~60 秒，平台会自动把它起回……',
+    running:
+      '定格执行中：源容器将停机数十秒（首次定格或改动大的容器可能到几分钟——别关页面，平台会把它自动起回）',
     freezeDone: '「{name}」定格完成，已入账本等待审核',
     freezeFailed: '定格失败',
     containerBackNote: '源容器已确认起回，照常使用不受影响；可重试或联系管理员',

@@ -169,6 +169,9 @@ const CAPABILITY_CACHE_TTL_MS = Number(process.env.DSH_CAPABILITY_CACHE_MS || 30
  * `du -sb` 扫描大卷、docker stats 采样）。需要更长的调用可在 opts.timeout 覆盖。
  */
 const DEFAULT_TIMEOUT_MS = Number(process.env.DOCKER_CLI_TIMEOUT_MS || 120000)
+// 定格的两记 docker commit 专列预算（判例 2026-10-30：真机首次 commit 超默认 120s
+// 被 CLI 超时杀，daemon 还在后台建像——「定格卡住不动」的正主）
+const ENV_COMMIT_TIMEOUT_MS = Number(process.env.ENV_COMMIT_TIMEOUT_MS || 10 * 60_000)
 
 /**
  * 容器实际 DSH 版本缓存：镜像 ID -> 版本。
@@ -1138,14 +1141,20 @@ export class DockerService {
     const scrubName = `dsh-env-scrub-${stamp}`
     // 保留名单：只收单层名（无 / 无 .. 无引号控制符），shell 单引号安全转义。
     const shq = (v) => `'${String(v).replace(/'/g, `'\''`)}'`
-    const keepCond = (Array.isArray(opts.scrubKeep) ? opts.scrubKeep : [])
-      .map((x) => String(x).trim())
-      .filter(
-        (x) =>
-          x && x.length <= 255 && !x.includes('/') && !x.includes('\0') && x !== '.' && x !== '..',
-      )
-      .map((x) => `! -name ${shq(x)}`)
-      .join(' ')
+    const keepNames =
+      (Array.isArray(opts.scrubKeep) ? opts.scrubKeep : [])
+        .map((x) => String(x).trim())
+        .filter(
+          (x) =>
+            x &&
+            x.length <= 255 &&
+            !x.includes('/') &&
+            !x.includes('\0') &&
+            x !== '.' &&
+            x !== '..',
+        )
+        .map((x) => `${shq(x)}) ;;`)
+        .join(' ') || `'__none__') ;;`
     // 子项摘除（判例 2026-10-30：目录里的隐私件）：恰两段 "目录/子项"，
     // shell 单引号转义后逐条 rm -rf；父目录本就不保留时此条自然空转
     const exclLines = (Array.isArray(opts.scrubExclude) ? opts.scrubExclude : [])
@@ -1174,7 +1183,11 @@ export class DockerService {
       // workspace 可写层默认清空（见上"布局真相"）：顶层逐条目，不在保留
       // 名单即删——find 的 ! -name 条件由 scrubKeep 拼接（单引号转义），
       // 名单空时=无条件全清。
-      `if [ -d /root/workspace ]; then find /root/workspace -mindepth 1 -maxdepth 1 ${keepCond} -delete; fi`,
+      // 判例 2026-10-30（真机演练抓漏）：find -maxdepth 1 -delete 删不动
+      // **非空目录**——GNU find 报 Directory not empty 后静默继续，SCRUB 末位
+      // 'true' 又把退出码抹平。"默认全清"从此只对文件成立：未勾选目录整棵
+      // 留在定格产物里，目录里的密钥照样上像=隐私泄露。改逐条目 case + rm -rf。
+      `if [ -d /root/workspace ]; then for e in /root/workspace/* /root/workspace/.[!.]* /root/workspace/..?*; do [ -e "$e" ] || continue; case "$(basename "$e")" in ${keepNames} *) rm -rf "$e";; esac; done; fi`,
       // 判例（2026-10 同夜第二层）：docker commit 会把**运行期 bind 挂载点**
       // 烘焙成 0 字节占位文件——/patches/tenant.patch.yml 的占位混进产物后，
       // CMD 的 [ -f ] 分支成立，dsh 把空文件当 YAML patch 读，直接崩。
@@ -1192,7 +1205,9 @@ export class DockerService {
     }
     try {
       await sh('docker', ['stop', '-t', '15', name])
-      await sh('docker', ['commit', ...labelChanges, name, stageTag])
+      await sh('docker', ['commit', ...labelChanges, name, stageTag], {
+        timeout: ENV_COMMIT_TIMEOUT_MS,
+      })
       // 判例（2026-10 用户选用模板后容器永久起不来）：scrub 用
       // `--entrypoint sh -c SCRUB` 起一次性容器，docker commit 默认把
       // **"容器最后执行的命令"烘焙成新镜像的启动命令**——定格产物变成
@@ -1226,14 +1241,11 @@ export class DockerService {
           SCRUB,
         ])
         await sh('docker', ['wait', scrubName])
-        await sh('docker', [
-          'commit',
-          '--change',
-          'LABEL dsh.env.scrubbed=true',
-          ...bootChanges,
-          scrubName,
-          tag,
-        ])
+        await sh(
+          'docker',
+          ['commit', '--change', 'LABEL dsh.env.scrubbed=true', ...bootChanges, scrubName, tag],
+          { timeout: ENV_COMMIT_TIMEOUT_MS },
+        )
         scrubbed = true
       } catch {
         await sh('docker', ['tag', stageTag, tag]).catch(() => {})
@@ -1283,7 +1295,17 @@ export class DockerService {
       } catch {
         /* docker 面不可用：此刻报错也无人执行，留给上层日志 */
       }
-      await rmiQuiet(stageTag)
+      for (let k = 0; k < 15; k++) {
+        await rmiQuiet(stageTag)
+        let q = ''
+        try {
+          q = String(await sh('docker', ['images', '-q', stageTag])).trim()
+        } catch {
+          q = ''
+        }
+        if (!q) break
+        await new Promise((r) => setTimeout(r, 2000))
+      }
     }
   }
 

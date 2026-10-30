@@ -446,6 +446,7 @@
               })
             }}
           </label>
+          <p v-if="!wz.consent" class="env-muted env-small">{{ $t('env.consentGate') }}</p>
           <div class="env-wz-nav">
             <button class="btn btn-secondary" :disabled="wz.running" @click="wzStep = 'pick'">
               {{ $t('env.backBtn') }}
