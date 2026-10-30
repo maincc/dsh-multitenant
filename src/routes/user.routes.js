@@ -435,7 +435,11 @@ export async function handleUserRoutes(req, res, path) {
     const envs = await dataService.listEnvironments()
     const published = envs.filter((e) => e.status === 'published')
     const pinned = userService.state.swtcUsers?.[addr]?.pinnedImage ?? null
-    const mine = published.find((e) => e._id === pinned) || null
+    // 认领兜底要认**全部状态**（判例 2026-10-30：作者下架后，正用着的人容器被
+    // 闲置销毁、实物探测扑空，published-only 兜底把来源条谎成"默认环境"——
+    // pin 是本人同意用的账，模板此刻上没上架都改不了"我用的就是它"的事实；
+    // 暴露面仍只有 name/slug/author，不借道泄 intro/manifest）
+    const mine = (pinned && envs.find((e) => e._id === pinned)) || null
     // 画面与真相收敛（第八案连带修正）：容器实物命中模板就算"套来的"，
     // 账本 pin 只在容器不在线时兜底——否则半途中止的回退会让来源条说谎，
     // 用户连"再点一次回退"的按钮都摸不到

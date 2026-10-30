@@ -306,6 +306,29 @@ describe('POST /api/user/environment/revert（回平台默认）', () => {
     expect(json(res).cleanNote).toContain('账本同步销记')
   })
 
+  it('判例 2026-10-30：模板下架+容器被销毁——来源条按 pin 认账，不谎报默认环境', async () => {
+    seed({
+      sourceAddr: 'someoneelseauthor00000000000000000000',
+      status: 'unlisted',
+      pinnedBy: [USER],
+    })
+    const { userService } = await import('../src/services/user.service.js')
+    userService.state.swtcUsers[USER] = { pinnedImage: TPL }
+    const { dockerService } = await import('../src/services/docker.service.js')
+    const prev = dockerService.containerImageId
+    dockerService.containerImageId = vi.fn().mockRejectedValue(new Error('No such container'))
+    try {
+      const res = await call('/api/user/environments', { method: 'GET' })
+      expect(res.statusCode).toBe(200)
+      const yc = json(res).yourCurrent
+      expect(yc.fromTemplate).not.toBeNull() // 谎报"默认环境"= 画面与真相分叉
+      expect(yc.fromTemplate.author).toBe('someoneelseauthor00000000000000000000')
+    } finally {
+      dockerService.containerImageId = prev
+      delete userService.state.swtcUsers[USER]
+    }
+  })
+
   it('作者已上架的作品也在 myWorks 全状态账里（下架入口不断头）', async () => {
     seed({ status: 'published', sourceAddr: USER })
     globalThis.__envStore.set('other-pub', {
