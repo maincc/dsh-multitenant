@@ -567,6 +567,7 @@ describe('PR2 随行包接线（include/导出/驳回/检测/装包）', () => {
       skills: ['cwt-verify'],
       plugins: ['a.js'],
       folders: ['策略'],
+      wsExcludes: [], // 子项摘除清单入账（判例 2026-10-30），空也要如实记
     })
     expect(template.bundle.files).toHaveLength(1)
     expect(template.scan.rulesVer).toBe(1)
@@ -576,6 +577,7 @@ describe('PR2 随行包接线（include/导出/驳回/检测/装包）', () => {
       skills: ['cwt-verify'],
       plugins: ['a.js'],
       folders: ['策略'],
+      wsExcludes: [], // 子项摘除清单入账（判例 2026-10-30），空也要如实记
     }) // 知情留痕：勾选=公开同意入审计
   })
 

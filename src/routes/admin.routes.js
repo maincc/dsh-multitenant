@@ -7,7 +7,7 @@ import { userService } from '../services/user.service.js'
 import { dataService } from '../services/data.service.js'
 import { dockerService } from '../services/docker.service.js'
 import { envBundleService } from '../services/env-bundle.service.js'
-import { runEnvCommit, normEnvNames } from '../services/env-commit.service.js'
+import { runEnvCommit, normEnvNames, normEnvWsExcludes } from '../services/env-commit.service.js'
 import { scanBundle } from '../utils/env-scan.js'
 // 镜像归属与可清理性判定的唯一真源（2026-09 从本文件抽出，与 F3 维护定时器共用）
 import { collectPrunableImages, matchImageId } from '../services/image-inventory.service.js'
@@ -797,6 +797,18 @@ export async function handleAdminRoutes(req, res, path, url) {
       plugins: normEnvNames(body.include && body.include.plugins),
       folders: normEnvNames(body.include && body.include.folders),
     }
+    const wsEx = normEnvWsExcludes(body.include && body.include.wsExcludes)
+    if (wsEx === null) {
+      res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(
+        JSON.stringify({
+          error: '子项摘除清单格式不正：须为"目录/子项"两段路径且不含 ..',
+          code: 'BAD_WS_EXCLUDE',
+        }),
+      )
+      return true
+    }
+    include.wsExcludes = wsEx
     if (!/^[a-z0-9][a-z0-9-]{1,40}$/.test(slug)) {
       res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
       res.end(

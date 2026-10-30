@@ -1146,6 +1146,19 @@ export class DockerService {
       )
       .map((x) => `! -name ${shq(x)}`)
       .join(' ')
+    // 子项摘除（判例 2026-10-30：目录里的隐私件）：恰两段 "目录/子项"，
+    // shell 单引号转义后逐条 rm -rf；父目录本就不保留时此条自然空转
+    const exclLines = (Array.isArray(opts.scrubExclude) ? opts.scrubExclude : [])
+      .map((x) => String(x).trim())
+      .filter((x) => {
+        const segs = x.split('/')
+        return (
+          segs.length === 2 &&
+          segs.every((seg) => seg && seg.length <= 255 && seg !== '.' && seg !== '..') &&
+          !x.includes('\0')
+        )
+      })
+      .map((p2) => `rm -rf ${shq('/root/workspace/' + p2)}`)
     const labelChanges = Object.entries(opts.labels || {}).flatMap(([k, v]) => [
       '--change',
       `LABEL ${k}=${String(v).replace(/["\s]/g, '_')}`,
@@ -1167,6 +1180,7 @@ export class DockerService {
       // CMD 的 [ -f ] 分支成立，dsh 把空文件当 YAML patch 读，直接崩。
       // 运行期平台会挂真文件覆盖，占位删除无副作用；顺带清一切挂载残留。
       'rm -f /patches/tenant.patch.yml',
+      ...exclLines,
       'true',
     ].join('; ')
     const rmiQuiet = async (ref) => {

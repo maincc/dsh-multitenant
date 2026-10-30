@@ -521,6 +521,30 @@ describe('PR3 自助定格（本人面：freezeAllowed + autoSlug + 共用流程
     expect(globalThis.__envStore.size).toBe(0)
   })
 
+  it('子项摘除：scrubExclude 原样透传清洗层；畸形清单 400 响亮拒绝（隐私绝不静默失效）', async () => {
+    const res = await call('/api/user/environment-commit', {
+      method: 'POST',
+      body: {
+        displayName: 'privacy pick',
+        include: { skills: [], plugins: [], folders: ['研报'], wsExcludes: ['研报/密钥.txt'] },
+      },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(dockerService.commitEnvironment).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      expect.objectContaining({ scrubKeep: ['研报'], scrubExclude: ['研报/密钥.txt'] }),
+    )
+    for (const bad of [['../x'], ['a/b/c'], ['solo'], ['研报/../.ssh'], ['']]) {
+      const r = await call('/api/user/environment-commit', {
+        method: 'POST',
+        body: { displayName: 'x', include: { wsExcludes: bad } },
+      })
+      expect(r.statusCode).toBe(400)
+      expect(JSON.parse(r.body).code).toBe('BAD_WS_EXCLUDE')
+    }
+  })
+
   it('判例 2026-10-30：定格=自采纳——格完本人 pin 即这套、引用账记名、旧钉迁账', async () => {
     const { userService } = await import('../src/services/user.service.js')
     userService.state.swtcUsers[USER] = { pinnedImage: 'OLDPIN' }

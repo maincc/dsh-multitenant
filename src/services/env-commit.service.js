@@ -20,6 +20,26 @@ const JSON_HDR = { 'content-type': 'application/json; charset=utf-8' }
 
 // 勾选名单归一：只收单层名（无 / 无控制符），200 条封顶——后端硬闸，
 // 前端灰显不是防线（export/install 两侧还要各自再验根）
+
+// 子项摘除清单校验（判例 2026-10-30：隐私摘除必须响亮失败——格式不正宁可不
+// 定格，绝不静默放行让密钥跟着上云）。合法形如 "目录/子项" 恰好两段，段内无
+// \0、不是 . / ..、单段 ≤255。null=有非法项，调用方必须拒绝。
+function normEnvWsExcludes(raw) {
+  if (raw === undefined || raw === null) return []
+  if (!Array.isArray(raw) || raw.length > 200) return null
+  const out = []
+  for (const x of raw) {
+    const segStr = String(x === null || x === undefined ? '' : x).trim()
+    const segs = segStr.split('/')
+    if (segs.length !== 2 || !segStr) return null
+    for (const seg of segs) {
+      if (!seg || seg.length > 255 || seg === '.' || seg === '..' || seg.includes('\0')) return null
+    }
+    out.push(segStr)
+  }
+  return [...new Set(out)]
+}
+
 export function normEnvNames(list) {
   return (Array.isArray(list) ? list : [])
     .map((x) => String(x || '').trim())
@@ -121,6 +141,9 @@ export async function runEnvCommit(p) {
           '执行定格时你的容器会暂停约 15~60 秒：正在用的会话会断，恢复后照常',
           '密码、登录状态、聊天记录不会被带走（它们本来就与复制品隔离）；工作目录 /root/workspace 里的文件**默认清空、勾了才保留**（本次勾选: ' +
             (include.folders.join(', ') || '未勾选→全清') +
+            (include.wsExcludes && include.wsExcludes.length
+              ? `；摘除子项 ${include.wsExcludes.join('、')}（它们只留容器，不入镜像）`
+              : '') +
             '）',
           '清理是"尽力而为"，不是保证——复制品里有什么，以管理员逐条核对的清单为准，请如实勾选',
           ...(sameName.length
@@ -136,6 +159,7 @@ export async function runEnvCommit(p) {
   const out = await dockerService.commitEnvironment(name, tag, {
     maxBytes: Number(CONFIG.docker?.envMaxBytes) || 2 * 1024 * 1024 * 1024,
     scrubKeep: include.folders,
+    scrubExclude: include.wsExcludes || [],
     labels: {
       'dsh.env.author': address,
       'dsh.env.slug': slug,
@@ -252,4 +276,4 @@ export async function runEnvCommit(p) {
   }
 }
 
-export { JSON_HDR }
+export { JSON_HDR, normEnvWsExcludes }

@@ -372,9 +372,22 @@
                 class="env-ws-children"
               >
                 <li class="env-ws-hint">{{ $t('env.wsChildHint') }}</li>
-                <li v-for="c in w.children" :key="c.name">
+                <li v-for="c in w.children" :key="c.name" class="env-ws-child">
+                  <input
+                    type="checkbox"
+                    :checked="!wz.wsExcludes.includes(w.name + '/' + c.name)"
+                    :disabled="!wz.folders.includes(w.name)"
+                    @change="toggleWsChild(w.name + '/' + c.name)"
+                  />
                   {{ c.dir ? '📁' : '📄' }} {{ c.name }}
-                  <span class="env-muted">{{ fmtBytes(c.sizeBytes) }}</span>
+                  <span class="env-muted">
+                    {{ fmtBytes(c.sizeBytes)
+                    }}{{
+                      wz.wsExcludes.includes(w.name + '/' + c.name)
+                        ? ' · ' + $t('env.wsExcludedTag')
+                        : ''
+                    }}
+                  </span>
                 </li>
               </ul>
             </div>
@@ -506,6 +519,7 @@ const wz = ref({
   inv: null,
   workspace: [],
   running: true,
+  wsExcludes: [],
   invLoading: false,
   preview: null,
   previewLoading: false,
@@ -699,6 +713,7 @@ function openWizard() {
     inv: null,
     workspace: [],
     running: true,
+    wsExcludes: [],
     invLoading: false,
     preview: null,
     previewLoading: false,
@@ -715,6 +730,12 @@ function exitWizard(quiet) {
   loadAll().catch(() => {})
 }
 const openWs = ref([])
+function toggleWsChild(path) {
+  const i = wz.value.wsExcludes.indexOf(path)
+  if (i < 0) wz.value.wsExcludes.push(path)
+  else wz.value.wsExcludes.splice(i, 1)
+}
+
 function toggleWs(n) {
   const i = openWs.value.indexOf(n)
   if (i < 0) openWs.value.push(n)
@@ -753,7 +774,13 @@ function commitBody() {
   return {
     displayName: wz.value.displayName,
     intro: wz.value.intro,
-    include: { skills: wz.value.skills, plugins: wz.value.plugins, folders: wz.value.folders },
+    include: {
+      skills: wz.value.skills,
+      plugins: wz.value.plugins,
+      folders: wz.value.folders,
+      // 只提交仍在随行的目录的摘除项：父目录没勾=整棵不带，摘除无从谈起
+      wsExcludes: wz.value.wsExcludes.filter((p) => wz.value.folders.includes(p.split('/')[0])),
+    },
   }
 }
 async function doFreeze() {
@@ -809,6 +836,14 @@ const totalBundleBytes = computed(() => {
 .env-ws-children li {
   font-size: 13px;
   opacity: 0.82;
+}
+.env-ws-child {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.env-ws-child input {
+  margin: 0;
 }
 .env-page {
   padding: 4px 2px;

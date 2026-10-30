@@ -6,7 +6,12 @@ import { CONFIG } from '../config/config.js'
 import { userService } from '../services/user.service.js'
 import { dockerService } from '../services/docker.service.js'
 import { envBundleService } from '../services/env-bundle.service.js'
-import { runEnvCommit, normEnvNames, autoSlug } from '../services/env-commit.service.js'
+import {
+  runEnvCommit,
+  normEnvNames,
+  autoSlug,
+  normEnvWsExcludes,
+} from '../services/env-commit.service.js'
 import { dataService } from '../services/data.service.js'
 import { skillService } from '../services/skill.service.js'
 import { resourceExhaustedPayload } from '../utils/resource-exhausted.js'
@@ -404,6 +409,19 @@ export async function handleUserRoutes(req, res, path) {
       plugins: normEnvNames(body.include && body.include.plugins),
       folders: normEnvNames(body.include && body.include.folders),
     }
+    const wsEx = normEnvWsExcludes(body.include && body.include.wsExcludes)
+    if (wsEx === null) {
+      res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(
+        JSON.stringify({
+          error:
+            '子项摘除清单格式不正：须为"目录/子项"两段路径且不含 ..——隐私摘除宁可拒绝也不静默失效',
+          code: 'BAD_WS_EXCLUDE',
+        }),
+      )
+      return true
+    }
+    include.wsExcludes = wsEx
     try {
       const { status, body: respBody } = await runEnvCommit({
         address: addr,
