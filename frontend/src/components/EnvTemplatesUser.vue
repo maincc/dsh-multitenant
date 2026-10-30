@@ -348,9 +348,13 @@
               {{ $t('env.wsNotRunning') }}
             </p>
             <p v-else-if="!wz.workspace.length" class="env-muted">{{ $t('env.wsEmpty') }}</p>
+            <p v-if="wz.workspace.length" class="env-muted env-small">{{ $t('env.wsTreeNote') }}</p>
             <label v-for="w in wz.workspace" :key="w.name" class="env-check">
-              <input type="checkbox" v-model="wz.folders" :value="w.name" /> {{ w.name }}
-              <span class="env-muted">{{ fmtBytes(w.sizeBytes) }}</span>
+              <input type="checkbox" v-model="wz.folders" :value="w.name" />
+              {{ w.dir ? '📁' : '📄' }} {{ w.name }}{{ w.dir ? '/' : '' }}
+              <span class="env-muted">
+                {{ fmtBytes(w.sizeBytes) }}{{ w.dir ? $t('env.wsDirNote', { n: w.children }) : '' }}
+              </span>
             </label>
             <div class="env-danger env-small">{{ $t('env.workspaceWarn') }}</div>
           </div>

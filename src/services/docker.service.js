@@ -766,14 +766,20 @@ export class DockerService {
         name,
         'sh',
         '-c',
-        'find /root/workspace -mindepth 1 -maxdepth 1 2>/dev/null | head -100 | while read -r p; do sz=$(du -sk "$p" 2>/dev/null | cut -f1); printf "%s\\t%s\\n" "$(basename "$p")" "${sz:-0}"; done',
+        'find /root/workspace -mindepth 1 -maxdepth 1 2>/dev/null | head -100 | while read -r p; do sz=$(du -sk "$p" 2>/dev/null | cut -f1); if [ -d "$p" ]; then n=$(find "$p" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l); printf "%s\\t%s\\td\\t%s\\n" "$(basename "$p")" "${sz:-0}" "$n"; else printf "%s\\t%s\\tf\\t0\\n" "$(basename "$p")" "${sz:-0}"; fi; done',
       ])
       return String(out)
         .split('\n')
         .filter(Boolean)
         .map((line) => {
-          const [nm, kb] = line.split('\t')
-          return { name: String(nm || '').trim(), sizeBytes: (Number(kb) || 0) * 1024 }
+          const [nm, kb, kind, kids] = line.split('\t')
+          return {
+            name: String(nm || '').trim(),
+            sizeBytes: (Number(kb) || 0) * 1024,
+            // 层级如实：目录=整体单位（含子项数可见），文件=单体
+            dir: kind === 'd',
+            children: Number(kids) || 0,
+          }
         })
         .filter((x) => x.name)
     } catch {
