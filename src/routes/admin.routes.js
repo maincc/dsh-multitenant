@@ -844,7 +844,7 @@ export async function handleAdminRoutes(req, res, path, url) {
     } catch (err) {
       // commitEnvironment 的 finally 已负责把源容器起回；此处只诚实报断点
       res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ error: `定格失败：${err.message}（源容器已确认起回）` }))
+      res.end(JSON.stringify({ error: `上传失败：${err.message}（源容器已确认起回）` }))
     }
     return true
   }
@@ -916,7 +916,7 @@ export async function handleAdminRoutes(req, res, path, url) {
       res.writeHead(409, { 'content-type': 'application/json; charset=utf-8' })
       res.end(
         JSON.stringify({
-          error: `状态 ${doc.status} 不可上架（revoked 不可复活——需重新定格重审）`,
+          error: `状态 ${doc.status} 不可上架（revoked 不可复活——需重新上传重审）`,
         }),
       )
       return true
@@ -1123,7 +1123,7 @@ export async function handleAdminRoutes(req, res, path, url) {
     }
     if (!doc.bundle || !doc.bundle.files || !doc.bundle.files.length) {
       res.writeHead(409, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ error: '该模板无随行包（纯镜像定格）——无扫描对象' }))
+      res.end(JSON.stringify({ error: '该模板无随行包（纯镜像上传）——无扫描对象' }))
       return true
     }
     try {

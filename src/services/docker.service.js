@@ -1256,14 +1256,14 @@ export class DockerService {
       // 不该让用户环境多躺一分钟
       await sh('docker', ['start', name])
       const imageId = await this.imageId(tag)
-      if (!imageId) throw new Error('定格产物不可读（镜像 ID 缺失）')
+      if (!imageId) throw new Error('上传产物不可读（镜像 ID 缺失）')
       // 护栏：定格产物的启动命令必须还是"起 dsh"，不是 scrub 的残留——
       // 本判例的自动化回归位（SCRUB 特征串出现在 Cmd 即作废本次定格）
       const finalBoot = String(
         await sh('docker', ['image', 'inspect', '--format', '{{json .Config.Cmd}}', tag]),
       )
       if (/bash_history|\.netrc/.test(finalBoot)) {
-        throw new Error('定格产物的启动命令被清洗过程覆盖（内部错误，本次定格作废）')
+        throw new Error('上传产物的启动命令被清洗过程覆盖（内部错误，本次上传作废）')
       }
       const sizeOut = await sh('docker', ['image', 'inspect', '--format', '{{.Size}}', tag])
       const sizeBytes = Number(String(sizeOut).trim()) || 0
@@ -1276,7 +1276,7 @@ export class DockerService {
       const dshVersion = await this.imageDshVersion(tag)
       if (!dshVersion) {
         await rmiQuiet(tag)
-        throw new Error('定格镜像读不到 DSH 版本（非合法 DSH 基座），已弃')
+        throw new Error('上传镜像读不到 DSH 版本（非合法 DSH 基座），已弃')
       }
       let manifest = []
       try {

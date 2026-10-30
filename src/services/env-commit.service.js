@@ -80,7 +80,7 @@ export async function runEnvCommit(p) {
     return {
       status: 409,
       body: {
-        error: '源容器未在运行——定格需要活容器（执行时定格会停机数十秒并自动起回）',
+        error: '源容器未在运行——上传需要活容器（执行时会停机数十秒并自动起回）',
       },
     }
   }
@@ -111,8 +111,8 @@ export async function runEnvCommit(p) {
         code: 'TEMPLATE_IN_USE',
         error:
           opKind === 'env_commit_self'
-            ? `你的容器正在跑「${nm}」这个套来的环境——在它上面定格只会格出它的翻版。想定格自己搭的环境：先点「回退到默认」，重新装好你的东西，再定格。`
-            : `该租户的容器正在跑「${nm}」——替他定格只会格出这个模板的翻版。如需换代：让他（或你在管理端）先回退到默认，装好新东西再格。`,
+            ? `你的容器正在跑「${nm}」这个套来的环境——在它上面上传只会传出它的翻版。想上传自己搭的环境：先点「回退到默认」，重新装好你的东西，再上传。`
+            : `该租户的容器正在跑「${nm}」——替他上传只会传出这个模板的翻版。如需换代：让他（或你在管理端）先回退到默认，装好新东西再传。`,
       },
     }
   }
@@ -138,7 +138,7 @@ export async function runEnvCommit(p) {
           '存为"待审核"：管理员逐条核过之后，才会摆上平台货架',
         ],
         notices: [
-          '执行定格时你的容器会暂停约 15~60 秒：正在用的会话会断，恢复后照常',
+          '执行上传时你的容器会暂停约 15~60 秒：正在用的会话会断，恢复后照常',
           '密码、登录状态、聊天记录不会被带走（它们本来就与复制品隔离）；工作目录 /root/workspace 里的文件**默认清空、勾了才保留**（本次勾选: ' +
             (include.folders.join(', ') || '未勾选→全清') +
             (include.wsExcludes && include.wsExcludes.length
@@ -148,7 +148,7 @@ export async function runEnvCommit(p) {
           '清理是"尽力而为"，不是保证——复制品里有什么，以管理员逐条核对的清单为准，请如实勾选',
           ...(sameName.length
             ? [
-                `注意：你已经有一个叫「${displayName}」的在架/待审模板——定格会生成全新的一个，旧模板和正在用它的人完全不受影响；新模板上架后建议撤销旧的，免得货架上出现两个同名`,
+                `注意：你已经有一个叫「${displayName}」的在架/待审模板——上传会生成全新的一个，旧模板和正在用它的人完全不受影响；新模板上架后建议撤销旧的，免得货架上出现两个同名`,
               ]
             : []),
         ],
@@ -184,7 +184,7 @@ export async function runEnvCommit(p) {
     } catch (err) {
       await dockerService.removeImage(out.tag)
       await envBundleService.removeBundle(out.tag)
-      return { status: 500, body: { error: `随行包导出失败，本次定格整体作废：${err.message}` } }
+      return { status: 500, body: { error: `随行包导出失败，本次上传整体作废：${err.message}` } }
     }
   }
   const doc = {

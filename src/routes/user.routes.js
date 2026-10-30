@@ -297,9 +297,9 @@ export async function handleUserRoutes(req, res, path) {
     res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
     res.end(
       JSON.stringify({
-        error: `定格环境需要 CWT 或管理员凭证（当前地址 ${addr ? '未持有' : '无会话'}）`,
+        error: `上传环境需要 CWT 或管理员凭证（当前地址 ${addr ? '未持有' : '无会话'}）`,
         code: 'FREEZE_REQUIRES_CWT',
-        hint: '容器本身不受影响，照常使用；可在凭证页申请 CWT 后回来定格',
+        hint: '容器本身不受影响，照常使用；可在凭证页申请 CWT 后回来上传',
       }),
     )
   }
@@ -398,7 +398,7 @@ export async function handleUserRoutes(req, res, path) {
       .slice(0, 60)
     if (!displayName) {
       res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ error: '定格需要给环境起名（displayName，≤60 字）' }))
+      res.end(JSON.stringify({ error: '上传需要给环境起名（displayName，≤60 字）' }))
       return true
     }
     const intro = String(body.intro || '')
@@ -437,7 +437,7 @@ export async function handleUserRoutes(req, res, path) {
       res.end(JSON.stringify(respBody))
     } catch (err) {
       res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ error: `定格失败：${err.message}（源容器已确认起回）` }))
+      res.end(JSON.stringify({ error: `上传失败：${err.message}（源容器已确认起回）` }))
     }
     return true
   }
@@ -647,7 +647,7 @@ export async function handleUserRoutes(req, res, path) {
       }
       if (doc.sourceAddr !== addr) {
         res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ error: '只能提交自己定格的模板' }))
+        res.end(JSON.stringify({ error: '只能提交自己上传的模板' }))
         return true
       }
       if (doc.status !== 'unlisted') {
@@ -684,7 +684,7 @@ export async function handleUserRoutes(req, res, path) {
       }
       if (doc.sourceAddr !== addr) {
         res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ error: '只能下架自己定格的模板' }))
+        res.end(JSON.stringify({ error: '只能下架自己上传的模板' }))
         return true
       }
       if (doc.status !== 'published') {
