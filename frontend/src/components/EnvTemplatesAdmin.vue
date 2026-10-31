@@ -134,6 +134,19 @@
                   })
                 }}
               </div>
+              <div
+                v-if="detail.provenance && Object.keys(detail.provenance).length"
+                class="enva-prov"
+              >
+                <div class="env-muted env-small">{{ $t('env.provDeclared') }}</div>
+                <span
+                  v-for="(v, k) in detail.provenance"
+                  :key="k"
+                  class="badge enva-prov-badge"
+                  :title="v.url || ''"
+                  >{{ k }} · {{ $t(provKey(v)) }}</span
+                >
+              </div>
               <div v-if="!detail.bundle" class="enva-muted">{{ $t('env.admin.noBundle') }}</div>
               <template v-else>
                 <div class="enva-scroll enva-files">
@@ -226,6 +239,13 @@ import { toast, askConfirm } from '../composables/useDialog'
 import { requestAccounts, signMessage, getPublicKey } from '../api/wallet'
 
 const { t } = useI18n()
+const PROV_KEYS = {
+  self: 'env.provSelf',
+  github: 'env.provGithub',
+  official: 'env.provOfficial',
+  other: 'env.provOther',
+}
+const provKey = (p) => (p && PROV_KEYS[p.kind]) || 'env.provNone'
 const FILTERS = ['all', 'draft', 'published', 'unlisted', 'revoked', 'rejected']
 const all = ref([])
 const filter = ref('all')

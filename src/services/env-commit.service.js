@@ -72,7 +72,7 @@ export function autoSlug(displayName) {
  * @returns {Promise<{status:number, body:object}>}
  */
 export async function runEnvCommit(p) {
-  const { address, slug, displayName, intro, include, dryRun, operator } = p
+  const { address, slug, displayName, intro, include, provenance, dryRun, operator } = p
   const opKind = p.opKind || 'env_commit'
   const name = swtcContainerName(address)
   const info = await dockerService.containerInfo(name)
@@ -201,6 +201,8 @@ export async function runEnvCommit(p) {
     scrubbed: out.scrubbed,
     manifest: out.manifest,
     include: { ...include },
+    // 插件出身自述（判例 55）：作者声明、非防线——只随行清单内点名过的插件才有资格记
+    provenance: normEnvProvenance(provenance, include.plugins || []),
     bundle,
     scan,
     status: 'draft',
@@ -277,3 +279,30 @@ export async function runEnvCommit(p) {
 }
 
 export { JSON_HDR, normEnvWsExcludes }
+
+/**
+ * 出身自述规整（判例 55）：raw = {plugins: {name: 'github' | {kind,url}}}。
+ * kind 枚举 ['self','github','official','other']；未点名（不在随行插件清单）丢弃；
+ * url ≤200（self 不带 url）；全空 → null（不制造空账）。
+ */
+export function normEnvProvenance(raw, allowedNames) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const src = raw.plugins && typeof raw.plugins === 'object' ? raw.plugins : null
+  if (!src) return null
+  const allowed = new Set((allowedNames || []).map(String))
+  const out = {}
+  for (const [name, v] of Object.entries(src)) {
+    if (!allowed.has(String(name))) continue
+    const kind = v && typeof v === 'object' ? String(v.kind || '') : String(v || '')
+    if (!['self', 'github', 'official', 'other'].includes(kind)) continue
+    const url =
+      v && typeof v === 'object' && v.url
+        ? String(v.url)
+            .trim()
+            .replace(/[\u0000-\u001f\u007f]/g, '')
+            .slice(0, 200)
+        : ''
+    out[String(name)] = kind !== 'self' && url ? { kind, url } : { kind }
+  }
+  return Object.keys(out).length ? out : null
+}

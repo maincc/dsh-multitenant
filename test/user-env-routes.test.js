@@ -28,6 +28,7 @@ vi.mock('../src/services/user.service.js', () => ({
 
 vi.mock('../src/services/env-bundle.service.js', () => ({
   envBundleService: {
+    probePluginContent: vi.fn(async () => ({})),
     applyBundleTo: vi.fn(async (addr, doc, opts = {}) => ({
       bundleApplied: !opts.dryRun,
       conflicts: opts.dryRun ? [{ p: 'plugins/a.js', size: 3 }] : [],
@@ -716,5 +717,98 @@ describe('POST /api/user/environment/unpublish（作者自助下架：published�
     expect(json(await call('/api/user/environments')).environments[0].isMine).toBe(true)
     seed({ sourceAddr: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' })
     expect(json(await call('/api/user/environments')).environments[0].isMine).toBe(false)
+  })
+})
+
+// ═══ 判例 55：退场清扫"删护内容" + 插件出身自述入账 ═══
+describe('revert「一并清除」——删护内容（判例 55）', () => {
+  const files = [
+    { p: 'plugins/foo/a.mjs', size: 3, sha256: 'aa' },
+    { p: 'plugins/bar/b.mjs', size: 4, sha256: 'bb' },
+  ]
+  it('字节全等才删：foo 相符删之，bar 被自写/另下载占据 → 留物留话', async () => {
+    seed({
+      pinnedBy: [USER],
+      include: { skills: [], plugins: ['foo', 'bar'], folders: [] },
+      bundle: { files, bytes: 7 },
+    })
+    const { envBundleService } = await import('../src/services/env-bundle.service.js')
+    const probe = (envBundleService.probePluginContent = vi.fn(async () => ({
+      foo: true,
+      bar: false,
+    })))
+    const res = await call('/api/user/environment/revert', {
+      method: 'POST',
+      body: { alsoClean: true },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(probe).toHaveBeenCalledTimes(1)
+    expect(probe.mock.calls[0][1]).toEqual({ foo: { 'a.mjs': 'aa' }, bar: { 'b.mjs': 'bb' } })
+    const { dockerService } = await import('../src/services/docker.service.js')
+    const cmd = String(dockerService.execSh.mock.calls.at(-1)[1])
+    expect(cmd).toContain('rm -rf /dsh-home/plugins/foo')
+    expect(cmd).not.toContain('plugins/bar')
+    expect(json(res).cleanNote).toContain('bar 槽位现被其他内容占据')
+    expect(json(res).cleanNote).toContain('未删')
+  })
+
+  it('实物查不了（探针 null）→ 不代删：点名"实物查不了"，可重试', async () => {
+    seed({
+      pinnedBy: [USER],
+      include: { skills: [], plugins: ['foo'], folders: [] },
+      bundle: { files, bytes: 7 },
+    })
+    const { envBundleService } = await import('../src/services/env-bundle.service.js')
+    envBundleService.probePluginContent = vi.fn(async () => null)
+    const res = await call('/api/user/environment/revert', {
+      method: 'POST',
+      body: { alsoClean: true },
+    })
+    const { dockerService } = await import('../src/services/docker.service.js')
+    const allCmd = dockerService.execSh.mock.calls.map((c) => String(c[1])).join(';')
+    expect(allCmd).not.toContain('rm -rf /dsh-home/plugins/foo')
+    expect(json(res).cleanNote).toContain('实物查不了')
+  })
+
+  it('包内无字节指纹在册 → 退回旧规点名删，并在回执如实注明', async () => {
+    seed({
+      pinnedBy: [USER],
+      include: { skills: [], plugins: ['foo', 'bar'], folders: [] },
+      bundle: { files: [{ p: 'plugins/foo/a.mjs', size: 3 }], bytes: 3 },
+    })
+    const { envBundleService } = await import('../src/services/env-bundle.service.js')
+    envBundleService.probePluginContent = vi.fn(async () => {
+      throw new Error('不该被调——无指纹就无从核对')
+    })
+    const res = await call('/api/user/environment/revert', {
+      method: 'POST',
+      body: { alsoClean: true },
+    })
+    const { dockerService } = await import('../src/services/docker.service.js')
+    const cmd = String(dockerService.execSh.mock.calls.at(-1)[1])
+    expect(cmd).toContain('plugins/foo')
+    expect(cmd).toContain('plugins/bar')
+    expect(json(res).cleanNote).toContain('无字节指纹在册')
+  })
+})
+
+describe('normEnvProvenance 出身自述入账（判例 55）', () => {
+  it('只收随行点名+合法 kind；未点名/乱 kind 丢弃；self 不配 url；空 → null', async () => {
+    const { normEnvProvenance } = await import('../src/services/env-commit.service.js')
+    expect(normEnvProvenance(null, ['a'])).toBe(null)
+    expect(normEnvProvenance({ plugins: { a: 'github' } }, ['a'])).toEqual({
+      a: { kind: 'github' },
+    })
+    expect(normEnvProvenance({ plugins: { ghost: 'self' } }, ['a'])).toBe(null) // 没勾的名字没资格声明
+    expect(normEnvProvenance({ plugins: { a: { kind: 'steal-others' } } }, ['a'])).toBe(null)
+    expect(normEnvProvenance({ plugins: { a: { kind: 'self', url: 'http://x' } } }, ['a'])).toEqual(
+      {
+        a: { kind: 'self' },
+      },
+    )
+    const long = normEnvProvenance({ plugins: { a: { kind: 'other', url: 'u'.repeat(300) } } }, [
+      'a',
+    ])
+    expect(long.a.url.length).toBe(200)
   })
 })

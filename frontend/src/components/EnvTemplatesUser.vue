@@ -236,7 +236,21 @@
           <div>
             <b>{{ $t('env.dPlugins') }}</b>
             <ul v-if="detailFor.include.plugins.length">
-              <li v-for="n in detailFor.include.plugins" :key="n">{{ n }}</li>
+              <li v-for="n in detailFor.include.plugins" :key="n">
+                {{ n
+                }}<span
+                  v-if="
+                    detailFor.provenance &&
+                    detailFor.provenance[n] &&
+                    provKey(detailFor.provenance[n])
+                  "
+                  class="env-prov-tag"
+                  >· {{ $t(provKey(detailFor.provenance[n]))
+                  }}<template v-if="detailFor.provenance[n].url"
+                    >（{{ detailFor.provenance[n].url }}）</template
+                  ></span
+                >
+              </li>
             </ul>
             <span v-else class="env-muted">{{ $t('env.dNone') }}</span>
             <div class="env-muted">
@@ -341,6 +355,25 @@
               <span class="env-muted">{{ fmtBytes(pl.size) }} · {{ pl.sha8 }}</span>
             </label>
             <div class="env-danger env-small">{{ $t('env.pluginsWarn') }}</div>
+            <div v-if="wz.plugins.length" class="env-prov">
+              <div class="env-muted env-small">{{ $t('env.provTitle') }}</div>
+              <div v-for="n in wz.plugins" :key="'prov-' + n" class="env-prov-row">
+                <span class="env-prov-name">{{ n }}</span>
+                <select v-model="provOf(n).kind">
+                  <option value="">{{ $t('env.provNone') }}</option>
+                  <option value="self">{{ $t('env.provSelf') }}</option>
+                  <option value="github">{{ $t('env.provGithub') }}</option>
+                  <option value="official">{{ $t('env.provOfficial') }}</option>
+                  <option value="other">{{ $t('env.provOther') }}</option>
+                </select>
+                <input
+                  v-if="provOf(n).kind && provOf(n).kind !== 'self'"
+                  v-model="provOf(n).url"
+                  :placeholder="$t('env.provUrlPh')"
+                  maxlength="200"
+                />
+              </div>
+            </div>
           </div>
           <div class="env-pick-block">
             <div class="env-pick-title">{{ $t('env.col.folders') }}</div>
@@ -501,6 +534,29 @@ import axios from 'axios'
 import { toast, askConfirm } from '../composables/useDialog'
 
 const { t } = useI18n()
+// 出身自述（判例 55 B 面）：闭包引用后定义的 wz——调用期取值，无 TDZ 问题
+const PROV_KEYS = {
+  self: 'env.provSelf',
+  github: 'env.provGithub',
+  official: 'env.provOfficial',
+  other: 'env.provOther',
+}
+const provKey = (p) => (p && PROV_KEYS[p.kind]) || ''
+const provOf = (n) => {
+  if (!wz.value.provenance[n]) wz.value.provenance[n] = { kind: '', url: '' }
+  return wz.value.provenance[n]
+}
+const provBody = () => {
+  const out = {}
+  for (const [n, v] of Object.entries(wz.value.provenance || {})) {
+    if (!v?.kind || !wz.value.plugins.includes(n)) continue
+    out[n] =
+      v.kind !== 'self' && String(v.url || '').trim()
+        ? { kind: v.kind, url: String(v.url).trim() }
+        : { kind: v.kind }
+  }
+  return Object.keys(out).length ? { plugins: out } : undefined
+}
 const list = ref([])
 const drafts = ref([])
 const current = ref(null)
@@ -721,6 +777,7 @@ function openWizard() {
     intro: '',
     skills: [],
     plugins: [],
+    provenance: {},
     folders: [],
     inv: null,
     workspace: [],
@@ -793,6 +850,7 @@ function commitBody() {
       // 只提交仍在随行的目录的摘除项：父目录没勾=整棵不带，摘除无从谈起
       wsExcludes: wz.value.wsExcludes.filter((p) => wz.value.folders.includes(p.split('/')[0])),
     },
+    provenance: provBody(),
   }
 }
 async function doFreeze() {

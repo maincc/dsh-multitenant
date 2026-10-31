@@ -429,6 +429,7 @@ export async function handleUserRoutes(req, res, path) {
         displayName,
         intro,
         include,
+        provenance: body.provenance,
         dryRun: !!body.dryRun,
         operator: addr, // 本人自助：审计操作人=会话地址（代格面记管理员）
         opKind: 'env_commit_self',
@@ -760,23 +761,57 @@ export async function handleUserRoutes(req, res, path) {
             failed.push(n)
           }
         }
+        // 删护内容（判例 55，裁定"插件可能来自 GitHub/官网/自写"）：manifest 躺着
+        // "我当初放的字节指纹"——槽位实物与之全等才删；不等=已被别的来源占据，
+        // 留物留话；查不了=不代删（可重试）。包内没记指纹的名字退回旧规点名删并如实注明。
         const plugins = (hadTpl.include?.plugins || []).filter((n) => NAME_OK.test(n))
+        const occupied = []
+        const skip = new Set()
+        let legacyNoHash = 0
         if (plugins.length) {
-          try {
-            await dockerService.execSh(
-              swtcContainerName(addr),
-              plugins.map((n) => `rm -rf /dsh-home/plugins/${n}`).join(' && '),
+          const expectByPlugin = {}
+          for (const f of hadTpl.bundle?.files || []) {
+            const m = /^plugins\/([^/]+)\/(.+)$/.exec(String(f.p || ''))
+            if (m && f.sha256) (expectByPlugin[m[1]] ||= {})[m[2]] = f.sha256
+          }
+          const checkable = plugins.filter((n) => expectByPlugin[n])
+          legacyNoHash = plugins.length - checkable.length
+          if (checkable.length) {
+            const { envBundleService } = await import('../services/env-bundle.service.js')
+            const probe = await envBundleService.probePluginContent(
+              addr,
+              Object.fromEntries(checkable.map((n) => [n, expectByPlugin[n]])),
             )
-            removed.push(...plugins)
-          } catch {
-            failed.push(...plugins)
+            for (const n of checkable) {
+              if (probe && probe[n] === true) continue
+              if (probe && probe[n] === false) occupied.push(n)
+              else failed.push(`${n}（实物查不了）`)
+              skip.add(n)
+            }
+          }
+          const deletable = plugins.filter((n) => !skip.has(n))
+          if (deletable.length) {
+            try {
+              await dockerService.execSh(
+                swtcContainerName(addr),
+                deletable.map((n) => `rm -rf /dsh-home/plugins/${n}`).join(' && '),
+              )
+              removed.push(...deletable)
+            } catch {
+              failed.push(...deletable)
+            }
           }
         }
         cleanNote =
-          removed.length || failed.length
-            ? failed.length
-              ? `已清除 ${removed.length} 项，${failed.length} 项未成（${failed.join('、')}），可重试。`
-              : `已按清单清除 ${removed.length} 项随行技能/插件（账本同步销记）。`
+          removed.length || failed.length || occupied.length
+            ? (failed.length
+                ? `已清除 ${removed.length} 项，${failed.length} 项未成（${failed.join('、')}），可重试。`
+                : `已按清单清除 ${removed.length} 项随行技能/插件（账本同步销记${
+                    legacyNoHash ? `；其中 ${legacyNoHash} 项包内无字节指纹在册，按旧规点名删` : ''
+                  }）。`) +
+              (occupied.length
+                ? ` ${occupied.join('、')} 槽位现被其他内容占据（自写/另行下载/改过），未删。`
+                : '')
             : '该模板清单里没有登记在册的随行技能/插件，无需清除。'
         cleanedCount = removed.length
       } else if (body.alsoClean && !hadTpl) {

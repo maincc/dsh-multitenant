@@ -237,6 +237,27 @@ export class EnvBundleService {
     return out
   }
 
+  /**
+   * 删护内容探针（判例 55）：逐文件比对卷内实物与包 manifest 的 sha256，
+   * 走 inventory/install 同款只读 helper 通道——主容器停着也能查。
+   * 返回 {name:bool}；null=查不了（卷不存在/helper 失败）——**查不了 caller 不许代删**。
+   */
+  async probePluginContent(destAddress, expectByPlugin) {
+    const vol = swtcVolumeName(normalizeAddress(destAddress))
+    try {
+      const vols = await dockerService.listVolumes()
+      if (!vols.includes(vol)) return null
+      return await this.#volumeRun(
+        vol,
+        'env-probe-plugins.mjs',
+        { expect: expectByPlugin },
+        { readOnly: true },
+      )
+    } catch {
+      return null
+    }
+  }
+
   removeBundle(id) {
     rmSync(this.bundleDir(id), { recursive: true, force: true })
   }

@@ -664,6 +664,14 @@ export default {
     skillsFollowNote: '技能按名随行：装到你容器时取平台当前版本，不是作者的旧副本',
     pluginsWarn:
       '插件按文件随行：这是作者本人的代码，审核会逐份读过再放行——不想给别人看的代码，别勾',
+    provTitle: '插件出身自述（选填，供管理员审核与使用者参考——声明不免责，搬运他人代码照样受审）',
+    provNone: '未声明',
+    provSelf: '作者自写',
+    provGithub: '来自 GitHub',
+    provOfficial: '官网下载',
+    provOther: '其他来源',
+    provUrlPh: '来源链接（选填）',
+    provDeclared: '作者自述出身：',
     workspaceWarn:
       '勾选=该目录保留进镜像并在整平台可见；未勾选的顶层条目会**从镜像里清空**。家目录密钥与登录态物理不入像',
     deniedNote:
