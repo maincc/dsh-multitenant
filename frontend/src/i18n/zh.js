@@ -407,6 +407,8 @@ export default {
     unpublish: '取消共享',
     myInstalled: '已安装',
     installedSource: '来源：{source} · {date}',
+    installedFromVolume: '容器实物在册（宿主账本没记它的安装流水）',
+    unverifiedNote: '暂时读不到容器实物，以下按宿主账本显示（可能滞后于容器）',
     hasUpdate: '有更新',
     uninstall: '卸载',
     noSkillsHint: '还没有技能。可以把本地 DSH 写好的技能导入进来，或去技能市场逛逛。',

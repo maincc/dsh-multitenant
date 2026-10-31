@@ -736,16 +736,19 @@
             </div>
             <div v-if="mineData.installed.length > 0" class="skill-subsection">
               <h3>{{ $t('user.myInstalled') }}</h3>
+              <p v-if="mineData.unverified" class="skill-desc">{{ $t('user.unverifiedNote') }}</p>
               <div v-for="s in mineData.installed" :key="'i-' + s.name" class="skill-row">
                 <div class="skill-row-main">
                   <strong>{{ s.name }}</strong>
                   <span class="skill-desc">
                     {{
                       s.description ||
-                      $t('user.installedSource', {
-                        source: s.source,
-                        date: new Date(s.installedAt).toLocaleString(),
-                      })
+                      (s.installedAt
+                        ? $t('user.installedSource', {
+                            source: s.source,
+                            date: new Date(s.installedAt).toLocaleString(),
+                          })
+                        : $t('user.installedFromVolume'))
                     }}
                   </span>
                   <span v-if="s.hasUpdate" class="badge badge-warning">{{
@@ -2553,7 +2556,7 @@ onMounted(async () => {
 })
 
 // ===================== 🧩 我的技能（技能市场集成） =====================
-const mineData = ref({ published: [], installed: [], inContainer: [] })
+const mineData = ref({ published: [], installed: [], inContainer: [], unverified: false })
 const mySkillsLoading = ref(true) // 初始即 loading：面板首帧显示 spinner，避免空态闪现后突然出数据
 const importDialogOpen = ref(false)
 const importName = ref('')
@@ -2588,6 +2591,7 @@ const loadMine = async () => {
         ...mineData.value,
         published: res.published || [],
         installed: res.installed || [],
+        unverified: Boolean(res.unverified),
       }
       if (res.reconciled) toast(t('skills.reconciledGone', { n: res.reconciled }))
     } catch (err) {

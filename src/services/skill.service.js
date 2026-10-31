@@ -274,38 +274,23 @@ export class SkillService {
     }
   }
 
-  /** 我的发布 + 我的安装（个人视图；宿主侧账本为底，卷实物可查时就地对账销幽灵） */
+  /**
+   * 我的发布 + 我的安装（个人视图）。
+   * **实物为主**（裁定 2026-10-31："以容器本身里面的东西为主"）：卷内实物名单
+   * 就是底账——容器里真实存在的技能一律显示（含手写在卷里、宿主账从没记过的）；
+   * 宿主账本只供附属信息（安装日期/可更新对比）。账上有、卷里没有=幽灵就地卸账
+   * （判例 52）；卷查不了≠没了：退回账本视图并如实标 unverified（fail-open）。
+   */
   async mineView(address) {
     address = normalizeAddress(address)
     const entries = this.readIndex()
     const published = entries
       .filter((e) => e.sharer === address && e.status === 'active')
       .map((e) => this.toPublic(e))
-    let installs = this.readInstalls()[address] || []
-    // 实物说了算 + 像物理消失必卸账（判例 46 的镜像面；2026-10-31 幽灵案）：
-    // 账上有、卷里没=幽灵记录（双轨翻转/旁路 rm 留下的账），就地自动卸账——
-    // 只在实物查得清时动手；探测失败（null）绝不动账（fail-open）。
-    let reconciled = 0
+    const installs = this.readInstalls()[address] || []
     const physical = await this.listContainerSkillsProbe(address)
-    if (physical && installs.length) {
-      const gone = installs.filter((r) => !physical.includes(r.name))
-      if (gone.length) {
-        for (const r of gone) {
-          await this.removeInstallRecord(address, r.name)
-          dataService.logOperation('skill_install_reconciled_gone', {
-            address,
-            skill: r.name,
-            reason: 'volume-listed-missing',
-          })
-        }
-        installs = installs.filter((r) => physical.includes(r.name))
-        reconciled = gone.length
-      }
-    }
-    const installed = installs.map((rec) => {
+    const toRow = (rec) => {
       const entry = entries.find((e) => e.name === rec.name)
-      const hasUpdate =
-        Boolean(entry) && entry.status === 'active' && entry.contentHash !== rec.contentHash
       return {
         name: rec.name,
         source: rec.source,
@@ -313,14 +298,59 @@ export class SkillService {
         contentHash: rec.contentHash,
         installedHash: rec.installedHash ?? null,
         size: rec.size,
-        hasUpdate,
+        hasUpdate:
+          Boolean(entry) && entry.status === 'active' && entry.contentHash !== rec.contentHash,
         status: entry?.status ?? 'removed',
         description: entry?.description ?? '',
         whenToUse: entry?.whenToUse ?? '',
         hasResources: Boolean(entry?.hasResources),
       }
-    })
-    return reconciled ? { published, installed, reconciled } : { published, installed }
+    }
+    let installed
+    let reconciled = 0
+    let unverified = false
+    if (physical) {
+      const gone = installs.filter((r) => !physical.includes(r.name))
+      for (const r of gone) {
+        await this.removeInstallRecord(address, r.name)
+        dataService.logOperation('skill_install_reconciled_gone', {
+          address,
+          skill: r.name,
+          reason: 'volume-listed-missing',
+        })
+      }
+      reconciled = gone.length
+      const recOf = new Map(
+        installs.filter((r) => physical.includes(r.name)).map((r) => [r.name, r]),
+      )
+      // 实物为底账：卷里有、账上没记=容器内自写/手放的实物，如实展示 source='volume'
+      installed = physical.map((name) => {
+        const rec = recOf.get(name)
+        if (rec) return toRow(rec)
+        const entry = entries.find((e) => e.name === name)
+        return {
+          name,
+          source: 'volume',
+          installedAt: null,
+          contentHash: null,
+          installedHash: null,
+          size: null,
+          hasUpdate: false,
+          status: entry?.status ?? 'volume',
+          description: entry?.description ?? '',
+          whenToUse: entry?.whenToUse ?? '',
+          hasResources: Boolean(entry?.hasResources),
+        }
+      })
+    } else {
+      // 查不了≠没了：不销任何账、不假装对过——退账本视图，诚实标记
+      installed = installs.map(toRow)
+      unverified = true
+    }
+    const out = { published, installed }
+    if (reconciled) out.reconciled = reconciled
+    if (unverified) out.unverified = true
+    return out
   }
 
   /** 我的发布 + 我的安装 + 容器内可共享列表（共享弹窗用，需签名） */

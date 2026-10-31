@@ -249,6 +249,30 @@ describe('mineView 实物对账销幽灵', () => {
     expect(svc.readInstalls()[ADDR].length).toBe(1)
   })
 
+  it('实物为主（裁定 2026-10-31）：卷里有、账上没记的手写技能也要显示，source=volume', async () => {
+    await svc.writeInstalls({ [ADDR]: [rec('kepty')] })
+    tenantConfigService.runScript = vi.fn(async () =>
+      JSON.stringify({ names: ['kepty', 'handwritten'] }),
+    )
+    const view = await svc.mineView(ADDR)
+    const names = view.installed.map((r) => r.name)
+    expect(names).toEqual(['kepty', 'handwritten']) // 实物名单为底账
+    const hw = view.installed[1]
+    expect(hw.source).toBe('volume')
+    expect(hw.installedAt).toBe(null)
+    expect(view.unverified).toBeUndefined()
+  })
+
+  it('查不了实物 → 账本兜底且 unverified 如实标注（不假装对过账）', async () => {
+    await svc.writeInstalls({ [ADDR]: [rec('kepty')] })
+    tenantConfigService.runScript = vi.fn(async () => {
+      throw new Error('docker down')
+    })
+    const view = await svc.mineView(ADDR)
+    expect(view.unverified).toBe(true)
+    expect(view.installed[0].source).toBe('market') // 账本行原样
+  })
+
   it('最后一笔销账塌不出空缓存：留 [] 空行，护栏不吞 mongo 删除（判例 2026-10-31）', async () => {
     await svc.writeInstalls({ [ADDR]: [rec('ghosty')] })
     tenantConfigService.runScript = vi.fn(async () => JSON.stringify({ names: [] }))
