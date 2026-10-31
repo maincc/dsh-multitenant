@@ -256,23 +256,52 @@ export class SkillService {
    * 只读操作，失败时返回 []（不给用户中心造成阻塞）。
    */
   async listContainerSkills(address) {
+    return (await this.listContainerSkillsProbe(address)) ?? []
+  }
+
+  /**
+   * 实物探测（判例 2026-10-31 幽灵案）：null=查不到（卷未建/docker 故障），
+   * 数组=卷里实有名单。与 [] 的分别是销账的生死线——**查不到≠没了**，
+   * 探测失败绝不许当成实物消失（fail-open：绝不上锁、绝不因看不见就销账）。
+   */
+  async listContainerSkillsProbe(address) {
     try {
       const out = await tenantConfigService.runScript(address, 'list-skills.mjs', [])
       const parsed = JSON.parse(out)
-      return Array.isArray(parsed?.names) ? parsed.names : []
+      return Array.isArray(parsed?.names) ? parsed.names : null
     } catch {
-      return []
+      return null
     }
   }
 
-  /** 我的发布 + 我的安装（个人视图，读取宿主侧数据，无需签名/卷访问） */
+  /** 我的发布 + 我的安装（个人视图；宿主侧账本为底，卷实物可查时就地对账销幽灵） */
   async mineView(address) {
     address = normalizeAddress(address)
     const entries = this.readIndex()
     const published = entries
       .filter((e) => e.sharer === address && e.status === 'active')
       .map((e) => this.toPublic(e))
-    const installs = this.readInstalls()[address] || []
+    let installs = this.readInstalls()[address] || []
+    // 实物说了算 + 像物理消失必卸账（判例 46 的镜像面；2026-10-31 幽灵案）：
+    // 账上有、卷里没=幽灵记录（双轨翻转/旁路 rm 留下的账），就地自动卸账——
+    // 只在实物查得清时动手；探测失败（null）绝不动账（fail-open）。
+    let reconciled = 0
+    const physical = await this.listContainerSkillsProbe(address)
+    if (physical && installs.length) {
+      const gone = installs.filter((r) => !physical.includes(r.name))
+      if (gone.length) {
+        for (const r of gone) {
+          await this.removeInstallRecord(address, r.name)
+          dataService.logOperation('skill_install_reconciled_gone', {
+            address,
+            skill: r.name,
+            reason: 'volume-listed-missing',
+          })
+        }
+        installs = installs.filter((r) => physical.includes(r.name))
+        reconciled = gone.length
+      }
+    }
     const installed = installs.map((rec) => {
       const entry = entries.find((e) => e.name === rec.name)
       const hasUpdate =
@@ -291,7 +320,7 @@ export class SkillService {
         hasResources: Boolean(entry?.hasResources),
       }
     })
-    return { published, installed }
+    return reconciled ? { published, installed, reconciled } : { published, installed }
   }
 
   /** 我的发布 + 我的安装 + 容器内可共享列表（共享弹窗用，需签名） */
@@ -582,10 +611,30 @@ export class SkillService {
     if (Array.isArray(list)) {
       const filtered = list.filter((r) => r.name !== name)
       if (filtered.length !== list.length) {
-        if (filtered.length === 0) delete all[address]
-        else all[address] = filtered
+        // 判例 2026-10-31：清零后留空行 [] 而非删 key——删 key 会让整缓存塌空，
+        // 触发 writeInstalls 的"空缓存防清库"护栏跳过对账删除，mongo 幽灵删不掉、
+        // 重启水合即复活。空行=查过销清，本来就是更诚实的账。
+        all[address] = filtered
         await this.writeInstalls(all)
+        return
       }
+    }
+    // 幽灵案补刀（2026-10-31）：单轨存储下"本轨无记录"≠"全平台无记录"——
+    // provider 曾在 json/mongo 间翻转，旧账滞留文件轨，回切即复活。卸账顺轨扫掉。
+    if (this.provider !== 'json' && existsSync(this.installsFile)) {
+      try {
+        const data = dataService.readJson(this.installsFile)
+        const legacy = data && data[address]
+        if (Array.isArray(legacy)) {
+          const left = legacy.filter((r) => r.name !== name)
+          if (left.length !== legacy.length) {
+            if (left.length === 0) delete data[address]
+            else data[address] = left
+            dataService.writeWithLock(this.installsFile, data)
+            console.warn(`[skill] 「${name}」旧账滞留文件轨，卸账顺轨摘除（防回切复活）`)
+          }
+        }
+      } catch {}
     }
   }
 
@@ -599,7 +648,7 @@ export class SkillService {
     const all = this.readInstalls()
     const list = Array.isArray(all[address]) ? all[address] : []
     if (!list.length) return 0
-    delete all[address]
+    all[address] = [] // 同款护栏避让（判例 2026-10-31）：留空行，删 key 塌空反锁死销账
     await this.writeInstalls(all)
     dataService.logOperation('skill_installs_cleared', { address, n: list.length, reason })
     return list.length

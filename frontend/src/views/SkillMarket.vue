@@ -284,6 +284,7 @@ const loadMine = async () => {
       published: res.published || [],
       installed: res.installed || [],
     }
+    if (res.reconciled) toast(t('skills.reconciledGone', { n: res.reconciled }))
   } catch (err) {
     console.warn('[skills] 加载我的技能失败（忽略）:', err)
   } finally {

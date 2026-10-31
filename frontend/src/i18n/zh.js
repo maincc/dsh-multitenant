@@ -737,6 +737,7 @@ export default {
     },
   },
   skills: {
+    reconciledGone: '对账完成：{n} 条技能记录实物已不在你的容器里，已自动销账（幽灵不留）',
     // ---- 技能市场侧栏（与 React 原型稿一致） ----
     tabMarket: '技能市场',
     tabMine: '我的技能',

@@ -183,7 +183,7 @@ describe('clearInstalls：拆卷必销账（第九案镜像——账比实物活
   const A1 = 'jhfamgqipxtakkdnamduoppim4shcdztea'
   const A2 = 'jndwretndumoqbt2uauclmfmx7xbqjykva'
 
-  it('整户销记：返回行数、该地址从账本消失、别人的账一字不碰、审计在案', async () => {
+  it('整户销记：返回行数、该地址清成空行（不删 key——塌空会触发防清库护栏）、别人的账一字不碰、审计在案', async () => {
     writeFileSync(
       join(dir, 'installs.json'),
       JSON.stringify({
@@ -198,7 +198,7 @@ describe('clearInstalls：拆卷必销账（第九案镜像——账比实物活
     const n = await svc.clearInstalls(A1, 'reset')
     expect(n).toBe(2)
     const after = JSON.parse(readFileSync(join(dir, 'installs.json'), 'utf8'))
-    expect(after).not.toHaveProperty(A1)
+    expect(after[A1]).toEqual([]) // 判例 2026-10-31：清成空行而非删 key（塌空反锁死 mongo 侧对账删除）
     expect(after[A2][0].name).toBe('keepme')
     expect(spy).toHaveBeenCalledWith(
       'skill_installs_cleared',
@@ -216,5 +216,63 @@ describe('clearInstalls：拆卷必销账（第九案镜像——账比实物活
     expect(Object.keys(after)).toEqual([A2])
     expect(spy).not.toHaveBeenCalled()
     spy.mockRestore()
+  })
+})
+
+// ═══ 幽灵记录对账（判例 2026-10-31：账有实物无 → 卸账；查不到 ≠ 没了）═══
+describe('mineView 实物对账销幽灵', () => {
+  const ADDR = 'jtestrecon0000000000000000000000aa'
+  const rec = (name) => ({
+    name,
+    source: 'market',
+    installedAt: '2026-08-28T00:00:00.000Z',
+    contentHash: 'h',
+    size: 10,
+  })
+
+  it('账上有、卷里没有 → 就地卸账，回执 reconciled 计数', async () => {
+    await svc.writeInstalls({ [ADDR]: [rec('ghosty'), rec('kepty')] })
+    tenantConfigService.runScript = vi.fn(async () => JSON.stringify({ names: ['kepty'] }))
+    const view = await svc.mineView(ADDR)
+    expect(view.reconciled).toBe(1)
+    expect(view.installed.map((r) => r.name)).toEqual(['kepty'])
+    expect(svc.readInstalls()[ADDR].map((r) => r.name)).toEqual(['kepty'])
+  })
+
+  it('探测失败（docker 不通/卷未建）= 不知道，绝不销账（fail-open）', async () => {
+    await svc.writeInstalls({ [ADDR]: [rec('ghosty')] })
+    tenantConfigService.runScript = vi.fn(async () => {
+      throw new Error('docker down')
+    })
+    const view = await svc.mineView(ADDR)
+    expect(view.reconciled).toBeUndefined()
+    expect(svc.readInstalls()[ADDR].length).toBe(1)
+  })
+
+  it('最后一笔销账塌不出空缓存：留 [] 空行，护栏不吞 mongo 删除（判例 2026-10-31）', async () => {
+    await svc.writeInstalls({ [ADDR]: [rec('ghosty')] })
+    tenantConfigService.runScript = vi.fn(async () => JSON.stringify({ names: [] }))
+    const view = await svc.mineView(ADDR)
+    expect(view.reconciled).toBe(1)
+    expect(svc.readInstalls()[ADDR]).toEqual([]) // key 还在（空行），不是 undefined
+    const onDisk = JSON.parse(readFileSync(join(dir, 'installs.json'), 'utf8'))
+    expect(onDisk[ADDR]).toEqual([])
+  })
+
+  it('removeInstallRecord 跨轨清扫：主轨无账时摘掉滞留在文件轨的旧账（防回切复活）', async () => {
+    const { CONFIG } = await import('../src/config/config.js')
+    const saved = CONFIG.storage.provider
+    const file = join(dir, 'cross.json')
+    writeFileSync(file, JSON.stringify({ [ADDR]: [rec('ghosty')] }))
+    const svc2 = new SkillService({ storeDir: join(dir, 'cross-skills'), installsFile: file })
+    CONFIG.storage.provider = 'mongodb'
+    try {
+      svc2._installsCache = {} // 主轨（mongo 缓存）查无此账——正是要扫旁轨的情形
+      await svc2.removeInstallRecord(ADDR, 'ghosty')
+      expect(JSON.parse(readFileSync(file, 'utf8'))[ADDR]).toBeUndefined()
+      expect(svc2._installsCache).toEqual({}) // 主轨没动
+    } finally {
+      CONFIG.storage.provider = saved
+    }
   })
 })

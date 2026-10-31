@@ -2589,6 +2589,7 @@ const loadMine = async () => {
         published: res.published || [],
         installed: res.installed || [],
       }
+      if (res.reconciled) toast(t('skills.reconciledGone', { n: res.reconciled }))
     } catch (err) {
       // 我的技能加载失败不阻塞其他功能
       console.warn('[skills] 加载我的技能失败（忽略）:', err)
