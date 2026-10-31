@@ -300,3 +300,42 @@ describe('mineView 实物对账销幽灵', () => {
     }
   })
 })
+
+// ═══ 内容级实物对账（判例 53 完成态："差异以容器实际为主"）═══
+describe('实物内容级对账', () => {
+  const ADDR2 = VALID_ADDR // list({address}) 要过 isValidAddressLike——假地址会被正当拒绝
+  const rec2 = (name) => ({
+    name,
+    source: 'market',
+    installedAt: '2026-08-28T00:00:00.000Z',
+    contentHash: 'h',
+    size: 10,
+  })
+  const ev = () => svc.readIndex().find((e) => e.name === 'evil-skill')
+
+  it('卷实物哈希=货架当前版应有的哈希 → 不算差异（hasUpdate false）', async () => {
+    const fresh = svc.expectedVolumeHash(ev())
+    await svc.writeInstalls({ [ADDR2]: [rec2('evil-skill')] })
+    tenantConfigService.runScript = vi.fn(async () =>
+      JSON.stringify({ items: [{ name: 'evil-skill', sha256: fresh }] }),
+    )
+    const view = await svc.mineView(ADDR2)
+    expect(view.installed[0].hasUpdate).toBe(false)
+  })
+
+  it('用户手改卷内文件 → 实物现形（hasUpdate true），不再等账本追认', async () => {
+    await svc.writeInstalls({ [ADDR2]: [rec2('evil-skill')] })
+    tenantConfigService.runScript = vi.fn(async () =>
+      JSON.stringify({ items: [{ name: 'evil-skill', sha256: 'f'.repeat(64) }] }),
+    )
+    const view = await svc.mineView(ADDR2)
+    expect(view.installed[0].hasUpdate).toBe(true)
+  })
+
+  it('市场列表的"已安装"徽标认卷实物：账上没记、卷里真有 → installed=true', async () => {
+    await svc.writeInstalls({ [ADDR2]: [] }) // 账本干净
+    tenantConfigService.runScript = vi.fn(async () => JSON.stringify({ names: ['evil-skill'] }))
+    const rows = await svc.list({ address: ADDR2 })
+    expect(rows.find((r) => r.name === 'evil-skill').installed).toBe(true)
+  })
+})

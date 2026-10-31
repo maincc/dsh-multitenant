@@ -229,8 +229,11 @@ export class SkillService {
       .sort((a, b) => a.name.localeCompare(b.name))
     const mine = new Set()
     if (address && isValidAddressLike(address)) {
-      const installs = this.readInstalls()
-      ;(installs[normalizeAddress(address)] || []).forEach((r) => mine.add(r.name))
+      // 差异以容器实际为主（判例 53 完成态）："已安装"徽标认卷内实物名单，
+      // 宿主账本只在查不了实物时兜底（旧语义，可能滞后）
+      const physical = await this.listContainerSkillsProbe(address)
+      if (physical) physical.forEach((name) => mine.add(name))
+      else (this.readInstalls()[normalizeAddress(address)] || []).forEach((r) => mine.add(r.name))
     }
     return entries.map((e) => this.toPublic(e, mine.has(e.name)))
   }
@@ -265,10 +268,35 @@ export class SkillService {
    * 探测失败绝不许当成实物消失（fail-open：绝不上锁、绝不因看不见就销账）。
    */
   async listContainerSkillsProbe(address) {
+    const items = await this.probeVolumeItems(address)
+    return items ? items.map((i) => i.name) : null
+  }
+
+  /**
+   * 实物探测（内容级）：[{name, sha256}]——卷里此刻的字节就是断言的依据。
+   * 旧版脚本无 items 时 sha256=null（结构兼容，哈希级对账自动降级名单级）。
+   */
+  async probeVolumeItems(address) {
     try {
       const out = await tenantConfigService.runScript(address, 'list-skills.mjs', [])
       const parsed = JSON.parse(out)
-      return Array.isArray(parsed?.names) ? parsed.names : null
+      if (Array.isArray(parsed?.items)) return parsed.items
+      if (Array.isArray(parsed?.names)) return parsed.names.map((name) => ({ name, sha256: null }))
+      return null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * 按货架当前版本算"安装后卷里应有的实物哈希"（含 P0-4 改写，与 install
+   * 落盘变换同型）。查不了=未知（null），未知不许判"可更新"。
+   */
+  expectedVolumeHash(entry) {
+    try {
+      const text = this.readEntryBody(entry.name)
+      const body = CONFIG.skills?.autoInvoke ? text : forceDisableModelInvocation(text)
+      return createHashForText(body)
     } catch {
       return null
     }
@@ -288,7 +316,20 @@ export class SkillService {
       .filter((e) => e.sharer === address && e.status === 'active')
       .map((e) => this.toPublic(e))
     const installs = this.readInstalls()[address] || []
-    const physical = await this.listContainerSkillsProbe(address)
+    const volume = await this.probeVolumeItems(address)
+    const physical = volume ? volume.map((i) => i.name) : null
+    const volHash = new Map((volume || []).map((i) => [i.name, i.sha256]))
+    // 内容级对账（判例 53）：卷实物哈希 ≠ 货架当前版本应有的哈希 = 有差异——
+    // 用户手改文件、仓库升版，一律现形；实物查不了则降级账本哈希对比并如实存在
+    const judgeUpdate = (entry, rec) => {
+      if (!entry || entry.status !== 'active') return false
+      const actual = volHash.get(entry.name)
+      if (actual) {
+        const expected = this.expectedVolumeHash(entry)
+        if (expected) return actual !== expected
+      }
+      return entry.contentHash !== rec.contentHash
+    }
     const toRow = (rec) => {
       const entry = entries.find((e) => e.name === rec.name)
       return {
@@ -298,8 +339,7 @@ export class SkillService {
         contentHash: rec.contentHash,
         installedHash: rec.installedHash ?? null,
         size: rec.size,
-        hasUpdate:
-          Boolean(entry) && entry.status === 'active' && entry.contentHash !== rec.contentHash,
+        hasUpdate: judgeUpdate(entry, rec),
         status: entry?.status ?? 'removed',
         description: entry?.description ?? '',
         whenToUse: entry?.whenToUse ?? '',
@@ -328,6 +368,9 @@ export class SkillService {
         const rec = recOf.get(name)
         if (rec) return toRow(rec)
         const entry = entries.find((e) => e.name === name)
+        // 手写实物与货架同名版本内容不一致——也以实物为断呈差异，不装看不见
+        const actual = volHash.get(name)
+        const expected = entry ? this.expectedVolumeHash(entry) : null
         return {
           name,
           source: 'volume',
@@ -335,7 +378,12 @@ export class SkillService {
           contentHash: null,
           installedHash: null,
           size: null,
-          hasUpdate: false,
+          hasUpdate:
+            Boolean(entry) &&
+            entry.status === 'active' &&
+            actual &&
+            expected &&
+            actual !== expected,
           status: entry?.status ?? 'volume',
           description: entry?.description ?? '',
           whenToUse: entry?.whenToUse ?? '',

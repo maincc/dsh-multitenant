@@ -10,14 +10,23 @@
  *
  * 用法：node list-skills.mjs
  */
-import { readdirSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 const SKILLS_DIR = '/dsh-home/skills'
 const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/
 
 const names = []
+const hashes = new Map() // name → 卷内实物的 sha256（判例 53：差异以容器实际为主）
 const flatBases = new Set()
+const hashOf = (file) => {
+  try {
+    return createHash('sha256').update(readFileSync(file)).digest('hex')
+  } catch {
+    return null
+  }
+}
 
 try {
   const entries = readdirSync(SKILLS_DIR, { withFileTypes: true })
@@ -26,7 +35,10 @@ try {
       const bundle = join(SKILLS_DIR, e.name, 'SKILL.md')
       try {
         if (readdirSync(join(SKILLS_DIR, e.name)).includes('SKILL.md')) {
-          if (NAME_RE.test(e.name) && e.name.length <= 64) names.push(e.name)
+          if (NAME_RE.test(e.name) && e.name.length <= 64) {
+            names.push(e.name)
+            hashes.set(e.name, hashOf(bundle))
+          }
         }
       } catch {
         // 目录不可读则跳过
@@ -39,10 +51,19 @@ try {
   // 目录技能优先：flat 与目录同名时去掉 flat 的候选
   const dirSet = new Set(names)
   for (const base of flatBases) {
-    if (!dirSet.has(base) && NAME_RE.test(base) && base.length <= 64) names.push(base)
+    if (!dirSet.has(base) && NAME_RE.test(base) && base.length <= 64) {
+      names.push(base)
+      hashes.set(base, hashOf(join(SKILLS_DIR, `${base}.md`)))
+    }
   }
 } catch {
   // /dsh-home/skills 不存在 → 空列表
 }
 
-console.log(JSON.stringify({ ok: true, names }))
+console.log(
+  JSON.stringify({
+    ok: true,
+    names,
+    items: names.map((name) => ({ name, sha256: hashes.get(name) ?? null })),
+  }),
+)
