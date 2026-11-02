@@ -1215,6 +1215,13 @@ const loadCredentialStatus = async (address) => {
       const q = String(route.query.tab || '')
       if (q.startsWith('adm:')) activeTab.value = q
       else if (q === 'system') activeTab.value = 'adm:overview'
+    } else if (!initialTabApplied) {
+      // 治动作歧义（用户裁定 2026-11-02）：首页「系统管理」按钮与普通入口同去用户
+      // 中心——非管理员由管理深链进来时，管理页签根本不装配，旧版静默弹回账户页，
+      // 用户无从知道是点错了、坏了、还是权限不够。现在给明话：落点在此、缘由在此。
+      initialTabApplied = true
+      const q0 = String(route.query.tab || '')
+      if (q0.startsWith('adm:') || q0 === 'system') toast(t('user.adminEntryLocked'))
     }
     // 撤销即时收面：角色掉出 admin 且正停在管理页 → 弹回账户信息
     if (role.value !== 'admin' && isSystemTab.value) activeTab.value = 'account'
