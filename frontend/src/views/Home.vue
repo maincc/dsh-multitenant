@@ -36,9 +36,9 @@
         <router-link to="/user" class="btn btn-primary btn-large">
           {{ $t('home.actions.start') }}
         </router-link>
-        <router-link to="/admin" class="btn btn-success btn-large">
-          {{ $t('home.actions.admin') }}
-        </router-link>
+        <!-- 2026-11-02 用户裁定：首页「系统管理」公共通道关闭——双按钮同去用户中心
+             造成动作歧义，且管理判权本在侧栏装配（role=admin 才给页签）+ /admin
+             书签跳板，门面按钮于管理员多余、于普通用户只剩误导。摘钮不留痕。 -->
       </div>
     </div>
 

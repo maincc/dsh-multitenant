@@ -39,7 +39,7 @@ export default {
     },
     actions: {
       start: '🔌 连接钱包开始使用',
-      admin: '📊 系统管理（仅管理员）',
+      // home.actions.admin 已随首页通道关闭摘除（2026-11-02）；侧栏组名 common.nav.admin 仍在用
     },
     guide: {
       title: '📖 使用说明',
