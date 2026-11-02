@@ -1186,6 +1186,7 @@ export default {
 
     // ── v1.4 CWT 解限申请审批 ──
     tabCred: '凭证审批',
+    pendingTip: '{n} 件待审',
     credTabTitle: 'CWT 解限申请',
     // ---- v1.5 管理员任免（名册=配发政策面；判权骑 admin 凭证） ----
     rosterTitle: '管理员名册（只读）',

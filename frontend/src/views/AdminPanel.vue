@@ -52,6 +52,11 @@
             >
               <span class="sidebar-icon" v-html="tab.icon"></span>
               <span>{{ tab.label }}</span>
+              <span
+                v-if="badgeFor(tab.key)"
+                class="tab-dot"
+                :title="$t('admin.pendingTip', { n: badgeFor(tab.key) })"
+              ></span>
             </button>
           </nav>
         </div>
@@ -1359,6 +1364,7 @@
 <script setup>
 import { askConfirm, toast } from '../composables/useDialog'
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useAdminBadges, startAdminBadges, stopAdminBadges } from '../composables/useAdminBadges'
 import axios from 'axios'
 import { useI18n } from 'vue-i18n'
 import { buildAdminTabs } from '../admin-tabs'
@@ -2868,6 +2874,13 @@ const onVisibilityChange = () => {
 }
 onMounted(() => document.addEventListener('visibilitychange', onVisibilityChange))
 
+onMounted(() => {
+  startAdminBadges()
+})
+onUnmounted(() => {
+  stopAdminBadges()
+})
+// （原有 onUnmounted 保留——上面是红点轮询的收线，下面是本面板既有清理逻辑）
 onUnmounted(() => {
   // 清理定时器与监听
   stopPolling()
@@ -2997,6 +3010,7 @@ onUnmounted(() => {
 }
 
 .sidebar-item {
+  position: relative;
   width: 100%;
   display: flex;
   align-items: center;

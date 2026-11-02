@@ -90,6 +90,11 @@
               >
                 <span class="sidebar-icon" v-html="tab.icon"></span>
                 <span>{{ tab.label }}</span>
+                <span
+                  v-if="badgeFor(tab.subKey)"
+                  class="tab-dot"
+                  :title="$t('admin.pendingTip', { n: badgeFor(tab.subKey) })"
+                ></span>
                 <!-- 后台自动拉起指示：容器 tab 右侧小转圈（完成/失败即消失，弹窗收尾） -->
                 <span
                   v-if="tab.key === 'container' && containerBooting"
@@ -898,6 +903,7 @@
 <script setup>
 import { askConfirm, toast } from '../composables/useDialog'
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { useAdminBadges, startAdminBadges, stopAdminBadges } from '../composables/useAdminBadges'
 import axios from 'axios'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
@@ -1206,6 +1212,8 @@ const loadCredentialStatus = async (address) => {
     credInfo.value = data.credential || null
     // v1.5 判权面：role='admin' 才装配「系统管理」tab（服务端活验证凭证属实）
     role.value = data.role === 'admin' ? 'admin' : 'user'
+    // 管理员在场即起待审红点轮询（单例引用计数，重复调用不加码；卸载统一收线）
+    if (role.value === 'admin') startAdminBadges()
     // （2026-10-23 修重大 bug：initialTabApplied 声明是裸布尔（:918），这里曾按
     // ref 用 .value——赋值即 TypeError，管理员每次装配都在此 throw，深链页签/
     // 续发提示/申请单态全被 catch 吞掉。恢复纯布尔用法，语义不变=仅首次生效）
@@ -2785,6 +2793,7 @@ const doShare = async () => {
 }
 
 onUnmounted(() => {
+  stopAdminBadges()
   // 排队轮询是全局 interval：不随组件卸载停止的话，切走页面的用户仍在后台
   // 空转打接口（僵尸组件 setState），重挂载后新旧两条轮询并行（2026-10 审计）。
   if (queuePollingTimer) {
@@ -3031,6 +3040,7 @@ onUnmounted(() => {
 }
 
 .sidebar-item {
+  position: relative;
   width: 100%;
   display: flex;
   align-items: center;
