@@ -17,10 +17,18 @@
  */
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { join, normalize } from 'node:path'
+import { dirname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { dirname } from 'node:path'
-import { mkdirSync, readFileSync, rmSync, existsSync } from 'node:fs'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+} from 'node:fs'
 import { dockerService } from './docker.service.js'
 
 import { dataService } from './data.service.js'
@@ -55,7 +63,7 @@ export class EnvBundleService {
     return norm
   }
 
-  async #volumeRun(volume, script, payload, { readOnly, bindOut, bindOutRo } = {}) {
+  async #volumeRun(volume, script, payload, { readOnly, bindOut, bindOutRo, bindBlobs } = {}) {
     const out = await dockerService.runVolumeScript(
       volume,
       join(SCRIPTS_DIR, script),
@@ -67,6 +75,7 @@ export class EnvBundleService {
         memory: '256m',
         bindHostDir: bindOut || bindOutRo,
         bindHostDirRo: !!bindOutRo,
+        bindBlobs,
       },
     )
     let json
@@ -121,8 +130,17 @@ export class EnvBundleService {
         { readOnly: true, bindOut: dir },
       )
       const manifest = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8'))
-      const scan = scanBundle(dir, manifest)
-      return { files: manifest, bytes: r.bytes, scan }
+      // 判例 56 内容寻址去重：多用户带同一插件=盘上一份字节（名=sha256 即地址）。
+      // 收编后 tar 出局；扫描改在装配出的真身暂存区跑——此前拿包目录扫平铺文件，
+      // 恒 scanned:0（审计假绿，判例 56 同案收案）。
+      this.#ingestCas(dir)
+      const stage = this.#stageBundleById(dir, manifest)
+      try {
+        const scan = scanBundle(stage, manifest)
+        return { files: manifest, bytes: r.bytes, scan }
+      } finally {
+        rmSync(stage, { recursive: true, force: true })
+      }
     } catch (err) {
       rmSync(dir, { recursive: true, force: true }) // 半包不留
       throw err
@@ -140,10 +158,25 @@ export class EnvBundleService {
   async verifyBundle(id, expectedFiles) {
     const dir = this.bundleDir(id)
     const tar = join(dir, 'bundle.tar.gz')
-    if (!existsSync(tar)) {
-      throw new Error('bundle-missing')
-    }
     const exp = [...expectedFiles].sort((a, b) => a.p.localeCompare(b.p))
+    if (!existsSync(tar)) {
+      if (!existsSync(dir)) throw new Error('bundle-missing')
+      // CAS 形态（判例 56）：字节块名=内容哈希，逐块存在+尺寸+哈希三重核验——
+      // 去重不降防：盘上那份坏了，两个引用它的账都验不过。
+      for (const f of exp) {
+        if (!f.sha256) throw new Error('bundle-missing')
+        let buf
+        try {
+          buf = readFileSync(this.blobPath(f.sha256))
+        } catch {
+          throw new Error(`bundle-integrity:缺字节块 ${f.p}`)
+        }
+        if (buf.length !== f.size) throw new Error(`bundle-integrity:大小不符 ${f.p}`)
+        if (createHash('sha256').update(buf).digest('hex') !== f.sha256)
+          throw new Error(`bundle-integrity:哈希不符 ${f.p}`)
+      }
+      return exp.map((f) => f.p)
+    }
     const tmp = join(
       this.baseDir,
       `.verify-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
@@ -179,11 +212,13 @@ export class EnvBundleService {
    */
   async installBundle(destAddress, id, files, { dryRun = false } = {}) {
     await this.verifyBundle(id, files)
+    const hasTar = existsSync(join(this.bundleDir(id), 'bundle.tar.gz'))
+    const plan = hasTar ? undefined : files.map((f) => ({ p: f.p, sha: f.sha256 }))
     return this.#volumeRun(
       swtcVolumeName(normalizeAddress(destAddress)),
       'env-install.mjs',
-      { dryRun, expect: files.map((f) => f.p).sort() },
-      { bindOutRo: this.bundleDir(id) },
+      { dryRun, expect: files.map((f) => f.p).sort(), plan },
+      hasTar ? { bindOutRo: this.bundleDir(id) } : { bindBlobs: this.blobRoot },
     )
   }
 
@@ -258,8 +293,139 @@ export class EnvBundleService {
     }
   }
 
-  removeBundle(id) {
+  async removeBundle(id) {
     rmSync(this.bundleDir(id), { recursive: true, force: true })
+    // 被引用之物不可删（判例 56）：字节块归全平台引用账共享——退场只退本包引用，
+    // 随后拆账即销（扫无引用者清）；拆卷必销账同款纪律，只是方向反过来。
+    return this.sweepBlobs()
+  }
+
+  /**
+   * 无账引用清扫：以 environments 账本为唯一权威，字节块没人点名才删。
+   * 查账失败=本轮不清扫（宁可留孤儿占几 KB，不在看不见账的时候删东西）。
+   */
+  async sweepBlobs() {
+    let docs
+    try {
+      docs = await dataService.listEnvironments()
+    } catch {
+      return { deleted: 0, kept: 0, note: '查账失败：本轮不清扫' }
+    }
+    const refs = new Set()
+    for (const d of docs) for (const f of d?.bundle?.files || []) if (f?.sha256) refs.add(f.sha256)
+    let deleted = 0
+    let kept = 0
+    const root = this.blobRoot
+    if (!existsSync(root)) return { deleted, kept }
+    for (const seg of readdirSync(root)) {
+      const sub = join(root, seg)
+      let st
+      try {
+        st = statSync(sub)
+      } catch {
+        continue
+      }
+      if (!st.isDirectory()) continue
+      for (const rest of readdirSync(sub)) {
+        if (refs.has(seg + rest)) {
+          kept++
+          continue
+        }
+        try {
+          rmSync(join(sub, rest), { force: true })
+          deleted++
+        } catch {}
+      }
+    }
+    return { deleted, kept }
+  }
+
+  /** 存量收编：所有还带 tar 的包目录逐个进 CAS；无 manifest 的旧形态跳过（不动tar）。 */
+  migrateCas() {
+    const migrated = []
+    if (!existsSync(this.baseDir)) return migrated
+    for (const name of readdirSync(this.baseDir)) {
+      if (name.startsWith('.')) continue
+      const dir = join(this.baseDir, name)
+      if (!existsSync(join(dir, 'bundle.tar.gz')) || !existsSync(join(dir, 'manifest.json')))
+        continue
+      this.#ingestCas(dir)
+      migrated.push(name)
+    }
+    return migrated
+  }
+
+  /** tar 形态收编进 CAS：逐文件哈希自证后 rename 入库；名已在=去重命中，弃本地拷贝。 */
+  #ingestCas(dir) {
+    const tar = join(dir, 'bundle.tar.gz')
+    const manifest = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8'))
+    const staging = join(this.baseDir, `.ingest-${Date.now().toString(36)}`)
+    mkdirSync(staging, { recursive: true })
+    try {
+      execFileSync('tar', ['-xzf', tar, '-C', staging], { stdio: 'pipe' })
+      for (const f of manifest) {
+        if (!f?.p || !f?.sha256) throw new Error('ingest:清单缺 sha256——旧包保留 tar 形态')
+        const src = join(staging, f.p)
+        const buf = readFileSync(src)
+        if (createHash('sha256').update(buf).digest('hex') !== f.sha256)
+          throw new Error(`ingest:字节与指纹不符 ${f.p}`)
+        const dest = this.blobPath(f.sha256)
+        mkdirSync(dirname(dest), { recursive: true })
+        if (existsSync(dest)) rmSync(src, { force: true })
+        else renameSync(src, dest)
+      }
+      rmSync(tar, { force: true })
+    } finally {
+      rmSync(staging, { recursive: true, force: true })
+    }
+    return manifest
+  }
+
+  blobPath(sha256) {
+    return join(this.blobRoot, sha256.slice(0, 2), sha256.slice(2))
+  }
+
+  get blobRoot() {
+    if (!dataService.dataDir) throw new Error('env-bundle：dataService.dataDir 不可用')
+    return join(dataService.dataDir, 'env-blobs')
+  }
+
+  /** 把账本清单装配成平铺暂存目录（tar 或 CAS 两形态通吃）——扫描/核验的"实物现场"。 */
+  #stageBundleById(dir, files) {
+    const tmp = join(
+      this.baseDir,
+      `.stage-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    )
+    mkdirSync(tmp, { recursive: true })
+    const tar = join(dir, 'bundle.tar.gz')
+    try {
+      if (existsSync(tar)) {
+        execFileSync('tar', ['-xzf', tar, '-C', tmp], { stdio: 'pipe' })
+        return tmp
+      }
+      for (const f of files || []) {
+        if (!f?.p || !f?.sha256) throw new Error('bundle-missing')
+        const src = this.blobPath(f.sha256)
+        if (!existsSync(src)) throw new Error(`bundle-integrity:缺字节块 ${f.p}`)
+        const dst = join(tmp, f.p)
+        mkdirSync(dirname(dst), { recursive: true })
+        copyFileSync(src, dst)
+      }
+      return tmp
+    } catch (e) {
+      rmSync(tmp, { recursive: true, force: true })
+      throw e
+    }
+  }
+
+  /** 重跑检测正解（判例 56 收假绿案）：装配真身后扫描——scanned 从此数得着。 */
+  scanOnStage(id, files) {
+    const stage = this.#stageBundleById(this.bundleDir(id), files)
+    try {
+      return scanBundle(stage, files)
+    } finally {
+      rmSync(stage, { recursive: true, force: true })
+    }
   }
 
   bundleBytes(id) {

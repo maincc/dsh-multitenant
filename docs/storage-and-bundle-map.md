@@ -22,7 +22,8 @@
 │   · workspace-snapshots/  三件套：active 槽 ws-<addr>.tar（建后  │
 │     自动合回）+ archived 槽 ws-<addr>-<ts>.archived.tar（只存    │
 │     不合，回退=干净默认的去处）                                   │
-│   · env-bundles/<模板 _id>/  bundle.tar.gz + manifest.json       │
+│   · env-blobs/<aa>/<sha62>      字节块库（判例56 CAS：同字节全局一份，账多引用共址）
+│   · env-bundles/<模板 _id>/  manifest.json 收存（tar 已收编进 CAS）       │
 │   · skills/  市场技能正文（元数据在 mongo，正文留磁盘=合同边界）  │
 │   · backups/ 换代前整卷备份 tgz；keys/ logs/ npm-cache/          │
 │   · config/*.json、installs.json：文件时代残留（单轨下不显形，    │
@@ -71,7 +72,7 @@ flowchart TD
 ## 四、当前边界与在册待办（如实）
 
 1. **换代残留**（上表 R 支）：旧模板独有文件无清扫机制（判例 55 已护住「误伤用户自装件」这半，残留清退本身未做）；技能面删护内容（用 installedHash 核对）列为续账。
-2. **空间 GC**（PR5 欠账）：workspace-snapshots 177MB（13 份）、backups 9.4MB、env 镜像 3×1.53GB（含演练件）；revoked>7d rmi 与快照 GC 未做。
+2. **空间 GC**（PR5 欠账）：workspace-snapshots 177MB（13 份）、backups 9.4MB、env 镜像 3×1.53GB（含演练件）；revoked>7d rmi 与快照 GC 未做（随行包字节已由判例 56 去重，此项大头剩镜像与快照）。
 3. **市场旧垃圾**：jndw 名下 `evil-skill` 等 8 月测试件仍在架（published 2 条之一），等用户点名清理。
 4. **文件时代死账**：config/sessions.json、installs.json 等残留不再显形（跨轨清扫兜底），可择机归档删除。
 5. 本地 30+ commit 未 push；部署（192.168.66.58）与雷达实弹循环仍挂起。

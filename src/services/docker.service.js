@@ -1826,6 +1826,9 @@ export class DockerService {
     if (opts.bindHostDir) {
       args.push('-v', `${opts.bindHostDir}:${opts.bindHostDirRo ? '/out:ro' : '/out'}`)
     }
+    if (opts.bindBlobs) {
+      args.push('-v', `${opts.bindBlobs}:/blobs:ro`)
+    }
     args.push(
       '-v',
       volMount,

@@ -51,6 +51,12 @@ vi.mock('../src/services/env-bundle.service.js', () => ({
       total: 1,
     })),
     verifyBundle: vi.fn(() => ['plugins/a.js']),
+    scanOnStage: vi.fn(() => ({
+      rulesVer: 1,
+      hits: [],
+      secrets: [],
+      stats: { scanned: 1, skipped: 0, longLines: [] },
+    })),
     bundleDir: vi.fn(() => '/tmp/dsh-nonexistent-bundle-dir'),
     installBundle: vi.fn(async () => ({ ok: true, copied: [], conflicts: [] })),
     applyBundleTo: vi.fn(async (addr, doc, opts = {}) => ({

@@ -8,7 +8,6 @@ import { dataService } from '../services/data.service.js'
 import { dockerService } from '../services/docker.service.js'
 import { envBundleService } from '../services/env-bundle.service.js'
 import { runEnvCommit, normEnvNames, normEnvWsExcludes } from '../services/env-commit.service.js'
-import { scanBundle } from '../utils/env-scan.js'
 // 镜像归属与可清理性判定的唯一真源（2026-09 从本文件抽出，与 F3 维护定时器共用）
 import { collectPrunableImages, matchImageId } from '../services/image-inventory.service.js'
 import {
@@ -1128,7 +1127,8 @@ export async function handleAdminRoutes(req, res, path, url) {
     }
     try {
       await envBundleService.verifyBundle(id, doc.bundle.files) // 账本↔tar 实体核验，不符拒扫
-      const scan = scanBundle(envBundleService.bundleDir(id), doc.bundle.files)
+      // 判例 56：装配实物现场再扫——拿包目录当平铺目录扫，恒 scanned:0 的假绿收案
+      const scan = envBundleService.scanOnStage(id, doc.bundle.files)
       await dataService.patchEnvironment(id, { scan })
       dataService.logOperation('env_scan', { id, operator: getAdminSession(req) || 'system' })
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })

@@ -10,9 +10,19 @@
  *  - dryRun：只报冲突（dest 已存在），零写入——接收者确认弹层的数据源
  *  - 真装：冲突项覆盖（接收者看过清单并确认）；不做删除动作（只加不减）
  */
-import { readdirSync, mkdirSync, renameSync, rmSync, statSync, lstatSync } from 'node:fs'
-import { cpSync } from 'node:fs'
-import { join, normalize, sep } from 'node:path'
+import {
+  copyFileSync,
+  cpSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+} from 'node:fs'
+import { createHash } from 'node:crypto'
+import { dirname, join, normalize, sep } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
 const HOME = '/dsh-home'
@@ -45,8 +55,28 @@ function main() {
   // rm 之后必须把暂存目录建回来（export 侧同款肌肉，这里曾漏写）
   const mk = spawnSync('mkdir', ['-p', TMP])
   if (mk.status !== 0) return { error: `mkdir-tmp-failed:${String(mk.stderr || '').slice(0, 120)}` }
-  const u = spawnSync('tar', ['-xzf', '/out/bundle.tar.gz', '-C', TMP])
-  if (u.status !== 0) return { error: `untar-failed:${String(u.stderr || '').slice(0, 200)}` }
+  if (Array.isArray(arg.plan) && arg.plan.length) {
+    // CAS 模式（判例 56）：字节块从 /blobs 只读取，名=内容；落位前逐块复验哈希——
+    // 挂载面被换/块被腐都在这里现形，不给半成品留进卷的机会。
+    for (const it of arg.plan) {
+      if (!it?.p || !it?.sha || !/^[0-9a-f]{64}$/.test(it.sha)) return { error: 'bad-plan' }
+      const rel = normalize(it.p)
+      if (!rel || rel.startsWith('/') || rel.includes('..')) return { error: 'bad-plan' }
+      const src = join('/blobs', it.sha.slice(0, 2), it.sha.slice(2))
+      const dst = join(TMP, rel)
+      try {
+        mkdirSync(dirname(dst), { recursive: true })
+        copyFileSync(src, dst)
+        const h = createHash('sha256').update(readFileSync(dst)).digest('hex')
+        if (h !== it.sha) return { error: `blob-tampered:${rel}` }
+      } catch {
+        return { error: `blob-missing:${rel}` }
+      }
+    }
+  } else {
+    const u = spawnSync('tar', ['-xzf', '/out/bundle.tar.gz', '-C', TMP])
+    if (u.status !== 0) return { error: `untar-failed:${String(u.stderr || '').slice(0, 200)}` }
+  }
   const files = listFiles(TMP, TMP).sort()
   if (!files.length) return { error: 'empty-bundle' }
   // 账本清单核验（服务端权威）：解出物与 expected 列表逐一对不上=包被外力
