@@ -21,6 +21,12 @@
     <div v-for="t2 in rows" :key="t2._id" class="enva-row" :class="{ open: openedId === t2._id }">
       <div class="enva-head" @click="toggle(t2)">
         <span class="enva-name">{{ t2.name || t2.slug }}</span>
+        <span
+          v-if="dupOf(t2)"
+          class="badge badge-warning"
+          :title="$t('env.dupNameTip', { n: dupOf(t2) })"
+          >{{ $t('env.dupName', { n: dupOf(t2) }) }}</span
+        >
         <span class="badge" :class="badgeCls(t2.status)">{{ $t('env.status.' + t2.status) }}</span>
         <span class="enva-meta"
           >{{ shortAddr(t2.sourceAddr) }} · {{ fmtBytes(t2.sizeBytes) }} ·
@@ -298,6 +304,16 @@ const badgeCls = (st) =>
     rejected: 'badge-danger',
     all: '',
   })[st] || 'badge-info'
+
+// 同名×N 徽标（判例 57 补落裁定）：同作者同名"活着的"（待审/在架）≥2 时点名——
+// 重新上架不触发上传侧的同名提醒，这个盲区由审核面徽标补上（提示不拦截）。
+function dupOf(row) {
+  const live = all.value.filter((e) => e.status === 'pending' || e.status === 'published')
+  const n = live.filter(
+    (e) => e.sourceAddr === row.sourceAddr && (e.name || e.slug) === (row.name || row.slug),
+  ).length
+  return n > 1 ? n : 0
+}
 
 function setFilter(f) {
   filter.value = f

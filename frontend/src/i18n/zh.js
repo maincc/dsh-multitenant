@@ -671,6 +671,8 @@ export default {
     provOfficial: '官网下载',
     provOther: '其他来源',
     provUrlPh: '来源链接（选填）',
+    dupName: '同名×{n}',
+    dupNameTip: '同作者同名在架/待审共 {n} 条——确认不是重复上架（提示不拦截）',
     provDeclared: '作者自述出身：',
     workspaceWarn:
       '勾选=该目录保留进镜像并在整平台可见；未勾选的顶层条目会**从镜像里清空**。家目录密钥与登录态物理不入像',

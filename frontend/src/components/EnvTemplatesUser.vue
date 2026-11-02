@@ -44,6 +44,12 @@
           <div class="env-card-head">
             <span class="env-card-name">{{ tpl.name }}</span>
             <span
+              v-if="dupOf(tpl)"
+              class="badge badge-warning"
+              :title="$t('env.dupNameTip', { n: dupOf(tpl) })"
+              >{{ $t('env.dupName', { n: dupOf(tpl) }) }}</span
+            >
+            <span
               v-if="!tpl.scrubbed"
               class="badge badge-warning"
               :title="$t('env.unscrubbedTip')"
@@ -558,6 +564,11 @@ const provBody = () => {
   return Object.keys(out).length ? { plugins: out } : undefined
 }
 const list = ref([])
+// 货架同名×N 徽标（判例 57 补落）：同作者同名并排 ≥2 就点名——接收者不再犯迷糊
+function dupOf(t) {
+  const n = list.value.filter((e) => e.author === t.author && e.name === t.name).length
+  return n > 1 ? n : 0
+}
 const drafts = ref([])
 const current = ref(null)
 const canFreeze = ref(false)
