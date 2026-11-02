@@ -20,7 +20,7 @@ try {
   process.exit(0)
 }
 const expect = (arg && arg.expect) || {}
-const out = {}
+const out = Object.create(null) // 同名 '__proto__' 不许写穿全局原型（判例 57 H2）
 for (const [name, map] of Object.entries(expect)) {
   let ok = true
   const seen = new Set()
@@ -51,4 +51,4 @@ for (const [name, map] of Object.entries(expect)) {
   for (const rel of Object.keys(map)) if (!seen.has(rel)) ok = false
   out[name] = ok
 }
-console.log(JSON.stringify(out))
+console.log(JSON.stringify({ checked: out }))

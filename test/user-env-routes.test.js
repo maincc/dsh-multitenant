@@ -812,3 +812,27 @@ describe('normEnvProvenance 出身自述入账（判例 55）', () => {
     expect(long.a.url.length).toBe(200)
   })
 })
+
+// ═══ 判例 57 H2：键空间污染防线 ═══
+describe('revert 清扫拒原型污染（判例 57）', () => {
+  it('插件名 __proto__ 不得写穿 Object.prototype，且无核对结果=不代删', async () => {
+    seed({
+      pinnedBy: [USER],
+      include: { skills: [], plugins: ['__proto__'], folders: [] },
+      bundle: { files: [{ p: 'plugins/__proto__/x.mjs', size: 2, sha256: 'ab' }], bytes: 2 },
+    })
+    const { envBundleService } = await import('../src/services/env-bundle.service.js')
+    envBundleService.probePluginContent = vi.fn(async () => ({})) // 无该键=实物查不了
+    const res = await call('/api/user/environment/revert', {
+      method: 'POST',
+      body: { alsoClean: true },
+    })
+    expect(res.statusCode).toBe(200)
+    expect('x.mjs' in Object.prototype).toBe(false) // 全局原型清白——没被写穿
+    expect(Object.prototype.hasOwnProperty.call(Object.prototype, 'x.mjs')).toBe(false)
+    const { dockerService } = await import('../src/services/docker.service.js')
+    const allCmd = dockerService.execSh.mock.calls.map((c) => String(c[1])).join(';')
+    expect(allCmd).not.toContain('plugins/__proto__') // 查不了=不代删
+    expect(json(res).cleanNote).toContain('实物查不了')
+  })
+})

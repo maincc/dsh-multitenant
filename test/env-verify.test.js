@@ -13,6 +13,7 @@ import {
   existsSync,
   readdirSync,
   readFileSync,
+  utimesSync,
 } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -194,12 +195,39 @@ describe('CAS 去重/清扫/真扫', () => {
     envBundleService.migrateCas() // 新包也走收编（tar→CAS）才谈得上清扫
     const orphanBlob = envBundleService.blobPath(orphan[0].sha256)
     expect(existsSync(orphanBlob)).toBe(true)
+    // 判例 57 M4 宽限期：在途新块（15min 内）不碰——测试把孤儿倒拨成"陈旧孤儿"
+    const old = new Date(Date.now() - 16 * 60 * 1000)
+    utimesSync(orphanBlob, old, old)
     globalThis.__envDocs = [{ bundle: { files: [...manA, ...manB] } }]
     const swept = await envBundleService.sweepBlobs()
     expect(swept.deleted).toBe(1)
     expect(existsSync(orphanBlob)).toBe(false)
     expect(existsSync(envBundleService.blobPath(sha(Buffer.from(SHARED))))).toBe(true)
     expect(swept.kept).toBe(3) // SHARED+onlya+onlyb——共享字节两块账点只算一份实物
+  })
+
+  it('在途宽限：新孤儿（<15min）点名 young 不物理删（判例 57 M4）', async () => {
+    const young = mkRealBundle('dsh-multitenant:env-jdedupcasddd-20260102000004', {
+      'plugins/youngw/n.mjs': 'export const w = 9;\n',
+    })
+    envBundleService.migrateCas()
+    globalThis.__envDocs = [{ bundle: { files: [...manA, ...manB] } }]
+    const r = await envBundleService.sweepBlobs()
+    expect(r.young).toBe(1)
+    expect(existsSync(envBundleService.blobPath(young[0].sha256))).toBe(true)
+  })
+
+  it('零引用疑障：账空而库有实物→不清扫点名留话（判例 57 H1）', async () => {
+    globalThis.__envDocs = [] // "如实报空"的查账盲区
+    const r = await envBundleService.sweepBlobs()
+    expect(r.note).toContain('查账盲区')
+    expect(r.deleted).toBe(0)
+    // 用闭包里的账本正身值断言，不手打内容字串（中文转义宽度教人谦卑）
+    for (const f of manA) expect(existsSync(envBundleService.blobPath(f.sha256))).toBe(true)
+  })
+
+  it('bundleDir 空模板 id 拒解——不赌调用顺序（判例 57 L7）', () => {
+    expect(() => envBundleService.bundleDir('')).toThrow('空模板 id')
   })
 })
 

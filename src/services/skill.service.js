@@ -351,15 +351,23 @@ export class SkillService {
     let unverified = false
     if (physical) {
       const gone = installs.filter((r) => !physical.includes(r.name))
+      // 销账不连坐读面（判例 57 M5）：账销不动只少记一笔——"我的技能"实物视图
+      // 不许被写侧异常砸成 500（fail-open 绝不上锁）。
+      let reconciledOk = 0
       for (const r of gone) {
-        await this.removeInstallRecord(address, r.name)
-        dataService.logOperation('skill_install_reconciled_gone', {
-          address,
-          skill: r.name,
-          reason: 'volume-listed-missing',
-        })
+        try {
+          await this.removeInstallRecord(address, r.name)
+          dataService.logOperation('skill_install_reconciled_gone', {
+            address,
+            skill: r.name,
+            reason: 'volume-listed-missing',
+          })
+          reconciledOk++
+        } catch {
+          /* 实物说了算：卷里没了是事实，账面迟销是事故——事故不夺视图 */
+        }
       }
-      reconciled = gone.length
+      reconciled = reconciledOk
       const recOf = new Map(
         installs.filter((r) => physical.includes(r.name)).map((r) => [r.name, r]),
       )

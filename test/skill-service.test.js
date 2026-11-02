@@ -339,3 +339,20 @@ describe('实物内容级对账', () => {
     expect(rows.find((r) => r.name === 'evil-skill').installed).toBe(true)
   })
 })
+
+// ═══ 判例 57 M5：销账连坐隔离 ═══
+describe('销账失败不夺实物视图', () => {
+  it('removeInstallRecord 炸=只少记 reconciled，视图照出', async () => {
+    const ADDR3 = 'jtestreconcilefail00000000000000aa'
+    await svc.writeInstalls({
+      [ADDR3]: [{ name: 'ghosty', source: 'market', installedAt: 'x', contentHash: 'h', size: 1 }],
+    })
+    tenantConfigService.runScript = vi.fn(async () => JSON.stringify({ names: [] }))
+    const spy = vi.spyOn(svc, 'removeInstallRecord').mockRejectedValue(new Error('mongo 事务炸'))
+    const view = await svc.mineView(ADDR3)
+    expect(view.installed).toEqual([]) // 实物为底：卷空=清单空
+    expect(view.reconciled).toBeUndefined() // 销不动就不记账（不谎报已销）
+    expect(view.unverified).toBeUndefined() // 探测成功过——不是"查不了"
+    spy.mockRestore()
+  })
+})

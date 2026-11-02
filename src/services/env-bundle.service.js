@@ -57,6 +57,8 @@ export class EnvBundleService {
   /** 模板 id（=image tag）→ 目录名安全形态（: 与 / 都是路径凶器） */
   bundleDir(id) {
     const safe = String(id).replace(/[^A-Za-z0-9._-]/g, '_')
+    // 空形态=域根目录本身：不赌调用顺序，直指要害就 throw（判例 57 L7）
+    if (!safe || safe === '.' || safe === '..') throw new Error('bundleDir：空模板 id 拒绝解析')
     const dir = join(this.baseDir, safe)
     const norm = normalize(dir)
     if (!norm.startsWith(normalize(this.baseDir))) throw new Error('bundle-path-escape')
@@ -282,12 +284,15 @@ export class EnvBundleService {
     try {
       const vols = await dockerService.listVolumes()
       if (!vols.includes(vol)) return null
-      return await this.#volumeRun(
+      const r = await this.#volumeRun(
         vol,
         'env-probe-plugins.mjs',
         { expect: expectByPlugin },
         { readOnly: true },
       )
+      // 信封面（判例 57 L6）：裸 {名:bool} 与 #volumeRun 的 json.error 错误通道同键空间——
+      // 插件名恰为 error 且过核时会把整探误判异常。checked 信封隔开两个键空间。
+      return r && typeof r === 'object' ? (r.checked ?? null) : null
     } catch {
       return null
     }
@@ -311,12 +316,34 @@ export class EnvBundleService {
     } catch {
       return { deleted: 0, kept: 0, note: '查账失败：本轮不清扫' }
     }
+    if (!Array.isArray(docs)) return { deleted: 0, kept: 0, note: '账形不正：本轮不清扫' }
     const refs = new Set()
     for (const d of docs) for (const f of d?.bundle?.files || []) if (f?.sha256) refs.add(f.sha256)
     let deleted = 0
     let kept = 0
+    let young = 0
     const root = this.blobRoot
     if (!existsSync(root)) return { deleted, kept }
+    if (!refs.size) {
+      // "空账"不是"查清"（判例 57 H1）：json 轨 readJson 吞 ENOENT/坏档为 null、
+      // provider 翻转后新库为空……任何看不见账的时刻都"如实报空"。零引用而库有实物
+      // =疑似查账盲区——停手不删。查不了≠没了，删除面同款教义。
+      let anyBlob = false
+      try {
+        anyBlob = readdirSync(root).some((seg) => {
+          try {
+            return readdirSync(join(root, seg)).length > 0
+          } catch {
+            return false
+          }
+        })
+      } catch {
+        anyBlob = true
+      }
+      return anyBlob
+        ? { deleted, kept, note: '账面零引用而库中有实物——疑查账盲区，本轮不清扫' }
+        : { deleted, kept }
+    }
     for (const seg of readdirSync(root)) {
       const sub = join(root, seg)
       let st
@@ -331,13 +358,20 @@ export class EnvBundleService {
           kept++
           continue
         }
+        const bp = join(sub, rest)
         try {
-          rmSync(join(sub, rest), { force: true })
+          // 在途窗口宽限（判例 57 M4）：ingest→putEnvironment 之间块已落库、账未挂上；
+          // 15 分钟内新块一律不碰——别人的导出失败清理/驳回不许绞杀在途导出。
+          if (Date.now() - statSync(bp).mtimeMs < 15 * 60 * 1000) {
+            young++
+            continue
+          }
+          rmSync(bp, { force: true })
           deleted++
         } catch {}
       }
     }
-    return { deleted, kept }
+    return { deleted, kept, young }
   }
 
   /** 存量收编：所有还带 tar 的包目录逐个进 CAS；无 manifest 的旧形态跳过（不动tar）。 */

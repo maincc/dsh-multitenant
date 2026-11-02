@@ -770,7 +770,9 @@ export async function handleUserRoutes(req, res, path) {
         const skip = new Set()
         let legacyNoHash = 0
         if (plugins.length) {
-          const expectByPlugin = {}
+          // null 原型（判例 57 H2）：插件目录名 '__proto__' 是合法名——普通字面量上
+          // `obj[n] ||= {}` 会拿到 Object.prototype 再把键直写全局原型，污染驻进程。
+          const expectByPlugin = Object.create(null)
           for (const f of hadTpl.bundle?.files || []) {
             const m = /^plugins\/([^/]+)\/(.+)$/.exec(String(f.p || ''))
             if (m && f.sha256) (expectByPlugin[m[1]] ||= {})[m[2]] = f.sha256

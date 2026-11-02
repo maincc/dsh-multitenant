@@ -1174,19 +1174,30 @@ export async function handleAdminRoutes(req, res, path, url) {
       )
       return true
     }
-    await dockerService.removeImage(doc.imageTag) // 即弃：删像
-    await Promise.resolve(envBundleService.removeBundle(id)) // 删包（幂等）
-    // 判例 2026-10-30：像没了钉必须卸——否则被钉者下次重建容器吊空炸。
-    // 驳回不是撤板（撤板对象还在、不驱逐在用者；驳回是物理消失）。
-    const holders =
-      typeof userService.unpinHolders === 'function' ? await userService.unpinHolders(id) : []
+    // 拆账先行（判例 57 M3，"置账于前、再动物理"）：先摘 bundle.files——否则
+    // rejected doc 的 sha 恒驻引用账，CAS 字节块永不清扫，"当场即弃"变永久驻盘。
+    // 摘要留账可审（片数/字节/discarded 标记），实物引用归零交给 removeBundle 的 sweep。
     await dataService.patchEnvironment(id, {
       status: 'rejected',
       rejectedAt: new Date().toISOString(),
       rejectedBy: getAdminSession(req) || 'system',
       rejectReason: reason,
       pinnedBy: [], // 钉册随像作废（解绑名数已录 env_unpin_on_reject 审计）
+      bundle: doc.bundle
+        ? {
+            bytes: doc.bundle.bytes || 0,
+            fileCount: (doc.bundle.files || []).length,
+            files: [],
+            discarded: true,
+          }
+        : null,
     })
+    await dockerService.removeImage(doc.imageTag) // 即弃：删像
+    await Promise.resolve(envBundleService.removeBundle(id)) // 删包+sweep（此刻才真销得动）
+    // 判例 2026-10-30：像没了钉必须卸——否则被钉者下次重建容器吊空炸。
+    // 驳回不是撤板（撤板对象还在、不驱逐在用者；驳回是物理消失）。
+    const holders =
+      typeof userService.unpinHolders === 'function' ? await userService.unpinHolders(id) : []
     dataService.logOperation('env_reject', {
       id,
       address: doc.sourceAddr,
