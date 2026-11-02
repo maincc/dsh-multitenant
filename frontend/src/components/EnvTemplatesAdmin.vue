@@ -308,6 +308,9 @@ const badgeCls = (st) =>
 // 同名×N 徽标（判例 57 补落裁定）：同作者同名"活着的"（待审/在架）≥2 时点名——
 // 重新上架不触发上传侧的同名提醒，这个盲区由审核面徽标补上（提示不拦截）。
 function dupOf(row) {
+  // 死账不挂标（用户裁定）：已撤销/已驳回/已下架只是历史陈列，不该被同名标指着——
+  // 数的时候只数活账，挂的时候也只往活账行上挂，两头同闸
+  if (!['draft', 'pending', 'published'].includes(row.status)) return 0
   // 本仓真队列态是 'draft'（重新提交审核的字面，管理端只认它——pending 是幽灵态）：
   // 判数面必须含 draft，否则"两条同名一起待审"这一徽标最该响的场景永远哑火
   const live = all.value.filter((e) => ['draft', 'pending', 'published'].includes(e.status))
