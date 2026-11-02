@@ -178,3 +178,181 @@ describe('市场安装供应链边界', () => {
     expect(written).toBe(local) // 原样，不加强制
   })
 })
+
+describe('clearInstalls：拆卷必销账（第九案镜像——账比实物活得久）', () => {
+  const A1 = 'jhfamgqipxtakkdnamduoppim4shcdztea'
+  const A2 = 'jndwretndumoqbt2uauclmfmx7xbqjykva'
+
+  it('整户销记：返回行数、该地址清成空行（不删 key——塌空会触发防清库护栏）、别人的账一字不碰、审计在案', async () => {
+    writeFileSync(
+      join(dir, 'installs.json'),
+      JSON.stringify({
+        [A1]: [
+          { name: 'stock-advisor', source: 'market' },
+          { name: 'another', source: 'import' },
+        ],
+        [A2]: [{ name: 'keepme', source: 'market' }],
+      }),
+    )
+    const spy = vi.spyOn(dataService, 'logOperation').mockImplementation(() => {})
+    const n = await svc.clearInstalls(A1, 'reset')
+    expect(n).toBe(2)
+    const after = JSON.parse(readFileSync(join(dir, 'installs.json'), 'utf8'))
+    expect(after[A1]).toEqual([]) // 判例 2026-10-31：清成空行而非删 key（塌空反锁死 mongo 侧对账删除）
+    expect(after[A2][0].name).toBe('keepme')
+    expect(spy).toHaveBeenCalledWith(
+      'skill_installs_cleared',
+      expect.objectContaining({ address: A1, n: 2, reason: 'reset' }),
+    )
+    spy.mockRestore()
+  })
+
+  it('空账=无操作：返回 0、不写文件、不产审计（无痕原则）', async () => {
+    writeFileSync(join(dir, 'installs.json'), JSON.stringify({ [A2]: [{ name: 'keepme' }] }))
+    const spy = vi.spyOn(dataService, 'logOperation').mockImplementation(() => {})
+    const n = await svc.clearInstalls(A1, 'volume_deleted')
+    expect(n).toBe(0)
+    const after = JSON.parse(readFileSync(join(dir, 'installs.json'), 'utf8'))
+    expect(Object.keys(after)).toEqual([A2])
+    expect(spy).not.toHaveBeenCalled()
+    spy.mockRestore()
+  })
+})
+
+// ═══ 幽灵记录对账（判例 2026-10-31：账有实物无 → 卸账；查不到 ≠ 没了）═══
+describe('mineView 实物对账销幽灵', () => {
+  const ADDR = 'jtestrecon0000000000000000000000aa'
+  const rec = (name) => ({
+    name,
+    source: 'market',
+    installedAt: '2026-08-28T00:00:00.000Z',
+    contentHash: 'h',
+    size: 10,
+  })
+
+  it('账上有、卷里没有 → 就地卸账，回执 reconciled 计数', async () => {
+    await svc.writeInstalls({ [ADDR]: [rec('ghosty'), rec('kepty')] })
+    tenantConfigService.runScript = vi.fn(async () => JSON.stringify({ names: ['kepty'] }))
+    const view = await svc.mineView(ADDR)
+    expect(view.reconciled).toBe(1)
+    expect(view.installed.map((r) => r.name)).toEqual(['kepty'])
+    expect(svc.readInstalls()[ADDR].map((r) => r.name)).toEqual(['kepty'])
+  })
+
+  it('探测失败（docker 不通/卷未建）= 不知道，绝不销账（fail-open）', async () => {
+    await svc.writeInstalls({ [ADDR]: [rec('ghosty')] })
+    tenantConfigService.runScript = vi.fn(async () => {
+      throw new Error('docker down')
+    })
+    const view = await svc.mineView(ADDR)
+    expect(view.reconciled).toBeUndefined()
+    expect(svc.readInstalls()[ADDR].length).toBe(1)
+  })
+
+  it('实物为主（裁定 2026-10-31）：卷里有、账上没记的手写技能也要显示，source=volume', async () => {
+    await svc.writeInstalls({ [ADDR]: [rec('kepty')] })
+    tenantConfigService.runScript = vi.fn(async () =>
+      JSON.stringify({ names: ['kepty', 'handwritten'] }),
+    )
+    const view = await svc.mineView(ADDR)
+    const names = view.installed.map((r) => r.name)
+    expect(names).toEqual(['kepty', 'handwritten']) // 实物名单为底账
+    const hw = view.installed[1]
+    expect(hw.source).toBe('volume')
+    expect(hw.installedAt).toBe(null)
+    expect(view.unverified).toBeUndefined()
+  })
+
+  it('查不了实物 → 账本兜底且 unverified 如实标注（不假装对过账）', async () => {
+    await svc.writeInstalls({ [ADDR]: [rec('kepty')] })
+    tenantConfigService.runScript = vi.fn(async () => {
+      throw new Error('docker down')
+    })
+    const view = await svc.mineView(ADDR)
+    expect(view.unverified).toBe(true)
+    expect(view.installed[0].source).toBe('market') // 账本行原样
+  })
+
+  it('最后一笔销账塌不出空缓存：留 [] 空行，护栏不吞 mongo 删除（判例 2026-10-31）', async () => {
+    await svc.writeInstalls({ [ADDR]: [rec('ghosty')] })
+    tenantConfigService.runScript = vi.fn(async () => JSON.stringify({ names: [] }))
+    const view = await svc.mineView(ADDR)
+    expect(view.reconciled).toBe(1)
+    expect(svc.readInstalls()[ADDR]).toEqual([]) // key 还在（空行），不是 undefined
+    const onDisk = JSON.parse(readFileSync(join(dir, 'installs.json'), 'utf8'))
+    expect(onDisk[ADDR]).toEqual([])
+  })
+
+  it('removeInstallRecord 跨轨清扫：主轨无账时摘掉滞留在文件轨的旧账（防回切复活）', async () => {
+    const { CONFIG } = await import('../src/config/config.js')
+    const saved = CONFIG.storage.provider
+    const file = join(dir, 'cross.json')
+    writeFileSync(file, JSON.stringify({ [ADDR]: [rec('ghosty')] }))
+    const svc2 = new SkillService({ storeDir: join(dir, 'cross-skills'), installsFile: file })
+    CONFIG.storage.provider = 'mongodb'
+    try {
+      svc2._installsCache = {} // 主轨（mongo 缓存）查无此账——正是要扫旁轨的情形
+      await svc2.removeInstallRecord(ADDR, 'ghosty')
+      expect(JSON.parse(readFileSync(file, 'utf8'))[ADDR]).toBeUndefined()
+      expect(svc2._installsCache).toEqual({}) // 主轨没动
+    } finally {
+      CONFIG.storage.provider = saved
+    }
+  })
+})
+
+// ═══ 内容级实物对账（判例 53 完成态："差异以容器实际为主"）═══
+describe('实物内容级对账', () => {
+  const ADDR2 = VALID_ADDR // list({address}) 要过 isValidAddressLike——假地址会被正当拒绝
+  const rec2 = (name) => ({
+    name,
+    source: 'market',
+    installedAt: '2026-08-28T00:00:00.000Z',
+    contentHash: 'h',
+    size: 10,
+  })
+  const ev = () => svc.readIndex().find((e) => e.name === 'evil-skill')
+
+  it('卷实物哈希=货架当前版应有的哈希 → 不算差异（hasUpdate false）', async () => {
+    const fresh = svc.expectedVolumeHash(ev())
+    await svc.writeInstalls({ [ADDR2]: [rec2('evil-skill')] })
+    tenantConfigService.runScript = vi.fn(async () =>
+      JSON.stringify({ items: [{ name: 'evil-skill', sha256: fresh }] }),
+    )
+    const view = await svc.mineView(ADDR2)
+    expect(view.installed[0].hasUpdate).toBe(false)
+  })
+
+  it('用户手改卷内文件 → 实物现形（hasUpdate true），不再等账本追认', async () => {
+    await svc.writeInstalls({ [ADDR2]: [rec2('evil-skill')] })
+    tenantConfigService.runScript = vi.fn(async () =>
+      JSON.stringify({ items: [{ name: 'evil-skill', sha256: 'f'.repeat(64) }] }),
+    )
+    const view = await svc.mineView(ADDR2)
+    expect(view.installed[0].hasUpdate).toBe(true)
+  })
+
+  it('市场列表的"已安装"徽标认卷实物：账上没记、卷里真有 → installed=true', async () => {
+    await svc.writeInstalls({ [ADDR2]: [] }) // 账本干净
+    tenantConfigService.runScript = vi.fn(async () => JSON.stringify({ names: ['evil-skill'] }))
+    const rows = await svc.list({ address: ADDR2 })
+    expect(rows.find((r) => r.name === 'evil-skill').installed).toBe(true)
+  })
+})
+
+// ═══ 判例 57 M5：销账连坐隔离 ═══
+describe('销账失败不夺实物视图', () => {
+  it('removeInstallRecord 炸=只少记 reconciled，视图照出', async () => {
+    const ADDR3 = 'jtestreconcilefail00000000000000aa'
+    await svc.writeInstalls({
+      [ADDR3]: [{ name: 'ghosty', source: 'market', installedAt: 'x', contentHash: 'h', size: 1 }],
+    })
+    tenantConfigService.runScript = vi.fn(async () => JSON.stringify({ names: [] }))
+    const spy = vi.spyOn(svc, 'removeInstallRecord').mockRejectedValue(new Error('mongo 事务炸'))
+    const view = await svc.mineView(ADDR3)
+    expect(view.installed).toEqual([]) // 实物为底：卷空=清单空
+    expect(view.reconciled).toBeUndefined() // 销不动就不记账（不谎报已销）
+    expect(view.unverified).toBeUndefined() // 探测成功过——不是"查不了"
+    spy.mockRestore()
+  })
+})

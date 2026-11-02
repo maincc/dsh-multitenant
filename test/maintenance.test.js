@@ -265,6 +265,25 @@ describe('低盘告警（F3#4，挂 5min 采集）', () => {
     ])
   })
 
+  it('真机形状 {items}（判例十一）：同样出告警与 top-N，面板不再假死', async () => {
+    vi.spyOn(dockerService, 'dockerDiskSummary').mockResolvedValue({
+      items: [{ name: 'Images', total: '39', active: '17', size: '24GB', reclaimable: '21GB' }],
+    })
+    vi.spyOn(dockerService, 'hostDiskUsage').mockResolvedValue({
+      totalKB: 100 * 1048576,
+      usedKB: 96 * 1048576,
+      availableKB: 2 * 1048576,
+      usePercent: '96%',
+      path: '/',
+    })
+    const logSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await userService.collectDiskUsage()
+    expect(userService.diskUsage.host.lowFree).toBe(true)
+    expect(userService.diskUsage.docker.items.length).toBe(1) // 面板有数了，不再 null
+    expect(logSpy.mock.calls.map((c) => String(c[0])).join('\n')).toContain('Images:21GB')
+    logSpy.mockRestore()
+  })
+
   it('可用低于阈值 → host.lowFree=true + 告警日志含 top-N（且不含 0B 卷）', async () => {
     vi.spyOn(dockerService, 'hostDiskUsage').mockResolvedValue({
       totalKB: 100 * 1048576,

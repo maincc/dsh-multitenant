@@ -229,8 +229,11 @@ export class SkillService {
       .sort((a, b) => a.name.localeCompare(b.name))
     const mine = new Set()
     if (address && isValidAddressLike(address)) {
-      const installs = this.readInstalls()
-      ;(installs[normalizeAddress(address)] || []).forEach((r) => mine.add(r.name))
+      // 差异以容器实际为主（判例 53 完成态）："已安装"徽标认卷内实物名单，
+      // 宿主账本只在查不了实物时兜底（旧语义，可能滞后）
+      const physical = await this.listContainerSkillsProbe(address)
+      if (physical) physical.forEach((name) => mine.add(name))
+      else (this.readInstalls()[normalizeAddress(address)] || []).forEach((r) => mine.add(r.name))
     }
     return entries.map((e) => this.toPublic(e, mine.has(e.name)))
   }
@@ -256,16 +259,56 @@ export class SkillService {
    * 只读操作，失败时返回 []（不给用户中心造成阻塞）。
    */
   async listContainerSkills(address) {
+    return (await this.listContainerSkillsProbe(address)) ?? []
+  }
+
+  /**
+   * 实物探测（判例 2026-10-31 幽灵案）：null=查不到（卷未建/docker 故障），
+   * 数组=卷里实有名单。与 [] 的分别是销账的生死线——**查不到≠没了**，
+   * 探测失败绝不许当成实物消失（fail-open：绝不上锁、绝不因看不见就销账）。
+   */
+  async listContainerSkillsProbe(address) {
+    const items = await this.probeVolumeItems(address)
+    return items ? items.map((i) => i.name) : null
+  }
+
+  /**
+   * 实物探测（内容级）：[{name, sha256}]——卷里此刻的字节就是断言的依据。
+   * 旧版脚本无 items 时 sha256=null（结构兼容，哈希级对账自动降级名单级）。
+   */
+  async probeVolumeItems(address) {
     try {
       const out = await tenantConfigService.runScript(address, 'list-skills.mjs', [])
       const parsed = JSON.parse(out)
-      return Array.isArray(parsed?.names) ? parsed.names : []
+      if (Array.isArray(parsed?.items)) return parsed.items
+      if (Array.isArray(parsed?.names)) return parsed.names.map((name) => ({ name, sha256: null }))
+      return null
     } catch {
-      return []
+      return null
     }
   }
 
-  /** 我的发布 + 我的安装（个人视图，读取宿主侧数据，无需签名/卷访问） */
+  /**
+   * 按货架当前版本算"安装后卷里应有的实物哈希"（含 P0-4 改写，与 install
+   * 落盘变换同型）。查不了=未知（null），未知不许判"可更新"。
+   */
+  expectedVolumeHash(entry) {
+    try {
+      const text = this.readEntryBody(entry.name)
+      const body = CONFIG.skills?.autoInvoke ? text : forceDisableModelInvocation(text)
+      return createHashForText(body)
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * 我的发布 + 我的安装（个人视图）。
+   * **实物为主**（裁定 2026-10-31："以容器本身里面的东西为主"）：卷内实物名单
+   * 就是底账——容器里真实存在的技能一律显示（含手写在卷里、宿主账从没记过的）；
+   * 宿主账本只供附属信息（安装日期/可更新对比）。账上有、卷里没有=幽灵就地卸账
+   * （判例 52）；卷查不了≠没了：退回账本视图并如实标 unverified（fail-open）。
+   */
   async mineView(address) {
     address = normalizeAddress(address)
     const entries = this.readIndex()
@@ -273,10 +316,22 @@ export class SkillService {
       .filter((e) => e.sharer === address && e.status === 'active')
       .map((e) => this.toPublic(e))
     const installs = this.readInstalls()[address] || []
-    const installed = installs.map((rec) => {
+    const volume = await this.probeVolumeItems(address)
+    const physical = volume ? volume.map((i) => i.name) : null
+    const volHash = new Map((volume || []).map((i) => [i.name, i.sha256]))
+    // 内容级对账（判例 53）：卷实物哈希 ≠ 货架当前版本应有的哈希 = 有差异——
+    // 用户手改文件、仓库升版，一律现形；实物查不了则降级账本哈希对比并如实存在
+    const judgeUpdate = (entry, rec) => {
+      if (!entry || entry.status !== 'active') return false
+      const actual = volHash.get(entry.name)
+      if (actual) {
+        const expected = this.expectedVolumeHash(entry)
+        if (expected) return actual !== expected
+      }
+      return entry.contentHash !== rec.contentHash
+    }
+    const toRow = (rec) => {
       const entry = entries.find((e) => e.name === rec.name)
-      const hasUpdate =
-        Boolean(entry) && entry.status === 'active' && entry.contentHash !== rec.contentHash
       return {
         name: rec.name,
         source: rec.source,
@@ -284,14 +339,74 @@ export class SkillService {
         contentHash: rec.contentHash,
         installedHash: rec.installedHash ?? null,
         size: rec.size,
-        hasUpdate,
+        hasUpdate: judgeUpdate(entry, rec),
         status: entry?.status ?? 'removed',
         description: entry?.description ?? '',
         whenToUse: entry?.whenToUse ?? '',
         hasResources: Boolean(entry?.hasResources),
       }
-    })
-    return { published, installed }
+    }
+    let installed
+    let reconciled = 0
+    let unverified = false
+    if (physical) {
+      const gone = installs.filter((r) => !physical.includes(r.name))
+      // 销账不连坐读面（判例 57 M5）：账销不动只少记一笔——"我的技能"实物视图
+      // 不许被写侧异常砸成 500（fail-open 绝不上锁）。
+      let reconciledOk = 0
+      for (const r of gone) {
+        try {
+          await this.removeInstallRecord(address, r.name)
+          dataService.logOperation('skill_install_reconciled_gone', {
+            address,
+            skill: r.name,
+            reason: 'volume-listed-missing',
+          })
+          reconciledOk++
+        } catch {
+          /* 实物说了算：卷里没了是事实，账面迟销是事故——事故不夺视图 */
+        }
+      }
+      reconciled = reconciledOk
+      const recOf = new Map(
+        installs.filter((r) => physical.includes(r.name)).map((r) => [r.name, r]),
+      )
+      // 实物为底账：卷里有、账上没记=容器内自写/手放的实物，如实展示 source='volume'
+      installed = physical.map((name) => {
+        const rec = recOf.get(name)
+        if (rec) return toRow(rec)
+        const entry = entries.find((e) => e.name === name)
+        // 手写实物与货架同名版本内容不一致——也以实物为断呈差异，不装看不见
+        const actual = volHash.get(name)
+        const expected = entry ? this.expectedVolumeHash(entry) : null
+        return {
+          name,
+          source: 'volume',
+          installedAt: null,
+          contentHash: null,
+          installedHash: null,
+          size: null,
+          hasUpdate:
+            Boolean(entry) &&
+            entry.status === 'active' &&
+            actual &&
+            expected &&
+            actual !== expected,
+          status: entry?.status ?? 'volume',
+          description: entry?.description ?? '',
+          whenToUse: entry?.whenToUse ?? '',
+          hasResources: Boolean(entry?.hasResources),
+        }
+      })
+    } else {
+      // 查不了≠没了：不销任何账、不假装对过——退账本视图，诚实标记
+      installed = installs.map(toRow)
+      unverified = true
+    }
+    const out = { published, installed }
+    if (reconciled) out.reconciled = reconciled
+    if (unverified) out.unverified = true
+    return out
   }
 
   /** 我的发布 + 我的安装 + 容器内可共享列表（共享弹窗用，需签名） */
@@ -582,11 +697,47 @@ export class SkillService {
     if (Array.isArray(list)) {
       const filtered = list.filter((r) => r.name !== name)
       if (filtered.length !== list.length) {
-        if (filtered.length === 0) delete all[address]
-        else all[address] = filtered
+        // 判例 2026-10-31：清零后留空行 [] 而非删 key——删 key 会让整缓存塌空，
+        // 触发 writeInstalls 的"空缓存防清库"护栏跳过对账删除，mongo 幽灵删不掉、
+        // 重启水合即复活。空行=查过销清，本来就是更诚实的账。
+        all[address] = filtered
         await this.writeInstalls(all)
+        return
       }
     }
+    // 幽灵案补刀（2026-10-31）：单轨存储下"本轨无记录"≠"全平台无记录"——
+    // provider 曾在 json/mongo 间翻转，旧账滞留文件轨，回切即复活。卸账顺轨扫掉。
+    if (this.provider !== 'json' && existsSync(this.installsFile)) {
+      try {
+        const data = dataService.readJson(this.installsFile)
+        const legacy = data && data[address]
+        if (Array.isArray(legacy)) {
+          const left = legacy.filter((r) => r.name !== name)
+          if (left.length !== legacy.length) {
+            if (left.length === 0) delete data[address]
+            else data[address] = left
+            dataService.writeWithLock(this.installsFile, data)
+            console.warn(`[skill] 「${name}」旧账滞留文件轨，卸账顺轨摘除（防回切复活）`)
+          }
+        }
+      } catch {}
+    }
+  }
+
+  /**
+   * 拆卷必销账（判例 2026-10-29，第九案的镜像面：账比实物活得久）。
+   * reset / 管理端清除数据 / 彻底删除用户——卷里的实物没了，安装账本就
+   * 成了幽灵：同地址重新注册会看见上辈子的技能"装着"。整户销记，返回行数。
+   */
+  async clearInstalls(address, reason = 'reset') {
+    address = normalizeAddress(address)
+    const all = this.readInstalls()
+    const list = Array.isArray(all[address]) ? all[address] : []
+    if (!list.length) return 0
+    all[address] = [] // 同款护栏避让（判例 2026-10-31）：留空行，删 key 塌空反锁死销账
+    await this.writeInstalls(all)
+    dataService.logOperation('skill_installs_cleared', { address, n: list.length, reason })
+    return list.length
   }
 
   checkInstallRate(address) {

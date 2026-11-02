@@ -28,7 +28,6 @@ import { CONFIG } from './config/config.js'
 import { userService } from './services/user.service.js'
 import { primeTenantNetwork, migrateExistingContainers } from './services/docker.service.js'
 import { dataService } from './services/data.service.js'
-import { adminSessionStore } from './middleware/auth.middleware.js'
 import { userSessionStore } from './middleware/user-auth.middleware.js'
 import { skillService } from './services/skill.service.js'
 import { credentialService } from './services/credential.service.js'
@@ -242,7 +241,7 @@ const server = createServer(async (req, res) => {
         const ck = req.headers.cookie || ''
         // eslint-disable-next-line no-console
         console.log(
-          `[req] ${new Date().toISOString().slice(11, 23)} ${req.method} ${path} → ${res.statusCode} ${Date.now() - t0}ms admin=${ck.includes('admin_session') ? 'Y' : 'N'} user=${ck.includes('user_session') ? 'Y' : 'N'}${url.searchParams?.get('address') ? ' addr=' + url.searchParams.get('address').slice(0, 8) : ''}`,
+          `[req] ${new Date().toISOString().slice(11, 23)} ${req.method} ${path} → ${res.statusCode} ${Date.now() - t0}ms user=${ck.includes('user_session') ? 'Y' : 'N'}${url.searchParams?.get('address') ? ' addr=' + url.searchParams.get('address').slice(0, 8) : ''}`,
         )
         return _end(d)
       }
@@ -337,7 +336,7 @@ server.listen(PORT, '0.0.0.0', async () => {
   try {
     await dataService.init() // M2-5：meta 单例域（admin/镜像版本）水合；admin 地址注入提权热路径
     await userService.init()
-    await adminSessionStore.init() // M2-3：双会话并入 sessions 集合（scope 区分，TTL 兜底）
+    // 判例 2026-10-30：admin_session 废止，会话只剩 user_session 一源（M2-3 双并入单）
     await userSessionStore.init()
     await skillService.init() // M2-4：技能元数据（目录+安装记录）水合；正文文件按合同留磁盘
     await credentialService.init() // v1.4：凭证台账集合索引 + legacy 名单加载 + 豁免快照水合
@@ -400,7 +399,8 @@ server.listen(PORT, '0.0.0.0', async () => {
 // （revoke 本就 await 写确认；state/skill/meta 域全部 await 落库，无需 drain）
 for (const sig of ['SIGTERM', 'SIGINT']) {
   process.once(sig, () => {
-    Promise.all([adminSessionStore.flush(), userSessionStore.flush()])
+    userSessionStore
+      .flush()
       .catch(() => {})
       .finally(() => process.exit(0))
   })

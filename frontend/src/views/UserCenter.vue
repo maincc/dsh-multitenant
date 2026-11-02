@@ -702,18 +702,7 @@
               {{ $t('user.resetContainerFlow') }}
             </div>
           </div>
-        </div>
 
-        <!-- ════════ 我的技能 ════════ -->
-        <!-- ════════ v1.5 管理员页签（验收反馈①：与用户页签平级并列，无嵌套壳）════════
-             role='admin'（官网活验证属实）才装配；内嵌复用独立版 AdminPanel（源码不合并，
-             同一组件两用：externalTab 驱动子页、自带侧栏隐藏）。操作仍要 admin_session 当场
-             签名——tab 可见=凭证判权，可操作=会话+钱包双门禁（刀2B 模型一字不松） -->
-        <div v-else-if="isSystemTab" class="tab-content admin-embed">
-          <AdminPanel embedded :external-tab="systemSubTab" />
-        </div>
-
-        <div v-else class="tab-content">
           <div class="tab-head">
             <h4>{{ $t('user.mySkills') }}</h4>
             <p class="tab-hint">{{ $t('user.mySkillsHint') }}</p>
@@ -725,9 +714,7 @@
             <button class="btn btn-primary" @click="openShareDialog">
               {{ $t('user.shareSkill') }}
             </button>
-            <router-link to="/skills" class="btn btn-secondary">{{
-              $t('user.skillMarketLink')
-            }}</router-link>
+            <span class="env-muted" style="align-self: center">{{ $t('user.mySkillsHint') }}</span>
           </div>
 
           <div v-if="mySkillsLoading" class="config-loading">
@@ -749,16 +736,19 @@
             </div>
             <div v-if="mineData.installed.length > 0" class="skill-subsection">
               <h3>{{ $t('user.myInstalled') }}</h3>
+              <p v-if="mineData.unverified" class="skill-desc">{{ $t('user.unverifiedNote') }}</p>
               <div v-for="s in mineData.installed" :key="'i-' + s.name" class="skill-row">
                 <div class="skill-row-main">
                   <strong>{{ s.name }}</strong>
                   <span class="skill-desc">
                     {{
                       s.description ||
-                      $t('user.installedSource', {
-                        source: s.source,
-                        date: new Date(s.installedAt).toLocaleString(),
-                      })
+                      (s.installedAt
+                        ? $t('user.installedSource', {
+                            source: s.source,
+                            date: new Date(s.installedAt).toLocaleString(),
+                          })
+                        : $t('user.installedFromVolume'))
                     }}
                   </span>
                   <span v-if="s.hasUpdate" class="badge badge-warning">{{
@@ -777,6 +767,43 @@
               {{ $t('user.noSkillsHint') }}
             </p>
           </template>
+
+          <!-- ════════ 环境·我的现场（货架/选用在「市场」的环境品类）════════ -->
+          <div class="tab-head">
+            <h4>{{ $t('env.mineSectionTitle') }}</h4>
+            <p class="tab-hint">{{ $t('env.mineSectionHint') }}</p>
+          </div>
+          <EnvTemplatesUser mode="mine" @mine-changed="loadMine" />
+        </div>
+
+        <!-- ════════ 我的技能 ════════ -->
+        <!-- ════════ v1.5 管理员页签（验收反馈①：与用户页签平级并列，无嵌套壳）════════
+             role='admin'（官网活验证属实）才装配；内嵌复用独立版 AdminPanel（源码不合并，
+             同一组件两用：externalTab 驱动子页、自带侧栏隐藏）。操作仍要登录会话+当场签名
+             签名——tab 可见=凭证判权，可操作=会话+钱包双门禁（刀2B 模型一字不松） -->
+        <div v-else-if="isSystemTab" class="tab-content admin-embed">
+          <AdminPanel embedded :external-tab="systemSubTab" />
+        </div>
+
+        <div v-else class="tab-content">
+          <div class="action-buttons">
+            <button
+              class="btn btn-small"
+              :class="marketCat === 'skills' ? 'btn-primary' : 'btn-secondary'"
+              @click="marketCat = 'skills'"
+            >
+              {{ $t('env.catSkills') }}
+            </button>
+            <button
+              class="btn btn-small"
+              :class="marketCat === 'env' ? 'btn-primary' : 'btn-secondary'"
+              @click="marketCat = 'env'"
+            >
+              {{ $t('env.catEnv') }}
+            </button>
+          </div>
+          <SkillMarket v-if="marketCat === 'skills'" embedded external-tab="market" />
+          <EnvTemplatesUser v-if="marketCat === 'env'" mode="market" />
         </div>
       </section>
 
@@ -877,6 +904,8 @@ import { useRoute } from 'vue-router'
 import { skillsApi } from '../api/skills.js'
 import { sha256Hex as sha256HexFallback } from '../utils/sha256.js'
 import AdminPanel from './AdminPanel.vue'
+import EnvTemplatesUser from '../components/EnvTemplatesUser.vue'
+import SkillMarket from './SkillMarket.vue'
 import { buildAdminTabs } from '../admin-tabs'
 import {
   requestAccounts,
@@ -896,6 +925,8 @@ const route = useRoute()
 // v1.5 用户验收②修订：进用户中心**不再自动建容器**，容器可能不存在——
 // 首屏停在"容器管理"会直面一片未就绪；改默认「账户信息」（凭证/角色第一眼看，反馈③）。
 const activeTab = ref('account')
+// 市场页签内品类（用户终审 IA）：市场=挑（技能/环境）；容器管理=经营（定格/显示/回退/技能装卸）
+const marketCat = ref('skills')
 // v1.5 刀5C：判权面（credential-status 的 role，服务端活验证 admin 凭证属实才为 'admin'）。
 // tab 注册表按 role 装配——管理页签对普通用户不存在（数据面砍掉，不是 CSS 隐藏）；
 // 对管理员则与用户页签**平级并列**（验收反馈①：消灭"系统管理"嵌套壳，同一侧栏）。
@@ -1150,9 +1181,6 @@ const loadCredentialStatus = async (address) => {
   // 用户拍板恢复方式：**检测到账户切换即自动发起重签**（钱包弹一次，零操作自愈）；
   // 拒签/重签未完成才落到被动引导态（"重新登录并重载凭证"按钮出口）。
   if (data.address && String(data.address).toLowerCase() !== String(address).toLowerCase()) {
-    console.log(
-      `[flow] F9 会话主人=${String(data.address).slice(0, 10)}…（上次签名登录的钱包）≠ 当前账户=${String(address).slice(0, 10)}…，自动重签发起（钱包只弹一次）`,
-    )
     const fresh = await resignSessionTo(address)
     if (fresh) {
       data = fresh
@@ -1187,6 +1215,13 @@ const loadCredentialStatus = async (address) => {
       const q = String(route.query.tab || '')
       if (q.startsWith('adm:')) activeTab.value = q
       else if (q === 'system') activeTab.value = 'adm:overview'
+    } else if (!initialTabApplied) {
+      // 治动作歧义（用户裁定 2026-11-02）：首页「系统管理」按钮与普通入口同去用户
+      // 中心——非管理员由管理深链进来时，管理页签根本不装配，旧版静默弹回账户页，
+      // 用户无从知道是点错了、坏了、还是权限不够。现在给明话：落点在此、缘由在此。
+      initialTabApplied = true
+      const q0 = String(route.query.tab || '')
+      if (q0.startsWith('adm:') || q0 === 'system') toast(t('user.adminEntryLocked'))
     }
     // 撤销即时收面：角色掉出 admin 且正停在管理页 → 弹回账户信息
     if (role.value !== 'admin' && isSystemTab.value) activeTab.value = 'account'
@@ -1844,9 +1879,6 @@ const loginOnly = async (address) => {
 // 处理地址变化的通用函数
 const handleAddressChange = async (newAddress, isInitialLoad = false) => {
   const oldAddress = localStorage.getItem('swtc_address')
-  console.log(
-    `[flow] F3 handleAddressChange 进入 (${isInitialLoad ? '初始加载' : '按钮/事件'}, old=${oldAddress}, new=${newAddress})`,
-  )
 
   if (isInitialLoad) {
     console.log('[UserCenter] 初始加载，恢复地址:', newAddress)
@@ -1876,7 +1908,6 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
 
   try {
     // 显示加载页面
-    console.log('[flow] L1 loading=10% 验证地址')
     showLoading(t('user.loadingConnect'), t('user.loadingVerify'), 10)
 
     // ★v1.5 验收反馈②：进入用户中心 = **登录**，不再顺手建容器。
@@ -1912,9 +1943,7 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
     }
 
     // 切换/连接后刷新"我的技能"为当前地址的个人视图
-    console.log('[flow] F13 loadMine 开始（loading 已结束）')
     await loadMine()
-    console.log('[flow] F13b loadMine 完成')
   } catch (err) {
     console.error('[UserCenter] 处理地址失败:', err)
     hideLoading()
@@ -1925,7 +1954,6 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
 }
 
 const connectWallet = async () => {
-  console.log('[flow] F1 connectWallet 进入')
   if (!hasCCDAO.value) return
 
   connecting.value = true
@@ -1936,7 +1964,6 @@ const connectWallet = async () => {
     rememberPluginCase(pluginAddress)
     // 统一转小写
     const address = pluginAddress.toLowerCase()
-    console.log('[flow] F2 拿到地址:', address)
     console.log('[UserCenter] 连接钱包，地址:', address)
 
     // 使用通用处理函数
@@ -1963,7 +1990,6 @@ const connectWallet = async () => {
 // 避免重复弹签名窗、重复创建容器。
 let ownershipInFlight = false
 const connectWithOwnership = async (address, opts = {}) => {
-  console.log('[flow] F6 connectWithOwnership 进入（签名链路）')
   // quiet=后台自动拉起（进入用户中心触发）：钱包签名弹窗照常（归属闸不放松），
   // 但不糊全屏 loading——用户可继续浏览，进度由容器 tab 的加载图标承担
   const quiet = !!opts.quiet
@@ -1996,12 +2022,10 @@ const connectWithOwnership = async (address, opts = {}) => {
     if (!nonce || !message) {
       throw new Error(challenge.error || '领取连接挑战失败，请重试')
     }
-    console.log('[flow] F7 挑战获取完成 nonce.length=' + (nonce ? String(nonce).length : 0))
     // 2) 插件签名（用户确认弹窗，可能等待较久）：签的是用途绑定消息（hex）
     if (!quiet) showLoading(title, t('user.loadingSign'), Math.max(progress0, 45))
     const signature = await signMessage(pluginAddress, message)
     const publicKey = await getPublicKey(pluginAddress)
-    console.log('[flow] F8 钱包签名+公钥完成')
     // 3) 带签名访问 /connect（已存在容器同样验签并发 cookie）
     // format=json：浏览器 fetch 的 redirect:manual 会把 302 包成 opaque (status 0)，
     // 取不到 location → 后端直接回 200 JSON {url}，前端 window.open。
@@ -2016,9 +2040,7 @@ const connectWithOwnership = async (address, opts = {}) => {
       format: 'json',
       ...(opts.action ? { action: opts.action } : {}),
     })
-    console.log('[flow] F9a 发起 /connect（带签名）')
     const cRes = await fetch(`/connect?${params}`)
-    console.log('[flow] F9b /connect 返回 status=' + cRes.status)
     return cRes
   } finally {
     ownershipInFlight = false
@@ -2047,7 +2069,6 @@ const enterDsh = async () => {
     if (res.status === 200) {
       const data = await res.json()
       if (data?.url) {
-        console.log('[flow] F14 打开容器页: ' + data.url)
         window.open(data.url, '_blank', 'noopener')
         return
       }
@@ -2057,7 +2078,6 @@ const enterDsh = async () => {
     if (res.status === 302) {
       const loc = res.headers.get('location')
       if (loc) {
-        console.log('[flow] F14 302 打开容器页: ' + loc)
         window.open(loc, '_blank', 'noopener')
       }
       return
@@ -2077,13 +2097,9 @@ const enterDsh = async () => {
 // 最近一次 /connect 202 的后端提示（资源不足/额度用完），供上层展示
 let lastConnect202Message = ''
 const ensureContainer = async (address, opts = {}) => {
-  console.log('[flow] F4a ensureContainer 进入')
   // 先检查容器状态
   try {
     const statusRes = await axios.get(`/connect-status?address=${encodeURIComponent(address)}`)
-    console.log(
-      `[flow] F4b /connect-status 返回 exists=${statusRes.data.exists} status=${statusRes.data.status}`,
-    )
 
     // 如果在等待队列中
     if (statusRes.data.status === 'waiting') {
@@ -2098,7 +2114,6 @@ const ensureContainer = async (address, opts = {}) => {
 
     // 如果容器不存在或已销毁，创建新容器
     if (!statusRes.data.exists || statusRes.data.status === 'destroyed') {
-      console.log('[flow] F5 容器不存在 → 签名并创建')
       console.log('[UserCenter] 容器不存在，正在创建...')
       const connectRes = await connectWithOwnership(address, {
         title: t('user.loadingCreateContainer'),
@@ -2225,19 +2240,12 @@ const cancelWaiting = () => {
 }
 
 const fetchUserInfo = async (address) => {
-  console.log('[flow] F11 fetchUserInfo 开始')
   // 门控 loading：仅当调用方没有在展示 loading 时才自己开/关，
   // 避免打断 handleAddressChange 的整体加载流程（它自己会 hide）
   const opened = !loading.value
   if (opened) showLoading(t('user.loadingFetchInfo'), t('user.loadingAccountData'), 80)
   try {
     const res = await axios.get(`/api/user/${address}`)
-    console.log(
-      '[flow] F12 用户信息返回 OK, address=' +
-        (res.data?.address || '(空)') +
-        ', status=' +
-        res.data?.status,
-    )
     // 未建档新用户空态：后端以 200+USER_NOT_FOUND 表达（根治浏览器网络层红字
     // 404；catch 里的 404 分支保留兼容旧服务端）。空态不发 usage/config 请求；
     // 装配必须先于 userInfo 落位——领取弹窗由装配触发，若后于容器管理块的
@@ -2336,7 +2344,6 @@ const autoBootContainer = async (data) => {
   // 归属签名重建）；none 未建档/waiting 已在排队页/未知态都不自动造轮子
   if (st !== 'stopped' && st !== 'destroyed') return
   containerBooting.value = true
-  console.log('[flow] F14 后台自动拉起容器, status=' + st)
   try {
     if (st === 'stopped') {
       await axios.post(`/api/user/${address}/restart`)
@@ -2556,7 +2563,7 @@ onMounted(async () => {
 })
 
 // ===================== 🧩 我的技能（技能市场集成） =====================
-const mineData = ref({ published: [], installed: [], inContainer: [] })
+const mineData = ref({ published: [], installed: [], inContainer: [], unverified: false })
 const mySkillsLoading = ref(true) // 初始即 loading：面板首帧显示 spinner，避免空态闪现后突然出数据
 const importDialogOpen = ref(false)
 const importName = ref('')
@@ -2591,7 +2598,9 @@ const loadMine = async () => {
         ...mineData.value,
         published: res.published || [],
         installed: res.installed || [],
+        unverified: Boolean(res.unverified),
       }
+      if (res.reconciled) toast(t('skills.reconciledGone', { n: res.reconciled }))
     } catch (err) {
       // 我的技能加载失败不阻塞其他功能
       console.warn('[skills] 加载我的技能失败（忽略）:', err)

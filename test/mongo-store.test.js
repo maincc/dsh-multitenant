@@ -34,13 +34,14 @@ afterAll(async () => {
 })
 
 describe('mongo.store 地基', () => {
-  it('集合合同锁定为 9 个（大拆除后 7 + v1.4 凭证体系 credentials/cwt_applications）', () => {
-    expect(COLLECTIONS).toHaveLength(9)
+  it('集合合同锁定为 10 个（大拆除后 7 + v1.4 凭证体系 credentials/cwt_applications + 定格 environments）', () => {
+    expect(COLLECTIONS).toHaveLength(10)
     expect([...COLLECTIONS].sort()).toEqual(
       [
         'audit',
         'credentials',
         'cwt_applications',
+        'environments',
         'meta',
         'sessions',
         'skill_installs',
@@ -57,7 +58,7 @@ describe('mongo.store 地基', () => {
 
   it('未知集合访问被拒（白名单护栏）', async (ctx) => {
     if (!skip(ctx)) return
-    expect(() => store.col('secrets')).toThrow(/不在 9 集合合同/)
+    expect(() => store.col('secrets')).toThrow(/不在 \d+ 集合合同/) // 数量动态引用合同，扩容不再碎
   })
 
   it('未连接时 col() 明确报错', async () => {

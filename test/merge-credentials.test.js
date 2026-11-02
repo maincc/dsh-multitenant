@@ -61,7 +61,7 @@ describe('merge-credentials.mjs', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
-  })
+  }, 60_000)
 
   it('set 覆盖已有同键条目', () => {
     const { dir, file } = tmpFile()

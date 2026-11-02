@@ -3,7 +3,10 @@
  * 封装所有 Docker CLI 操作
  */
 
-import { execFile } from 'node:child_process'
+import { execFile, spawnSync } from 'node:child_process'
+import { join } from 'node:path'
+import { openSync, closeSync, mkdtempSync, existsSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { CONFIG } from '../config/config.js'
 import { requiresToken, DSH_TOKEN_AUTH_SINCE } from './dsh-version.service.js'
@@ -166,6 +169,9 @@ const CAPABILITY_CACHE_TTL_MS = Number(process.env.DSH_CAPABILITY_CACHE_MS || 30
  * `du -sb` 扫描大卷、docker stats 采样）。需要更长的调用可在 opts.timeout 覆盖。
  */
 const DEFAULT_TIMEOUT_MS = Number(process.env.DOCKER_CLI_TIMEOUT_MS || 120000)
+// 定格的两记 docker commit 专列预算（判例 2026-10-30：真机首次 commit 超默认 120s
+// 被 CLI 超时杀，daemon 还在后台建像——「定格卡住不动」的正主）
+const ENV_COMMIT_TIMEOUT_MS = Number(process.env.ENV_COMMIT_TIMEOUT_MS || 10 * 60_000)
 
 /**
  * 容器实际 DSH 版本缓存：镜像 ID -> 版本。
@@ -752,6 +758,58 @@ export class DockerService {
   }
 
   /**
+   * 可写层 /root/workspace 顶层条目（定格向导"文件夹勾选档"的数据源）：
+   * inventory helper 只挂卷看不到可写层，这里走活容器 exec——读语义、
+   * 限量 100 项、单项 du KB 容错为 0（du 挂不拖全表）。
+   */
+  async listWorkspaceTop(name) {
+    try {
+      const out = await sh('docker', [
+        'exec',
+        name,
+        'sh',
+        '-c',
+        'find /root/workspace -mindepth 1 -maxdepth 2 2>/dev/null | head -300 | while read -r p; do sz=$(du -sk "$p" 2>/dev/null | cut -f1); k=f; [ -d "$p" ] && k=d; rel="${p#/root/workspace/}"; printf "%s\\t%s\\t%s\\n" "$rel" "${sz:-0}" "$k"; done',
+      ])
+      // 两层树：顶层=勾选单位，子项=只读预览——层级可视化但取舍粒度不变，
+      // 目录整体随行这条语义没被界面花招动摇（定格=现状快照，拆目录=扯谎）
+      const tops = new Map()
+      for (const line of String(out).split('\n')) {
+        if (!line) continue
+        const [rel, kb, kind] = line.split('\t')
+        const segs = String(rel || '').split('/')
+        const top = (segs[0] || '').trim()
+        if (!top) continue
+        if (!tops.has(top)) tops.set(top, { name: top, sizeBytes: 0, dir: false, children: [] })
+        const t = tops.get(top)
+        const item = {
+          name: segs.length > 1 ? segs.slice(1).join('/') : top,
+          sizeBytes: (Number(kb) || 0) * 1024,
+          dir: kind === 'd',
+        }
+        if (segs.length === 1) {
+          t.sizeBytes = item.sizeBytes
+          t.dir = item.dir
+        } else if (t.dir) {
+          t.children.push(item)
+        }
+      }
+      return [...tops.values()]
+    } catch {
+      return [] // 容器停着/无 workspace：空列表——向导按运行状态分说"没起"与"真空"
+    }
+  }
+
+  /** 随行包/驳回即弃面的单镜像删除（静默：已不在不算失败） */
+  async removeImage(ref) {
+    try {
+      await sh('docker', ['rmi', '-f', ref])
+    } catch {
+      /* 已被清理：目标达成即可 */
+    }
+  }
+
+  /**
    * 所有容器（含已停止）当前挂载引用的卷名集合
    * （清理孤儿卷时用于排除"仍有容器在用"的卷，避免误删）
    */
@@ -962,12 +1020,292 @@ export class DockerService {
     return { removed, failed }
   }
 
+  // ═══ 工作目录快照三件套（判例 2026-10-29：/root/workspace 在镜像层，回退/升级/
+  // 闲置销毁/换模板等一切重建都会连坐丢掉用户攒的文件——拆前存、建后合）═══
+
+  // 把容器内目录导出为 tar 文件（docker cp 流直写磁盘；停止中的容器同样可导）。
+  exportWorkspaceDir(name, srcPath, tarFile) {
+    const fd = openSync(tarFile, 'w')
+    try {
+      const r = spawnSync('docker', ['cp', `${name}:${srcPath}`, '-'], {
+        stdio: ['ignore', fd, 'pipe'],
+        encoding: 'utf8',
+        timeout: 180_000, // daemon 挂起不能拖死全平台事件循环（审查 F1）
+      })
+      if (r.status !== 0) {
+        const err = String(r.stderr || '')
+        return {
+          ok: false,
+          missing: /no such file|not found|could not find/i.test(err),
+          error: err.slice(0, 200),
+        }
+      }
+      return { ok: true, missing: false }
+    } finally {
+      closeSync(fd)
+    }
+  }
+
+  // 把 tar 合回容器目标目录：宿主机解包 → 放逐处暂存 → `cp -rn` 合并——
+  // 只填空位不覆盖：新镜像/模板带来的同名文件优先，用户旧文件补位。
+  importWorkspaceMerge(name, tarFile, destPath) {
+    const tmp = mkdtempSync(join(tmpdir(), 'ws-import-'))
+    try {
+      let r = spawnSync('tar', ['-xf', tarFile, '-C', tmp], { encoding: 'utf8', timeout: 120_000 })
+      if (r.status !== 0)
+        return {
+          ok: false,
+          error: String(r.stderr || r.error?.message || 'untar-failed').slice(0, 200),
+        }
+      // docker cp <dir> - 的 tar 恒以目录名作外壳（2026-10-29 真机演练证实：
+      // 导出→合回后文件落位正确）。兜底分支只防外壳假设失效，非常态。
+      const root = existsSync(join(tmp, 'workspace')) ? join(tmp, 'workspace') : tmp
+      r = spawnSync('docker', ['cp', root, `${name}:/.ws-import`], {
+        encoding: 'utf8',
+        timeout: 120_000,
+      })
+      if (r.status !== 0)
+        return {
+          ok: false,
+          error: String(r.stderr || r.error?.message || 'cp-failed').slice(0, 200),
+        }
+      r = spawnSync(
+        'docker',
+        [
+          'exec',
+          name,
+          'sh',
+          '-c',
+          `mkdir -p ${destPath} && cp -rn /.ws-import/. ${destPath}/ ; rm -rf /.ws-import`,
+        ],
+        { encoding: 'utf8' },
+      )
+      if (r.status !== 0)
+        return { ok: false, error: String(r.stderr || 'merge-failed').slice(0, 200) }
+      return { ok: true }
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  }
+
+  // 容器内最小远程命令（回退「一并清除」按清单 rm -rf；名单校验在调用方）
+  execSh(name, cmd) {
+    return sh('docker', ['exec', name, 'sh', '-c', cmd])
+  }
+
   async imageId(image = IMAGE) {
     try {
       const out = await sh('docker', ['image', 'inspect', '--format', '{{.Id}}', image])
       return out.trim() || null
     } catch {
       return null
+    }
+  }
+
+  /**
+   * 环境模板定格（environment-templates PR1，2026-10-27）。
+   *
+   * 四条铁律（方案会审定式，注释即判例）：
+   *  1. **停机定格**：运行中进程正在写 fs，热 commit 会捞进中间态——先优雅
+   *     stop 再 commit，定格的是"安静时刻的环境"。
+   *  2. **源容器必须起回**：commit 失败绝不能赔上用户环境——finally 兜底
+   *     检查状态，任何断点之后都把源容器拉起来。
+   *  3. **清洗非破坏**：清洗脚本跑在定格产物派生的一次性容器里（--network
+   *     none，无网无卷），源容器和它的 volume 一字节都不碰。清洗失败=带
+   *     原始层收下（宁可模板没洗，不可源容器躺平）。
+   *  4. **数据不出门**：卷挂载点 /dsh-home 架构性不入 commit——定格=纯环境，
+   *     会话/密钥/工作区文件物理上带不走（这是全方案的安全前提）。
+   *
+   * 布局真相（2026-10-27 实测修正，别信"workspace 在卷里"的想当然）：
+   *   /dsh-home 卷 = settings/credentials/sessions —— 键与登录态，架构性出框 ✓
+   *   /root/workspace = **可写层**（Dockerfile RUN mkdir）——用户工作文件会被
+   *   docker commit 整个拍走！因此清洗层默认**清空 workspace**，仅保留作者
+   *   勾选的顶层条目（scrubKeep）：没勾=不带出，勾了=公开同意。
+   *
+   * 产物校验三关：体积超限即定格即弃（镜像存储不在 tier 配额内，预检是
+   * 唯一闸）；DSH 版本必须可读（血统=applyImageVersion 门的既有校验）；
+   * manifest=docker diff 写层清单（审核与追责的主证据）。
+   *
+   * @param {string} name 源容器名
+   * @param {string} tag 目标模板 tag（路由层治理命名，建议 dsh-multitenant:env-…
+   *   ——落进本平台 repo 镜像空间，repo 归属校验/镜像列表天然兼容）
+   * @param {{maxBytes?:number, labels?:Object<string,string>, scrubKeep?:string[]}} [opts]
+   *   scrubKeep：/root/workspace 顶层保留名单（作者勾选即公开；含路径分隔符的
+   *   条目直接丢弃——勾选粒度=顶层条目，不给穿透口）
+   * @returns {Promise<{tag,imageId,sizeBytes,dshVersion,manifest,scrubbed}>}
+   */
+  async commitEnvironment(name, tag, opts = {}) {
+    const maxBytes = Number(opts.maxBytes) > 0 ? Number(opts.maxBytes) : 2 * 1024 * 1024 * 1024
+    const stamp = Date.now()
+    const stageTag = `dsh-env-stage-${stamp}`
+    const scrubName = `dsh-env-scrub-${stamp}`
+    // 保留名单：只收单层名（无 / 无 .. 无引号控制符），shell 单引号安全转义。
+    const shq = (v) => `'${String(v).replace(/'/g, `'\''`)}'`
+    const keepNames =
+      (Array.isArray(opts.scrubKeep) ? opts.scrubKeep : [])
+        .map((x) => String(x).trim())
+        .filter(
+          (x) =>
+            x &&
+            x.length <= 255 &&
+            !x.includes('/') &&
+            !x.includes('\0') &&
+            x !== '.' &&
+            x !== '..',
+        )
+        .map((x) => `${shq(x)}) ;;`)
+        .join(' ') || `'__none__') ;;`
+    // 子项摘除（判例 2026-10-30：目录里的隐私件）：恰两段 "目录/子项"，
+    // shell 单引号转义后逐条 rm -rf；父目录本就不保留时此条自然空转
+    const exclLines = (Array.isArray(opts.scrubExclude) ? opts.scrubExclude : [])
+      .map((x) => String(x).trim())
+      .filter((x) => {
+        const segs = x.split('/')
+        return (
+          segs.length === 2 &&
+          segs.every((seg) => seg && seg.length <= 255 && seg !== '.' && seg !== '..') &&
+          !x.includes('\0')
+        )
+      })
+      .map((p2) => `rm -rf ${shq('/root/workspace/' + p2)}`)
+    const labelChanges = Object.entries(opts.labels || {}).flatMap(([k, v]) => [
+      '--change',
+      `LABEL ${k}=${String(v).replace(/["\s]/g, '_')}`,
+    ])
+    // 尽力清洗清单：只清已知泄露面（shell 史/netrc/npmrc token/ssh 私钥/
+    // dotfiles 里的敏感 export）。诚实措辞进路由层提示语，不在此假装穷尽。
+    const SCRUB = [
+      'rm -f /root/.bash_history /root/.netrc /root/.npmrc',
+      'find /root/.ssh -maxdepth 1 -type f -name "id_*" ! -name "*.pub" -delete',
+      'for f in /root/.bashrc /root/.profile /etc/profile; do [ -f "$f" ] && sed -ri' +
+        ' "/^[[:space:]]*export[[:space:]]+[A-Za-z0-9_]*(TOKEN|SECRET|KEY|PASSWD|PASSWORD)[A-Za-z0-9_]*=.*/d" "$f";' +
+        ' done',
+      // workspace 可写层默认清空（见上"布局真相"）：顶层逐条目，不在保留
+      // 名单即删——find 的 ! -name 条件由 scrubKeep 拼接（单引号转义），
+      // 名单空时=无条件全清。
+      // 判例 2026-10-30（真机演练抓漏）：find -maxdepth 1 -delete 删不动
+      // **非空目录**——GNU find 报 Directory not empty 后静默继续，SCRUB 末位
+      // 'true' 又把退出码抹平。"默认全清"从此只对文件成立：未勾选目录整棵
+      // 留在定格产物里，目录里的密钥照样上像=隐私泄露。改逐条目 case + rm -rf。
+      `if [ -d /root/workspace ]; then for e in /root/workspace/* /root/workspace/.[!.]* /root/workspace/..?*; do [ -e "$e" ] || continue; case "$(basename "$e")" in ${keepNames} *) rm -rf "$e";; esac; done; fi`,
+      // 判例（2026-10 同夜第二层）：docker commit 会把**运行期 bind 挂载点**
+      // 烘焙成 0 字节占位文件——/patches/tenant.patch.yml 的占位混进产物后，
+      // CMD 的 [ -f ] 分支成立，dsh 把空文件当 YAML patch 读，直接崩。
+      // 运行期平台会挂真文件覆盖，占位删除无副作用；顺带清一切挂载残留。
+      'rm -f /patches/tenant.patch.yml',
+      ...exclLines,
+      'true',
+    ].join('; ')
+    const rmiQuiet = async (ref) => {
+      try {
+        await sh('docker', ['rmi', '-f', ref])
+      } catch {
+        /* 已删或被下游层持有：中间 tag 反正只是标签 */
+      }
+    }
+    try {
+      await sh('docker', ['stop', '-t', '15', name])
+      await sh('docker', ['commit', ...labelChanges, name, stageTag], {
+        timeout: ENV_COMMIT_TIMEOUT_MS,
+      })
+      // 判例（2026-10 用户选用模板后容器永久起不来）：scrub 用
+      // `--entrypoint sh -c SCRUB` 起一次性容器，docker commit 默认把
+      // **"容器最后执行的命令"烘焙成新镜像的启动命令**——定格产物变成
+      // "跑一遍清洗脚本然后退出 0"，dsh 永不启动。修复：定格前抓取原始
+      // boot config，scrub commit 时显式 --change 写回。
+      const bootCfg = JSON.parse(
+        String(await sh('docker', ['inspect', name, '--format', '{{json .Config}}'])),
+      )
+      const bootChanges = []
+      if (Array.isArray(bootCfg?.Entrypoint) && bootCfg.Entrypoint.length) {
+        bootChanges.push('--change', `ENTRYPOINT ${JSON.stringify(bootCfg.Entrypoint)}`)
+      }
+      if (Array.isArray(bootCfg?.Cmd) && bootCfg.Cmd.length) {
+        bootChanges.push('--change', `CMD ${JSON.stringify(bootCfg.Cmd)}`)
+      }
+      let scrubbed = false
+      try {
+        await sh('docker', [
+          'run',
+          '-d',
+          '--name',
+          scrubName,
+          '--network',
+          'none',
+          '--memory',
+          '256m',
+          '--entrypoint',
+          'sh',
+          stageTag,
+          '-c',
+          SCRUB,
+        ])
+        await sh('docker', ['wait', scrubName])
+        await sh(
+          'docker',
+          ['commit', '--change', 'LABEL dsh.env.scrubbed=true', ...bootChanges, scrubName, tag],
+          { timeout: ENV_COMMIT_TIMEOUT_MS },
+        )
+        scrubbed = true
+      } catch {
+        await sh('docker', ['tag', stageTag, tag]).catch(() => {})
+      }
+      await sh('docker', ['rm', '-f', scrubName]).catch(() => {})
+      await rmiQuiet(stageTag)
+      // 先归还源容器，再做产物校验：体积/血统不满足是模板的失败，
+      // 不该让用户环境多躺一分钟
+      await sh('docker', ['start', name])
+      const imageId = await this.imageId(tag)
+      if (!imageId) throw new Error('上传产物不可读（镜像 ID 缺失）')
+      // 护栏：定格产物的启动命令必须还是"起 dsh"，不是 scrub 的残留——
+      // 本判例的自动化回归位（SCRUB 特征串出现在 Cmd 即作废本次定格）
+      const finalBoot = String(
+        await sh('docker', ['image', 'inspect', '--format', '{{json .Config.Cmd}}', tag]),
+      )
+      if (/bash_history|\.netrc/.test(finalBoot)) {
+        throw new Error('上传产物的启动命令被清洗过程覆盖（内部错误，本次上传作废）')
+      }
+      const sizeOut = await sh('docker', ['image', 'inspect', '--format', '{{.Size}}', tag])
+      const sizeBytes = Number(String(sizeOut).trim()) || 0
+      if (sizeBytes > maxBytes) {
+        await rmiQuiet(tag)
+        throw new Error(
+          `模板体积 ${Math.round(sizeBytes / 1e6)}MB 超过上限 ${Math.round(maxBytes / 1e6)}MB，已弃`,
+        )
+      }
+      const dshVersion = await this.imageDshVersion(tag)
+      if (!dshVersion) {
+        await rmiQuiet(tag)
+        throw new Error('上传镜像读不到 DSH 版本（非合法 DSH 基座），已弃')
+      }
+      let manifest = []
+      try {
+        const diff = await sh('docker', ['diff', name])
+        manifest = diff.split('\n').filter(Boolean).slice(0, 2000)
+      } catch {
+        /* manifest 尽力而为：读不到不否决定格 */
+      }
+      return { tag, imageId, sizeBytes, dshVersion, manifest, scrubbed }
+    } finally {
+      // 兜底中的兜底：成功路径早已 start 回；此处专管中途炸点——
+      // 源容器状态不可读（宿主 docker 都挂了）就不在这里重复报错
+      try {
+        const info = await this.containerInfo(name)
+        if (info.exists && info.status !== 'running') await sh('docker', ['start', name])
+      } catch {
+        /* docker 面不可用：此刻报错也无人执行，留给上层日志 */
+      }
+      for (let k = 0; k < 15; k++) {
+        await rmiQuiet(stageTag)
+        let q = ''
+        try {
+          q = String(await sh('docker', ['images', '-q', stageTag])).trim()
+        } catch {
+          q = ''
+        }
+        if (!q) break
+        await new Promise((r) => setTimeout(r, 2000))
+      }
     }
   }
 
@@ -1479,9 +1817,21 @@ export class DockerService {
     if (opts.networkContainer) {
       args.push('--network', `container:${opts.networkContainer}`)
     }
+    // 随行包管线（PR2）新增三面：卷只读（导出面物理不可写租户卷）；
+    // 宿主输出目录挂入（tar 二进制不走 stdout 字符串通道，写文件才完好）；
+    // 资源限额（helper 是不可信脚本的执行场：断网是默认而非选项）。
+    const volMount = opts.readOnly ? `${volume}:/dsh-home:ro` : `${volume}:/dsh-home`
+    if (opts.noNetwork) args.push('--network', 'none')
+    if (opts.memory) args.push('--memory', opts.memory)
+    if (opts.bindHostDir) {
+      args.push('-v', `${opts.bindHostDir}:${opts.bindHostDirRo ? '/out:ro' : '/out'}`)
+    }
+    if (opts.bindBlobs) {
+      args.push('-v', `${opts.bindBlobs}:/blobs:ro`)
+    }
     args.push(
       '-v',
-      `${volume}:/dsh-home`,
+      volMount,
       '-v',
       `${scriptHostPath}:/${scriptName}:ro`,
       IMAGE,

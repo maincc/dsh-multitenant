@@ -11,9 +11,8 @@
            （v1.6：摘除"系统管理"tab——v1.5 起管理页签已并入用户中心侧栏（role=admin
            活验属实才装配），/admin 仅剩 redirect 跳板（书签兼容保留）；顶部入口对
            管理员是死路绕行、对普通用户是噪音+管理面存在性泄露，两头皆纯冗余） -->
-      <div class="nav-links">
-        <router-link to="/skills" class="nav-tab">{{ $t('common.nav.skills') }}</router-link>
-      </div>
+      <!-- 顶栏「技能市场」入口拆除（用户验收 IA：市场是用户中心里的单独功能；
+           公开页 /skills 路由保留可用，导航不再给第二条门） -->
       <!-- 右组：账户性入口靠右 -->
       <div class="nav-links nav-links-right">
         <router-link to="/user" class="nav-tab">{{ $t('common.nav.user') }}</router-link>

@@ -24,7 +24,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { createHash } from 'node:crypto'
 import { tenantConfigService } from '../src/services/tenant-config.service.js'
-import { adminSessionStore } from '../src/middleware/auth.middleware.js'
+import { userSessionStore } from '../src/middleware/user-auth.middleware.js'
 import { buildBinding } from '../src/middleware/admin-signature.middleware.js'
 import { handleAdminRoutes } from '../src/routes/admin.routes.js'
 import { handleTenantRoutes } from '../src/routes/tenant.routes.js'
@@ -146,7 +146,7 @@ function makeReq(opts) {
   return new MockReq(opts)
 }
 
-const adminCookie = () => `admin_session=${ADMIN_TOKEN}`
+const adminCookie = () => `user_session=${ADMIN_TOKEN}`
 
 /** 走真实的挑战池领一个绑定到 (operation,payload) 的挑战 */
 async function issueChallenge(operation, payload, { address = ADMIN_ADDR } = {}) {
@@ -195,7 +195,7 @@ beforeEach(() => {
   vi.spyOn(tenantConfigService, 'verifySignature').mockImplementation(
     (addr, message, signature) => signature === `sig:${message}`,
   )
-  adminSessionStore.sessions = {
+  userSessionStore.sessions = {
     [sha256(ADMIN_TOKEN)]: { address: ADMIN_ADDR, expiresAt: Date.now() + 3600e3 },
   }
   userService.state.swtcUsers = {}
@@ -552,5 +552,24 @@ describe('v1.5 撤销管理员（demote）：签名门禁 + 防锁死 + 凭证�
   it('demote 绑定串含操作名（签 demote 才执行 demote）', async () => {
     const { data } = await issueChallenge('demote', { address: TENANT })
     expect(data.binding).toBe(`demote:address=${TENANT}`)
+  })
+})
+
+describe('环境模板动作签名绑定（environment-templates PR1）', () => {
+  const A = 'jNyJLQkxfYh12wu8jYnwStyZBJUvEDW7jj'
+  it('env-commit 需 address+slug 双全；binding 含 slug（签错环境名即拒）', () => {
+    expect(buildBinding('env-commit', { address: A, slug: 'stock' })).toBe(
+      'env-commit:address=jnyjlqkxfyh12wu8jynwstyzbjuvedw7jj:slug=stock',
+    )
+    expect(buildBinding('env-commit', { address: A })).toBe(null)
+    expect(buildBinding('env-commit', { slug: 'stock' })).toBe(null)
+  })
+  it('env-publish/env-revoke 需 id；env-apply 需 id+address 双全（分发对象签死）', () => {
+    expect(buildBinding('env-publish', { id: 't1' })).toBe('env-publish:id=t1')
+    expect(buildBinding('env-revoke', {})).toBe(null)
+    expect(buildBinding('env-apply', { id: 't1', address: A })).toBe(
+      'env-apply:id=t1:address=jnyjlqkxfyh12wu8jynwstyzbjuvedw7jj',
+    )
+    expect(buildBinding('env-apply', { id: 't1' })).toBe(null)
   })
 })

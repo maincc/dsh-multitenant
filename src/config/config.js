@@ -155,7 +155,7 @@ const DEFAULTS = {
     usersCacheTtlMs: 3000,
   },
   storage: {
-    // 业务数据存储介质。见 docs/storage-design.md（MongoDB 集中存储，9 集合合同）。
+    // 业务数据存储介质。见 docs/storage-design.md（MongoDB 集中存储，集合合同见 mongo.store.js COLLECTIONS）。
     // provider：'json'=维持现状（文件，默认）；'mongodb'=迁入 Mongo。
     // D5 灰度：本地验证通过后手动切 'mongodb'，服务器本期不部署。
     provider: 'json',

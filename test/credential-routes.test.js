@@ -59,7 +59,6 @@ vi.mock('../src/services/data.service.js', async (importOriginal) => {
 import { handleUserRoutes } from '../src/routes/user.routes.js'
 import { credentialService } from '../src/services/credential.service.js'
 import { userSessionStore } from '../src/middleware/user-auth.middleware.js'
-import { adminSessionStore } from '../src/middleware/auth.middleware.js'
 
 const USER_ADDR = 'jga9j9tkqtbcuohe2zqhvffbguved6o9or' // 普通用户（非管理员）
 const ADMIN_ADDR = 'jndwretndumoqbt2uauclmfmx7xbqjykva'
@@ -191,22 +190,22 @@ describe('凭证六端点 × 会话类型（HTTP 层契约）', () => {
     }
   })
 
-  describe('管理员本人：admin_session 同样可达（自测路径不回退）', () => {
+  describe('管理员身份单源：唯一票 user_session（判例 2026-10-30 admin_session 废止）', () => {
     beforeEach(() => {
-      adminSessionStore.sessions[sha256('admintoken-cred-routes')] = {
+      userSessionStore.sessions[sha256('admintoken-cred-routes')] = {
         address: ADMIN_ADDR,
         expiresAt: Date.now() + 3600e3,
       }
     })
-    // ★F9 循环根因钉位（2026-10-23）：admin_session + user_session 并存时凭证端点
-    // 必须认 user_session（插件当前登录钱包）——旧实现 getRequestAddress admin 抢先，
-    // 自动重签只换 user_session 永远换不掉残留 admin cookie → "会话主人≠当前账户"死循环
-    it('双会话并存：user_session 优先（admin 旧 cookie 不抢占凭证身份）', async () => {
+    // ★F9 循环根因的终局（2026-10-23 病理，2026-10-30 根治）：当年双票并存靠
+    // "user 优先"绕抢占死循环；admin_session 整体废止后**根本没有第二张票可读**——
+    // 浏览器里残留的 admin_session 被原样无视，身份恒为 user_session 的登录钱包。
+    it('残留 admin_session 彻底无视：身份恒为 user_session 钱包', async () => {
       for (const ep of ENDPOINTS) {
         const req = makeReq({
           method: ep.method,
           url: ep.path,
-          cookie: `admin_session=admintoken-cred-routes; user_session=${userToken}`,
+          cookie: `user_session=${userToken}; admin_session=admintoken-cred-routes`,
           body: ep.body,
         })
         const res = makeRes()
@@ -220,7 +219,7 @@ describe('凭证六端点 × 会话类型（HTTP 层契约）', () => {
         const req = makeReq({
           method: ep.method,
           url: ep.path,
-          cookie: `admin_session=admintoken-cred-routes`,
+          cookie: `user_session=admintoken-cred-routes`,
           body: ep.body,
         })
         const res = makeRes()

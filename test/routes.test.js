@@ -14,7 +14,6 @@
 
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { createHash } from 'node:crypto'
-import { adminSessionStore } from '../src/middleware/auth.middleware.js'
 
 // 有效管理员会话（P0-1：会话 = 服务端随机 token，Cookie 值不再是地址）
 const ADMIN_TOKEN = '11'.repeat(32) // 64 位 hex
@@ -22,7 +21,7 @@ const sha256 = (v) => createHash('sha256').update(v).digest('hex')
 
 // 全局注入有效会话（内存），所有依赖 admin_session 的用例默认可用
 beforeEach(() => {
-  adminSessionStore.sessions[sha256(ADMIN_TOKEN)] = {
+  userSessionStore.sessions[sha256(ADMIN_TOKEN)] = {
     address: 'jndwretndumoqbt2uauclmfmx7xbqjykva',
     expiresAt: Date.now() + 3600e3,
   }
@@ -190,7 +189,7 @@ describe('user.routes.js 详情分支', () => {
     const req = makeReq({
       method: 'POST',
       url: `/api/user/${TARGET_ADDR}/remove`,
-      cookie: `admin_session=${ADMIN_TOKEN}`,
+      cookie: `user_session=${ADMIN_TOKEN}`,
     })
     const res = makeRes()
 
@@ -204,7 +203,7 @@ describe('user.routes.js 详情分支', () => {
     const req = makeReq({
       method: 'GET',
       url: `/api/user/${TARGET_ADDR}`,
-      cookie: `admin_session=${ADMIN_TOKEN}`,
+      cookie: `user_session=${ADMIN_TOKEN}`,
     })
     const res = makeRes()
 
@@ -234,14 +233,14 @@ describe('user.routes.js 详情分支', () => {
     userService.getUserInfo.mockResolvedValue({ address: TARGET_ADDR, port: 31001 })
     // 另一个非管理员地址的会话访问 TARGET_ADDR
     const strangerToken = 'aa'.repeat(32)
-    adminSessionStore.sessions[sha256(strangerToken)] = {
+    userSessionStore.sessions[sha256(strangerToken)] = {
       address: 'jpfx5i4xxnzggbl1sgm1cfabayvyyb9vzp', // 非管理员、非 TARGET_ADDR
       expiresAt: Date.now() + 3600e3,
     }
     const req = makeReq({
       method: 'GET',
       url: `/api/user/${TARGET_ADDR}`,
-      cookie: `admin_session=${strangerToken}`,
+      cookie: `user_session=${strangerToken}`,
     })
     const res = makeRes()
 
@@ -263,7 +262,7 @@ describe('tenant.routes.js remove / restart 错误码', () => {
       {
         method: 'POST',
         url: `/api/user/${TARGET_ADDR}/remove`,
-        cookie: `admin_session=${ADMIN_TOKEN}`,
+        cookie: `user_session=${ADMIN_TOKEN}`,
       },
       'remove',
       { address: TARGET_ADDR, keepVolume: false },
@@ -290,7 +289,7 @@ describe('tenant.routes.js remove / restart 错误码', () => {
       {
         method: 'POST',
         url: `/api/user/${TARGET_ADDR}/remove`,
-        cookie: `admin_session=${ADMIN_TOKEN}`,
+        cookie: `user_session=${ADMIN_TOKEN}`,
       },
       'remove',
       { address: TARGET_ADDR, keepVolume: false },
@@ -322,7 +321,7 @@ describe('tenant.routes.js remove / restart 错误码', () => {
       {
         method: 'POST',
         url: `/api/user/${TARGET_ADDR}/remove?keepVolume=1`,
-        cookie: `admin_session=${ADMIN_TOKEN}`,
+        cookie: `user_session=${ADMIN_TOKEN}`,
       },
       'remove',
       { address: TARGET_ADDR, keepVolume: true },
@@ -355,7 +354,7 @@ describe('tenant.routes.js remove / restart 错误码', () => {
       {
         method: 'POST',
         url: `/api/user/${TARGET_ADDR}/reset`,
-        cookie: `admin_session=${ADMIN_TOKEN}`,
+        cookie: `user_session=${ADMIN_TOKEN}`,
       },
       'reset',
       { address: TARGET_ADDR },
@@ -384,7 +383,7 @@ describe('tenant.routes.js remove / restart 错误码', () => {
       makeReq({
         method: 'POST',
         url: `/api/user/${TARGET_ADDR}/reset`,
-        cookie: `admin_session=${ADMIN_TOKEN}`,
+        cookie: `user_session=${ADMIN_TOKEN}`,
       }),
       res,
       `/api/user/${TARGET_ADDR}/reset`,
@@ -406,7 +405,7 @@ describe('tenant.routes.js remove / restart 错误码', () => {
       makeReq({
         method: 'POST',
         url: `/api/user/${ADMIN_ADDR}/reset`,
-        cookie: `admin_session=${ADMIN_TOKEN}`,
+        cookie: `user_session=${ADMIN_TOKEN}`,
       }),
       res,
       `/api/user/${ADMIN_ADDR}/reset`,
@@ -423,7 +422,7 @@ describe('tenant.routes.js remove / restart 错误码', () => {
       {
         method: 'POST',
         url: `/api/user/${TARGET_ADDR}/reset`,
-        cookie: `admin_session=${ADMIN_TOKEN}`,
+        cookie: `user_session=${ADMIN_TOKEN}`,
       },
       'reset',
       { address: TARGET_ADDR },
@@ -503,7 +502,7 @@ describe('tenant.routes.js remove / restart 错误码', () => {
       {
         method: 'POST',
         url: `/api/user/${TARGET_ADDR}/restart`,
-        cookie: `admin_session=${ADMIN_TOKEN}`,
+        cookie: `user_session=${ADMIN_TOKEN}`,
       },
       'restart',
       { address: TARGET_ADDR },
@@ -527,7 +526,7 @@ describe('tenant.routes.js remove / restart 错误码', () => {
       {
         method: 'POST',
         url: `/api/user/${TARGET_ADDR}/restart`,
-        cookie: `admin_session=${ADMIN_TOKEN}`,
+        cookie: `user_session=${ADMIN_TOKEN}`,
       },
       'restart',
       { address: TARGET_ADDR },
@@ -627,7 +626,7 @@ describe('user.routes.js 模型配置端点', () => {
       makeReq({
         method: 'GET',
         url: `/api/user/tenant-config?address=${TARGET_ADDR}`,
-        cookie: `admin_session=${ADMIN_TOKEN}`,
+        cookie: `user_session=${ADMIN_TOKEN}`,
       }),
       adminRes,
       '/api/user/tenant-config',
@@ -842,7 +841,7 @@ describe('容器控制签名对称性（2026-10 全面审计回归位）', () =>
     const req = makeReq({
       method: 'POST',
       url: `/api/user/${TARGET_ADDR}/restart`,
-      cookie: `admin_session=${ADMIN_TOKEN}`,
+      cookie: `user_session=${ADMIN_TOKEN}`,
     })
     const res = makeRes()
     await handleTenantRoutes(
@@ -862,7 +861,7 @@ describe('容器控制签名对称性（2026-10 全面审计回归位）', () =>
       {
         method: 'POST',
         url: `/api/user/${TARGET_ADDR}/restart`,
-        cookie: `admin_session=${ADMIN_TOKEN}`,
+        cookie: `user_session=${ADMIN_TOKEN}`,
       },
       'restart',
       { address: TARGET_ADDR },
@@ -906,7 +905,7 @@ describe('容器控制签名对称性（2026-10 全面审计回归位）', () =>
   it('免签 GET /leave/他人（CSRF 头号入口）→ 403，容器没被毁', async () => {
     const req = makeReq({
       url: `/leave/${TARGET_ADDR}`,
-      cookie: `admin_session=${ADMIN_TOKEN}`,
+      cookie: `user_session=${ADMIN_TOKEN}`,
     })
     const res = makeRes()
     const handled = await handleTenantRoutes(
@@ -924,7 +923,7 @@ describe('容器控制签名对称性（2026-10 全面审计回归位）', () =>
   it('带签 GET /leave/他人 → 200 + admin_leave_user 留痕', async () => {
     userService.destroyContainer.mockResolvedValue({ ok: true })
     const req = await makeSignedReq(
-      { url: `/leave/${TARGET_ADDR}`, cookie: `admin_session=${ADMIN_TOKEN}` },
+      { url: `/leave/${TARGET_ADDR}`, cookie: `user_session=${ADMIN_TOKEN}` },
       'leave',
       { address: TARGET_ADDR },
     )
@@ -949,7 +948,7 @@ describe('容器控制签名对称性（2026-10 全面审计回归位）', () =>
     const req = makeReq({
       method: 'POST',
       url: `/api/upgrade/${TARGET_ADDR}`,
-      cookie: `admin_session=${ADMIN_TOKEN}`,
+      cookie: `user_session=${ADMIN_TOKEN}`,
       body: { tier: 2 },
     })
     const res = makeRes()
@@ -967,7 +966,7 @@ describe('容器控制签名对称性（2026-10 全面审计回归位）', () =>
       {
         method: 'POST',
         url: `/api/upgrade/${TARGET_ADDR}`,
-        cookie: `admin_session=${ADMIN_TOKEN}`,
+        cookie: `user_session=${ADMIN_TOKEN}`,
         body: { tier: 2 },
       },
       'user-upgrade',
@@ -989,7 +988,7 @@ describe('容器控制签名对称性（2026-10 全面审计回归位）', () =>
       {
         method: 'POST',
         url: `/api/upgrade/${TARGET_ADDR}`,
-        cookie: `admin_session=${ADMIN_TOKEN}`,
+        cookie: `user_session=${ADMIN_TOKEN}`,
         body: { tier: 3 },
       },
       'user-upgrade',

@@ -24,6 +24,12 @@ vi.mock('../src/services/docker.service.js', () => ({
     containerImageId: vi.fn(),
     imageDshVersion: vi.fn(),
     backupVolume: vi.fn(),
+    exportWorkspaceDir: vi.fn(async (n, src, file) => {
+      writeFileSync(file, 'fake-tar')
+      return { ok: true, missing: false }
+    }),
+    importWorkspaceMerge: vi.fn(async () => ({ ok: true })),
+    execSh: vi.fn(async () => ''),
     stopContainer: vi.fn(),
     removeContainer: vi.fn(),
     removeVolume: vi.fn(),
@@ -67,11 +73,11 @@ import { handleAdminRoutes } from '../src/routes/admin.routes.js'
 import { userService } from '../src/services/user.service.js'
 import { dockerService } from '../src/services/docker.service.js'
 import { dataService } from '../src/services/data.service.js'
-import { adminSessionStore } from '../src/middleware/auth.middleware.js'
+import { userSessionStore } from '../src/middleware/user-auth.middleware.js'
 import { tenantConfigService } from '../src/services/tenant-config.service.js'
 import { isAdmin, CONFIG } from '../src/config/config.js'
 import { EventEmitter } from 'node:events'
-import { mkdtempSync, rmSync, existsSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, writeFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -122,7 +128,7 @@ function makeRes() {
 }
 
 const json = (res) => JSON.parse(res.body)
-const adminCookie = () => `admin_session=${adminSessionStore.create(ADMIN_ADDR, 3600_000)}`
+const adminCookie = () => `user_session=${userSessionStore.create(ADMIN_ADDR, 3600_000)}`
 
 /**
  * 为一个 dsh/apply 请求生成有效的签名请求头。
@@ -168,7 +174,7 @@ beforeEach(() => {
   vi.restoreAllMocks()
   vi.clearAllMocks() // vitest4: 模块级vi.mock工厂的fn不被restore覆盖，需显式清调用历史
   isAdmin.mockReturnValue(true)
-  adminSessionStore.sessions = {}
+  userSessionStore.sessions = {}
   userService.state.swtcUsers = {}
   userService.state.availablePorts = []
 
@@ -199,7 +205,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  adminSessionStore.sessions = {}
+  userSessionStore.sessions = {}
   userService.state.swtcUsers = {}
   if (backupDir) {
     try {
@@ -208,6 +214,15 @@ afterEach(() => {
       // 清理失败不影响测试结论
     }
     backupDir = null
+  }
+  // 快照槽位也是测试动过的"世界"：残留会让下一个用例的合回钩子凭空生效
+  // （自检揪出的跨用例污染：'sync 状态'老用例跑真实 apply 落了 8 字节 active）
+  try {
+    const sd = userService._snapDir()
+    for (const f of readdirSync(sd))
+      if (f.startsWith(`ws-${TENANT}`)) rmSync(join(sd, f), { force: true })
+  } catch {
+    // 尽力打扫
   }
 })
 
@@ -288,6 +303,93 @@ describe('applyImageVersion：安全护栏', () => {
     expect(dockerService.removeVolume).not.toHaveBeenCalled()
   })
 
+  it('审查 F4：回退存档失败绝不烧掉唯一旧档（active 留存、残壳扫净）', async () => {
+    injectTenant()
+    const dir = userService._snapDir()
+    const active = join(dir, `ws-${TENANT}.tar`)
+    writeFileSync(active, 'old-precious')
+    dockerService.exportWorkspaceDir.mockImplementationOnce(async (n, src, file) => {
+      writeFileSync(file, 'half-baked') // 半截残壳
+      return { ok: false, missing: false, error: 'boom' }
+    })
+    await userService.applyImageVersion(TENANT, {
+      backup: false,
+      workspaceSnapshot: 'archive-only',
+    })
+    expect(existsSync(active)).toBe(true) // 旧档还在——两次失败不清零唯一留存
+    const leftovers = readdirSync(dir).filter(
+      (f) => f.startsWith(`ws-${TENANT}`) && f !== `ws-${TENANT}.tar`,
+    )
+    expect(leftovers.length).toBe(0) // 失败残壳一个不留
+  })
+
+  it('审查 F8：purge 边界匹配——变长地址前缀连坐不误删他人档', () => {
+    const dir = userService._snapDir()
+    const victim = `${TENANT}x` // 变长 base32：短地址可能是长地址的前缀
+    writeFileSync(join(dir, `ws-${TENANT}.tar`), 'a')
+    writeFileSync(join(dir, `ws-${TENANT}-999.archived.tar`), 'b')
+    writeFileSync(join(dir, `ws-${victim}.tar`), 'precious-B')
+    userService._purgeWorkspaceSnapshots(TENANT)
+    expect(existsSync(join(dir, `ws-${TENANT}.tar`))).toBe(false)
+    expect(existsSync(join(dir, `ws-${TENANT}-999.archived.tar`))).toBe(false)
+    expect(existsSync(join(dir, `ws-${victim}.tar`))).toBe(true) // 邻居的档一根毫毛不碰
+    rmSync(join(dir, `ws-${victim}.tar`), { force: true })
+  })
+
+  it('判例 2026-10-29：拆前必存工作目录、新建后合回（快照连环）', async () => {
+    injectTenant()
+    dockerService.exportWorkspaceDir.mockClear()
+    dockerService.importWorkspaceMerge.mockClear()
+    userService.ensureContainer.mockImplementation(async () => {
+      await userService._restoreWorkspace(TENANT, 'x') // 模拟创建路径的合回钩子
+      return PORT
+    })
+
+    await userService.applyImageVersion(TENANT, { backup: false })
+
+    expect(dockerService.exportWorkspaceDir).toHaveBeenCalledWith(
+      expect.any(String),
+      '/root/workspace',
+      expect.stringContaining('.tar.tmp'),
+    )
+    expect(
+      dockerService.exportWorkspaceDir.mock.invocationCallOrder[0] <
+        dockerService.removeContainer.mock.invocationCallOrder[0],
+    ).toBe(true) // 存必须在拆前
+    expect(dockerService.importWorkspaceMerge).toHaveBeenCalledWith(
+      'x',
+      expect.stringContaining(`ws-${TENANT}.tar`),
+      '/root/workspace',
+    )
+    rmSync(join(userService._snapDir(), `ws-${TENANT}.tar`), { force: true })
+  })
+
+  it('archive-only（回退）：进存档槽、active 不留——下次新建才是干净的', async () => {
+    injectTenant()
+    const active = userService._snapActive(TENANT)
+    writeFileSync(active, 'old') // 历史 active（比如上次快照）
+    dockerService.importWorkspaceMerge.mockClear()
+    let dest = ''
+    dockerService.exportWorkspaceDir.mockImplementation(async (n, src, file) => {
+      dest = file
+      writeFileSync(file, 'fake-tar')
+      return { ok: true, missing: false }
+    })
+
+    await userService.applyImageVersion(TENANT, {
+      image: null,
+      backup: false,
+      workspaceSnapshot: 'archive-only',
+    })
+
+    expect(dest).toMatch(/ws-[a-z0-9]+-\d+\.archived\.tar$/)
+    expect(existsSync(active)).toBe(false) // active 清空：新容器无文件可合=真干净
+    expect(dockerService.importWorkspaceMerge).not.toHaveBeenCalled()
+    for (const f of readdirSync(userService._snapDir())) {
+      if (f.startsWith(`ws-${TENANT}`)) rmSync(join(userService._snapDir(), f), { force: true })
+    }
+  })
+
   it('sync 状态：容器删除后状态为 stopped（与"容器已删"一致）', async () => {
     injectTenant()
 
@@ -297,6 +399,26 @@ describe('applyImageVersion：安全护栏', () => {
     // 重建成功后状态由 ensureContainer/finalizeTenant 负责，这里断言它被调用了
     // 第三个参数是目标镜像：null = 平台默认 latest（未指定版本选择时）
     expect(userService.ensureContainer).toHaveBeenCalledWith(TENANT, true, null)
+  })
+
+  it('判例·回退不得被旧账本劫持（2026-10-29 真机第八案）：动手前意图先入账', async () => {
+    // 复现真机故障链：记录里 pinnedImage=模板，revert 调 applyImageVersion
+    // (image=null)——旧实现 rm 完容器才在 ⑥ 清 pin，ensureContainer 中途读
+    // 到旧 pin 就把"回默认"劫持回模板镜像。修复=④ 落账意图先于动手。
+    injectTenant()
+    userService.state.swtcUsers[TENANT].pinnedImage = 'dsh-multitenant:env-x'
+    dockerService.containerImageId.mockResolvedValue('sha:tpl') // 容器在模板上
+    dockerService.imageId.mockResolvedValue('sha:default')
+    let pinAtRebuild = 'ensureContainer 未被调用'
+    userService.ensureContainer.mockImplementation(async () => {
+      pinAtRebuild = userService.state.swtcUsers[TENANT].pinnedImage
+      return PORT
+    })
+
+    await userService.applyImageVersion(TENANT, { image: null, backup: false })
+
+    expect(pinAtRebuild).toBe(null) // 重建那一刻，账本已按新意图落账
+    expect(userService.state.swtcUsers[TENANT].pinnedImage).toBe(null)
   })
 })
 

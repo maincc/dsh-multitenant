@@ -441,6 +441,55 @@ function buildVerifyPage(req, gwToken) {
   )
 }
 
+// 环境切换自感知（用户验收：回退/选用后不刷新，平台捕捉到）：容器一换，
+// 挂在网关上的页面雷达发现代际变化就自动 reload——网关知道真相，浏览器听令。
+const LIVE_JS = `/* dsh-live radar (platform-injected): watch for container swaps, auto-reload when ready */
+(function () {
+  var epoch = null
+  var flipping = false
+  function banner() {
+    if (document.getElementById('__dsh_live_tip')) return
+    var d = document.createElement('div')
+    d.id = '__dsh_live_tip'
+    d.textContent = '环境已切换，正在自动重连新环境…（无需手动刷新）'
+    d.setAttribute('style', 'position:fixed;top:12px;left:50%;transform:translateX(-50%);' +
+      'z-index:99999;background:#0f172a;color:#fff;padding:8px 16px;border-radius:999px;' +
+      'font:13px/1.4 system-ui;box-shadow:0 4px 16px rgba(0,0,0,.25)')
+    ;(document.body || document.documentElement).appendChild(d)
+  }
+  function reloadWhenReady() {
+    if (flipping) return
+    flipping = true
+    setTimeout(function () { flipping = false }, 20000) // 保险丝：reload 被拦则该页雷达不许永久报废
+    try { banner() } catch (e) {}
+    // 代际一变先试水首页：重建中的容器答 502，就每 2 秒再问，探活成功才刷新——
+    // 绝不在半路上把用户摔进白屏
+    function probe() {
+      fetch('/', { credentials: 'same-origin', cache: 'no-store' })
+        .then(function (r) {
+          if (r.status < 500) { location.reload(); return }
+          setTimeout(probe, 2000)
+        })
+        .catch(function () {
+          setTimeout(probe, 2000)
+        })
+    }
+    probe()
+  }
+  function tick() {
+    fetch('/__dsh-live/status', { credentials: 'same-origin', cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null })
+      .then(function (d) {
+        if (!d || !d.epoch) return
+        if (epoch === null) { epoch = d.epoch; return }
+        if (d.epoch !== epoch) reloadWhenReady()
+      })
+      .catch(function () {})
+  }
+  setInterval(tick, 3000)
+})()
+`
+
 class TenantGateway {
   constructor() {
     /** publicPort -> { server, address, internalPort } */
@@ -642,7 +691,7 @@ class TenantGateway {
    *   网关刻意不 import user.service（会形成循环依赖），只在路由表里保存这一份。
    * @returns {Promise<void>}
    */
-  listen(publicPort, internalPort, address, capability = null) {
+  listen(publicPort, internalPort, address, capability = null, epoch = null) {
     // 2026-10 全面审计：owner 门。此前无条件先 close 再绑——端口分配一旦竞态
     // （两个租户拿到同一个对外端口），后来者会**静默关掉前一个租户的监听**，
     // 把前者的用户流量转到自己的容器上 = 跨租户数据泄露。同一租户重启/换镜像
@@ -733,7 +782,15 @@ class TenantGateway {
         server.on('error', (err) => {
           console.error(`[gateway] :${publicPort} runtime error:`, err.message)
         })
-        this.routes.set(publicPort, { server, address, internalPort, capability })
+        this.routes.set(publicPort, {
+          server,
+          address,
+          internalPort,
+          capability,
+          // 容器代际：调用方传 rebuildEpoch（真正的换容器动作才会变）；没传
+          // 的兜底按 attach 时刻算——宁可多发一次 reload，不可漏发
+          epoch: epoch != null ? String(epoch) : 'attach-' + Date.now(),
+        })
         console.log(`[gateway] :${publicPort} -> 127.0.0.1:${internalPort} (${address})`)
         // listen 只发生在"容器就绪"时（新建/重启/换镜像/启动恢复）—— 这正是
         // 丢弃旧代激活 cookie 的时机。DSH 的 cookie 由租户卷 .credentials.yaml
@@ -800,6 +857,33 @@ class TenantGateway {
       pathname = new URL(req.url, 'http://x').pathname
     } catch {
       pathname = String(req.url || '')
+    }
+    // ---- 环境切换雷达（网关自答：绝不转发给容器；门禁与页面同权）----
+    if (pathname === '/__dsh-live/status' || pathname === '/__dsh-live/live.js') {
+      if (!this.authorize(req, publicPort)) {
+        res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' })
+        res.end('gateway: forbidden')
+        return
+      }
+      if (pathname.endsWith('/status')) {
+        res.writeHead(200, {
+          'content-type': 'application/json; charset=utf-8',
+          'cache-control': 'no-store',
+        })
+        const liveRoute = this.routes.get(publicPort)
+        if (liveRoute && liveRoute.lastBeatEpoch !== liveRoute.epoch) {
+          liveRoute.lastBeatEpoch = liveRoute.epoch
+          console.log(`[radar] :${publicPort} 收到页面心跳（雷达在跑，epoch=${liveRoute.epoch}）`)
+        }
+        res.end(JSON.stringify({ ok: true, epoch: liveRoute?.epoch ?? null }))
+        return
+      }
+      res.writeHead(200, {
+        'content-type': 'text/javascript; charset=utf-8',
+        'cache-control': 'no-store',
+      })
+      res.end(LIVE_JS)
+      return
     }
     if (pathname === '/__gw__/session-info' && (req.method || 'GET') === 'GET') {
       const cookie = req.headers.cookie || ''
@@ -962,6 +1046,24 @@ class TenantGateway {
   forward(req, res, internalPort, authCookie = null, opts = {}) {
     const headers = { ...req.headers }
     for (const h of HOP_BY_HOP) delete headers[h]
+    // 文档请求禁用条件再验证（判例：浏览器刷新带 if-none-match → 上游 304 →
+    // 缓存旧页原样复用 → 网关注入的雷达永远进不了页面）。牺牲一个几 KB 的
+    // 重复下载，换"每次载入都带雷达"的确定性。
+    const docPath = (() => {
+      try {
+        const pn = new URL(req.url, 'http://x').pathname
+        return pn === '/' || pn.endsWith('.html')
+      } catch {
+        return false
+      }
+    })()
+    if (docPath && (req.method === 'GET' || req.method === 'HEAD')) {
+      delete headers['if-none-match']
+      // 同判例族（C 审查#1）：透传 accept-encoding 会让上游 gzip 页面，注入
+      // 条件（!content-encoding）就永远跳过——文档请求逼上游出 identity 编码。
+      delete headers['accept-encoding']
+      delete headers['if-modified-since']
+    }
     headers['x-forwarded-for'] = req.socket?.remoteAddress ?? ''
     headers['x-forwarded-host'] = req.headers.host
     // Cookie 处理（**无条件执行**，不能只在 authCookie 存在时才做）：
@@ -1003,14 +1105,45 @@ class TenantGateway {
         for (const [k, v] of Object.entries(outHeaders)) {
           finalHeaders[k] = Array.isArray(v) ? v : String(v)
         }
+        // HTML 注入雷达：只碰 GET+text/html+未压缩的中性状态码——压缩流
+        // 尾加明文会破 gzip 帧（跳过注入=fail-open），重定向不碰。
+        const ct = String(ures.headers['content-type'] || '')
+        const inject =
+          req.method === 'GET' &&
+          ct.includes('text/html') &&
+          !ures.headers['content-encoding'] &&
+          ures.statusCode === 200
+        if (inject) {
+          for (const k of Object.keys(finalHeaders))
+            if (k.toLowerCase() === 'content-length') delete finalHeaders[k]
+          finalHeaders['transfer-encoding'] = 'chunked'
+        }
         res.writeHead(ures.statusCode, finalHeaders)
-        ures.pipe(res)
+        if (!inject) {
+          ures.pipe(res)
+          return
+        }
+        ures.on('data', (c) => res.write(c))
+        ures.on('end', () => {
+          res.end('\n<script src="/__dsh-live/live.js" defer></script>\n')
+          const route = opts.publicPort ? this.routes.get(opts.publicPort) : null
+          if (route && route.lastInjectedEpoch !== route.epoch) {
+            route.lastInjectedEpoch = route.epoch
+            console.log(`[radar] :${opts.publicPort} 雷达已注入页面（epoch=${route.epoch}）`)
+          }
+        })
+        ures.on('error', () => res.destroy())
       },
     )
     upstream.on('error', () => {
-      if (!res.headersSent) {
-        res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' })
+      if (res.headersSent) {
+        // 页已流出一半：往半截 HTML 后拼纯文本比截断更糟——断流让浏览器自显中断
+        try {
+          res.destroy()
+        } catch {}
+        return
       }
+      res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' })
       res.end('gateway: upstream unreachable')
     })
     // 2026-10 审计（流生命周期泄漏，两端各堵）：

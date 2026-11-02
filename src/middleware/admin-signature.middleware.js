@@ -3,7 +3,7 @@
  *
  * ## 为什么要加这层
  *
- * 管理侧的 `admin_session` 是一个 **12 小时有效的 bearer token**：
+ * 管理侧的登录会话（user_session，判例 2026-10-30 单源化前叫 admin_session）是 **12 小时有效的 bearer token**：
  * `requireAdmin` 只做 `sha256(token)` 查表 + 过期判断，不验签。而租户网关会把
  * 浏览器带来的 cookie 原样转发进租户容器（`path=/` 的 cookie 不按端口隔离，
  * `SameSite` 也不判端口），于是"管理员访问过的那个租户"能拿到这串 token ——
@@ -14,7 +14,7 @@
  * 样板：**每次数据操作当场签一个新的 nonce**，用完即毁、5 分钟过期，所以被
  * 拦截也没有价值。这里把那套样板搬到管理侧的破坏性操作上。
  *
- * `admin_session` 的设计（避免管理员每点一下都弹钱包）保持不变，只是给
+ * 登录会话的设计（避免管理员每点一下都弹钱包）保持不变，只是给
  * **会改变平台状态**的操作再加一道当场签名。纯读取接口不要求，日常查看
  * 不会被弹窗打断。
  *
@@ -120,6 +120,18 @@ export function buildBinding(operation, payload = {}) {
     case 'remove':
       // keepVolume 会改变"数据卷是否保留"这一破坏性语义，必须签进去
       return addr ? `remove:address=${addr}:keepVolume=${p.keepVolume === true ? '1' : '0'}` : null
+    // 环境模板（2026-10-27 PR1）：定格"谁的环境"、上下架"哪个模板"、
+    // 分发"到哪个人"都是改变世界的动作——slug/id/address 全部进签名面，
+    // 签 A 执行 B 直接拒（promote/remove 同款纪律）。
+    case 'env-commit':
+      return addr && p.slug ? `env-commit:address=${addr}:slug=${String(p.slug)}` : null
+    case 'env-publish':
+    case 'env-revoke':
+    case 'env-reject':
+    case 'env-scan':
+      return p.id ? `${operation}:id=${String(p.id)}` : null
+    case 'env-apply':
+      return addr && p.id ? `env-apply:id=${String(p.id)}:address=${addr}` : null
     case 'cleanup-orphan-volumes': {
       // 批量删卷：删哪几个必须签进去（同 prune-images 的规范化：去重+排序，
       // 稳定可比对）。与 prune 不同，**空列表一律拒**——"不签任何东西"不该
@@ -229,7 +241,7 @@ export function issueAdminSignatureChallenge(address, operation, payload = {}) {
  *
  * 顺序（每步失败都明确拒绝，且 ③ 早于 ④/⑤：nonce 一旦拿来用就作废，
  * 验签失败也不给第二次机会）：
- *   ① 有 admin_session 会话
+ *   ① 有登录会话（user_session 单源）
  *   ② 该操作可签名（白名单 + 目标齐全）
  *   ③ 存在与之匹配的待执行挑战，且**这次请求推导出的 binding 与发放时一致**
  *   ④ nonce 未过期未使用 → 先消费
