@@ -202,3 +202,40 @@ describe('CAS 去重/清扫/真扫', () => {
     expect(swept.kept).toBe(3) // SHARED+onlya+onlyb——共享字节两块账点只算一份实物
   })
 })
+
+// ═══ 复审加固（判例 56 审查轮）═══
+describe('CAS 护栏与容错（审查轮）', () => {
+  it('blobPath 拒非 hex 地址：账本被写脏也出不了库区', () => {
+    expect(() => envBundleService.blobPath('a/../../../etc/passwd')).toThrow('bad-sha')
+    expect(() => envBundleService.blobPath('ZZ'.padEnd(64, 'z'))).toThrow('bad-sha')
+  })
+  it('装配面拒逃逸路径：p 带 .. 一律 bundle-integrity 中止', () => {
+    const dir = join(TMP, 'env-bundles', 'escaper-dir')
+    rmSync(dir, { recursive: true, force: true })
+    mkdirSync(dir, { recursive: true })
+    const bad = [{ p: '../escape.mjs', size: 1, sha256: 'a'.repeat(64) }]
+    writeFileSync(join(dir, 'manifest.json'), JSON.stringify(bad))
+    expect(() => envBundleService.scanOnStage('escaper-dir', bad)).toThrow(/路径不正/)
+  })
+  it('migrateCas 坏包不拦路：跳过点名、好包照常收编、tar 原样留', () => {
+    const bad = join(TMP, 'env-bundles', 'broken-tar-dir')
+    rmSync(bad, { recursive: true, force: true })
+    mkdirSync(bad, { recursive: true })
+    writeFileSync(join(bad, 'manifest.json'), JSON.stringify([{ p: 'plugins/x/y.mjs', size: 5 }]))
+    execFileSync('tar', ['-czf', join(bad, 'bundle.tar.gz'), '--files-from', '/dev/null'])
+    const good = join(TMP, 'env-bundles', 'fine-tar-dir')
+    rmSync(good, { recursive: true, force: true })
+    mkdirSync(join(good, 'plugins', 'ok'), { recursive: true })
+    const buf = Buffer.from('export const ok = 1;\n')
+    writeFileSync(join(good, 'plugins', 'ok', 'a.mjs'), buf)
+    writeFileSync(
+      join(good, 'manifest.json'),
+      JSON.stringify([{ p: 'plugins/ok/a.mjs', size: buf.length, sha256: sha(buf) }]),
+    )
+    execFileSync('tar', ['-czf', join(good, 'bundle.tar.gz'), '-C', good, 'plugins'])
+    const migrated = envBundleService.migrateCas()
+    expect(migrated).toContain('fine-tar-dir')
+    expect(migrated).not.toContain('broken-tar-dir')
+    expect(existsSync(join(bad, 'bundle.tar.gz'))).toBe(true)
+  })
+})

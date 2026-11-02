@@ -55,9 +55,10 @@ function main() {
   // rm 之后必须把暂存目录建回来（export 侧同款肌肉，这里曾漏写）
   const mk = spawnSync('mkdir', ['-p', TMP])
   if (mk.status !== 0) return { error: `mkdir-tmp-failed:${String(mk.stderr || '').slice(0, 120)}` }
-  if (Array.isArray(arg.plan) && arg.plan.length) {
+  if (Array.isArray(arg.plan)) {
     // CAS 模式（判例 56）：字节块从 /blobs 只读取，名=内容；落位前逐块复验哈希——
-    // 挂载面被换/块被腐都在这里现形，不给半成品留进卷的机会。
+    // 挂载面被换/块被腐都在这里现形，不给半成品留进卷的机会。空 plan 也走此支
+    // （下条 empty-bundle 如实报），绝不让空 CAS 包误掉 tar 支撞不存在的 /out。
     for (const it of arg.plan) {
       if (!it?.p || !it?.sha || !/^[0-9a-f]{64}$/.test(it.sha)) return { error: 'bad-plan' }
       const rel = normalize(it.p)

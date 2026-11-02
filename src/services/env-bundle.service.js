@@ -17,7 +17,7 @@
  */
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { dirname, join, normalize } from 'node:path'
+import { dirname, join, normalize, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   copyFileSync,
@@ -349,8 +349,13 @@ export class EnvBundleService {
       const dir = join(this.baseDir, name)
       if (!existsSync(join(dir, 'bundle.tar.gz')) || !existsSync(join(dir, 'manifest.json')))
         continue
-      this.#ingestCas(dir)
-      migrated.push(name)
+      try {
+        this.#ingestCas(dir)
+        migrated.push(name)
+      } catch (err) {
+        // 单个旧包坏了不拦路：tar 原样留（verify/install 走 tar 老路），如实点名
+        console.warn(`[env-bundle] 收编跳过 ${name}: ${err.message}`)
+      }
     }
     return migrated
   }
@@ -359,7 +364,10 @@ export class EnvBundleService {
   #ingestCas(dir) {
     const tar = join(dir, 'bundle.tar.gz')
     const manifest = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8'))
-    const staging = join(this.baseDir, `.ingest-${Date.now().toString(36)}`)
+    const staging = join(
+      this.baseDir,
+      `.ingest-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    )
     mkdirSync(staging, { recursive: true })
     try {
       execFileSync('tar', ['-xzf', tar, '-C', staging], { stdio: 'pipe' })
@@ -382,7 +390,9 @@ export class EnvBundleService {
   }
 
   blobPath(sha256) {
-    return join(this.blobRoot, sha256.slice(0, 2), sha256.slice(2))
+    // 地址即内容：只认 64 位 hex——账本被写脏（含 '../' 之类）也出不了库区
+    if (!/^[0-9a-f]{64}$/.test(String(sha256))) throw new Error('bad-sha')
+    return join(this.blobRoot, String(sha256).slice(0, 2), String(sha256).slice(2))
   }
 
   get blobRoot() {
@@ -405,9 +415,12 @@ export class EnvBundleService {
       }
       for (const f of files || []) {
         if (!f?.p || !f?.sha256) throw new Error('bundle-missing')
+        const rel = normalize(String(f.p))
+        if (!rel || rel.startsWith('/') || rel.split(sep).includes('..'))
+          throw new Error(`bundle-integrity:路径不正 ${f.p}`) // 装配面也设闸：账脏=不出装
         const src = this.blobPath(f.sha256)
         if (!existsSync(src)) throw new Error(`bundle-integrity:缺字节块 ${f.p}`)
-        const dst = join(tmp, f.p)
+        const dst = join(tmp, rel)
         mkdirSync(dirname(dst), { recursive: true })
         copyFileSync(src, dst)
       }

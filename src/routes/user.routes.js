@@ -520,6 +520,7 @@ export async function handleUserRoutes(req, res, path) {
               folders: (e.include?.folders || []).slice(0, 200),
             },
             bundleFiles: (e.bundle?.files || []).length,
+            provenance: e.provenance || null, // 出身自述：记了就得看得见（列表白名单曾漏此字段成哑功能）
             bundleBytes: e.bundle?.bytes || 0,
             pinnedByCount: (e.pinnedBy || []).length,
           }))
