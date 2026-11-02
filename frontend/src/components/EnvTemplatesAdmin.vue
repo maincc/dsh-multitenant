@@ -242,9 +242,11 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import axios from 'axios'
 import { toast, askConfirm } from '../composables/useDialog'
+import { useAdminBadges } from '../composables/useAdminBadges'
 import { requestAccounts, signMessage, getPublicKey } from '../api/wallet'
 
 const { t } = useI18n()
+const { syncEnvRows } = useAdminBadges()
 const PROV_KEYS = {
   self: 'env.provSelf',
   github: 'env.provGithub',
@@ -283,6 +285,8 @@ const cdValid = computed(() => cd.value.address && /^[a-z0-9][a-z0-9-]{1,40}$/.t
 async function load() {
   const res = await axios.get('/api/admin/environments')
   all.value = res.data.environments || []
+  // 审批动作后 list 必重拉——红点判数从同一份行就地同步，不等轮询（用户裁定：实时）
+  syncEnvRows(all.value)
 }
 onMounted(() => load().catch((e) => toast(errMsg(e))))
 const errMsg = (e) => e?.response?.data?.error || e?.message || 'error'

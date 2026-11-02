@@ -17,7 +17,7 @@ let subs = 0
 async function refresh() {
   try {
     const res = await axios.get('/api/admin/environments')
-    env.value = (res.data.environments || []).filter((e) => e.status === 'draft').length
+    syncEnvRows(res.data.environments)
   } catch {
     /* 查不了不夺上一读数 */
   }
@@ -33,7 +33,16 @@ async function refresh() {
 
 export function useAdminBadges() {
   const badgeFor = (key) => (key === 'envtpl' ? env.value : key === 'cred' ? cred.value : 0)
-  return { badgeFor }
+  return { badgeFor, syncEnvRows, refresh }
+}
+
+/**
+ * 环境红点就地搭车：管理面板 load() 本就拉了全量环境，数 draft 的活直接从
+ * 它拿到的行算——审批/驳回落定后徽标即刻跟随（60 秒轮询只是别的浏览器/别人
+ * 操作的兜底，不该是本浏览器自己的节拍）。
+ */
+function syncEnvRows(rows) {
+  env.value = (rows || []).filter((e) => e.status === 'draft').length
 }
 
 export function startAdminBadges() {
