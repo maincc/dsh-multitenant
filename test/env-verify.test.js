@@ -226,6 +226,24 @@ describe('CAS 去重/清扫/真扫', () => {
     for (const f of manA) expect(existsSync(envBundleService.blobPath(f.sha256))).toBe(true)
   })
 
+  it('陈旧暂存自清：一小时前的 .stage- 残渣被扫，进行中的不碰（判例 57 补）', () => {
+    const stale = join(envBundleService.baseDir, '.stage-fake-stale')
+    mkdirSync(stale, { recursive: true })
+    writeFileSync(join(stale, 'x'), 'junk')
+    const fresh = join(envBundleService.baseDir, '.stage-fake-fresh')
+    mkdirSync(fresh, { recursive: true })
+    const old = new Date(Date.now() - 61 * 60 * 1000)
+    utimesSync(stale, old, old)
+    const bundle = mkRealBundle('dsh-multitenant:env-jdedupcasddd-20260102000005', {
+      'plugins/prunew/q.mjs': 'export const q = 7;\n',
+    })
+    void bundle
+    envBundleService.migrateCas() // 内部 #ingestCas 会顺路自扫
+    expect(existsSync(stale)).toBe(false)
+    expect(existsSync(fresh)).toBe(true)
+    rmSync(fresh, { recursive: true, force: true })
+  })
+
   it('bundleDir 空模板 id 拒解——不赌调用顺序（判例 57 L7）', () => {
     expect(() => envBundleService.bundleDir('')).toThrow('空模板 id')
   })

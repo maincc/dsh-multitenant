@@ -309,7 +309,25 @@ export class EnvBundleService {
    * 无账引用清扫：以 environments 账本为唯一权威，字节块没人点名才删。
    * 查账失败=本轮不清扫（宁可留孤儿占几 KB，不在看不见账的时候删东西）。
    */
+  /** 残渣自扫（判例 57 补）：崩在暂存期的 .ingest-/.stage- 点目录永无人管——
+   *  每次 ingest/sweep 顺路清掉一小时前的陈旧暂存（进行中的绝不碰） */
+  #pruneStaleStaging() {
+    if (!existsSync(this.baseDir)) return 0
+    let gone = 0
+    for (const name of readdirSync(this.baseDir)) {
+      if (!name.startsWith('.stage-') && !name.startsWith('.ingest-')) continue
+      const p = join(this.baseDir, name)
+      try {
+        if (Date.now() - statSync(p).mtimeMs < 60 * 60 * 1000) continue
+        rmSync(p, { recursive: true, force: true })
+        gone++
+      } catch {}
+    }
+    return gone
+  }
+
   async sweepBlobs() {
+    this.#pruneStaleStaging()
     let docs
     try {
       docs = await dataService.listEnvironments()
@@ -398,6 +416,7 @@ export class EnvBundleService {
   #ingestCas(dir) {
     const tar = join(dir, 'bundle.tar.gz')
     const manifest = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8'))
+    this.#pruneStaleStaging()
     const staging = join(
       this.baseDir,
       `.ingest-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
