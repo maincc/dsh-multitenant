@@ -1366,7 +1366,7 @@ import { askConfirm, toast } from '../composables/useDialog'
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useAdminBadges, startAdminBadges, stopAdminBadges } from '../composables/useAdminBadges'
 // 红点判数入口（模板侧 badgeFor 引用此解构——只 import 不解构=运行时 TypeError，上一版踩中自修）
-const { badgeFor } = useAdminBadges()
+const { badgeFor, syncCredCount, refreshCred } = useAdminBadges()
 import axios from 'axios'
 import { useI18n } from 'vue-i18n'
 import { buildAdminTabs } from '../admin-tabs'
@@ -1908,6 +1908,10 @@ const loadCwtApps = async () => {
     })
     cwtApps.value = res.data.applications || []
     cwtTotal.value = res.data.total || 0
+    // 红点实时化（用户裁定）：审批动作后本函数必被重拉——pending 视图直接搭车，
+    // 切了别的过滤则轻取一次 total，判数始终来自写后重读的库账
+    if (cwtStatusFilter.value === 'pending') syncCredCount(cwtTotal.value)
+    else refreshCred()
   } catch (err) {
     toast(t('admin.credOpFail', { err: err?.response?.data?.error || err.message }))
   } finally {

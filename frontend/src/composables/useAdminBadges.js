@@ -33,7 +33,7 @@ async function refresh() {
 
 export function useAdminBadges() {
   const badgeFor = (key) => (key === 'envtpl' ? env.value : key === 'cred' ? cred.value : 0)
-  return { badgeFor, syncEnvRows, refresh }
+  return { badgeFor, syncEnvRows, syncCredCount, refreshCred, refresh }
 }
 
 /**
@@ -43,6 +43,23 @@ export function useAdminBadges() {
  */
 function syncEnvRows(rows) {
   env.value = (rows || []).filter((e) => e.status === 'draft').length
+}
+
+/** 凭证页签同款搭车：CWT 列表在 pending 视图重拉时，total 就是待审数，直接同步 */
+export function syncCredCount(n) {
+  cred.value = n || 0
+}
+
+/** 非 pending 视图（或跨端兜底）时的轻取：limit=1 只为拿 total */
+export async function refreshCred() {
+  try {
+    const res = await axios.get('/api/admin/cwt-applications', {
+      params: { status: 'pending', limit: 1 },
+    })
+    syncCredCount(res.data.total)
+  } catch {
+    /* fail-open：查不了保留上一读数 */
+  }
 }
 
 export function startAdminBadges() {
