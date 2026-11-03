@@ -8,17 +8,22 @@ import axios from 'axios'
  *    （draft 是本仓真队列字面——重提入队写 draft，pending 系幽灵态，user.routes 白纸黑字）；
  *  - 凭证审批：CWT 解限申请单就在该页签内，服务端过滤 status=pending 借 total 白拿计数。
  * fail-open：查询失败沉默保留上一读数——红点是提示不是闸门，绝不因它挡住界面。
- * 更新时刻=挂载一次+动作搭车+15s 节拍兜底。
+ *
+ * 节拍器规矩（用户裁定 2026-11-02 终态）：
+ *  - 频率可配置：走既有通道 GET /api/stats → uiConfig.refreshIntervalMs
+ *    （config.json admin.refreshIntervalMs，默认 15000——改配置重启即生效，不重 build 前端）；
+ *  - 只在管理员在场时打表：宿主组件（AdminPanel / UserCenter role=admin）start，
+ *    全卸载或角色跌落即 stop——普通用户访问不产生任何红点流量；
+ *  - 前台才打：页面切后台停表，回前台立即刷一次再续表（与管理列表既有轮询同精神）；
+ *  - 本端动作不等节拍：审批后列表重拉走 syncEnvRows/syncCredCount 即时搭车。
  */
 const env = ref(0)
 const cred = ref(0)
-// 节拍器（用户裁定终态：开表且频率快些）：15 秒一问，专责跨端兜底——别的
-// 浏览器/同事落定的审批最迟 15s 追平。本端的动作不等节拍：列表重拉就地搭车。
-// 每轮成本如实：两个轻 GET（环境小全量 + cwt limit=1 借 total），单人管理量级
-// 下无感；要再快/再慢改这一个常量即可。
 let timer = null
 let subs = 0
-const TICK_MS = 15000
+let tickMs = 15000
+let tickInited = false
+let visBound = false
 
 async function refresh() {
   try {
@@ -31,9 +36,38 @@ async function refresh() {
     const res = await axios.get('/api/admin/cwt-applications', {
       params: { status: 'pending', limit: 1 },
     })
-    cred.value = res.data.total || 0
+    syncCredCount(res.data.total)
   } catch {
     /* 同上 */
+  }
+}
+
+/** 频率读取：搭 /api/stats 的 uiConfig 顺风车（requireAdmin——非管理员 403 静默落默认） */
+async function initTick() {
+  try {
+    const res = await axios.get('/api/stats')
+    const v = Number(res.data?.uiConfig?.refreshIntervalMs)
+    if (v >= 1000) tickMs = v
+  } catch {
+    /* 读不到就用默认 15s，不因此罢工也不因此报错 */
+  }
+  reschedule()
+}
+
+function reschedule() {
+  if (timer) clearInterval(timer)
+  timer = setInterval(refresh, tickMs)
+}
+
+function onVisibility() {
+  if (document.visibilityState === 'visible') {
+    if (subs > 0) {
+      refresh()
+      reschedule()
+    }
+  } else if (timer) {
+    clearInterval(timer)
+    timer = null
   }
 }
 
@@ -42,21 +76,17 @@ export function useAdminBadges() {
   return { badgeFor, syncEnvRows, syncCredCount, refreshCred, refresh }
 }
 
-/**
- * 环境红点就地搭车：管理面板 load() 本就拉了全量环境，数 draft 的活直接从
- * 它拿到的行算——审批/驳回落定后徽标即刻跟随（60 秒轮询只是别的浏览器/别人
- * 操作的兜底，不该是本浏览器自己的节拍）。
- */
-function syncEnvRows(rows) {
+/** 环境红点就地搭车：管理面板 load() 本就拉了全量环境，数 draft 从它拿到的行算 */
+export function syncEnvRows(rows) {
   env.value = (rows || []).filter((e) => e.status === 'draft').length
 }
 
-/** 凭证页签同款搭车：CWT 列表在 pending 视图重拉时，total 就是待审数，直接同步 */
+/** 凭证页签同款搭车：CWT 列表在 pending 视图重拉时，total 就是待审数 */
 export function syncCredCount(n) {
   cred.value = n || 0
 }
 
-/** 非 pending 视图（或跨端兜底）时的轻取：limit=1 只为拿 total */
+/** 非 pending 视图时的轻取：limit=1 只为拿 total */
 export async function refreshCred() {
   try {
     const res = await axios.get('/api/admin/cwt-applications', {
@@ -68,21 +98,30 @@ export async function refreshCred() {
   }
 }
 
-/** 面板挂载时调用：立即查一次账 + 起节拍（引用计数，双宿主共存只一条表） */
+/** 管理员宿主挂载时调用：立即查账 + 读配置频率 + 起表（引用计数双宿主单表） */
 export function startAdminBadges() {
   subs++
   refresh()
-  if (!timer) timer = setInterval(refresh, TICK_MS)
+  if (!visBound) {
+    document.addEventListener('visibilitychange', onVisibility)
+    visBound = true
+  }
+  if (!tickInited) {
+    tickInited = true
+    initTick()
+  } else if (!timer && document.visibilityState === 'visible') {
+    reschedule()
+  }
 }
 
-/** 全部管理宿主卸载才停表——不留无人看的后台节拍 */
+/** 全部管理宿主卸载（或角色跌落）才停表——普通用户面前绝不打表 */
 export function stopAdminBadges() {
   subs--
   if (subs <= 0) {
+    subs = 0
     if (timer) {
       clearInterval(timer)
       timer = null
     }
-    subs = 0
   }
 }

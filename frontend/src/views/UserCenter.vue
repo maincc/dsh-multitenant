@@ -905,6 +905,8 @@ import { askConfirm, toast } from '../composables/useDialog'
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useAdminBadges, startAdminBadges, stopAdminBadges } from '../composables/useAdminBadges'
 const { badgeFor } = useAdminBadges()
+// 红点节拍起停的组件侧凭证：防角色状态反复刷新叠加引用计数（起一次=守一次）
+let badgesStarted = false
 import axios from 'axios'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
@@ -1213,8 +1215,17 @@ const loadCredentialStatus = async (address) => {
     credInfo.value = data.credential || null
     // v1.5 判权面：role='admin' 才装配「系统管理」tab（服务端活验证凭证属实）
     role.value = data.role === 'admin' ? 'admin' : 'user'
-    // 管理员在场即起待审红点轮询（单例引用计数，重复调用不加码；卸载统一收线）
-    if (role.value === 'admin') startAdminBadges()
+    // 红点节拍只在管理员在场：首起一次（badgesStarted 守，凭证状态刷新反复走此
+    // 函数不叠加计数）；角色跌落=普通用户/登出，立即停表并复位
+    if (role.value === 'admin') {
+      if (!badgesStarted) {
+        badgesStarted = true
+        startAdminBadges()
+      }
+    } else if (badgesStarted) {
+      badgesStarted = false
+      stopAdminBadges()
+    }
     // （2026-10-23 修重大 bug：initialTabApplied 声明是裸布尔（:918），这里曾按
     // ref 用 .value——赋值即 TypeError，管理员每次装配都在此 throw，深链页签/
     // 续发提示/申请单态全被 catch 吞掉。恢复纯布尔用法，语义不变=仅首次生效）
