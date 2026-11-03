@@ -8,11 +8,13 @@ import axios from 'axios'
  *    （draft 是本仓真队列字面——重提入队写 draft，pending 系幽灵态，user.routes 白纸黑字）；
  *  - 凭证审批：CWT 解限申请单就在该页签内，服务端过滤 status=pending 借 total 白拿计数。
  * fail-open：查询失败沉默保留上一读数——红点是提示不是闸门，绝不因它挡住界面。
+ * 更新时刻=挂载一次+动作搭车，无后台定时器。
  */
 const env = ref(0)
 const cred = ref(0)
-let timer = null
-let subs = 0
+// 无轮询定时器（用户裁定 2026-11-02：『动作结束询问一次』即够）：判数只发生在
+// 两个时刻——面板打开挂载查一次、动作落定后列表重拉搭车同步。代价如实：别的
+// 浏览器/同事做的审批，本页要等下次打开或下次动作才见——单人管理场景可接受。
 
 async function refresh() {
   try {
@@ -62,20 +64,7 @@ export async function refreshCred() {
   }
 }
 
+/** 面板挂载时调用：开门查一次账（动作后的更新全靠 syncEnvRows/syncCredCount 搭车） */
 export function startAdminBadges() {
-  subs++
-  if (timer) return
   refresh()
-  timer = setInterval(refresh, 60000)
-}
-
-export function stopAdminBadges() {
-  subs--
-  if (subs <= 0) {
-    if (timer) {
-      clearInterval(timer)
-      timer = null
-    }
-    subs = 0
-  }
 }

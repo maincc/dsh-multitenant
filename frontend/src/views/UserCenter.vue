@@ -903,7 +903,7 @@
 <script setup>
 import { askConfirm, toast } from '../composables/useDialog'
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
-import { useAdminBadges, startAdminBadges, stopAdminBadges } from '../composables/useAdminBadges'
+import { useAdminBadges, startAdminBadges } from '../composables/useAdminBadges'
 const { badgeFor } = useAdminBadges()
 import axios from 'axios'
 import { useI18n } from 'vue-i18n'
@@ -2794,7 +2794,6 @@ const doShare = async () => {
 }
 
 onUnmounted(() => {
-  stopAdminBadges()
   // 排队轮询是全局 interval：不随组件卸载停止的话，切走页面的用户仍在后台
   // 空转打接口（僵尸组件 setState），重挂载后新旧两条轮询并行（2026-10 审计）。
   if (queuePollingTimer) {
