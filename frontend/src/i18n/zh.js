@@ -599,6 +599,7 @@ export default {
     rejectReason: '驳回理由：{reason}',
     freezeBtn: '把当前环境上传为模板',
     uploadTopBtn: '上传我的环境',
+    tabOnsite: '我的现场',
     needCwt: '自助上传需要 CWT 或管理员凭证；容器本身不受影响，可在凭证页申请 CWT 后回来。',
     eligFailTitle: '上传资格暂时查不了',
     eligFailSafe: '你的容器和数据不受影响；下面这个原因修好后点重试即可',

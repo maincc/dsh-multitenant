@@ -10,6 +10,26 @@
       </ul>
     </div>
 
+    <!-- 容器管理顶栏 tab（用户裁定 2026-11-02：与市场页 action-buttons 同款形态）：
+         现场 ⇄ 上传。上传钮只在资格闸亮时在场（与底部主按钮同闸），向导全程走 tab 页。 -->
+    <div v-if="mode !== 'market'" class="action-buttons env-mine-tabs">
+      <button
+        class="btn btn-small"
+        :class="envTab === 'onsite' ? 'btn-primary' : 'btn-secondary'"
+        @click="envTab = 'onsite'"
+      >
+        {{ $t('env.tabOnsite') }}
+      </button>
+      <button
+        v-if="topUploadReady || wz.active"
+        class="btn btn-small"
+        :class="envTab === 'upload' ? 'btn-primary' : 'btn-secondary'"
+        @click="goUploadTab"
+      >
+        ⬆ {{ $t('env.uploadTopBtn') }}
+      </button>
+    </div>
+
     <!-- 当前来源条（我的现场） -->
     <div v-if="mode !== 'market'" class="env-current">
       <span class="env-current-label">{{ $t('env.currentSource') }}</span>
@@ -33,18 +53,6 @@
         $t('env.pinnedVersion')
       }}</span>
       <span v-else class="badge badge-success">{{ $t('env.platformDefault') }}</span>
-      <!-- 顶部上传快捷（用户反馈 2026-11-02：定格区在页底翻得难受）：与底部同闸复用
-           ——只在底部主按钮本可点亮的形态在场（套来的先回退/无资格/查不了都此处不出现，
-           解释仍归下方定格区四态墙，不复制一套天梯）；向导展开时也收起 -->
-      <div v-if="mode !== 'market' && !wz.active && topUploadReady" class="env-current-actions">
-        <button
-          class="btn btn-small btn-primary"
-          :disabled="busy || elig.containerRunning === false"
-          @click="openWizard"
-        >
-          ⬆ {{ $t('env.uploadTopBtn') }}
-        </button>
-      </div>
     </div>
 
     <!-- 模板卡片列表 -->
@@ -138,7 +146,7 @@
     </template>
 
     <!-- 我的模板（作者可见全状态，驳回理由回传） -->
-    <template v-if="mode !== 'market' && drafts.length">
+    <template v-if="mode !== 'market' && envTab === 'onsite' && drafts.length">
       <h4 class="env-h4">{{ $t('env.mineTitle') }}</h4>
       <div v-for="d in drafts" :key="d.id" class="env-mine-row">
         <span class="env-card-name">{{ d.name }}</span>
@@ -182,7 +190,7 @@
     </template>
 
     <!-- 定格入口（四态：套来的环境要先回退 / 故障≠无资格 / CWT 墙 / 可定格） -->
-    <div v-if="mode !== 'market'" class="env-freeze-zone">
+    <div v-if="mode !== 'market' && envTab === 'onsite'" class="env-freeze-zone">
       <template v-if="!wz.active">
         <div v-if="elig.status === 'ok' && elig.onTemplate" class="env-wall">
           <div class="env-wall-title">{{ $t('env.onTplTitle') }}</div>
@@ -214,7 +222,7 @@
           <button
             class="btn btn-primary"
             :disabled="!canFreeze || busy || elig.containerRunning === false"
-            @click="openWizard"
+            @click="goUploadTab"
           >
             {{ $t('env.freezeBtn') }}
           </button>
@@ -308,7 +316,7 @@
     </div>
 
     <!-- ================= 定格向导（对齐 docs/env-template-wizard.md 六步） ================= -->
-    <div v-if="wz.active && mode !== 'market'" class="env-wizard">
+    <div v-if="wz.active && mode !== 'market' && envTab === 'upload'" class="env-wizard">
       <div class="env-wz-head">
         <span
           v-for="(s, i) in ['name', 'pick', 'confirm']"
@@ -538,7 +546,7 @@
  * 纪律：所有"将发生什么"的数据来自服务端 dryRun（前端不自己编停机秒数、
  * 不算冲突、不美化承诺）；勾选默认全不选；体积只展示服务端算好的数。
  */
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 
 // 一个组件两张脸（IA 重排：市场=逛与选用；容器管理=我的现场）：
 //   mode='market' 货架段（讲解+模板卡片+dryRun 预览+选用）
@@ -614,6 +622,19 @@ const wz = ref({
   error: '',
 })
 const wzStep = ref('name')
+// 容器管理顶栏 tab（现场⇄上传）：入口统一 goUploadTab——openWizard 每次全量重置
+// wz（在途草稿不重开），故向导已开时翻 tab 只切视图不碰状态；向导收场自动翻回现场。
+const envTab = ref('onsite')
+function goUploadTab() {
+  envTab.value = 'upload'
+  if (!wz.value.active) openWizard()
+}
+watch(
+  () => wz.value.active,
+  (on) => {
+    if (!on && envTab.value === 'upload') envTab.value = 'onsite'
+  },
+)
 const steps = ['name', 'pick', 'confirm', 'run']
 const stepOrder = (s) => steps.indexOf(s)
 
@@ -1303,7 +1324,7 @@ const totalBundleBytes = computed(() => {
   color: var(--ok-color, #57b874);
 }
 
-.env-current-actions {
-  margin-left: auto;
+.env-mine-tabs {
+  margin: 0.25rem 0 0.75rem;
 }
 </style>
