@@ -538,6 +538,7 @@ const mode = props.mode
 import { useI18n } from 'vue-i18n'
 import axios from 'axios'
 import { toast, askConfirm } from '../composables/useDialog'
+import { refreshIfWatching } from '../composables/useAdminBadges'
 
 const { t } = useI18n()
 // 出身自述（判例 55 B 面）：闭包引用后定义的 wz——调用期取值，无 TDZ 问题
@@ -601,6 +602,9 @@ const steps = ['name', 'pick', 'confirm', 'run']
 const stepOrder = (s) => steps.indexOf(s)
 
 async function loadAll() {
+  // 用户侧动作全走本函数收口重拉——管理员在同一浏览器时顺手补问红点判数
+  // （refreshIfWatching 只在节拍器在场才发请求：普通用户零流量约束不破）
+  refreshIfWatching()
   const res = await axios.get('/api/user/environments')
   list.value = res.data.environments || []
   drafts.value = res.data.myWorks || []

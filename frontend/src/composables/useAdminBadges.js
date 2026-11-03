@@ -26,6 +26,7 @@ let tickInited = false
 let visBound = false
 
 async function refresh() {
+  // 返回 promise：出生日志要等两轮查询落定
   try {
     const res = await axios.get('/api/admin/environments')
     syncEnvRows(res.data.environments)
@@ -73,7 +74,12 @@ function onVisibility() {
 
 export function useAdminBadges() {
   const badgeFor = (key) => (key === 'envtpl' ? env.value : key === 'cred' ? cred.value : 0)
-  return { badgeFor, syncEnvRows, syncCredCount, refreshCred, refresh }
+  return { badgeFor, syncEnvRows, syncCredCount, refreshCred, refreshIfWatching, refresh }
+}
+
+/** 用户侧动作（下架/重新申请）后的即时补问：管理员节拍在场才发——普通用户仍零流量 */
+export function refreshIfWatching() {
+  if (subs > 0) refresh()
 }
 
 /** 环境红点就地搭车：管理面板 load() 本就拉了全量环境，数 draft 从它拿到的行算 */
@@ -101,7 +107,12 @@ export async function refreshCred() {
 /** 管理员宿主挂载时调用：立即查账 + 读配置频率 + 起表（引用计数双宿主单表） */
 export function startAdminBadges() {
   subs++
-  refresh()
+  // 出生日志（一次性，控制台排障用）：报节拍值与首查结果——"红点没动静"时先问它
+  refresh().then(() =>
+    console.info(
+      `[badge] 红点节拍启动 tick=${tickMs}ms · draft=${env.value} · cwtPending=${cred.value}`,
+    ),
+  )
   if (!visBound) {
     document.addEventListener('visibilitychange', onVisibility)
     visBound = true
