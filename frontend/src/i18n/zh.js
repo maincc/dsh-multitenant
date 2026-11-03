@@ -166,6 +166,8 @@ export default {
     connected: '已连接',
     myAccount: '我的账户',
     accountHint: '您的 SWTC 身份信息',
+    subTabInfo: '容器信息',
+    subTabEnv: '环境模板',
     containerManageHint: '查看容器状态与资源使用，管理您的 DSH 容器',
     swtcAddress: 'SWTC 地址：',
     port: '专属端口：',
