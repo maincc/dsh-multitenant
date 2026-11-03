@@ -33,6 +33,18 @@
         $t('env.pinnedVersion')
       }}</span>
       <span v-else class="badge badge-success">{{ $t('env.platformDefault') }}</span>
+      <!-- 顶部上传快捷（用户反馈 2026-11-02：定格区在页底翻得难受）：与底部同闸复用
+           ——只在底部主按钮本可点亮的形态在场（套来的先回退/无资格/查不了都此处不出现，
+           解释仍归下方定格区四态墙，不复制一套天梯）；向导展开时也收起 -->
+      <div v-if="mode !== 'market' && !wz.active && topUploadReady" class="env-current-actions">
+        <button
+          class="btn btn-small btn-primary"
+          :disabled="busy || elig.containerRunning === false"
+          @click="openWizard"
+        >
+          ⬆ {{ $t('env.uploadTopBtn') }}
+        </button>
+      </div>
     </div>
 
     <!-- 模板卡片列表 -->
@@ -573,6 +585,10 @@ function dupOf(t) {
 const drafts = ref([])
 const current = ref(null)
 const canFreeze = ref(false)
+// 顶部快捷钮在场判据：eligibility 已定、可格、非套来态（与底部主按钮同一把闸）
+const topUploadReady = computed(
+  () => elig.value.status === 'ok' && canFreeze.value && !elig.value.onTemplate,
+)
 const elig = ref({ status: 'loading', containerRunning: true, msg: '', onTemplate: null })
 const loadingInv = ref(true)
 const busy = ref(false)
@@ -1285,5 +1301,9 @@ const totalBundleBytes = computed(() => {
 .env-done {
   font-size: 14px;
   color: var(--ok-color, #57b874);
+}
+
+.env-current-actions {
+  margin-left: auto;
 }
 </style>
