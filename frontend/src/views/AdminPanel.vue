@@ -1364,7 +1364,7 @@
 <script setup>
 import { askConfirm, toast } from '../composables/useDialog'
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { useAdminBadges, startAdminBadges } from '../composables/useAdminBadges'
+import { useAdminBadges, startAdminBadges, stopAdminBadges } from '../composables/useAdminBadges'
 // 红点判数入口（模板侧 badgeFor 引用此解构——只 import 不解构=运行时 TypeError，上一版踩中自修）
 const { badgeFor, syncCredCount, refreshCred } = useAdminBadges()
 import axios from 'axios'
@@ -2883,6 +2883,10 @@ onMounted(() => document.addEventListener('visibilitychange', onVisibilityChange
 onMounted(() => {
   startAdminBadges()
 })
+onUnmounted(() => {
+  stopAdminBadges()
+})
+// ↑红点节拍收线；下方为本面板既有清理逻辑
 onUnmounted(() => {
   // 清理定时器与监听
   stopPolling()

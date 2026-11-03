@@ -8,13 +8,17 @@ import axios from 'axios'
  *    （draft 是本仓真队列字面——重提入队写 draft，pending 系幽灵态，user.routes 白纸黑字）；
  *  - 凭证审批：CWT 解限申请单就在该页签内，服务端过滤 status=pending 借 total 白拿计数。
  * fail-open：查询失败沉默保留上一读数——红点是提示不是闸门，绝不因它挡住界面。
- * 更新时刻=挂载一次+动作搭车，无后台定时器。
+ * 更新时刻=挂载一次+动作搭车+15s 节拍兜底。
  */
 const env = ref(0)
 const cred = ref(0)
-// 无轮询定时器（用户裁定 2026-11-02：『动作结束询问一次』即够）：判数只发生在
-// 两个时刻——面板打开挂载查一次、动作落定后列表重拉搭车同步。代价如实：别的
-// 浏览器/同事做的审批，本页要等下次打开或下次动作才见——单人管理场景可接受。
+// 节拍器（用户裁定终态：开表且频率快些）：15 秒一问，专责跨端兜底——别的
+// 浏览器/同事落定的审批最迟 15s 追平。本端的动作不等节拍：列表重拉就地搭车。
+// 每轮成本如实：两个轻 GET（环境小全量 + cwt limit=1 借 total），单人管理量级
+// 下无感；要再快/再慢改这一个常量即可。
+let timer = null
+let subs = 0
+const TICK_MS = 15000
 
 async function refresh() {
   try {
@@ -64,7 +68,21 @@ export async function refreshCred() {
   }
 }
 
-/** 面板挂载时调用：开门查一次账（动作后的更新全靠 syncEnvRows/syncCredCount 搭车） */
+/** 面板挂载时调用：立即查一次账 + 起节拍（引用计数，双宿主共存只一条表） */
 export function startAdminBadges() {
+  subs++
   refresh()
+  if (!timer) timer = setInterval(refresh, TICK_MS)
+}
+
+/** 全部管理宿主卸载才停表——不留无人看的后台节拍 */
+export function stopAdminBadges() {
+  subs--
+  if (subs <= 0) {
+    if (timer) {
+      clearInterval(timer)
+      timer = null
+    }
+    subs = 0
+  }
 }
