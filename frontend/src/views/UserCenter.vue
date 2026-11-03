@@ -615,6 +615,16 @@
           <div class="tab-head">
             <h4>{{ $t('user.containerManage') }}</h4>
             <p class="tab-hint">{{ $t('user.containerManageHint') }}</p>
+            <!-- 上传快捷置顶（用户裁定 2026-11-02：翻页之苦）：与「环境·我的现场」区内
+                 tab 行同一入口同一把闸（topUploadReady 由子组件 expose），点了开向导
+                 并自动滚到该区——向导就在那儿展开 -->
+            <button
+              v-if="envMineRef && envMineRef.topUploadReady"
+              class="btn btn-small btn-primary env-upload-top"
+              @click="uploadFromTop"
+            >
+              ⬆ {{ $t('env.uploadTopBtn') }}
+            </button>
           </div>
           <!-- 容器信息（原在账户信息）：端口/配额/状态/资源使用都归容器 -->
           <div class="stat-rows">
@@ -778,7 +788,12 @@
             <h4>{{ $t('env.mineSectionTitle') }}</h4>
             <p class="tab-hint">{{ $t('env.mineSectionHint') }}</p>
           </div>
-          <EnvTemplatesUser mode="mine" @mine-changed="loadMine" />
+          <EnvTemplatesUser
+            id="env-mine-section"
+            ref="envMineRef"
+            mode="mine"
+            @mine-changed="loadMine"
+          />
         </div>
 
         <!-- ════════ 我的技能 ════════ -->
@@ -936,6 +951,16 @@ const route = useRoute()
 const activeTab = ref('account')
 // 市场页签内品类（用户终审 IA）：市场=挑（技能/环境）；容器管理=经营（定格/显示/回退/技能装卸）
 const marketCat = ref('skills')
+// 置顶上传快捷：调子组件唯一入口（开向导+翻 tab），再平滑滚到「我的现场」区
+const envMineRef = ref(null)
+function uploadFromTop() {
+  const el = envMineRef.value
+  if (!el) return
+  el.goUploadTab()
+  document
+    .getElementById('env-mine-section')
+    ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
 // v1.5 刀5C：判权面（credential-status 的 role，服务端活验证 admin 凭证属实才为 'admin'）。
 // tab 注册表按 role 装配——管理页签对普通用户不存在（数据面砍掉，不是 CSS 隐藏）；
 // 对管理员则与用户页签**平级并列**（验收反馈①：消灭"系统管理"嵌套壳，同一侧栏）。

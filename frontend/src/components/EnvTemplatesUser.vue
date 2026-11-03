@@ -632,9 +632,12 @@ function goUploadTab() {
 watch(
   () => wz.value.active,
   (on) => {
+    if (!on && envTab.value === 'onsite') return
     if (!on && envTab.value === 'upload') envTab.value = 'onsite'
   },
 )
+// 容器管理页顶部快捷入口（用户裁定）跨组件调用：开向导+翻页签的正当口只有一个
+defineExpose({ goUploadTab, topUploadReady })
 const steps = ['name', 'pick', 'confirm', 'run']
 const stepOrder = (s) => steps.indexOf(s)
 
