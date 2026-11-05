@@ -632,7 +632,7 @@
               :class="cSub === 'skills' ? 'btn-primary' : 'btn-secondary'"
               @click="cSub = 'skills'"
             >
-              {{ $t('user.mySkills') }}
+              {{ $t('user.tabSkillsPlugins') }}
             </button>
             <button
               class="btn btn-small"
@@ -806,6 +806,35 @@
               >
                 {{ $t('user.noSkillsHint') }}
               </p>
+              <!-- 插件实物小节（判例 55：无账、以卷为断）：探针取法与技能同船；
+                   null=查不了（≠没了，话术分明）；只陈列不配删钮——插件退场语义
+                   归「回退/环境」侧，此处不开第二把刀 -->
+              <div class="skill-subsection">
+                <h3>{{ $t('user.pluginsTitle') }}</h3>
+                <p v-if="mineData.plugins === null" class="skill-desc">
+                  {{ $t('user.pluginsUnprobed') }}
+                </p>
+                <p v-else-if="mineData.plugins.length === 0" class="skill-desc">
+                  {{ $t('user.pluginsEmpty') }}
+                </p>
+                <div v-for="pl in mineData.plugins || []" :key="'pl-' + pl.name" class="skill-row">
+                  <div class="skill-row-main">
+                    <strong>{{ pl.name }}</strong>
+                    <span v-if="pl.version" class="badge badge-info">v{{ pl.version }}</span>
+                    <span class="skill-desc">{{ pl.description || $t('user.pluginNoDesc') }}</span>
+                    <span class="skill-desc">
+                      {{
+                        $t('user.pluginMeta', {
+                          kind:
+                            pl.kind === 'file' ? $t('user.pluginFileTag') : $t('user.pluginDirTag'),
+                          files: pl.fileCount,
+                          size: fmtBytes(pl.bytes),
+                        })
+                      }}
+                    </span>
+                  </div>
+                </div>
+              </div>
             </template>
           </div>
 
@@ -1952,7 +1981,7 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
   // 避免切换后短暂闪现上一个用户的共享/安装列表；
   // 也保证后续失败分支（额度用完/资源排队/异常）不会残留旧地址的页面与信息
   if (!isInitialLoad && newAddress !== oldAddress) {
-    mineData.value = { published: [], installed: [], inContainer: [] }
+    mineData.value = { published: [], installed: [], inContainer: [], plugins: null }
     mySkillsLoading.value = true
     userInfo.value = {}
     connected.value = false
@@ -2644,6 +2673,12 @@ const fetchMine = async () => {
 let mineInFlight = null
 
 /** 我的技能列表整体刷新（控制下方列表区的 loading） */
+function fmtBytes(n) {
+  if (typeof n !== 'number' || Number.isNaN(n)) return '—'
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
+}
 const loadMine = async () => {
   if (mineInFlight) return mineInFlight // 并发去重：watch 与切换流程可能重叠触发
   if (!connected.value) return
@@ -2659,6 +2694,7 @@ const loadMine = async () => {
         published: res.published || [],
         installed: res.installed || [],
         unverified: Boolean(res.unverified),
+        plugins: Array.isArray(res.plugins) ? res.plugins : null,
       }
       if (res.reconciled) toast(t('skills.reconciledGone', { n: res.reconciled }))
     } catch (err) {

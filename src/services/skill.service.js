@@ -277,12 +277,26 @@ export class SkillService {
    * 旧版脚本无 items 时 sha256=null（结构兼容，哈希级对账自动降级名单级）。
    */
   async probeVolumeItems(address) {
+    const full = await this.probeVolumeFull(address)
+    return full ? full.items : null
+  }
+
+  /** 卷实物全量探针：技能 items + 插件 plugins（判例 55：插件无账，以卷为断）
+   *  返回 null=查不了（无容器/无卷/脚本炸）；数组可为空=实物真没有——口径分明 */
+  async probeVolumeFull(address) {
     try {
       const out = await tenantConfigService.runScript(address, 'list-skills.mjs', [])
       const parsed = JSON.parse(out)
-      if (Array.isArray(parsed?.items)) return parsed.items
-      if (Array.isArray(parsed?.names)) return parsed.names.map((name) => ({ name, sha256: null }))
-      return null
+      let items = null
+      if (Array.isArray(parsed?.items)) items = parsed.items
+      else if (Array.isArray(parsed?.names))
+        items = parsed.names.map((name) => ({ name, sha256: null }))
+      if (!items) return null
+      return {
+        items,
+        plugins: Array.isArray(parsed.plugins) ? parsed.plugins : [],
+        pluginsDir: parsed.pluginsDir ?? null,
+      }
     } catch {
       return null
     }
@@ -316,7 +330,9 @@ export class SkillService {
       .filter((e) => e.sharer === address && e.status === 'active')
       .map((e) => this.toPublic(e))
     const installs = this.readInstalls()[address] || []
-    const volume = await this.probeVolumeItems(address)
+    // 一船两舱：技能实物 + 插件实物同探针取回（不多开一次容器跑）
+    const probeFull = await this.probeVolumeFull(address)
+    const volume = probeFull ? probeFull.items : null
     const physical = volume ? volume.map((i) => i.name) : null
     const volHash = new Map((volume || []).map((i) => [i.name, i.sha256]))
     // 内容级对账（判例 53）：卷实物哈希 ≠ 货架当前版本应有的哈希 = 有差异——
@@ -406,6 +422,9 @@ export class SkillService {
     const out = { published, installed }
     if (reconciled) out.reconciled = reconciled
     if (unverified) out.unverified = true
+    // 插件实物：null=本轮没探到卷（容器未运行等），[]=卷里真没有——前台两话分开说
+    out.plugins = probeFull ? probeFull.plugins : null
+    out.pluginsDir = probeFull ? probeFull.pluginsDir : null
     return out
   }
 
