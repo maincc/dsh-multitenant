@@ -190,7 +190,14 @@
     </template>
 
     <!-- 定格入口（四态：套来的环境要先回退 / 故障≠无资格 / CWT 墙 / 可定格） -->
-    <div v-if="mode !== 'market' && envTab === 'onsite'" class="env-freeze-zone">
+    <div
+      v-if="
+        mode !== 'market' &&
+        envTab === 'onsite' &&
+        !(elig.status === 'ok' && canFreeze && elig.containerRunning !== false)
+      "
+      class="env-freeze-zone"
+    >
       <template v-if="!wz.active">
         <div v-if="elig.status === 'ok' && elig.onTemplate" class="env-wall">
           <div class="env-wall-title">{{ $t('env.onTplTitle') }}</div>
@@ -219,13 +226,8 @@
           <div class="env-wall-steps">{{ $t('env.wallSteps') }}</div>
         </div>
         <template v-else-if="elig.status === 'ok'">
-          <button
-            class="btn btn-primary"
-            :disabled="!canFreeze || busy || elig.containerRunning === false"
-            @click="goUploadTab"
-          >
-            {{ $t('env.freezeBtn') }}
-          </button>
+          <!-- 底部主钮已摘（用户裁定 2026-11-02：两个上传钮只留上方 tab）；
+               条件未齐的两句提示原样留下，缺牙不装齐 -->
           <p v-if="!canFreeze && !loadingInv" class="env-muted">{{ $t('env.needCwt') }}</p>
           <p v-else-if="canFreeze && elig.containerRunning === false" class="env-muted">
             {{ $t('env.needRunning') }}
@@ -1328,6 +1330,6 @@ const totalBundleBytes = computed(() => {
 }
 
 .env-mine-tabs {
-  margin: 0.25rem 0 0.75rem;
+  margin: 0.5rem 0 0.6rem;
 }
 </style>
