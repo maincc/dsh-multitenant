@@ -745,16 +745,15 @@
               <h4>{{ $t('user.mySkills') }}</h4>
               <p class="tab-hint">{{ $t('user.mySkillsHint') }}</p>
             </div>
-            <div class="action-buttons">
+            <!-- 按钮行只放按钮（用户反馈 2026-11-02 挤一行别扭）：解释文案归上方
+                 tab-hint 唯一一处——原先行尾重复挂了一遍，删 -->
+            <div class="action-buttons skill-actions">
               <button class="btn btn-primary" @click="openImportDialog">
                 {{ $t('user.importSkill') }}
               </button>
-              <button class="btn btn-primary" @click="openShareDialog">
+              <button class="btn btn-secondary" @click="openShareDialog">
                 {{ $t('user.shareSkill') }}
               </button>
-              <span class="env-muted" style="align-self: center">{{
-                $t('user.mySkillsHint')
-              }}</span>
             </div>
 
             <div v-if="mySkillsLoading" class="config-loading">
@@ -2895,6 +2894,11 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* 技能动作行：紧凑贴标题，别再让全局 action-buttons 的 1.25rem 上下大空档 */
+.skill-actions {
+  margin: 0.5rem 0 1rem;
+}
+
 .user-center {
   height: 100%;
   display: flex;
