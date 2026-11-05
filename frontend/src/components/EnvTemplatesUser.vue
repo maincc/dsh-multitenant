@@ -1331,5 +1331,6 @@ const totalBundleBytes = computed(() => {
 
 .env-mine-tabs {
   margin: 0.5rem 0 0.6rem;
+  gap: 1.5rem; /* 两颗 pill 拉开（用户反馈 0.75rem 全局档太挤） */
 }
 </style>
