@@ -1330,7 +1330,15 @@ const totalBundleBytes = computed(() => {
 }
 
 .env-mine-tabs {
-  margin: 0.5rem 0 0.6rem;
-  gap: 1.5rem; /* 两颗 pill 拉开（用户反馈 0.75rem 全局档太挤） */
+  margin: 0.75rem 0 0.75rem;
+  gap: 1.5rem;
+}
+/* 用户处方走 margin/padding 三重保险：flex gap 失效的渲染核也照样隔开——
+   每颗 pill 两侧各 0.75rem margin（相邻即 1.5rem）+ 内衬 padding 加宽 */
+.env-mine-tabs > .btn {
+  margin-left: 0.75rem;
+  margin-right: 0.75rem;
+  padding-left: 1.25rem;
+  padding-right: 1.25rem;
 }
 </style>
