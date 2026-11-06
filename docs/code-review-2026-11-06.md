@@ -40,6 +40,10 @@
 
 `skill.service.js:434` mine() 二次探针无去重（性能）；`middleware/rate-limit:2` 头注"滑动"实为固定窗口（账实漂移）；`admin-signature:40` ADMIN_SIGNED_OPERATIONS 死数组零引用且清单与实签面漂移（env-commit 等六项不在、'user-downgrade' 无签发方）；`admin-signature:147` dsh 镜像 binding toLowerCase 与 select 原样铁律相左（实害窄）；`EnvTplAdmin:357` 签名材料校验缺位（对照 AdminPanel:1885 已修版——第三次半拉子）；`UserCenter:1629` 裸传材料（闸在 AdminPanel 侧，svc 先 consume 后 verify）；`AdminPanel:363/369/375` 猜数残存 3 处（??兜底=账实一致反例）；`AdminPanel:2065` toast+throw 叠报双弹；`setup-hooks.js:34` 文件名空格展开噪声（方向安全）。
 
+## HIGH 修复纪实（2026-11-06 · fd 批次）
+
+H1 diskScanning 补声明；H2 dryRun 预览免签（服务侧纯算即 return 实证后放行，正式落库照签）；H3 hide 入双门禁（skill-hide 绑名）+ unpublish 改存证式归档（rmSync 绝迹，归档随 storeDir 派生；写失败宁留实物）；H4 env-commit binding 扩 skills|plugins|folders|wsExcludes 规范化段（排序免疫勾选顺序）+ FE 挑战票带 include 对齐。契约用例三处同步更新、新增 dryRun 免签与 binding 偷换守卫各一。全件绿后入册。
+
 ## 待人工裁定（3 条）
 
 1. `skill.routes.js:121` GET `/api/skills/mine` 公开视图含实物名单/插件——**注释与测试表明有意免签**；要不要按"读面最小化"收紧，产品裁。

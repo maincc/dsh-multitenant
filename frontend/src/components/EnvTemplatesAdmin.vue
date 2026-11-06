@@ -469,7 +469,13 @@ async function cdGo() {
       cd.value.dryDone = true
       return
     }
-    const headers = await signOp('env-commit', { address: payload.address, slug: payload.slug })
+    // H4 配套：勾选集合进票——挑战 payload 必须与执行体 include 同形（两侧各自
+    // canon 后逐字节等），否则"签空勾选"与"执行真勾选" binding 不等当场拒
+    const headers = await signOp('env-commit', {
+      address: payload.address,
+      slug: payload.slug,
+      include: payload.include,
+    })
     const res = await axios.post('/api/admin/env-commit', payload, { headers })
     toast(t('env.admin.committed', { tag: res.data.template?.slug || payload.slug }))
     cd.value.open = false

@@ -2230,6 +2230,10 @@ const fetchData = async (force = false) => {
   }
 }
 
+// 审查 H1（2026-11-06）：diskScanning 六处引用零声明——扫描钮一点必抛。
+// badgeFor 判例同族：模板/引用名缺声明，构建全绿运行时才炸。补上。
+const diskScanning = ref(false)
+
 /** 手动触发精确扫描：du 实测每个租户卷真实占用（O(n)，管理员按需调用） */
 const runDiskScan = async () => {
   if (diskScanning.value) return

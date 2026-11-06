@@ -582,12 +582,27 @@ export class SkillService {
     if (!admin && entry.sharer !== normalizeAddress(operator)) {
       throw new ForbiddenError('只能取消自己共享的技能（管理员可下架任意技能）')
     }
-    // 取消共享 = 删除共享仓正文文件 + 移除索引条目。
-    // 已安装用户持有的副本在自己卷里，不受影响；同名可重新发布（全新条目）。
+    // 取消共享 = 移出索引 + 正文存证归档（审查 H3 续：原 rmSync 直删违"被引用之物
+    // 不可物理删"——安装账的 installedHash/内容级对账仍要按货架版本复推期望哈希，
+    // 正文没了账就瞎；对齐 env 驳回"拆账先行+存证式"判例）。
+    // 已安装用户副本在自己卷，不受影响；同名可重新发布（归档不在货架路径，不占名）。
     const removed = this.toPublic(entry)
     entries.splice(idx, 1)
     await this.writeIndex(entries)
-    rmSync(join(this.storeDir, name), { recursive: true, force: true })
+    const src = join(this.storeDir, name)
+    if (existsSync(src)) {
+      try {
+        // 归档随仓走：storeDir 的上一级（默认=<data>/skills → <data>/archive/skills，
+        // 与 dataService.dataDir 同址；测试自定义 storeDir 时自然沙盒隔离，不踏公共盘）
+        const arch = join(this.storeDir, '..', 'archive', 'skills')
+        mkdirSync(arch, { recursive: true })
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+        renameSync(src, join(arch, `${name}-${stamp}`))
+      } catch {
+        // 归档失败宁留实物不直删（方向与"查不了不删"同律）：索引已摘=货架不可见，
+        // 磁盘残留交 GC 续账处理，绝不拿删除赌运气
+      }
+    }
     dataService.logOperation('skill_unpublish', {
       address: normalizeAddress(operator),
       skill: name,

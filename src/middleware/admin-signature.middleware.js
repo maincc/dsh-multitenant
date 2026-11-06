@@ -123,8 +123,22 @@ export function buildBinding(operation, payload = {}) {
     // 环境模板（2026-10-27 PR1）：定格"谁的环境"、上下架"哪个模板"、
     // 分发"到哪个人"都是改变世界的动作——slug/id/address 全部进签名面，
     // 签 A 执行 B 直接拒（promote/remove 同款纪律）。
-    case 'env-commit':
-      return addr && p.slug ? `env-commit:address=${addr}:slug=${String(p.slug)}` : null
+    case 'env-commit': {
+      // 审查 H4（2026-11-06）：勾选集合是"包里装什么"的正身——skills/plugins/folders
+      // 不签进去就是"签空勾选、执行全随行"的偷换面（folders 还直接决定 scrubKeep）；
+      // wsExcludes 是摘除清单，同进。两侧（挑战领取/执行校验）都吃客户端原样 payload，
+      // 各自不改动地规范化：逐项串化+排序，与顺序无关；缺位/坏形记空。
+      const inc = p.include && typeof p.include === 'object' ? p.include : {}
+      const canon = (v) => (Array.isArray(v) ? v.map(String).sort().join(',') : '')
+      return addr && p.slug
+        ? `env-commit:address=${addr}:slug=${String(p.slug)}:inc=${canon(inc.skills)}|${canon(inc.plugins)}|${canon(inc.folders)}|${canon(inc.wsExcludes)}`
+        : null
+    }
+    // 审查 H3（2026-11-06）：管理员下架他人技能=移走作者正文，入双门禁白名单
+    case 'skill-hide': {
+      const n = typeof p.name === 'string' ? p.name.trim() : ''
+      return n ? `skill-hide:name=${n}` : null
+    }
     case 'env-publish':
     case 'env-revoke':
     case 'env-reject':

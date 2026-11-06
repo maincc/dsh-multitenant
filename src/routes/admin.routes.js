@@ -823,7 +823,19 @@ export async function handleAdminRoutes(req, res, path, url) {
       return true
     }
     // 参数合法先于签名检查（promote 同款次序：不让人去签一个注定失败的操作）
-    if (!requireAdminSignature(req, res, 'env-commit', { address, slug }, getAdminSession(req)))
+    // 审查 H2（2026-11-06）：dryRun 预览免签——该分支在服务侧纯算字符串即 return
+    // （不触容器/不落账/不落图，零世界改动），原闸把预览一并 403、代格功能自断。
+    // 正式落库照旧签名，且 binding 扩勾选面（H4）：签"不随行"执行"全随行"封死。
+    if (
+      !body.dryRun &&
+      !requireAdminSignature(
+        req,
+        res,
+        'env-commit',
+        { address, slug, include: body.include },
+        getAdminSession(req),
+      )
+    )
       return true
     // 定格全流程在 env-commit.service（admin/user 两面共用同一条链——权限差异
     // 留在路由层：这里 requireAdmin+签名，user 面是 session+freezeAllowed）

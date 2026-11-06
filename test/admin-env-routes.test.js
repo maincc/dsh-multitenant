@@ -532,6 +532,22 @@ describe('env-apply（分发：digest 逐字校验）', () => {
     expect(res.statusCode).toBe(409)
   })
 
+  it('H2（审查 2026-11-06）：env-commit 的 dryRun 预览免签直通——纯算不触世界', async () => {
+    // 正式落库仍要签名（上一条用例与 mismatch 面守着）；预览零副作用，免签放行
+    const res = await call('/api/admin/env-commit', {
+      body: {
+        address: TENANT,
+        slug: 'preview-only',
+        dryRun: true,
+        include: { skills: [], plugins: [], folders: [] },
+      },
+      cookie: true,
+    })
+    expect(res.statusCode).toBe(200)
+    expect(res.body).toContain('dryRun')
+    expect(dockerService.commitEnvironment).not.toHaveBeenCalled()
+  })
+
   it('dryRun 不动世界：无 pinnedBy、无审计', async () => {
     seedTemplate({ status: 'published' })
     vi.spyOn(userService, 'applyImageVersion').mockResolvedValue({ dryRun: true })
@@ -585,7 +601,15 @@ describe('PR2 随行包接线（include/导出/驳回/检测/装包）', () => {
         slug: 'stock',
         include: { skills: ['cwt-verify'], plugins: ['a.js'], folders: ['策略'] },
       },
-      sign: { op: 'env-commit', payload: { address: TENANT, slug: 'stock' } },
+      // H4 配套：签票必须含与 body 同形的 include（勾选集合现在就是签名面）
+      sign: {
+        op: 'env-commit',
+        payload: {
+          address: TENANT,
+          slug: 'stock',
+          include: { skills: ['cwt-verify'], plugins: ['a.js'], folders: ['策略'] },
+        },
+      },
     })
     expect(res.statusCode).toBe(200)
     const { template } = json(res)
@@ -616,7 +640,10 @@ describe('PR2 随行包接线（include/导出/驳回/检测/装包）', () => {
     const before = globalThis.__envStore.size
     const res = await call('/api/admin/env-commit', {
       body: { address: TENANT, slug: 'stock', include: { plugins: ['big.js'] } },
-      sign: { op: 'env-commit', payload: { address: TENANT, slug: 'stock' } },
+      sign: {
+        op: 'env-commit',
+        payload: { address: TENANT, slug: 'stock', include: { plugins: ['big.js'] } },
+      },
     })
     expect(res.statusCode).toBe(500)
     expect(res.body).toContain('作废')

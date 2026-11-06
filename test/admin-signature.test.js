@@ -559,8 +559,24 @@ describe('环境模板动作签名绑定（environment-templates PR1）', () => 
   const A = 'jNyJLQkxfYh12wu8jYnwStyZBJUvEDW7jj'
   it('env-commit 需 address+slug 双全；binding 含 slug（签错环境名即拒）', () => {
     expect(buildBinding('env-commit', { address: A, slug: 'stock' })).toBe(
-      'env-commit:address=jnyjlqkxfyh12wu8jynwstyzbjuvedw7jj:slug=stock',
+      'env-commit:address=jnyjlqkxfyh12wu8jynwstyzbjuvedw7jj:slug=stock:inc=|||',
     )
+    // H4（审查 2026-11-06）：勾选集合成进签名面——空勾选与带内容两票不等价，
+    // "签不随行、执行全随行"从此换不动；canon 排序，勾选顺序不敏感
+    const inc = { skills: ['b', 'a'], plugins: [], folders: ['策略'] }
+    const bInc = buildBinding('env-commit', { address: A, slug: 'stock', include: inc })
+    expect(bInc).toContain(':inc=a,b||策略|')
+    expect(bInc).toBe(
+      buildBinding('env-commit', {
+        address: A,
+        slug: 'stock',
+        include: { skills: ['a', 'b'], plugins: [], folders: ['策略'] },
+      }),
+    )
+    expect(bInc).not.toContain(':inc=|||')
+    // skill-hide 绑定技能名（H3 双门禁的偷换闸）
+    expect(buildBinding('skill-hide', { name: 'good-skill' })).toBe('skill-hide:name=good-skill')
+    expect(buildBinding('skill-hide', {})).toBe(null)
     expect(buildBinding('env-commit', { address: A })).toBe(null)
     expect(buildBinding('env-commit', { slug: 'stock' })).toBe(null)
   })
