@@ -1882,10 +1882,30 @@ const signAdminOperation = async (operation, payload) => {
     const { message } = chalRes.data
     const signature = await signMessage(pluginAddress, message)
     const publicKey = await getPublicKey(pluginAddress)
+    // 材料不齐就地刹车（线上案 2026-11-02：插件未解锁时 swtc_getPublicKey 可回
+    // undefined/对象——axios 静默丢非串头，裸 POST 撞上 SIGNATURE_REQUIRED，
+    // 报错文案把人引向"没签名"，实际是"签了但材料半路蒸发"）。绝不再提交无签请求。
+    const nonce = chalRes.data.nonce
+    const sigStr = typeof signature === 'string' ? signature : (signature?.signature ?? '')
+    const pubStr =
+      typeof publicKey === 'string' ? publicKey : (publicKey?.publicKey ?? publicKey?.pubKey ?? '')
+    if (!nonce || !sigStr || !pubStr) {
+      throw new Error(
+        t('admin.sigMaterialMissing', {
+          miss: [
+            !nonce && 'nonce',
+            !sigStr && t('admin.sigKindSign'),
+            !pubStr && t('admin.sigKindPub'),
+          ]
+            .filter(Boolean)
+            .join('、'),
+        }),
+      )
+    }
     return {
-      'x-admin-nonce': chalRes.data.nonce,
-      'x-admin-signature': signature,
-      'x-admin-pubkey': publicKey,
+      'x-admin-nonce': nonce,
+      'x-admin-signature': sigStr,
+      'x-admin-pubkey': pubStr,
     }
   } catch (err) {
     throw new Error(friendlyPluginError(err))

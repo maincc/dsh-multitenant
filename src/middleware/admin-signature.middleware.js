@@ -271,6 +271,12 @@ export function requireAdminSignature(req, res, operation, payload = {}, session
 
   const sig = req.__adminSignature
   if (!sig || !sig.nonce || !sig.signature || !sig.publicKey) {
+    // 拒因入日志（只记三个头名的在场性，不记任何值）：区分"前端没发"与
+    // "发了被半路丢"（2026-11-02 降级案：插件回 undefined、axios 静默丢头）
+    const h = req.headers || {}
+    console.warn(
+      `[sig-gate] SIGNATURE_REQUIRED ${req.method} ${req.url} · nonce:${h['x-admin-nonce'] ? '有' : '无'} signature:${h['x-admin-signature'] ? '有' : '无'} pubkey:${h['x-admin-pubkey'] ? '有' : '无'}`,
+    )
     return deny('该操作需要钱包签名确认（请对本次操作签名后重试）', 'SIGNATURE_REQUIRED')
   }
 
