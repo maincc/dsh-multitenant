@@ -625,10 +625,16 @@ async function cdGo() {
 }
 .enva-modal-box {
   width: min(460px, 92vw);
-  background: var(--bg-elevated, #1d2129);
-  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
-  border-radius: 12px;
+  /* 用户裁定 2026-11-06：代格弹窗与全站弹窗同浅色壳（modal-panel 配方背景 #fff）
+     ——原 var(--bg-elevated) 全仓零定义，暗色兜底值一直在裸奔 */
+  background: #fff;
+  color: #1d2129;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 16px;
   padding: 16px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+  max-height: 86vh;
+  overflow: auto;
 }
 .enva-label {
   display: block;
@@ -642,9 +648,10 @@ async function cdGo() {
   margin-top: 3px;
   padding: 6px 10px;
   border-radius: 8px;
-  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.14));
-  background: transparent;
-  color: inherit;
+  /* 孪生面：壳转白后白边透明底输入框会蒸发，同刀转浅灰描边 */
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  background: #fbfcfd;
+  color: #1d2129;
   font-size: 13px;
 }
 .enva-ul {
