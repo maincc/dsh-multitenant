@@ -2275,13 +2275,24 @@ const upgradeUser = async (address, tier) => {
 
 const downgradeUser = async (address, tier) => {
   if (tier < 1) return
-  try {
-    await axios.post(`/api/upgrade/${address}`, { tier })
-    await fetchData()
-    toast(t('admin.downgradeOk'))
-  } catch (err) {
-    toast(t('admin.downgradeFail', { err: err.response?.data?.error || err.message }))
-  }
+  // 2026-11-02 实账补刀：2026-10 审计给同端点升级半边上了"确认+签名"，降级半边
+  // 漏了——裸 POST 无签，服务端闸（binding=address:tier 双向同闸）拒得对，用户
+  // 看到的是我们的手术遗漏。与 upgradeUser 同款补全：danger 确认 + run 锁 +
+  // signAdminOperation('user-upgrade')——同一把闸同一张票，降档同样会重启对方容器。
+  await askConfirm({
+    message: t('admin.confirmTierChange', { addr: `${address.slice(0, 10)}…`, tier }),
+    danger: true,
+    run: async () => {
+      try {
+        const headers = await signAdminOperation('user-upgrade', { address, tier })
+        await axios.post(`/api/upgrade/${address}`, { tier }, { headers })
+        await fetchData()
+        toast(t('admin.downgradeOk'))
+      } catch (err) {
+        toast(t('admin.downgradeFail', { err: err.response?.data?.error || err.message }))
+      }
+    },
+  })
 }
 
 const removeUser = async (address) => {
