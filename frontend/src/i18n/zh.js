@@ -166,6 +166,8 @@ export default {
     connected: '已连接',
     myAccount: '我的账户',
     accountHint: '您的 SWTC 身份信息',
+    subTabInfo: '容器信息',
+    subTabEnv: '环境模板',
     containerManageHint: '查看容器状态与资源使用，管理您的 DSH 容器',
     swtcAddress: 'SWTC 地址：',
     port: '专属端口：',
@@ -398,6 +400,14 @@ export default {
     resetContainerFlow: '删除所有数据和配置，重新开始（不可恢复）',
     // ---- 我的技能 ----
     mySkills: '🧩 我的技能',
+    tabSkillsPlugins: '🧩 技能与插件',
+    pluginsTitle: '插件（卷内实物·无账本）',
+    pluginsUnprobed: '容器未在运行或卷不可探——插件实物本轮未列出。查不了≠没了。',
+    pluginsEmpty: '卷内 plugins 槽位是空的。',
+    pluginNoDesc: '（无描述清单）',
+    pluginFileTag: '单文件',
+    pluginDirTag: '目录',
+    pluginMeta: '{kind} · {files} 个文件 · {size}',
     mySkillsHint: '将本地 DSH 的技能导入容器，或在技能市场安装他人共享的技能',
     importSkill: '📥 导入技能',
     shareSkill: '📤 共享技能',
@@ -597,7 +607,8 @@ export default {
     reverted: '已回退到默认环境。DSH 页面会自动刷新；没动静就刷一下',
     usedBy: '{n} 人使用中',
     rejectReason: '驳回理由：{reason}',
-    freezeBtn: '把当前环境上传为模板',
+    uploadTopBtn: '上传我的环境',
+    tabOnsite: '我的现场',
     needCwt: '自助上传需要 CWT 或管理员凭证；容器本身不受影响，可在凭证页申请 CWT 后回来。',
     eligFailTitle: '上传资格暂时查不了',
     eligFailSafe: '你的容器和数据不受影响；下面这个原因修好后点重试即可',
@@ -1036,6 +1047,10 @@ export default {
     switchedAdmin: '已切换到管理员：{addr}',
     noAccounts: '未获取到账户',
     loginFail: '登录失败：{err}',
+    sigMaterialMissing:
+      '已领挑战但签名材料不齐（缺 {miss}）——多半是 CCDAO 插件此刻未解锁/未授权取公钥。请解锁插件后重试；本次未提交任何未签名请求。',
+    sigKindSign: '签名',
+    sigKindPub: '公钥',
     signNeedsWallet: '该操作需要钱包签名确认：未检测到 CCDAO 钱包插件',
     switchWalletHint: '请在 CCDAO 插件中切换到管理员地址',
     loadFail: '加载数据失败: {err}',
@@ -1186,6 +1201,7 @@ export default {
 
     // ── v1.4 CWT 解限申请审批 ──
     tabCred: '凭证审批',
+    pendingTip: '{n} 件待审',
     credTabTitle: 'CWT 解限申请',
     // ---- v1.5 管理员任免（名册=配发政策面；判权骑 admin 凭证） ----
     rosterTitle: '管理员名册（只读）',

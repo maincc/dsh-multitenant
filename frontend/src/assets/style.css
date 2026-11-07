@@ -297,3 +297,15 @@ tr:hover {
   border-color: #6b7bdb;
   box-shadow: 0 0 0 3px rgba(107, 123, 219, 0.15);
 }
+
+/* 管理页签待审红点（AdminPanel/UserCenter 侧栏共用；position 由各自 scoped 的 .sidebar-item 提供） */
+.tab-dot {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #e5484d;
+  box-shadow: 0 0 0 2px rgba(229, 72, 77, 0.22);
+}

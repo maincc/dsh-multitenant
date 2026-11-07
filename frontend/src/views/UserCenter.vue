@@ -90,6 +90,11 @@
               >
                 <span class="sidebar-icon" v-html="tab.icon"></span>
                 <span>{{ tab.label }}</span>
+                <span
+                  v-if="badgeFor(tab.subKey)"
+                  class="tab-dot"
+                  :title="$t('admin.pendingTip', { n: badgeFor(tab.subKey) })"
+                ></span>
                 <!-- 后台自动拉起指示：容器 tab 右侧小转圈（完成/失败即消失，弹窗收尾） -->
                 <span
                   v-if="tab.key === 'container' && containerBooting"
@@ -611,169 +616,235 @@
             <h4>{{ $t('user.containerManage') }}</h4>
             <p class="tab-hint">{{ $t('user.containerManageHint') }}</p>
           </div>
-          <!-- 容器信息（原在账户信息）：端口/配额/状态/资源使用都归容器 -->
-          <div class="stat-rows">
-            <div class="stat-row">
-              <span class="stat-label">{{ $t('user.port') }}</span>
-              <code class="stat-value mono">{{ userInfo.port }}</code>
+          <!-- 容器管理页顶三段页签（用户裁定 2026-11-02：与市场品类 pill 同款）：
+               原一页竖堆 容器信息/我的技能/环境现场 三段，翻到底上传之苦——现在点一段看一段。
+               v-show 互斥非卸载：向导在途草稿、技能列表状态翻页不丢。 -->
+          <div class="action-buttons container-subtabs">
+            <button
+              class="btn btn-small"
+              :class="cSub === 'info' ? 'btn-primary' : 'btn-secondary'"
+              @click="cSub = 'info'"
+            >
+              {{ $t('user.subTabInfo') }}
+            </button>
+            <button
+              class="btn btn-small"
+              :class="cSub === 'skills' ? 'btn-primary' : 'btn-secondary'"
+              @click="cSub = 'skills'"
+            >
+              {{ $t('user.tabSkillsPlugins') }}
+            </button>
+            <button
+              class="btn btn-small"
+              :class="cSub === 'env' ? 'btn-primary' : 'btn-secondary'"
+              @click="cSub = 'env'"
+            >
+              {{ $t('user.subTabEnv') }}
+            </button>
+          </div>
+          <div v-show="cSub === 'info'">
+            <!-- 容器信息（原在账户信息）：端口/配额/状态/资源使用都归容器 -->
+            <div class="stat-rows">
+              <div class="stat-row">
+                <span class="stat-label">{{ $t('user.port') }}</span>
+                <code class="stat-value mono">{{ userInfo.port }}</code>
+              </div>
+              <div class="stat-row">
+                <span class="stat-label">{{ $t('user.tier') }}</span>
+                <span class="badge" :class="tierBadge(userInfo.tier)">{{
+                  userInfo.tierLabel
+                }}</span>
+              </div>
+              <div class="stat-row">
+                <span class="stat-label">{{ $t('user.containerStatus') }}</span>
+                <span class="badge" :class="statusBadge(userInfo.status)">{{
+                  statusText(userInfo.status)
+                }}</span>
+                <button
+                  v-if="userInfo.status !== 'running'"
+                  class="btn btn-small btn-success"
+                  :disabled="containerBooting"
+                  :title="containerBooting ? $t('user.tabBooting') : ''"
+                  @click="restartContainer"
+                >
+                  {{ $t('user.startContainer') }}
+                </button>
+              </div>
             </div>
-            <div class="stat-row">
-              <span class="stat-label">{{ $t('user.tier') }}</span>
-              <span class="badge" :class="tierBadge(userInfo.tier)">{{ userInfo.tierLabel }}</span>
+
+            <div v-if="userInfo.stats" class="resource-usage">
+              <div class="resource-item">
+                <div class="resource-header">
+                  <span>{{ $t('user.cpuUsage') }}</span>
+                  <span class="mono">{{ userInfo.stats.cpu }}</span>
+                </div>
+              </div>
+              <div class="resource-item">
+                <div class="resource-header">
+                  <span>{{ $t('user.memUsage') }}</span>
+                  <span class="mono"
+                    >{{ userInfo.stats.memory }} ({{ userInfo.stats.memoryPercent }})</span
+                  >
+                </div>
+                <div class="progress-bar">
+                  <div class="progress-fill" :style="{ width: userInfo.stats.memoryPercent }"></div>
+                </div>
+              </div>
             </div>
-            <div class="stat-row">
-              <span class="stat-label">{{ $t('user.containerStatus') }}</span>
-              <span class="badge" :class="statusBadge(userInfo.status)">{{
-                statusText(userInfo.status)
-              }}</span>
-              <button
-                v-if="userInfo.status !== 'running'"
-                class="btn btn-small btn-success"
-                :disabled="containerBooting"
-                :title="containerBooting ? $t('user.tabBooting') : ''"
-                @click="restartContainer"
-              >
-                {{ $t('user.startContainer') }}
+            <div v-else class="loading">{{ $t('user.noData') }}</div>
+
+            <div class="tab-divider" />
+
+            <!-- 进入容器入口（连同容器状态/端口/配额/资源使用一起，均已从账户信息迁来） -->
+            <div class="enter-box">
+              <div class="enter-info">
+                <div class="enter-title">{{ $t('user.enterDsh') }}</div>
+                <div class="enter-hint">{{ $t('user.enterDshHint') }}</div>
+              </div>
+              <button class="btn btn-primary btn-enter" @click="enterDsh">
+                {{ $t('user.openDsh') }}
               </button>
             </div>
-          </div>
 
-          <div v-if="userInfo.stats" class="resource-usage">
-            <div class="resource-item">
-              <div class="resource-header">
-                <span>{{ $t('user.cpuUsage') }}</span>
-                <span class="mono">{{ userInfo.stats.cpu }}</span>
+            <div class="tab-divider" />
+
+            <div class="action-buttons">
+              <button class="btn btn-primary" @click="restartDSH">
+                {{ $t('user.restartDsh') }}
+              </button>
+              <button
+                class="btn btn-secondary"
+                :disabled="!connected || userInfo.status !== 'running'"
+                @click="stopContainer"
+              >
+                {{ $t('user.stopContainer') }}
+              </button>
+              <button class="btn btn-danger" @click="resetContainer">
+                {{ $t('user.resetContainer') }}
+              </button>
+            </div>
+            <div class="action-hints">
+              <div class="hint">
+                <strong>{{ $t('user.restartDshFlowTitle') }}</strong>
+                {{ $t('user.restartDshFlow') }}
+              </div>
+              <div class="hint">
+                <strong>{{ $t('user.stopFlowTitle') }}</strong>
+                {{ $t('user.stopFlow') }}
+                {{ usageInfoLabel ? $t('user.todayUsagePrefix') + usageInfoLabel : '' }}
+              </div>
+              <div class="hint">
+                <strong>{{ $t('user.resetFlowTitle') }}</strong>
+                {{ $t('user.resetContainerFlow') }}
               </div>
             </div>
-            <div class="resource-item">
-              <div class="resource-header">
-                <span>{{ $t('user.memUsage') }}</span>
-                <span class="mono"
-                  >{{ userInfo.stats.memory }} ({{ userInfo.stats.memoryPercent }})</span
-                >
-              </div>
-              <div class="progress-bar">
-                <div class="progress-fill" :style="{ width: userInfo.stats.memoryPercent }"></div>
-              </div>
+          </div>
+
+          <div v-show="cSub === 'skills'">
+            <div class="tab-head">
+              <h4>{{ $t('user.mySkills') }}</h4>
+              <p class="tab-hint">{{ $t('user.mySkillsHint') }}</p>
             </div>
-          </div>
-          <div v-else class="loading">{{ $t('user.noData') }}</div>
-
-          <div class="tab-divider" />
-
-          <!-- 进入容器入口（连同容器状态/端口/配额/资源使用一起，均已从账户信息迁来） -->
-          <div class="enter-box">
-            <div class="enter-info">
-              <div class="enter-title">{{ $t('user.enterDsh') }}</div>
-              <div class="enter-hint">{{ $t('user.enterDshHint') }}</div>
+            <!-- 按钮行只放按钮（用户反馈 2026-11-02 挤一行别扭）：解释文案归上方
+                 tab-hint 唯一一处——原先行尾重复挂了一遍，删 -->
+            <div class="action-buttons skill-actions">
+              <button class="btn btn-primary" @click="openImportDialog">
+                {{ $t('user.importSkill') }}
+              </button>
+              <button class="btn btn-secondary" @click="openShareDialog">
+                {{ $t('user.shareSkill') }}
+              </button>
             </div>
-            <button class="btn btn-primary btn-enter" @click="enterDsh">
-              {{ $t('user.openDsh') }}
-            </button>
-          </div>
 
-          <div class="tab-divider" />
-
-          <div class="action-buttons">
-            <button class="btn btn-primary" @click="restartDSH">{{ $t('user.restartDsh') }}</button>
-            <button
-              class="btn btn-secondary"
-              :disabled="!connected || userInfo.status !== 'running'"
-              @click="stopContainer"
-            >
-              {{ $t('user.stopContainer') }}
-            </button>
-            <button class="btn btn-danger" @click="resetContainer">
-              {{ $t('user.resetContainer') }}
-            </button>
-          </div>
-          <div class="action-hints">
-            <div class="hint">
-              <strong>{{ $t('user.restartDshFlowTitle') }}</strong>
-              {{ $t('user.restartDshFlow') }}
+            <div v-if="mySkillsLoading" class="config-loading">
+              <div class="mini-spinner"></div>
+              <span>{{ $t('user.mySkillsLoading') }}</span>
             </div>
-            <div class="hint">
-              <strong>{{ $t('user.stopFlowTitle') }}</strong>
-              {{ $t('user.stopFlow') }}
-              {{ usageInfoLabel ? $t('user.todayUsagePrefix') + usageInfoLabel : '' }}
-            </div>
-            <div class="hint">
-              <strong>{{ $t('user.resetFlowTitle') }}</strong>
-              {{ $t('user.resetContainerFlow') }}
-            </div>
-          </div>
-
-          <div class="tab-head">
-            <h4>{{ $t('user.mySkills') }}</h4>
-            <p class="tab-hint">{{ $t('user.mySkillsHint') }}</p>
-          </div>
-          <div class="action-buttons">
-            <button class="btn btn-primary" @click="openImportDialog">
-              {{ $t('user.importSkill') }}
-            </button>
-            <button class="btn btn-primary" @click="openShareDialog">
-              {{ $t('user.shareSkill') }}
-            </button>
-            <span class="env-muted" style="align-self: center">{{ $t('user.mySkillsHint') }}</span>
-          </div>
-
-          <div v-if="mySkillsLoading" class="config-loading">
-            <div class="mini-spinner"></div>
-            <span>{{ $t('user.mySkillsLoading') }}</span>
-          </div>
-          <template v-else>
-            <div v-if="mineData.published.length > 0" class="skill-subsection">
-              <h3>{{ $t('user.myPublished') }}</h3>
-              <div v-for="s in mineData.published" :key="'p-' + s.name" class="skill-row">
-                <div class="skill-row-main">
-                  <strong>{{ s.name }}</strong>
-                  <span class="skill-desc">{{ s.description }}</span>
+            <template v-else>
+              <div v-if="mineData.published.length > 0" class="skill-subsection">
+                <h3>{{ $t('user.myPublished') }}</h3>
+                <div v-for="s in mineData.published" :key="'p-' + s.name" class="skill-row">
+                  <div class="skill-row-main">
+                    <strong>{{ s.name }}</strong>
+                    <span class="skill-desc">{{ s.description }}</span>
+                  </div>
+                  <button class="btn btn-small btn-danger" @click="unpublishSkill(s.name)">
+                    {{ $t('user.unpublish') }}
+                  </button>
                 </div>
-                <button class="btn btn-small btn-danger" @click="unpublishSkill(s.name)">
-                  {{ $t('user.unpublish') }}
-                </button>
               </div>
-            </div>
-            <div v-if="mineData.installed.length > 0" class="skill-subsection">
-              <h3>{{ $t('user.myInstalled') }}</h3>
-              <p v-if="mineData.unverified" class="skill-desc">{{ $t('user.unverifiedNote') }}</p>
-              <div v-for="s in mineData.installed" :key="'i-' + s.name" class="skill-row">
-                <div class="skill-row-main">
-                  <strong>{{ s.name }}</strong>
-                  <span class="skill-desc">
-                    {{
-                      s.description ||
-                      (s.installedAt
-                        ? $t('user.installedSource', {
-                            source: s.source,
-                            date: new Date(s.installedAt).toLocaleString(),
-                          })
-                        : $t('user.installedFromVolume'))
-                    }}
-                  </span>
-                  <span v-if="s.hasUpdate" class="badge badge-warning">{{
-                    $t('user.hasUpdate')
-                  }}</span>
+              <div v-if="mineData.installed.length > 0" class="skill-subsection">
+                <h3>{{ $t('user.myInstalled') }}</h3>
+                <p v-if="mineData.unverified" class="skill-desc">{{ $t('user.unverifiedNote') }}</p>
+                <div v-for="s in mineData.installed" :key="'i-' + s.name" class="skill-row">
+                  <div class="skill-row-main">
+                    <strong>{{ s.name }}</strong>
+                    <span class="skill-desc">
+                      {{
+                        s.description ||
+                        (s.installedAt
+                          ? $t('user.installedSource', {
+                              source: s.source,
+                              date: new Date(s.installedAt).toLocaleString(),
+                            })
+                          : $t('user.installedFromVolume'))
+                      }}
+                    </span>
+                    <span v-if="s.hasUpdate" class="badge badge-warning">{{
+                      $t('user.hasUpdate')
+                    }}</span>
+                  </div>
+                  <button class="btn btn-small btn-danger" @click="uninstallSkill(s.name)">
+                    {{ $t('user.uninstall') }}
+                  </button>
                 </div>
-                <button class="btn btn-small btn-danger" @click="uninstallSkill(s.name)">
-                  {{ $t('user.uninstall') }}
-                </button>
               </div>
-            </div>
-            <p
-              v-if="mineData.published.length === 0 && mineData.installed.length === 0"
-              class="hint"
-            >
-              {{ $t('user.noSkillsHint') }}
-            </p>
-          </template>
-
-          <!-- ════════ 环境·我的现场（货架/选用在「市场」的环境品类）════════ -->
-          <div class="tab-head">
-            <h4>{{ $t('env.mineSectionTitle') }}</h4>
-            <p class="tab-hint">{{ $t('env.mineSectionHint') }}</p>
+              <p
+                v-if="mineData.published.length === 0 && mineData.installed.length === 0"
+                class="hint"
+              >
+                {{ $t('user.noSkillsHint') }}
+              </p>
+              <!-- 插件实物小节（判例 55：无账、以卷为断）：探针取法与技能同船；
+                   null=查不了（≠没了，话术分明）；只陈列不配删钮——插件退场语义
+                   归「回退/环境」侧，此处不开第二把刀 -->
+              <div class="skill-subsection">
+                <h3>{{ $t('user.pluginsTitle') }}</h3>
+                <p v-if="mineData.plugins === null" class="skill-desc">
+                  {{ $t('user.pluginsUnprobed') }}
+                </p>
+                <p v-else-if="mineData.plugins.length === 0" class="skill-desc">
+                  {{ $t('user.pluginsEmpty') }}
+                </p>
+                <div v-for="pl in mineData.plugins || []" :key="'pl-' + pl.name" class="skill-row">
+                  <div class="skill-row-main">
+                    <strong>{{ pl.name }}</strong>
+                    <span v-if="pl.version" class="badge badge-info">v{{ pl.version }}</span>
+                    <span class="skill-desc">{{ pl.description || $t('user.pluginNoDesc') }}</span>
+                    <span class="skill-desc">
+                      {{
+                        $t('user.pluginMeta', {
+                          kind:
+                            pl.kind === 'file' ? $t('user.pluginFileTag') : $t('user.pluginDirTag'),
+                          files: pl.fileCount,
+                          size: fmtBytes(pl.bytes),
+                        })
+                      }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </template>
           </div>
-          <EnvTemplatesUser mode="mine" @mine-changed="loadMine" />
+
+          <div v-show="cSub === 'env'">
+            <!-- ════════ 环境·我的现场（货架/选用在「市场」的环境品类）════════ -->
+            <div class="tab-head">
+              <h4>{{ $t('env.mineSectionTitle') }}</h4>
+              <p class="tab-hint">{{ $t('env.mineSectionHint') }}</p>
+            </div>
+            <EnvTemplatesUser mode="mine" @mine-changed="loadMine" />
+          </div>
         </div>
 
         <!-- ════════ 我的技能 ════════ -->
@@ -898,6 +969,10 @@
 <script setup>
 import { askConfirm, toast } from '../composables/useDialog'
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { useAdminBadges, startAdminBadges, stopAdminBadges } from '../composables/useAdminBadges'
+const { badgeFor } = useAdminBadges()
+// 红点节拍起停的组件侧凭证：防角色状态反复刷新叠加引用计数（起一次=守一次）
+let badgesStarted = false
 import axios from 'axios'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
@@ -927,6 +1002,8 @@ const route = useRoute()
 const activeTab = ref('account')
 // 市场页签内品类（用户终审 IA）：市场=挑（技能/环境）；容器管理=经营（定格/显示/回退/技能装卸）
 const marketCat = ref('skills')
+// 容器管理页三段页签（info/skills/env）；默认容器信息=原第一屏
+const cSub = ref('info')
 // v1.5 刀5C：判权面（credential-status 的 role，服务端活验证 admin 凭证属实才为 'admin'）。
 // tab 注册表按 role 装配——管理页签对普通用户不存在（数据面砍掉，不是 CSS 隐藏）；
 // 对管理员则与用户页签**平级并列**（验收反馈①：消灭"系统管理"嵌套壳，同一侧栏）。
@@ -1206,6 +1283,17 @@ const loadCredentialStatus = async (address) => {
     credInfo.value = data.credential || null
     // v1.5 判权面：role='admin' 才装配「系统管理」tab（服务端活验证凭证属实）
     role.value = data.role === 'admin' ? 'admin' : 'user'
+    // 红点节拍只在管理员在场：首起一次（badgesStarted 守，凭证状态刷新反复走此
+    // 函数不叠加计数）；角色跌落=普通用户/登出，立即停表并复位
+    if (role.value === 'admin') {
+      if (!badgesStarted) {
+        badgesStarted = true
+        startAdminBadges()
+      }
+    } else if (badgesStarted) {
+      badgesStarted = false
+      stopAdminBadges()
+    }
     // （2026-10-23 修重大 bug：initialTabApplied 声明是裸布尔（:918），这里曾按
     // ref 用 .value——赋值即 TypeError，管理员每次装配都在此 throw，深链页签/
     // 续发提示/申请单态全被 catch 吞掉。恢复纯布尔用法，语义不变=仅首次生效）
@@ -1892,7 +1980,7 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
   // 避免切换后短暂闪现上一个用户的共享/安装列表；
   // 也保证后续失败分支（额度用完/资源排队/异常）不会残留旧地址的页面与信息
   if (!isInitialLoad && newAddress !== oldAddress) {
-    mineData.value = { published: [], installed: [], inContainer: [] }
+    mineData.value = { published: [], installed: [], inContainer: [], plugins: null }
     mySkillsLoading.value = true
     userInfo.value = {}
     connected.value = false
@@ -2584,6 +2672,12 @@ const fetchMine = async () => {
 let mineInFlight = null
 
 /** 我的技能列表整体刷新（控制下方列表区的 loading） */
+function fmtBytes(n) {
+  if (typeof n !== 'number' || Number.isNaN(n)) return '—'
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
+}
 const loadMine = async () => {
   if (mineInFlight) return mineInFlight // 并发去重：watch 与切换流程可能重叠触发
   if (!connected.value) return
@@ -2599,6 +2693,7 @@ const loadMine = async () => {
         published: res.published || [],
         installed: res.installed || [],
         unverified: Boolean(res.unverified),
+        plugins: Array.isArray(res.plugins) ? res.plugins : null,
       }
       if (res.reconciled) toast(t('skills.reconciledGone', { n: res.reconciled }))
     } catch (err) {
@@ -2785,6 +2880,7 @@ const doShare = async () => {
 }
 
 onUnmounted(() => {
+  stopAdminBadges()
   // 排队轮询是全局 interval：不随组件卸载停止的话，切走页面的用户仍在后台
   // 空转打接口（僵尸组件 setState），重挂载后新旧两条轮询并行（2026-10 审计）。
   if (queuePollingTimer) {
@@ -2798,6 +2894,11 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* 技能动作行：紧凑贴标题，别再让全局 action-buttons 的 1.25rem 上下大空档 */
+.skill-actions {
+  margin: 0.5rem 0 1rem;
+}
+
 .user-center {
   height: 100%;
   display: flex;
@@ -3031,6 +3132,7 @@ onUnmounted(() => {
 }
 
 .sidebar-item {
+  position: relative;
   width: 100%;
   display: flex;
   align-items: center;

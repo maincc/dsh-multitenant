@@ -52,6 +52,11 @@
             >
               <span class="sidebar-icon" v-html="tab.icon"></span>
               <span>{{ tab.label }}</span>
+              <span
+                v-if="badgeFor(tab.key)"
+                class="tab-dot"
+                :title="$t('admin.pendingTip', { n: badgeFor(tab.key) })"
+              ></span>
             </button>
           </nav>
         </div>
@@ -1359,6 +1364,9 @@
 <script setup>
 import { askConfirm, toast } from '../composables/useDialog'
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useAdminBadges, startAdminBadges, stopAdminBadges } from '../composables/useAdminBadges'
+// 红点判数入口（模板侧 badgeFor 引用此解构——只 import 不解构=运行时 TypeError，上一版踩中自修）
+const { badgeFor, syncCredCount, refreshCred } = useAdminBadges()
 import axios from 'axios'
 import { useI18n } from 'vue-i18n'
 import { buildAdminTabs } from '../admin-tabs'
@@ -1874,10 +1882,30 @@ const signAdminOperation = async (operation, payload) => {
     const { message } = chalRes.data
     const signature = await signMessage(pluginAddress, message)
     const publicKey = await getPublicKey(pluginAddress)
+    // 材料不齐就地刹车（线上案 2026-11-02：插件未解锁时 swtc_getPublicKey 可回
+    // undefined/对象——axios 静默丢非串头，裸 POST 撞上 SIGNATURE_REQUIRED，
+    // 报错文案把人引向"没签名"，实际是"签了但材料半路蒸发"）。绝不再提交无签请求。
+    const nonce = chalRes.data.nonce
+    const sigStr = typeof signature === 'string' ? signature : (signature?.signature ?? '')
+    const pubStr =
+      typeof publicKey === 'string' ? publicKey : (publicKey?.publicKey ?? publicKey?.pubKey ?? '')
+    if (!nonce || !sigStr || !pubStr) {
+      throw new Error(
+        t('admin.sigMaterialMissing', {
+          miss: [
+            !nonce && 'nonce',
+            !sigStr && t('admin.sigKindSign'),
+            !pubStr && t('admin.sigKindPub'),
+          ]
+            .filter(Boolean)
+            .join('、'),
+        }),
+      )
+    }
     return {
-      'x-admin-nonce': chalRes.data.nonce,
-      'x-admin-signature': signature,
-      'x-admin-pubkey': publicKey,
+      'x-admin-nonce': nonce,
+      'x-admin-signature': sigStr,
+      'x-admin-pubkey': pubStr,
     }
   } catch (err) {
     throw new Error(friendlyPluginError(err))
@@ -1900,6 +1928,10 @@ const loadCwtApps = async () => {
     })
     cwtApps.value = res.data.applications || []
     cwtTotal.value = res.data.total || 0
+    // 红点实时化（用户裁定）：审批动作后本函数必被重拉——pending 视图直接搭车，
+    // 切了别的过滤则轻取一次 total，判数始终来自写后重读的库账
+    if (cwtStatusFilter.value === 'pending') syncCredCount(cwtTotal.value)
+    else refreshCred()
   } catch (err) {
     toast(t('admin.credOpFail', { err: err?.response?.data?.error || err.message }))
   } finally {
@@ -2198,6 +2230,10 @@ const fetchData = async (force = false) => {
   }
 }
 
+// 审查 H1（2026-11-06）：diskScanning 六处引用零声明——扫描钮一点必抛。
+// badgeFor 判例同族：模板/引用名缺声明，构建全绿运行时才炸。补上。
+const diskScanning = ref(false)
+
 /** 手动触发精确扫描：du 实测每个租户卷真实占用（O(n)，管理员按需调用） */
 const runDiskScan = async () => {
   if (diskScanning.value) return
@@ -2243,13 +2279,24 @@ const upgradeUser = async (address, tier) => {
 
 const downgradeUser = async (address, tier) => {
   if (tier < 1) return
-  try {
-    await axios.post(`/api/upgrade/${address}`, { tier })
-    await fetchData()
-    toast(t('admin.downgradeOk'))
-  } catch (err) {
-    toast(t('admin.downgradeFail', { err: err.response?.data?.error || err.message }))
-  }
+  // 2026-11-02 实账补刀：2026-10 审计给同端点升级半边上了"确认+签名"，降级半边
+  // 漏了——裸 POST 无签，服务端闸（binding=address:tier 双向同闸）拒得对，用户
+  // 看到的是我们的手术遗漏。与 upgradeUser 同款补全：danger 确认 + run 锁 +
+  // signAdminOperation('user-upgrade')——同一把闸同一张票，降档同样会重启对方容器。
+  await askConfirm({
+    message: t('admin.confirmTierChange', { addr: `${address.slice(0, 10)}…`, tier }),
+    danger: true,
+    run: async () => {
+      try {
+        const headers = await signAdminOperation('user-upgrade', { address, tier })
+        await axios.post(`/api/upgrade/${address}`, { tier }, { headers })
+        await fetchData()
+        toast(t('admin.downgradeOk'))
+      } catch (err) {
+        toast(t('admin.downgradeFail', { err: err.response?.data?.error || err.message }))
+      }
+    },
+  })
 }
 
 const removeUser = async (address) => {
@@ -2868,6 +2915,13 @@ const onVisibilityChange = () => {
 }
 onMounted(() => document.addEventListener('visibilitychange', onVisibilityChange))
 
+onMounted(() => {
+  startAdminBadges()
+})
+onUnmounted(() => {
+  stopAdminBadges()
+})
+// ↑红点节拍收线；下方为本面板既有清理逻辑
 onUnmounted(() => {
   // 清理定时器与监听
   stopPolling()
@@ -2997,6 +3051,7 @@ onUnmounted(() => {
 }
 
 .sidebar-item {
+  position: relative;
   width: 100%;
   display: flex;
   align-items: center;

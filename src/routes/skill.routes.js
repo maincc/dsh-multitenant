@@ -248,6 +248,14 @@ export async function handleSkillRoutes(req, res, path) {
     // POST /api/skills/:name/hide - 管理员下架
     if (segs.length === 2 && segs[1] === 'hide' && req.method === 'POST') {
       if (!requireAdmin(req, res)) return true
+      // 审查 H3（2026-11-06）：下架会把作者正文移出共享仓，此前只凭会话 cookie——
+      // 同站 CSRF 即毁他人技能。补会话+当场钱包签名双门禁（binding 锁技能名，防
+      // "签 A 执行 B"）；attach 本域自挂（user.routes:1073 同款先例，非全局装配面）。
+      const { requireAdminSignature, attachAdminSignature } =
+        await import('../middleware/admin-signature.middleware.js')
+      attachAdminSignature(req)
+      if (!requireAdminSignature(req, res, 'skill-hide', { name }, getAdminSession(req)))
+        return true
       try {
         const entry = await skillService.unpublish(
           req.headers.cookie ? getAdminSession(req) : '',

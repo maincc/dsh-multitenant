@@ -277,12 +277,26 @@ export class SkillService {
    * 旧版脚本无 items 时 sha256=null（结构兼容，哈希级对账自动降级名单级）。
    */
   async probeVolumeItems(address) {
+    const full = await this.probeVolumeFull(address)
+    return full ? full.items : null
+  }
+
+  /** 卷实物全量探针：技能 items + 插件 plugins（判例 55：插件无账，以卷为断）
+   *  返回 null=查不了（无容器/无卷/脚本炸）；数组可为空=实物真没有——口径分明 */
+  async probeVolumeFull(address) {
     try {
       const out = await tenantConfigService.runScript(address, 'list-skills.mjs', [])
       const parsed = JSON.parse(out)
-      if (Array.isArray(parsed?.items)) return parsed.items
-      if (Array.isArray(parsed?.names)) return parsed.names.map((name) => ({ name, sha256: null }))
-      return null
+      let items = null
+      if (Array.isArray(parsed?.items)) items = parsed.items
+      else if (Array.isArray(parsed?.names))
+        items = parsed.names.map((name) => ({ name, sha256: null }))
+      if (!items) return null
+      return {
+        items,
+        plugins: Array.isArray(parsed.plugins) ? parsed.plugins : [],
+        pluginsDir: parsed.pluginsDir ?? null,
+      }
     } catch {
       return null
     }
@@ -316,7 +330,9 @@ export class SkillService {
       .filter((e) => e.sharer === address && e.status === 'active')
       .map((e) => this.toPublic(e))
     const installs = this.readInstalls()[address] || []
-    const volume = await this.probeVolumeItems(address)
+    // 一船两舱：技能实物 + 插件实物同探针取回（不多开一次容器跑）
+    const probeFull = await this.probeVolumeFull(address)
+    const volume = probeFull ? probeFull.items : null
     const physical = volume ? volume.map((i) => i.name) : null
     const volHash = new Map((volume || []).map((i) => [i.name, i.sha256]))
     // 内容级对账（判例 53）：卷实物哈希 ≠ 货架当前版本应有的哈希 = 有差异——
@@ -406,6 +422,9 @@ export class SkillService {
     const out = { published, installed }
     if (reconciled) out.reconciled = reconciled
     if (unverified) out.unverified = true
+    // 插件实物：null=本轮没探到卷（容器未运行等），[]=卷里真没有——前台两话分开说
+    out.plugins = probeFull ? probeFull.plugins : null
+    out.pluginsDir = probeFull ? probeFull.pluginsDir : null
     return out
   }
 
@@ -563,12 +582,27 @@ export class SkillService {
     if (!admin && entry.sharer !== normalizeAddress(operator)) {
       throw new ForbiddenError('只能取消自己共享的技能（管理员可下架任意技能）')
     }
-    // 取消共享 = 删除共享仓正文文件 + 移除索引条目。
-    // 已安装用户持有的副本在自己卷里，不受影响；同名可重新发布（全新条目）。
+    // 取消共享 = 移出索引 + 正文存证归档（审查 H3 续：原 rmSync 直删违"被引用之物
+    // 不可物理删"——安装账的 installedHash/内容级对账仍要按货架版本复推期望哈希，
+    // 正文没了账就瞎；对齐 env 驳回"拆账先行+存证式"判例）。
+    // 已安装用户副本在自己卷，不受影响；同名可重新发布（归档不在货架路径，不占名）。
     const removed = this.toPublic(entry)
     entries.splice(idx, 1)
     await this.writeIndex(entries)
-    rmSync(join(this.storeDir, name), { recursive: true, force: true })
+    const src = join(this.storeDir, name)
+    if (existsSync(src)) {
+      try {
+        // 归档随仓走：storeDir 的上一级（默认=<data>/skills → <data>/archive/skills，
+        // 与 dataService.dataDir 同址；测试自定义 storeDir 时自然沙盒隔离，不踏公共盘）
+        const arch = join(this.storeDir, '..', 'archive', 'skills')
+        mkdirSync(arch, { recursive: true })
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+        renameSync(src, join(arch, `${name}-${stamp}`))
+      } catch {
+        // 归档失败宁留实物不直删（方向与"查不了不删"同律）：索引已摘=货架不可见，
+        // 磁盘残留交 GC 续账处理，绝不拿删除赌运气
+      }
+    }
     dataService.logOperation('skill_unpublish', {
       address: normalizeAddress(operator),
       skill: name,

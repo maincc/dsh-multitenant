@@ -10,6 +10,26 @@
       </ul>
     </div>
 
+    <!-- 容器管理顶栏 tab（用户裁定 2026-11-02：与市场页 action-buttons 同款形态）：
+         现场 ⇄ 上传。上传钮只在资格闸亮时在场（与底部主按钮同闸），向导全程走 tab 页。 -->
+    <div v-if="mode !== 'market'" class="action-buttons env-mine-tabs">
+      <button
+        class="btn btn-small"
+        :class="envTab === 'onsite' ? 'btn-primary' : 'btn-secondary'"
+        @click="envTab = 'onsite'"
+      >
+        {{ $t('env.tabOnsite') }}
+      </button>
+      <button
+        v-if="topUploadReady || wz.active"
+        class="btn btn-small"
+        :class="envTab === 'upload' ? 'btn-primary' : 'btn-secondary'"
+        @click="goUploadTab"
+      >
+        ⬆ {{ $t('env.uploadTopBtn') }}
+      </button>
+    </div>
+
     <!-- 当前来源条（我的现场） -->
     <div v-if="mode !== 'market'" class="env-current">
       <span class="env-current-label">{{ $t('env.currentSource') }}</span>
@@ -126,7 +146,7 @@
     </template>
 
     <!-- 我的模板（作者可见全状态，驳回理由回传） -->
-    <template v-if="mode !== 'market' && drafts.length">
+    <template v-if="mode !== 'market' && envTab === 'onsite' && drafts.length">
       <h4 class="env-h4">{{ $t('env.mineTitle') }}</h4>
       <div v-for="d in drafts" :key="d.id" class="env-mine-row">
         <span class="env-card-name">{{ d.name }}</span>
@@ -170,7 +190,14 @@
     </template>
 
     <!-- 定格入口（四态：套来的环境要先回退 / 故障≠无资格 / CWT 墙 / 可定格） -->
-    <div v-if="mode !== 'market'" class="env-freeze-zone">
+    <div
+      v-if="
+        mode !== 'market' &&
+        envTab === 'onsite' &&
+        !(elig.status === 'ok' && canFreeze && elig.containerRunning !== false)
+      "
+      class="env-freeze-zone"
+    >
       <template v-if="!wz.active">
         <div v-if="elig.status === 'ok' && elig.onTemplate" class="env-wall">
           <div class="env-wall-title">{{ $t('env.onTplTitle') }}</div>
@@ -199,13 +226,8 @@
           <div class="env-wall-steps">{{ $t('env.wallSteps') }}</div>
         </div>
         <template v-else-if="elig.status === 'ok'">
-          <button
-            class="btn btn-primary"
-            :disabled="!canFreeze || busy || elig.containerRunning === false"
-            @click="openWizard"
-          >
-            {{ $t('env.freezeBtn') }}
-          </button>
+          <!-- 底部主钮已摘（用户裁定 2026-11-02：两个上传钮只留上方 tab）；
+               条件未齐的两句提示原样留下，缺牙不装齐 -->
           <p v-if="!canFreeze && !loadingInv" class="env-muted">{{ $t('env.needCwt') }}</p>
           <p v-else-if="canFreeze && elig.containerRunning === false" class="env-muted">
             {{ $t('env.needRunning') }}
@@ -296,7 +318,7 @@
     </div>
 
     <!-- ================= 定格向导（对齐 docs/env-template-wizard.md 六步） ================= -->
-    <div v-if="wz.active && mode !== 'market'" class="env-wizard">
+    <div v-if="wz.active && mode !== 'market' && envTab === 'upload'" class="env-wizard">
       <div class="env-wz-head">
         <span
           v-for="(s, i) in ['name', 'pick', 'confirm']"
@@ -526,7 +548,7 @@
  * 纪律：所有"将发生什么"的数据来自服务端 dryRun（前端不自己编停机秒数、
  * 不算冲突、不美化承诺）；勾选默认全不选；体积只展示服务端算好的数。
  */
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 
 // 一个组件两张脸（IA 重排：市场=逛与选用；容器管理=我的现场）：
 //   mode='market' 货架段（讲解+模板卡片+dryRun 预览+选用）
@@ -538,6 +560,7 @@ const mode = props.mode
 import { useI18n } from 'vue-i18n'
 import axios from 'axios'
 import { toast, askConfirm } from '../composables/useDialog'
+import { refreshIfWatching } from '../composables/useAdminBadges'
 
 const { t } = useI18n()
 // 出身自述（判例 55 B 面）：闭包引用后定义的 wz——调用期取值，无 TDZ 问题
@@ -572,6 +595,10 @@ function dupOf(t) {
 const drafts = ref([])
 const current = ref(null)
 const canFreeze = ref(false)
+// 顶部快捷钮在场判据：eligibility 已定、可格、非套来态（与底部主按钮同一把闸）
+const topUploadReady = computed(
+  () => elig.value.status === 'ok' && canFreeze.value && !elig.value.onTemplate,
+)
 const elig = ref({ status: 'loading', containerRunning: true, msg: '', onTemplate: null })
 const loadingInv = ref(true)
 const busy = ref(false)
@@ -597,10 +624,29 @@ const wz = ref({
   error: '',
 })
 const wzStep = ref('name')
+// 容器管理顶栏 tab（现场⇄上传）：入口统一 goUploadTab——openWizard 每次全量重置
+// wz（在途草稿不重开），故向导已开时翻 tab 只切视图不碰状态；向导收场自动翻回现场。
+const envTab = ref('onsite')
+function goUploadTab() {
+  envTab.value = 'upload'
+  if (!wz.value.active) openWizard()
+}
+watch(
+  () => wz.value.active,
+  (on) => {
+    if (!on && envTab.value === 'onsite') return
+    if (!on && envTab.value === 'upload') envTab.value = 'onsite'
+  },
+)
+// 容器管理页顶部快捷入口（用户裁定）跨组件调用：开向导+翻页签的正当口只有一个
+defineExpose({ goUploadTab, topUploadReady })
 const steps = ['name', 'pick', 'confirm', 'run']
 const stepOrder = (s) => steps.indexOf(s)
 
 async function loadAll() {
+  // 用户侧动作全走本函数收口重拉——管理员在同一浏览器时顺手补问红点判数
+  // （refreshIfWatching 只在节拍器在场才发请求：普通用户零流量约束不破）
+  refreshIfWatching()
   const res = await axios.get('/api/user/environments')
   list.value = res.data.environments || []
   drafts.value = res.data.myWorks || []
@@ -1281,5 +1327,18 @@ const totalBundleBytes = computed(() => {
 .env-done {
   font-size: 14px;
   color: var(--ok-color, #57b874);
+}
+
+.env-mine-tabs {
+  margin: 0.75rem 0 0.75rem;
+  gap: 1.5rem;
+}
+/* 用户处方走 margin/padding 三重保险：flex gap 失效的渲染核也照样隔开——
+   每颗 pill 两侧各 0.75rem margin（相邻即 1.5rem）+ 内衬 padding 加宽 */
+.env-mine-tabs > .btn {
+  margin-left: 0.75rem;
+  margin-right: 0.75rem;
+  padding-left: 1.25rem;
+  padding-right: 1.25rem;
 }
 </style>

@@ -242,9 +242,11 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import axios from 'axios'
 import { toast, askConfirm } from '../composables/useDialog'
+import { useAdminBadges } from '../composables/useAdminBadges'
 import { requestAccounts, signMessage, getPublicKey } from '../api/wallet'
 
 const { t } = useI18n()
+const { syncEnvRows } = useAdminBadges()
 const PROV_KEYS = {
   self: 'env.provSelf',
   github: 'env.provGithub',
@@ -283,6 +285,8 @@ const cdValid = computed(() => cd.value.address && /^[a-z0-9][a-z0-9-]{1,40}$/.t
 async function load() {
   const res = await axios.get('/api/admin/environments')
   all.value = res.data.environments || []
+  // 审批动作后 list 必重拉——红点判数从同一份行就地同步，不等轮询（用户裁定：实时）
+  syncEnvRows(all.value)
 }
 onMounted(() => load().catch((e) => toast(errMsg(e))))
 const errMsg = (e) => e?.response?.data?.error || e?.message || 'error'
@@ -465,7 +469,13 @@ async function cdGo() {
       cd.value.dryDone = true
       return
     }
-    const headers = await signOp('env-commit', { address: payload.address, slug: payload.slug })
+    // H4 配套：勾选集合进票——挑战 payload 必须与执行体 include 同形（两侧各自
+    // canon 后逐字节等），否则"签空勾选"与"执行真勾选" binding 不等当场拒
+    const headers = await signOp('env-commit', {
+      address: payload.address,
+      slug: payload.slug,
+      include: payload.include,
+    })
     const res = await axios.post('/api/admin/env-commit', payload, { headers })
     toast(t('env.admin.committed', { tag: res.data.template?.slug || payload.slug }))
     cd.value.open = false
@@ -615,10 +625,16 @@ async function cdGo() {
 }
 .enva-modal-box {
   width: min(460px, 92vw);
-  background: var(--bg-elevated, #1d2129);
-  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
-  border-radius: 12px;
+  /* 用户裁定 2026-11-06：代格弹窗与全站弹窗同浅色壳（modal-panel 配方背景 #fff）
+     ——原 var(--bg-elevated) 全仓零定义，暗色兜底值一直在裸奔 */
+  background: #fff;
+  color: #1d2129;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 16px;
   padding: 16px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+  max-height: 86vh;
+  overflow: auto;
 }
 .enva-label {
   display: block;
@@ -632,9 +648,10 @@ async function cdGo() {
   margin-top: 3px;
   padding: 6px 10px;
   border-radius: 8px;
-  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.14));
-  background: transparent;
-  color: inherit;
+  /* 孪生面：壳转白后白边透明底输入框会蒸发，同刀转浅灰描边 */
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  background: #fbfcfd;
+  color: #1d2129;
   font-size: 13px;
 }
 .enva-ul {
