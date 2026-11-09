@@ -183,7 +183,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
-import { signChallenge } from '../../api/wallet.js'
+import { requestAccounts, signMessage, getPublicKey } from '../../api/wallet.js'
 import { useAdminBadges, refreshIfWatching } from '../../composables/useAdminBadges.js'
 
 const { badgeFor } = useAdminBadges()
@@ -323,14 +323,29 @@ function nextPage() {
   loadApplications()
 }
 
-async function signAdminOperation(action, data) {
-  const challengeRes = await axios.post('/api/admin/challenge', { action })
-  const { nonce, message } = challengeRes.data
-  const auth = await signChallenge()
+async function signAdminOperation(operation, payload) {
+  // 获取钱包地址
+  const pluginAddress = await requestAccounts()
+  
+  // 调用 challenge 接口
+  const chalRes = await axios.post('/api/admin/challenge', {
+    address: pluginAddress.toLowerCase(),
+    operation,
+    payload,
+  })
+  
+  const { message, nonce } = chalRes.data
+  
+  // 签名
+  const signature = await signMessage(pluginAddress, message)
+  const publicKey = await getPublicKey(pluginAddress)
+  
+  const sigStr = typeof signature === 'string' ? signature : (signature?.signature ?? '')
+  
   return {
     'x-admin-nonce': nonce,
-    'x-admin-signature': auth.signature,
-    'x-admin-pubkey': auth.publicKey,
+    'x-admin-signature': sigStr,
+    'x-admin-pubkey': publicKey,
   }
 }
 
