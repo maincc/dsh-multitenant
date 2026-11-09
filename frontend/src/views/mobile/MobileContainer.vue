@@ -108,6 +108,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
+import { requestAccounts, signMessage, getPublicKey } from '../../api/wallet.js'
 
 const loading = ref(true)
 const userInfo = ref({
@@ -163,11 +164,78 @@ const usageInfoLabel = computed(() => {
   return `${u.usedMinutes} / ${u.dailyMinutes} 分钟`
 })
 
+// 连接钱包并建立会话（简化版 connectWithOwnership）
+async function connectWithOwnership(address) {
+  try {
+    // 1. 请求钱包账户
+    const pluginAddress = await requestAccounts()
+    
+    // 2. 领取挑战
+    const chalRes = await fetch(`/connect-challenge?address=${encodeURIComponent(pluginAddress)}`)
+    const challenge = await chalRes.json()
+    const nonce = challenge.nonce
+    const message = challenge.message
+    if (!nonce || !message) {
+      throw new Error(challenge.error || '领取连接挑战失败，请重试')
+    }
+    
+    // 3. 钱包签名
+    const signature = await signMessage(pluginAddress, message)
+    const publicKey = await getPublicKey(pluginAddress)
+    
+    // 4. 带签名访问 /connect，建立会话
+    const params = new URLSearchParams({
+      address,
+      nonce,
+      signature,
+      publicKey,
+      format: 'json',
+      action: 'login',
+    })
+    const cRes = await fetch(`/connect?${params}`)
+    return cRes
+  } catch (err) {
+    console.error('连接失败:', err)
+    throw err
+  }
+}
+
+// 检查并建立登录会话
+async function ensureLogin(address) {
+  try {
+    // 先检查是否已有有效会话
+    const sessionRes = await axios.get('/api/user/session-info')
+    if (sessionRes.data?.address && 
+        String(sessionRes.data.address).toLowerCase() === String(address).toLowerCase()) {
+      return true // 已有有效会话
+    }
+  } catch {
+    // 会话查询失败，需要登录
+  }
+  
+  // 没有有效会话，调用钱包登录
+  try {
+    const res = await connectWithOwnership(address)
+    return res.status === 200
+  } catch (err) {
+    console.error('登录失败:', err)
+    alert('登录失败: ' + (err.message || '未知错误'))
+    return false
+  }
+}
+
 async function loadUserInfo() {
   try {
     const res = await axios.get('/api/user/credential-status')
     role.value = res.data.role || 'user'
     const address = res.data.address
+
+    // 确保已登录（建立会话）
+    const loginSuccess = await ensureLogin(address)
+    if (!loginSuccess) {
+      console.error('登录失败，无法加载容器信息')
+      return
+    }
 
     // 获取容器信息（使用 PC 端的端点）
     const containerRes = await axios.get(`/api/user/${address}`)
