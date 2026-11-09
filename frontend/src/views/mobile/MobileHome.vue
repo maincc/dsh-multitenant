@@ -110,11 +110,12 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted, onActivated, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import axios from 'axios'
 
 const router = useRouter()
+const route = useRoute()
 const address = ref('')
 const role = ref('user')
 const containerStatus = ref(null)
@@ -147,12 +148,26 @@ async function scanOrphanVolumes() {
 }
 
 async function checkLoginStatus() {
+  // 先检查 localStorage 中是否有钱包地址（UserCenter 连接后保存）
+  const savedAddress = localStorage.getItem('swtc_address')
+  console.log('[MobileHome] checkLoginStatus - localStorage swtc_address:', savedAddress)
+
+  if (!savedAddress) {
+    console.log('[MobileHome] No saved address in localStorage, setting isLoggedIn to false')
+    isLoggedIn.value = false
+    return
+  }
+
+  // 检查后端 session
   try {
+    console.log('[MobileHome] Checking backend session...')
     const res = await axios.get('/api/user/credential-status')
+    console.log('[MobileHome] Backend session check success:', res.data)
     isLoggedIn.value = true
     address.value = res.data.address || ''
     role.value = res.data.role || 'user'
   } catch (e) {
+    console.log('[MobileHome] Backend session check failed:', e.response?.status, e.response?.data)
     if (e.response?.status === 401) {
       isLoggedIn.value = false
     } else {
@@ -187,12 +202,38 @@ async function loadStats() {
 }
 
 onMounted(async () => {
+  console.log('[MobileHome] Component mounted')
   await checkLoginStatus()
   if (isLoggedIn.value) {
     await loadContainerStatus()
     await loadStats()
   }
 })
+
+// 组件被激活时（从缓存中恢复）重新检查登录状态
+onActivated(async () => {
+  console.log('[MobileHome] Component activated, rechecking login status')
+  await checkLoginStatus()
+  if (isLoggedIn.value) {
+    await loadContainerStatus()
+    await loadStats()
+  }
+})
+
+// 监听路由变化，当回到首页时重新检查登录状态
+watch(
+  () => route.path,
+  async (newPath) => {
+    if (newPath === '/') {
+      console.log('[MobileHome] Route changed to /, rechecking login status')
+      await checkLoginStatus()
+      if (isLoggedIn.value) {
+        await loadContainerStatus()
+        await loadStats()
+      }
+    }
+  },
+)
 </script>
 
 <style scoped>
@@ -355,8 +396,13 @@ onMounted(async () => {
 }
 
 @keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
 }
 
 .docker-info {

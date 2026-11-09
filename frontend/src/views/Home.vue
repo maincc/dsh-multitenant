@@ -1,7 +1,52 @@
 <template>
-  <!-- 移动端：使用独立的移动端首页组件 -->
-  <MobileHome v-if="isMobile" />
-  
+  <!-- 移动端：根据登录状态显示不同内容 -->
+  <div v-if="isMobile">
+    <!-- 未登录：显示产品介绍页（和桌面一样） -->
+    <div v-if="!isLoggedIn" class="home">
+      <div class="hero">
+        <h1>{{ $t('home.heroTitle') }}</h1>
+        <p class="subtitle">{{ $t('home.subtitle') }}</p>
+
+        <div class="features">
+          <div class="feature-card">
+            <div class="icon">🔐</div>
+            <h3>{{ $t('home.features.wallet.title') }}</h3>
+            <p>{{ $t('home.features.wallet.desc') }}</p>
+          </div>
+          <div class="feature-card">
+            <div class="icon">📦</div>
+            <h3>{{ $t('home.features.container.title') }}</h3>
+            <p>{{ $t('home.features.container.desc') }}</p>
+          </div>
+          <div class="feature-card">
+            <div class="icon">⚡</div>
+            <h3>{{ $t('home.features.scale.title') }}</h3>
+            <p>{{ $t('home.features.scale.desc') }}</p>
+          </div>
+          <div class="feature-card">
+            <div class="icon">🪪</div>
+            <h3>{{ $t('home.features.credential.title') }}</h3>
+            <p>{{ $t('home.features.credential.desc') }}</p>
+          </div>
+          <div class="feature-card">
+            <div class="icon">💾</div>
+            <h3>{{ $t('home.features.persist.title') }}</h3>
+            <p>{{ $t('home.features.persist.desc') }}</p>
+          </div>
+        </div>
+
+        <div class="actions">
+          <router-link to="/user" class="btn btn-primary btn-large">
+            {{ $t('home.actions.start') }}
+          </router-link>
+        </div>
+      </div>
+    </div>
+
+    <!-- 已登录：显示系统概览页 -->
+    <MobileHome v-else />
+  </div>
+
   <!-- 桌面端：原有首页 -->
   <div v-else class="home">
     <div class="hero">
@@ -197,22 +242,62 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, onActivated, watch } from 'vue'
+import { useRoute } from 'vue-router'
+import axios from 'axios'
 import MobileHome from './mobile/MobileHome.vue'
 
+const route = useRoute()
 const isMobile = ref(window.innerWidth <= 768)
+const isLoggedIn = ref(false)
 
 function updateMobile() {
   isMobile.value = window.innerWidth <= 768
 }
 
+// 检查登录状态
+async function checkLoginStatus() {
+  // 先检查 localStorage 中是否有钱包地址
+  const savedAddress = localStorage.getItem('swtc_address')
+  if (!savedAddress) {
+    isLoggedIn.value = false
+    return
+  }
+
+  // 检查后端 session
+  try {
+    const res = await axios.get('/api/user/credential-status')
+    isLoggedIn.value = true
+  } catch (e) {
+    if (e.response?.status === 401) {
+      isLoggedIn.value = false
+    }
+  }
+}
+
 onMounted(() => {
   window.addEventListener('resize', updateMobile)
+  checkLoginStatus()
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', updateMobile)
 })
+
+// 组件被激活时重新检查登录状态
+onActivated(() => {
+  checkLoginStatus()
+})
+
+// 监听路由变化
+watch(
+  () => route.path,
+  () => {
+    if (route.path === '/') {
+      checkLoginStatus()
+    }
+  },
+)
 </script>
 
 <style scoped>
