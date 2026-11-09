@@ -166,9 +166,10 @@ async function loadUserInfo() {
   try {
     const res = await axios.get('/api/user/credential-status')
     role.value = res.data.role || 'user'
+    const address = res.data.address
 
-    // 获取容器信息
-    const containerRes = await axios.get('/api/user/container-info')
+    // 获取容器信息（使用 PC 端的端点）
+    const containerRes = await axios.get(`/api/user/${address}`)
     userInfo.value = {
       port: containerRes.data.port || '',
       tier: containerRes.data.tier || 'basic',
@@ -184,8 +185,13 @@ async function loadUserInfo() {
 
 async function loadUsageInfo() {
   try {
-    const res = await axios.get('/api/user/usage-info')
-    usageInfo.value = res.data
+    const res = await axios.get('/api/user/credential-status')
+    const address = res.data.address
+    if (!address) return
+
+    // 使用 PC 端的端点
+    const usageRes = await axios.get(`/connect-status?address=${encodeURIComponent(address)}`)
+    usageInfo.value = usageRes.data.usage || null
   } catch (e) {
     console.error('加载使用信息失败:', e)
   }

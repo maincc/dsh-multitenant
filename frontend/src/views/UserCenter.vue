@@ -82,11 +82,7 @@
         </div>
         <!-- 技能 -->
         <div v-else-if="mobileTab === 'skills'" class="mobile-page">
-          <div class="mobile-placeholder">
-            <div class="placeholder-icon">🎯</div>
-            <div class="placeholder-text">技能市场</div>
-            <div class="placeholder-hint">待实现</div>
-          </div>
+          <MobileSkills />
         </div>
         <!-- 审批 -->
         <div v-else-if="mobileTab === 'approvals'" class="mobile-page">
@@ -1066,6 +1062,7 @@ import AdminPanel from './AdminPanel.vue'
 import EnvTemplatesUser from '../components/EnvTemplatesUser.vue'
 import MobileHome from './mobile/MobileHome.vue'
 import MobileContainer from './mobile/MobileContainer.vue'
+import MobileSkills from './mobile/MobileSkills.vue'
 import SkillMarket from './SkillMarket.vue'
 import { buildAdminTabs } from '../admin-tabs'
 import {
