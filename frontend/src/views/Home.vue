@@ -1,5 +1,9 @@
 <template>
-  <div class="home">
+  <!-- 移动端：使用独立的移动端首页组件 -->
+  <MobileHome v-if="isMobile" />
+  
+  <!-- 桌面端：原有首页 -->
+  <div v-else class="home">
     <div class="hero">
       <h1>{{ $t('home.heroTitle') }}</h1>
       <p class="subtitle">{{ $t('home.subtitle') }}</p>
@@ -192,7 +196,24 @@
   </div>
 </template>
 
-<script setup></script>
+<script setup>
+import { ref, onMounted, onUnmounted } from 'vue'
+import MobileHome from './mobile/MobileHome.vue'
+
+const isMobile = ref(window.innerWidth <= 768)
+
+function updateMobile() {
+  isMobile.value = window.innerWidth <= 768
+}
+
+onMounted(() => {
+  window.addEventListener('resize', updateMobile)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', updateMobile)
+})
+</script>
 
 <style scoped>
 .home {
