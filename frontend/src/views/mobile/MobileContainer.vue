@@ -278,23 +278,41 @@ async function enterDsh() {
   }
   
   try {
+    console.log('[MobileContainer] enterDsh - 开始建立会话...')
     // 先建立会话（与 PC 版 enterDsh 一致）
     const { res, address } = await connectWithOwnership()
+    console.log('[MobileContainer] enterDsh - 响应状态:', res.status, '地址:', address)
     
     if (res.status === 200) {
       const data = await res.json()
+      console.log('[MobileContainer] enterDsh - 响应数据:', data)
       if (data?.url) {
         // 打开后端返回的 URL（已包含会话信息）
         window.open(data.url, '_blank', 'noopener')
         return
       }
-      alert(data?.message || data?.error || '进入 DSH 失败')
+      alert(data?.message || data?.error || '进入 DSH 失败：未返回 URL')
+      return
+    }
+    
+    if (res.status === 302) {
+      const loc = res.headers.get('location')
+      console.log('[MobileContainer] enterDsh - 302 重定向到:', loc)
+      if (loc) {
+        window.open(loc, '_blank', 'noopener')
+      }
+      return
+    }
+    
+    if (res.status === 202) {
+      const data = await res.json()
+      alert(data.message || data.error || '资源不足，请等待')
       return
     }
     
     alert('进入 DSH 失败: HTTP ' + res.status)
   } catch (err) {
-    console.error('进入 DSH 失败:', err)
+    console.error('[MobileContainer] enterDsh 失败:', err)
     alert('进入 DSH 失败: ' + (err.message || '未知错误'))
   }
 }
