@@ -506,7 +506,7 @@ onUnmounted(() => {
   background: #fff;
   border-radius: 12px;
   box-shadow: 0 2px 8px rgba(60, 70, 120, 0.06);
-  overflow: hidden;
+  position: relative;
 }
 
 .tab-group-btn {
@@ -519,13 +519,23 @@ onUnmounted(() => {
   color: #8a90a3;
   cursor: pointer;
   transition: all 0.2s;
-  border-bottom: 3px solid transparent;
+  position: relative;
 }
 
 .tab-group-btn.active {
   color: #6a72e8;
   background: #f0f4ff;
-  border-bottom-color: #6a72e8;
+}
+
+.tab-group-btn.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 20%;
+  right: 20%;
+  height: 3px;
+  background: #6a72e8;
+  border-radius: 3px 3px 0 0;
 }
 
 /* 子 tab 组 */

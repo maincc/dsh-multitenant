@@ -167,9 +167,8 @@ function fmtBytes(bytes) {
 
 async function loadList() {
   try {
-    const address = localStorage.getItem('swtc_address') || undefined
-    const res = await axios.get('/api/env/templates', { params: { address } })
-    list.value = res.data.templates || []
+    const res = await axios.get('/api/user/environments')
+    list.value = res.data.environments || []
   } catch (e) {
     console.error('加载环境列表失败:', e)
   }
@@ -177,8 +176,8 @@ async function loadList() {
 
 async function loadCurrent() {
   try {
-    const res = await axios.get('/api/env/current')
-    current.value = res.data
+    const res = await axios.get('/api/user/environments')
+    current.value = res.data.yourCurrent || null
   } catch (e) {
     console.error('加载当前环境失败:', e)
   }
@@ -197,9 +196,10 @@ async function applyEnv(tpl) {
   
   busy.value = true
   try {
-    await axios.post(`/api/env/apply/${tpl.id}`)
+    await axios.post('/api/user/environment/apply', { id: tpl.id })
     alert(`环境 "${tpl.name}" 应用成功！`)
     await loadCurrent()
+    await loadList()
     closeDetail()
   } catch (e) {
     console.error('应用环境失败:', e)
@@ -214,9 +214,10 @@ async function revertEnv() {
   
   busy.value = true
   try {
-    await axios.post('/api/env/revert')
+    await axios.post('/api/user/environment/revert', { alsoClean: true })
     alert('已回退到默认环境')
     await loadCurrent()
+    await loadList()
   } catch (e) {
     console.error('回退环境失败:', e)
     alert('回退失败: ' + (e.response?.data?.error || e.message))
@@ -230,7 +231,7 @@ async function unpublishEnv(tpl) {
   
   busy.value = true
   try {
-    await axios.delete(`/api/env/templates/${tpl.id}`)
+    await axios.post('/api/user/environment/unpublish', { id: tpl.id })
     alert('已下架')
     await loadList()
   } catch (e) {
