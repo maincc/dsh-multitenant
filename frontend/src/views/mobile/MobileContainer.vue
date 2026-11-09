@@ -19,88 +19,210 @@
 
       <!-- 主体内容 -->
       <div class="body">
-        <!-- 容器信息卡片 -->
-        <div class="card">
-          <div class="kv">
-            <span class="k">专属端口</span>
-            <span class="v mono" style="font-weight: 700">{{ userInfo.port || '-' }}</span>
-          </div>
-          <div class="kv">
-            <span class="k">当前配额</span>
-            <span class="v">
-              <span class="badge" :class="tierBadgeClass">{{ tierLabel }}</span>
-            </span>
-          </div>
-          <div class="kv">
-            <span class="k">容器状态</span>
-            <span class="v">
-              <span class="badge" :class="statusBadgeClass">{{ statusText }}</span>
-            </span>
-          </div>
-        </div>
-
-        <!-- 资源使用卡片 -->
-        <div class="card">
-          <div class="kv">
-            <span class="k">CPU 使用率</span>
-            <span class="v" style="font-weight: 700">{{ userInfo.stats?.cpu || '0%' }}</span>
-          </div>
-          <div class="kv" style="border: none; padding-bottom: 4px">
-            <span class="k">内存使用</span>
-            <span class="v" style="font-weight: 700">
-              {{ userInfo.stats?.memory || '0MiB' }}
-              <span style="color: #8a90a3; font-weight: 400">
-                ({{ userInfo.stats?.memoryPercent || '0%' }})
-              </span>
-            </span>
-          </div>
-          <div class="progress">
-            <i :style="{ width: memoryPercent }"></i>
-          </div>
-        </div>
-
-        <!-- 进入 DSH 卡片 -->
-        <div class="card enter-card">
-          <div class="ct">🚀 进入 DSH</div>
-          <div class="cd">
-            点击下方按钮进入你的专属 DSH 实例（每次进入需插件签名，用于运行匹配）
-          </div>
-          <div style="margin-top: 12px">
-            <button class="btn btn-p" @click="enterDsh" :disabled="enteringDsh">
-              {{ enteringDsh ? '正在进入...' : '打开 DSH Web UI' }}
-            </button>
-          </div>
-        </div>
-
-        <!-- 操作按钮 -->
-        <div class="btn-row">
-          <button class="btn btn-p" @click="restartDSH" :disabled="containerBooting">
-            🔄 重启服务
+        <!-- 子 tab 切换 -->
+        <div class="sub-tabs">
+          <button
+            class="sub-tab"
+            :class="{ active: cSub === 'info' }"
+            @click="cSub = 'info'"
+          >
+            容器信息
           </button>
           <button
-            class="btn btn-g"
-            @click="stopContainer"
-            :disabled="!connected || userInfo.status !== 'running'"
+            class="sub-tab"
+            :class="{ active: cSub === 'skills' }"
+            @click="cSub = 'skills'; loadMySkills()"
           >
-            ■ 停止容器
+            技能插件
+          </button>
+          <button
+            class="sub-tab"
+            :class="{ active: cSub === 'env' }"
+            @click="cSub = 'env'; loadEnvVars()"
+          >
+            环境现场
           </button>
         </div>
 
-        <!-- 危险操作 -->
-        <button class="btn btn-r" @click="resetContainer">🗑 重置容器（删除数据）</button>
-
-        <!-- 说明卡片 -->
-        <div class="card">
-          <div class="cd">
-            <b style="color: #4b5162">重启服务：</b>
-            安装插件后需重启 DSH 服务才能生效<br /><br />
-            <b style="color: #4b5162">停止容器：</b>
-            立即结束今日使用时长并保全剩余额度，数据保留，可随时重新启动。{{
-              usageInfoLabel ? '今日已用 ' + usageInfoLabel : ''
-            }}<br /><br />
-            <b style="color: #4b5162">重置容器：</b>
-            删除所有数据和配置，重新开始（不可恢复）
+        <!-- 容器信息 tab -->
+        <div v-show="cSub === 'info'">
+          <!-- 容器信息卡片 -->
+          <div class="card">
+            <div class="kv">
+              <span class="k">专属端口</span>
+              <span class="v mono" style="font-weight: 700">{{ userInfo.port || '-' }}</span>
+            </div>
+            <div class="kv">
+              <span class="k">当前配额</span>
+              <span class="v">
+                <span class="badge" :class="tierBadgeClass">{{ tierLabel }}</span>
+              </span>
+            </div>
+            <div class="kv">
+              <span class="k">容器状态</span>
+              <span class="v">
+                <span class="badge" :class="statusBadgeClass">{{ statusText }}</span>
+              </span>
+            </div>
           </div>
+
+          <!-- 资源使用卡片 -->
+          <div class="card">
+            <div class="kv">
+              <span class="k">CPU 使用率</span>
+              <span class="v" style="font-weight: 700">{{ userInfo.stats?.cpu || '0%' }}</span>
+            </div>
+            <div class="kv" style="border: none; padding-bottom: 4px">
+              <span class="k">内存使用</span>
+              <span class="v" style="font-weight: 700">
+                {{ userInfo.stats?.memory || '0MiB' }}
+                <span style="color: #8a90a3; font-weight: 400">
+                  ({{ userInfo.stats?.memoryPercent || '0%' }})
+                </span>
+              </span>
+            </div>
+            <div class="progress">
+              <i :style="{ width: memoryPercent }"></i>
+            </div>
+          </div>
+
+          <!-- 进入 DSH 卡片 -->
+          <div class="card enter-card">
+            <div class="ct">🚀 进入 DSH</div>
+            <div class="cd">
+              点击下方按钮进入你的专属 DSH 实例（每次进入需插件签名，用于运行匹配）
+            </div>
+            <div style="margin-top: 12px">
+              <button class="btn btn-p" @click="enterDsh" :disabled="enteringDsh">
+                {{ enteringDsh ? '正在进入...' : '打开 DSH Web UI' }}
+              </button>
+            </div>
+          </div>
+
+          <!-- 操作按钮 -->
+          <div class="btn-row">
+            <button class="btn btn-p" @click="restartDSH" :disabled="containerBooting">
+              🔄 重启服务
+            </button>
+            <button
+              class="btn btn-g"
+              @click="stopContainer"
+              :disabled="!connected || userInfo.status !== 'running'"
+            >
+              ■ 停止容器
+            </button>
+          </div>
+
+          <!-- 危险操作 -->
+          <button class="btn btn-r" @click="resetContainer">🗑 重置容器（删除数据）</button>
+
+          <!-- 说明卡片 -->
+          <div class="card">
+            <div class="cd">
+              <b style="color: #4b5162">重启服务：</b>
+              安装插件后需重启 DSH 服务才能生效<br /><br />
+              <b style="color: #4b5162">停止容器：</b>
+              立即结束今日使用时长并保全剩余额度，数据保留，可随时重新启动。{{
+                usageInfoLabel ? '今日已用 ' + usageInfoLabel : ''
+              }}<br /><br />
+              <b style="color: #4b5162">重置容器：</b>
+              删除所有数据和配置，重新开始（不可恢复）
+            </div>
+          </div>
+        </div>
+
+        <!-- 技能插件 tab -->
+        <div v-show="cSub === 'skills'">
+          <div v-if="skillsLoading" class="loading-state">
+            <div class="loading-spinner"></div>
+            <div class="loading-text">加载技能数据...</div>
+          </div>
+          <template v-else>
+            <!-- 已发布的技能 -->
+            <div v-if="mySkills.published.length > 0" class="card">
+              <div class="ct">📤 已发布的技能</div>
+              <div v-for="skill in mySkills.published" :key="'p-' + skill.name" class="skill-item">
+                <div class="skill-info">
+                  <div class="skill-name">{{ skill.name }}</div>
+                  <div class="skill-desc">{{ skill.description || '暂无描述' }}</div>
+                </div>
+                <button class="btn btn-sm btn-r" @click="unpublishSkill(skill.name)">
+                  取消发布
+                </button>
+              </div>
+            </div>
+
+            <!-- 已安装的技能 -->
+            <div v-if="mySkills.installed.length > 0" class="card">
+              <div class="ct">📦 已安装的技能</div>
+              <div v-for="skill in mySkills.installed" :key="'i-' + skill.name" class="skill-item">
+                <div class="skill-info">
+                  <div class="skill-name">{{ skill.name }}</div>
+                  <div class="skill-desc">{{ skill.description || '暂无描述' }}</div>
+                  <div v-if="skill.installedAt" class="skill-meta">
+                    安装于 {{ new Date(skill.installedAt).toLocaleDateString() }}
+                  </div>
+                </div>
+                <button class="btn btn-sm btn-r" @click="uninstallSkill(skill.name)">
+                  卸载
+                </button>
+              </div>
+            </div>
+
+            <!-- 插件列表 -->
+            <div class="card">
+              <div class="ct">🔌 插件</div>
+              <div v-if="mySkills.plugins.length === 0" class="empty-hint">
+                暂无插件
+              </div>
+              <div v-for="plugin in mySkills.plugins" :key="'pl-' + plugin.name" class="skill-item">
+                <div class="skill-info">
+                  <div class="skill-name">
+                    {{ plugin.name }}
+                    <span v-if="plugin.version" class="badge b-purple">v{{ plugin.version }}</span>
+                  </div>
+                  <div class="skill-desc">{{ plugin.description || '暂无描述' }}</div>
+                  <div class="skill-meta">
+                    {{ plugin.kind === 'file' ? '文件' : '目录' }} · 
+                    {{ plugin.fileCount || 0 }} 个文件 · 
+                    {{ formatBytes(plugin.bytes || 0) }}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 空状态 -->
+            <div v-if="mySkills.published.length === 0 && mySkills.installed.length === 0" class="card">
+              <div class="empty-hint">
+                暂无技能数据<br />
+                你可以在技能市场中安装技能
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- 环境现场 tab -->
+        <div v-show="cSub === 'env'">
+          <div v-if="envLoading" class="loading-state">
+            <div class="loading-spinner"></div>
+            <div class="loading-text">加载环境变量...</div>
+          </div>
+          <template v-else>
+            <div v-if="envVars.length === 0" class="card">
+              <div class="empty-hint">
+                暂无环境变量<br />
+                你可以在环境市场中配置环境变量
+              </div>
+            </div>
+            <div v-else class="card">
+              <div class="ct">🌍 环境变量</div>
+              <div v-for="env in envVars" :key="env.name" class="env-item">
+                <div class="env-name">{{ env.name }}</div>
+                <div class="env-value">{{ env.value }}</div>
+                <div v-if="env.description" class="env-desc">{{ env.description }}</div>
+              </div>
+            </div>
+          </template>
         </div>
       </div>
     </template>
@@ -126,6 +248,21 @@ const role = ref('user')
 const connected = ref(false)
 const containerBooting = ref(false)
 const usageInfo = ref(null)
+
+// 子 tab 状态
+const cSub = ref('info') // 'info' | 'skills' | 'env'
+
+// 技能数据
+const mySkills = ref({
+  published: [],
+  installed: [],
+  plugins: [],
+})
+const skillsLoading = ref(false)
+
+// 环境变量数据
+const envVars = ref([])
+const envLoading = ref(false)
 
 const memoryPercent = computed(() => {
   return userInfo.value.stats?.memoryPercent || '0%'
@@ -395,6 +532,73 @@ onMounted(async () => {
     loading.value = false
   }
 })
+
+// 加载技能数据
+async function loadMySkills() {
+  skillsLoading.value = true
+  try {
+    const res = await axios.get('/api/skills/mine')
+    mySkills.value = {
+      published: res.data.published || [],
+      installed: res.data.installed || [],
+      plugins: res.data.plugins || [],
+    }
+  } catch (e) {
+    console.error('加载技能数据失败:', e)
+  } finally {
+    skillsLoading.value = false
+  }
+}
+
+// 加载环境变量
+async function loadEnvVars() {
+  envLoading.value = true
+  try {
+    const res = await axios.get('/api/env/mine')
+    envVars.value = res.data || []
+  } catch (e) {
+    console.error('加载环境变量失败:', e)
+  } finally {
+    envLoading.value = false
+  }
+}
+
+// 卸载技能
+async function uninstallSkill(skillName) {
+  if (!confirm(`确定要卸载技能 "${skillName}" 吗？`)) return
+  
+  try {
+    await axios.post(`/api/skills/uninstall`, { name: skillName })
+    alert('技能已卸载')
+    await loadMySkills()
+  } catch (e) {
+    console.error('卸载技能失败:', e)
+    alert('卸载失败: ' + (e.response?.data?.error || e.message))
+  }
+}
+
+// 取消发布技能
+async function unpublishSkill(skillName) {
+  if (!confirm(`确定要取消发布技能 "${skillName}" 吗？`)) return
+  
+  try {
+    await axios.post(`/api/skills/unpublish`, { name: skillName })
+    alert('技能已取消发布')
+    await loadMySkills()
+  } catch (e) {
+    console.error('取消发布失败:', e)
+    alert('取消发布失败: ' + (e.response?.data?.error || e.message))
+  }
+}
+
+// 格式化字节数
+function formatBytes(bytes) {
+  if (bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
+}
 </script>
 
 <style scoped>
@@ -620,5 +824,124 @@ onMounted(async () => {
 
 .btn-row .btn {
   flex: 1;
+}
+
+/* 子 tab 切换 */
+.sub-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  background: #fff;
+  padding: 8px;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(60, 70, 120, 0.06);
+}
+
+.sub-tab {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #8a90a3;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.sub-tab.active {
+  background: linear-gradient(135deg, #6a72e8 0%, #9b8cf5 100%);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(106, 114, 232, 0.3);
+}
+
+/* 技能列表项 */
+.skill-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid #eceef4;
+  gap: 12px;
+}
+
+.skill-item:last-child {
+  border-bottom: none;
+}
+
+.skill-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.skill-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #20242f;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.skill-desc {
+  font-size: 12px;
+  color: #8a90a3;
+  line-height: 1.5;
+  margin-bottom: 4px;
+}
+
+.skill-meta {
+  font-size: 11px;
+  color: #b0b5c5;
+}
+
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 12px;
+  width: auto;
+  white-space: nowrap;
+}
+
+/* 环境变量项 */
+.env-item {
+  padding: 12px 0;
+  border-bottom: 1px solid #eceef4;
+}
+
+.env-item:last-child {
+  border-bottom: none;
+}
+
+.env-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #20242f;
+  margin-bottom: 4px;
+  font-family: 'SF Mono', Monaco, monospace;
+}
+
+.env-value {
+  font-size: 13px;
+  color: #6a72e8;
+  word-break: break-all;
+  margin-bottom: 4px;
+}
+
+.env-desc {
+  font-size: 12px;
+  color: #8a90a3;
+  line-height: 1.5;
+}
+
+/* 空状态提示 */
+.empty-hint {
+  text-align: center;
+  padding: 40px 20px;
+  color: #8a90a3;
+  font-size: 13px;
+  line-height: 1.6;
 }
 </style>
