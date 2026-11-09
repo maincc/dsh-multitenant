@@ -19,17 +19,17 @@
 
       <!-- 主体内容 -->
       <div class="body">
-        <!-- 顶级分类切换：技能市场 / 环境市场 -->
-        <div class="category-bar">
+        <!-- 顶级分类切换 -->
+        <div class="tab-group">
           <button
-            class="category-btn"
+            class="tab-group-btn"
             :class="{ active: marketCategory === 'skills' }"
             @click="marketCategory = 'skills'"
           >
             🧩 技能市场
           </button>
           <button
-            class="category-btn"
+            class="tab-group-btn"
             :class="{ active: marketCategory === 'env' }"
             @click="marketCategory = 'env'"
           >
@@ -39,17 +39,17 @@
 
         <!-- 技能市场 -->
         <template v-if="marketCategory === 'skills'">
-          <!-- Tab 切换 -->
-          <div class="tab-bar">
+          <!-- 子 tab 组 -->
+          <div class="sub-tab-group">
             <button
-              class="tab-btn"
+              class="sub-tab-btn"
               :class="{ active: activeTab === 'market' }"
               @click="switchTab('market')"
             >
               市场
             </button>
             <button
-              class="tab-btn"
+              class="sub-tab-btn"
               :class="{ active: activeTab === 'mine' }"
               @click="switchTab('mine')"
             >
@@ -498,64 +498,63 @@ onUnmounted(() => {
   padding: 16px;
 }
 
-/* 顶级分类切换 */
-.category-bar {
+/* 顶级 tab 组 */
+.tab-group {
   display: flex;
-  gap: 8px;
+  gap: 0;
   margin-bottom: 16px;
   background: #fff;
-  padding: 8px;
   border-radius: 12px;
   box-shadow: 0 2px 8px rgba(60, 70, 120, 0.06);
+  overflow: hidden;
 }
 
-.category-btn {
+.tab-group-btn {
   flex: 1;
-  padding: 12px;
+  padding: 14px;
   border: none;
   background: transparent;
-  border-radius: 8px;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
   color: #8a90a3;
   cursor: pointer;
   transition: all 0.2s;
+  border-bottom: 3px solid transparent;
 }
 
-.category-btn.active {
-  background: linear-gradient(135deg, #6a72e8 0%, #9b8cf5 100%);
-  color: #fff;
-  box-shadow: 0 2px 8px rgba(106, 114, 232, 0.3);
+.tab-group-btn.active {
+  color: #6a72e8;
+  background: #f0f4ff;
+  border-bottom-color: #6a72e8;
 }
 
-/* Tab 切换 */
-.tab-bar {
+/* 子 tab 组 */
+.sub-tab-group {
   display: flex;
   gap: 8px;
   margin-bottom: 16px;
-  background: #fff;
-  padding: 8px;
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(60, 70, 120, 0.06);
+  background: #f4f5fa;
+  padding: 6px;
+  border-radius: 10px;
 }
 
-.tab-btn {
+.sub-tab-btn {
   flex: 1;
   padding: 10px;
   border: none;
   background: transparent;
   border-radius: 8px;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: #8a90a3;
   cursor: pointer;
   transition: all 0.2s;
 }
 
-.tab-btn.active {
-  background: linear-gradient(135deg, #6a72e8 0%, #9b8cf5 100%);
-  color: #fff;
-  box-shadow: 0 2px 8px rgba(106, 114, 232, 0.3);
+.sub-tab-btn.active {
+  background: #fff;
+  color: #6a72e8;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
 
 /* Tab 内容 */
