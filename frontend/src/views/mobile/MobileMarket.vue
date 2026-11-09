@@ -24,14 +24,14 @@
           <button
             class="tab-btn"
             :class="{ active: activeTab === 'market' }"
-            @click="activeTab = 'market'"
+            @click="switchTab('market')"
           >
             市场
           </button>
           <button
             class="tab-btn"
             :class="{ active: activeTab === 'mine' }"
-            @click="activeTab = 'mine'"
+            @click="switchTab('mine')"
           >
             我的技能
           </button>
@@ -39,6 +39,25 @@
 
         <!-- 市场 Tab -->
         <div v-if="activeTab === 'market'" class="tab-content">
+          <!-- CCDAO 插件未安装提示 -->
+          <div v-if="!ccdao" class="notice notice-error">
+            请安装 CCDAO Connector 浏览器插件以使用技能市场功能。
+            <a
+              href="https://chromewebstore.google.com/detail/ccdao-connector/fpondiojcgaollhcmjgpjmldjjkealjb"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="notice-link"
+            >
+              点击下载安装
+            </a>
+          </div>
+          
+          <!-- 未连接钱包提示 -->
+          <div v-else-if="!connected" class="notice notice-info">
+            您可以浏览技能市场，但安装和下载需要连接钱包。
+            <router-link to="/user" class="notice-link">前往连接</router-link>
+          </div>
+
           <!-- 搜索框和刷新按钮 -->
           <div class="search-box">
             <div class="search-row">
@@ -78,7 +97,7 @@
                 <button
                   class="btn btn-sm btn-p"
                   @click="installSkill(skill)"
-                  :disabled="installing"
+                  :disabled="!connected || installing"
                 >
                   {{ skill.installed ? '重新安装' : '安装' }}
                 </button>
@@ -236,6 +255,14 @@ function formatDate(dateStr) {
 
 function downloadUrl(name) {
   return skillsApi.downloadUrl(name)
+}
+
+function switchTab(tab) {
+  activeTab.value = tab
+  // 切换到"我的技能" tab 时自动加载数据
+  if (tab === 'mine' && connected.value) {
+    loadMySkills()
+  }
 }
 
 async function loadUserInfo() {
