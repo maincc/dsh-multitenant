@@ -28,13 +28,25 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import dshLogo from './assets/dsh-logo-white.svg'
 import GlobalDialog from './components/GlobalDialog.vue'
 
 const route = useRoute()
-const isMobile = computed(() => route.path.startsWith('/mobile'))
+const isMobile = ref(window.innerWidth <= 768)
+
+function updateMobile() {
+  isMobile.value = window.innerWidth <= 768
+}
+
+onMounted(() => {
+  window.addEventListener('resize', updateMobile)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', updateMobile)
+})
 </script>
 
 <style scoped>
@@ -123,11 +135,13 @@ const isMobile = computed(() => route.path.startsWith('/mobile'))
   min-height: 0;
   overflow-y: auto;
   background: #f8fafc;
+  width: 100%;
 }
 
 /* 移动端页面不需要顶部间距 */
 .page.mobile-page {
   background: #f4f5fa;
+  width: 100%;
 }
 
 /* 三 Tab 视图自身撑满并内部滚动；Home 等长页在此容器内自然滚动 */

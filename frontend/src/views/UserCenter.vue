@@ -3009,6 +3009,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  width: 100%;
   background: #f4f5fa;
 }
 
@@ -3016,10 +3017,12 @@ onUnmounted(() => {
   flex: 1;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  width: 100%;
 }
 
 .mobile-page {
   min-height: 100%;
+  width: 100%;
 }
 
 .mobile-placeholder {

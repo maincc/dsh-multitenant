@@ -146,12 +146,14 @@ onMounted(async () => {
 <style scoped>
 .mobile-home {
   padding: 0 0 20px;
+  width: 100%;
 }
 
 .home-header {
   background: linear-gradient(135deg, #6a72e8 0%, #9b8cf5 100%);
   padding: 20px 16px 24px;
   margin-bottom: 16px;
+  width: 100%;
 }
 
 .welcome-card {
