@@ -13,87 +13,168 @@
           <div class="ttl">审批中心</div>
           <div class="avatar">管</div>
         </div>
-        <div class="greet">管理 CWT 解限申请</div>
+        <div class="greet">管理各类审批申请</div>
       </div>
 
       <!-- 主体内容 -->
       <div class="body">
-        <!-- 状态筛选 -->
-        <div class="filter-bar">
+        <!-- 审批类型切换 -->
+        <div class="type-tabs">
           <button
-            v-for="status in statuses"
-            :key="status.key"
-            class="filter-btn"
-            :class="{ active: currentStatus === status.key }"
-            @click="switchStatus(status.key)"
+            class="type-tab"
+            :class="{ active: approvalType === 'cwt' }"
+            @click="switchType('cwt')"
           >
-            {{ status.label }}
-            <span v-if="status.key === 'pending' && pendingCount > 0" class="badge-count">
-              {{ pendingCount }}
-            </span>
+            CWT 申请
+            <span v-if="pendingCount > 0" class="badge-count">{{ pendingCount }}</span>
+          </button>
+          <button
+            class="type-tab"
+            :class="{ active: approvalType === 'env' }"
+            @click="switchType('env')"
+          >
+            环境模板
+            <span v-if="draftCount > 0" class="badge-count">{{ draftCount }}</span>
           </button>
         </div>
 
-        <!-- 申请列表 -->
-        <div v-if="applications.length === 0" class="empty-state">
-          <div class="empty-icon">📋</div>
-          <div class="empty-text">暂无{{ currentStatusLabel }}的申请</div>
-        </div>
+        <!-- CWT 申请 -->
+        <template v-if="approvalType === 'cwt'">
+          <!-- 状态筛选 -->
+          <div class="filter-bar">
+            <button
+              v-for="status in statuses"
+              :key="status.key"
+              class="filter-btn"
+              :class="{ active: currentStatus === status.key }"
+              @click="switchStatus(status.key)"
+            >
+              {{ status.label }}
+            </button>
+          </div>
 
-        <div v-else class="app-list">
-          <div v-for="app in applications" :key="app._id" class="app-card">
-            <div class="app-info">
-              <div class="app-address">
-                {{ shortAddress(app.addressDisplay || app.address) }}
+          <!-- 申请列表 -->
+          <div v-if="applications.length === 0" class="empty-state">
+            <div class="empty-icon">📋</div>
+            <div class="empty-text">暂无{{ currentStatusLabel }}的申请</div>
+          </div>
+
+          <div v-else class="app-list">
+            <div v-for="app in applications" :key="app._id" class="app-card">
+              <div class="app-info">
+                <div class="app-address">
+                  {{ shortAddress(app.addressDisplay || app.address) }}
+                </div>
+                <div class="app-time">提交于 {{ formatDate(app.submittedAt) }}</div>
+                <div v-if="app.decidedAt" class="app-decided">
+                  {{ statusLabel(app.status) }}于 {{ formatDate(app.decidedAt) }}
+                </div>
+                <div v-if="app.rejectReason" class="app-reason">
+                  拒绝原因：{{ app.rejectReason }}
+                </div>
               </div>
-              <div class="app-time">
-                提交于 {{ formatDate(app.submittedAt) }}
-              </div>
-              <div v-if="app.decidedAt" class="app-decided">
-                {{ statusLabel(app.status) }}于 {{ formatDate(app.decidedAt) }}
-              </div>
-              <div v-if="app.rejectReason" class="app-reason">
-                拒绝原因：{{ app.rejectReason }}
-              </div>
-            </div>
-            <div class="app-actions">
-              <span class="badge" :class="statusClass(app.status)">
-                {{ statusLabel(app.status) }}
-              </span>
-              <div v-if="app.status === 'pending'" class="action-btns">
-                <button
-                  class="btn btn-sm btn-green"
-                  @click="approveApp(app)"
-                  :disabled="busy === app._id"
-                >
-                  {{ busy === app._id ? '处理中...' : '批准' }}
-                </button>
-                <button
-                  class="btn btn-sm btn-red"
-                  @click="rejectApp(app)"
-                  :disabled="busy === app._id"
-                >
-                  拒绝
-                </button>
+              <div class="app-actions">
+                <span class="badge" :class="statusClass(app.status)">
+                  {{ statusLabel(app.status) }}
+                </span>
+                <div v-if="app.status === 'pending'" class="action-btns">
+                  <button
+                    class="btn btn-sm btn-green"
+                    @click="approveApp(app)"
+                    :disabled="busy === app._id"
+                  >
+                    {{ busy === app._id ? '处理中...' : '批准' }}
+                  </button>
+                  <button
+                    class="btn btn-sm btn-red"
+                    @click="rejectApp(app)"
+                    :disabled="busy === app._id"
+                  >
+                    拒绝
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        <!-- 分页 -->
-        <div v-if="total > 10" class="pagination">
-          <button class="btn btn-sm btn-outline" :disabled="offset === 0" @click="prevPage">
-            上一页
-          </button>
-          <span class="page-info">{{ offset + 1 }}-{{ Math.min(offset + 10, total) }} / {{ total }}</span>
-          <button
-            class="btn btn-sm btn-outline"
-            :disabled="offset + 10 >= total"
-            @click="nextPage"
-          >
-            下一页
-          </button>
-        </div>
+          <!-- 分页 -->
+          <div v-if="total > 10" class="pagination">
+            <button class="btn btn-sm btn-outline" :disabled="offset === 0" @click="prevPage">
+              上一页
+            </button>
+            <span class="page-info"
+              >{{ offset + 1 }}-{{ Math.min(offset + 10, total) }} / {{ total }}</span
+            >
+            <button
+              class="btn btn-sm btn-outline"
+              :disabled="offset + 10 >= total"
+              @click="nextPage"
+            >
+              下一页
+            </button>
+          </div>
+        </template>
+
+        <!-- 环境模板 -->
+        <template v-else-if="approvalType === 'env'">
+          <!-- 状态筛选 -->
+          <div class="filter-bar">
+            <button
+              v-for="status in envStatuses"
+              :key="status.key"
+              class="filter-btn"
+              :class="{ active: currentEnvStatus === status.key }"
+              @click="switchEnvStatus(status.key)"
+            >
+              {{ status.label }}
+            </button>
+          </div>
+
+          <!-- 模板列表 -->
+          <div v-if="environments.length === 0" class="empty-state">
+            <div class="empty-icon">🌍</div>
+            <div class="empty-text">暂无{{ currentEnvStatusLabel }}的模板</div>
+          </div>
+
+          <div v-else class="app-list">
+            <div v-for="env in environments" :key="env._id" class="app-card">
+              <div class="app-info">
+                <div class="app-address">
+                  {{ env.name }}
+                </div>
+                <div class="app-time">来源：{{ shortAddress(env.sourceAddr) }}</div>
+                <div class="app-time">大小：{{ formatBytes(env.sizeBytes) }}</div>
+                <div v-if="env.createdAt" class="app-time">
+                  创建于 {{ formatDate(env.createdAt) }}
+                </div>
+                <div v-if="env.rejectReason" class="app-reason">
+                  拒绝原因：{{ env.rejectReason }}
+                </div>
+              </div>
+              <div class="app-actions">
+                <span class="badge" :class="envStatusClass(env.status)">
+                  {{ envStatusLabel(env.status) }}
+                </span>
+                <div v-if="env.status === 'draft'" class="action-btns">
+                  <button
+                    class="btn btn-sm btn-green"
+                    @click="publishEnv(env)"
+                    :disabled="busy === env._id"
+                  >
+                    {{ busy === env._id ? '处理中...' : '发布' }}
+                  </button>
+                  <button
+                    class="btn btn-sm btn-red"
+                    @click="rejectEnv(env)"
+                    :disabled="busy === env._id"
+                  >
+                    驳回
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
       </div>
     </template>
   </div>
@@ -105,6 +186,9 @@ import axios from 'axios'
 import { signChallenge } from '../../api/wallet.js'
 
 const loading = ref(true)
+const approvalType = ref('cwt') // 'cwt' | 'env'
+
+// CWT 申请相关
 const applications = ref([])
 const total = ref(0)
 const offset = ref(0)
@@ -119,6 +203,19 @@ const statuses = [
 ]
 
 const currentStatusLabel = ref('待审批')
+
+// 环境模板相关
+const environments = ref([])
+const currentEnvStatus = ref('draft')
+const draftCount = ref(0)
+
+const envStatuses = [
+  { key: 'draft', label: '待审核' },
+  { key: 'published', label: '已发布' },
+  { key: 'rejected', label: '已驳回' },
+]
+
+const currentEnvStatusLabel = ref('待审核')
 
 function shortAddress(addr) {
   return addr ? `${addr.slice(0, 10)}…${addr.slice(-4)}` : ''
@@ -147,6 +244,43 @@ function statusClass(status) {
   return classes[status] || ''
 }
 
+function formatBytes(bytes) {
+  if (!bytes) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i]
+}
+
+function envStatusLabel(status) {
+  const labels = {
+    draft: '待审核',
+    published: '已发布',
+    rejected: '已驳回',
+    revoked: '已撤销',
+  }
+  return labels[status] || status
+}
+
+function envStatusClass(status) {
+  const classes = {
+    draft: 'b-orange',
+    published: 'b-green',
+    rejected: 'b-red',
+    revoked: 'b-gray',
+  }
+  return classes[status] || ''
+}
+
+function switchType(type) {
+  approvalType.value = type
+  if (type === 'cwt') {
+    loadApplications()
+  } else if (type === 'env') {
+    loadEnvironments()
+  }
+}
+
 async function loadApplications() {
   loading.value = true
   try {
@@ -159,7 +293,7 @@ async function loadApplications() {
     })
     applications.value = res.data.applications || []
     total.value = res.data.total || 0
-    
+
     // 如果是待审批状态，记录待审批数量
     if (currentStatus.value === 'pending') {
       pendingCount.value = total.value
@@ -212,7 +346,7 @@ async function approveApp(app) {
     await axios.post(
       `/api/admin/cwt-applications/${encodeURIComponent(app._id)}/approve`,
       {},
-      { headers }
+      { headers },
     )
     alert('已批准')
     await loadApplications()
@@ -237,13 +371,79 @@ async function rejectApp(app) {
     await axios.post(
       `/api/admin/cwt-applications/${encodeURIComponent(app._id)}/reject`,
       { reason },
-      { headers }
+      { headers },
     )
     alert('已拒绝')
     await loadApplications()
   } catch (e) {
     console.error('拒绝失败:', e)
     alert('拒绝失败: ' + (e.response?.data?.error || e.message))
+  } finally {
+    busy.value = ''
+  }
+}
+
+// 环境模板相关函数
+async function loadEnvironments() {
+  loading.value = true
+  try {
+    const res = await axios.get('/api/admin/environments')
+    const allEnvs = res.data.environments || []
+
+    // 根据状态筛选
+    environments.value = allEnvs.filter((env) => env.status === currentEnvStatus.value)
+
+    // 如果是待审核状态，记录待审核数量
+    if (currentEnvStatus.value === 'draft') {
+      draftCount.value = allEnvs.filter((env) => env.status === 'draft').length
+    }
+  } catch (e) {
+    console.error('加载环境模板列表失败:', e)
+    alert('加载失败: ' + (e.response?.data?.error || e.message))
+  } finally {
+    loading.value = false
+  }
+}
+
+function switchEnvStatus(status) {
+  currentEnvStatus.value = status
+  currentEnvStatusLabel.value = envStatuses.find((s) => s.key === status)?.label || ''
+  loadEnvironments()
+}
+
+async function publishEnv(env) {
+  if (!confirm(`确定要发布环境模板 "${env.name}" 吗？`)) return
+
+  busy.value = env._id
+  try {
+    const headers = await signAdminOperation('env-publish', { id: env._id })
+    await axios.post('/api/admin/env-publish', { id: env._id }, { headers })
+    alert('已发布')
+    await loadEnvironments()
+  } catch (e) {
+    console.error('发布失败:', e)
+    alert('发布失败: ' + (e.response?.data?.error || e.message))
+  } finally {
+    busy.value = ''
+  }
+}
+
+async function rejectEnv(env) {
+  const reason = prompt('请输入驳回原因（必填）：')
+  if (!reason) {
+    alert('驳回原因不能为空')
+    return
+  }
+
+  busy.value = env._id
+  try {
+    const headers = await signAdminOperation('env-reject', { id: env._id })
+    await axios.post('/api/admin/env-reject', { id: env._id, reason }, { headers })
+    alert('已驳回')
+    await loadEnvironments()
+  } catch (e) {
+    console.error('驳回失败:', e)
+    alert('驳回失败: ' + (e.response?.data?.error || e.message))
   } finally {
     busy.value = ''
   }
@@ -330,6 +530,40 @@ onMounted(() => {
 /* 主体内容 */
 .body {
   padding: 16px;
+}
+
+/* 审批类型切换 */
+.type-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  background: #fff;
+  padding: 8px;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(60, 70, 120, 0.06);
+}
+
+.type-tab {
+  flex: 1;
+  padding: 12px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #8a90a3;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.type-tab.active {
+  background: linear-gradient(135deg, #6a72e8 0%, #9b8cf5 100%);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(106, 114, 232, 0.3);
 }
 
 /* 状态筛选 */
@@ -475,6 +709,11 @@ onMounted(() => {
 .b-red {
   background: #ffe6e6;
   color: #ff4757;
+}
+
+.b-gray {
+  background: #f0f0f0;
+  color: #8a90a3;
 }
 
 /* 按钮 */
