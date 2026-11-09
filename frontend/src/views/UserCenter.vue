@@ -80,9 +80,9 @@
         <div v-else-if="mobileTab === 'container'" class="mobile-page">
           <MobileContainer />
         </div>
-        <!-- 技能 -->
+        <!-- 技能市场 -->
         <div v-else-if="mobileTab === 'skills'" class="mobile-page">
-          <MobileSkills />
+          <SkillMarket />
         </div>
         <!-- 审批 -->
         <div v-else-if="mobileTab === 'approvals'" class="mobile-page">
@@ -104,43 +104,39 @@
 
       <!-- 底部 Tab 导航 -->
       <nav class="mobile-tabbar">
-        <button 
-          class="tab-item" 
+        <button
+          class="tab-item"
           :class="{ active: mobileTab === 'home' }"
           @click="mobileTab = 'home'"
         >
           <div class="tab-icon">🏠</div>
           <div class="tab-label">首页</div>
         </button>
-        <button 
-          class="tab-item" 
+        <button
+          class="tab-item"
           :class="{ active: mobileTab === 'container' }"
           @click="mobileTab = 'container'"
         >
           <div class="tab-icon">📦</div>
           <div class="tab-label">容器</div>
         </button>
-        <button 
-          class="tab-item" 
+        <button
+          class="tab-item"
           :class="{ active: mobileTab === 'skills' }"
           @click="mobileTab = 'skills'"
         >
           <div class="tab-icon">🎯</div>
-          <div class="tab-label">技能</div>
+          <div class="tab-label">市场</div>
         </button>
-        <button 
-          class="tab-item" 
+        <button
+          class="tab-item"
           :class="{ active: mobileTab === 'approvals' }"
           @click="mobileTab = 'approvals'"
         >
           <div class="tab-icon">✅</div>
           <div class="tab-label">审批</div>
         </button>
-        <button 
-          class="tab-item" 
-          :class="{ active: mobileTab === 'me' }"
-          @click="mobileTab = 'me'"
-        >
+        <button class="tab-item" :class="{ active: mobileTab === 'me' }" @click="mobileTab = 'me'">
           <div class="tab-icon">👤</div>
           <div class="tab-label">我的</div>
         </button>
