@@ -78,11 +78,7 @@
         </div>
         <!-- 容器 -->
         <div v-else-if="mobileTab === 'container'" class="mobile-page">
-          <div class="mobile-placeholder">
-            <div class="placeholder-icon">📦</div>
-            <div class="placeholder-text">容器管理</div>
-            <div class="placeholder-hint">待实现</div>
-          </div>
+          <MobileContainer />
         </div>
         <!-- 技能 -->
         <div v-else-if="mobileTab === 'skills'" class="mobile-page">
@@ -1069,6 +1065,7 @@ import { sha256Hex as sha256HexFallback } from '../utils/sha256.js'
 import AdminPanel from './AdminPanel.vue'
 import EnvTemplatesUser from '../components/EnvTemplatesUser.vue'
 import MobileHome from './mobile/MobileHome.vue'
+import MobileContainer from './mobile/MobileContainer.vue'
 import SkillMarket from './SkillMarket.vue'
 import { buildAdminTabs } from '../admin-tabs'
 import {
