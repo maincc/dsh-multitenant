@@ -1,6 +1,6 @@
 <template>
   <div id="app">
-    <nav class="navbar">
+    <nav class="navbar" v-if="!isMobile">
       <div class="nav-brand">
         <router-link to="/" class="brand-link" :title="$t('common.brand')">
           <img class="brand-logo" :src="dshLogo" alt="DSH logo" />
@@ -18,7 +18,7 @@
         <router-link to="/user" class="nav-tab">{{ $t('common.nav.user') }}</router-link>
       </div>
     </nav>
-    <main class="page">
+    <main class="page" :class="{ 'mobile-page': isMobile }">
       <router-view />
     </main>
 
@@ -28,8 +28,13 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
 import dshLogo from './assets/dsh-logo-white.svg'
 import GlobalDialog from './components/GlobalDialog.vue'
+
+const route = useRoute()
+const isMobile = computed(() => route.path.startsWith('/mobile'))
 </script>
 
 <style scoped>
@@ -118,6 +123,11 @@ import GlobalDialog from './components/GlobalDialog.vue'
   min-height: 0;
   overflow-y: auto;
   background: #f8fafc;
+}
+
+/* 移动端页面不需要顶部间距 */
+.page.mobile-page {
+  background: #f4f5fa;
 }
 
 /* 三 Tab 视图自身撑满并内部滚动；Home 等长页在此容器内自然滚动 */
