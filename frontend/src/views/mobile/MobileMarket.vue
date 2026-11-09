@@ -39,12 +39,21 @@
 
         <!-- 市场 Tab -->
         <div v-if="activeTab === 'market'" class="tab-content">
-          <!-- 搜索框 -->
+          <!-- 搜索框和刷新按钮 -->
           <div class="search-box">
-            <input v-model="keyword" type="text" class="search-input" placeholder="搜索技能..." />
+            <div class="search-row">
+              <input v-model="keyword" type="text" class="search-input" placeholder="搜索技能..." />
+              <button class="btn btn-sm btn-outline" @click="loadMarketSkills" :disabled="loading">
+                刷新
+              </button>
+            </div>
           </div>
 
-          <div v-if="filteredSkills.length === 0" class="empty-state">
+          <div v-if="loading" class="loading-state">
+            <div class="loading-spinner"></div>
+            <div class="loading-text">加载中...</div>
+          </div>
+          <div v-else-if="filteredSkills.length === 0" class="empty-state">
             <div class="empty-icon">🎯</div>
             <div class="empty-text">暂无可用技能</div>
           </div>
@@ -54,15 +63,18 @@
                 <div class="skill-name">
                   {{ skill.name }}
                   <span v-if="skill.installed" class="badge b-green">已安装</span>
+                  <span v-if="skill.disableModelInvocation" class="badge b-orange">仅用户触发</span>
                 </div>
                 <div class="skill-desc">{{ skill.description || '暂无描述' }}</div>
                 <div class="skill-meta">
                   <span class="meta-item">👤 {{ shortAddress(skill.sharer) }}</span>
                   <span class="meta-item">📅 {{ formatDate(skill.sharedAt) }}</span>
+                  <span v-if="skill.hasResources" class="badge b-blue">包含资源</span>
                 </div>
               </div>
               <div class="skill-actions">
-                <button class="btn btn-sm btn-outline" @click="viewDetail(skill)">预览</button>
+                <button class="btn btn-sm btn-outline" @click="viewDetail(skill.name)">预览</button>
+                <a class="btn btn-sm btn-outline" :href="downloadUrl(skill.name)" download>下载</a>
                 <button
                   class="btn btn-sm btn-p"
                   @click="installSkill(skill)"
@@ -135,28 +147,39 @@
     </template>
 
     <!-- 详情弹窗 -->
-    <div v-if="showDetail" class="modal-mask" @click.self="closeDetail">
+    <div v-if="showDetail || detailLoading" class="modal-mask" @click.self="closeDetail">
       <div class="modal-panel">
-        <div class="modal-head">
-          <h3>{{ detailSkill.name }}</h3>
-          <button class="close-btn" @click="closeDetail">✕</button>
-        </div>
-        <div class="modal-body">
-          <p class="detail-desc">{{ detailSkill.description }}</p>
-          <div class="detail-meta">
-            <div>👤 发布者：{{ shortAddress(detailSkill.sharer) }}</div>
-            <div>📅 发布时间：{{ formatDate(detailSkill.sharedAt) }}</div>
-          </div>
-          <div class="detail-content">
-            <pre>{{ detailSkill.body }}</pre>
+        <div v-if="detailLoading && !detailSkill.name" class="modal-body">
+          <div class="loading-state">
+            <div class="loading-spinner"></div>
+            <div class="loading-text">加载详情中...</div>
           </div>
         </div>
-        <div class="modal-footer">
-          <button class="btn btn-outline" @click="closeDetail">关闭</button>
-          <button class="btn btn-p" @click="installSkill(detailSkill)" :disabled="installing">
-            {{ detailSkill.installed ? '重新安装' : '安装' }}
-          </button>
-        </div>
+        <template v-else>
+          <div class="modal-head">
+            <h3>{{ detailSkill.name }}</h3>
+            <button class="close-btn" @click="closeDetail">✕</button>
+          </div>
+          <div class="modal-body">
+            <p class="detail-desc">{{ detailSkill.description }}</p>
+            <div class="detail-meta">
+              <div>👤 发布者：{{ shortAddress(detailSkill.sharer) }}</div>
+              <div>📅 发布时间：{{ formatDate(detailSkill.sharedAt) }}</div>
+              <div v-if="detailSkill.contentHash">🔒 内容哈希：{{ shortHash(detailSkill.contentHash) }}</div>
+              <div v-if="detailSkill.disableModelInvocation" class="badge b-orange">仅用户触发</div>
+            </div>
+            <div class="detail-content">
+              <pre>{{ detailSkill.body }}</pre>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-outline" @click="closeDetail">关闭</button>
+            <a class="btn btn-outline" :href="downloadUrl(detailSkill.name)" download>下载</a>
+            <button class="btn btn-p" @click="installSkill(detailSkill)" :disabled="installing">
+              {{ detailSkill.installed ? '重新安装' : '安装' }}
+            </button>
+          </div>
+        </template>
       </div>
     </div>
   </div>
@@ -182,6 +205,7 @@ const installing = ref(false)
 
 // 详情弹窗
 const showDetail = ref(false)
+const detailLoading = ref(false)
 const detailSkill = ref({})
 
 const filteredSkills = computed(() => {
@@ -196,9 +220,17 @@ function shortAddress(addr) {
   return addr ? `${addr.slice(0, 8)}…${addr.slice(-4)}` : ''
 }
 
+function shortHash(hash) {
+  return hash ? `${hash.slice(0, 12)}...` : ''
+}
+
 function formatDate(dateStr) {
   if (!dateStr) return ''
   return new Date(dateStr).toLocaleDateString()
+}
+
+function downloadUrl(name) {
+  return skillsApi.downloadUrl(name)
 }
 
 async function loadUserInfo() {
@@ -211,12 +243,15 @@ async function loadUserInfo() {
 }
 
 async function loadMarketSkills() {
+  loading.value = true
   try {
     const address = localStorage.getItem('swtc_address') || undefined
     const res = await skillsApi.list(address)
     skills.value = res.skills || []
   } catch (e) {
     console.error('加载市场技能失败:', e)
+  } finally {
+    loading.value = false
   }
 }
 
@@ -237,13 +272,25 @@ async function loadMySkills() {
   }
 }
 
-function viewDetail(skill) {
-  detailSkill.value = skill
+async function viewDetail(name) {
   showDetail.value = true
+  detailLoading.value = true
+  detailSkill.value = {}
+  try {
+    const res = await skillsApi.detail(name)
+    detailSkill.value = res.skill || {}
+  } catch (e) {
+    console.error('加载技能详情失败:', e)
+    alert('加载详情失败: ' + (e.response?.data?.error || e.message))
+    closeDetail()
+  } finally {
+    detailLoading.value = false
+  }
 }
 
 function closeDetail() {
   showDetail.value = false
+  detailLoading.value = false
   detailSkill.value = {}
 }
 
@@ -406,8 +453,13 @@ onMounted(async () => {
   margin-bottom: 16px;
 }
 
+.search-row {
+  display: flex;
+  gap: 8px;
+}
+
 .search-input {
-  width: 100%;
+  flex: 1;
   padding: 12px 16px;
   border: 1px solid #e0e3eb;
   border-radius: 10px;
@@ -454,8 +506,7 @@ onMounted(async () => {
   padding: 16px;
   box-shadow: 0 2px 8px rgba(60, 70, 120, 0.06);
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
+  flex-direction: column;
   gap: 12px;
 }
 
@@ -488,6 +539,7 @@ onMounted(async () => {
   font-size: 12px;
   color: #b0b5c5;
   flex-wrap: wrap;
+  align-items: center;
 }
 
 .meta-item {
@@ -499,7 +551,7 @@ onMounted(async () => {
 .skill-actions {
   display: flex;
   gap: 8px;
-  flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 /* 徽章 */
@@ -519,6 +571,16 @@ onMounted(async () => {
 .b-green {
   background: #e6f7ee;
   color: #1fa05c;
+}
+
+.b-orange {
+  background: #fff4e3;
+  color: #e8930c;
+}
+
+.b-blue {
+  background: #e6f0ff;
+  color: #3b82f6;
 }
 
 /* 按钮 */
