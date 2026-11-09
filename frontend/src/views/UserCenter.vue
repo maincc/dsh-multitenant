@@ -82,7 +82,7 @@
         </div>
         <!-- 技能市场 -->
         <div v-else-if="mobileTab === 'skills'" class="mobile-page">
-          <SkillMarket />
+          <MobileMarket />
         </div>
         <!-- 审批 -->
         <div v-else-if="mobileTab === 'approvals'" class="mobile-page">
@@ -125,7 +125,7 @@
           :class="{ active: mobileTab === 'skills' }"
           @click="mobileTab = 'skills'"
         >
-          <div class="tab-icon">🎯</div>
+          <div class="tab-icon">🏪</div>
           <div class="tab-label">市场</div>
         </button>
         <button
@@ -1058,6 +1058,7 @@ import AdminPanel from './AdminPanel.vue'
 import EnvTemplatesUser from '../components/EnvTemplatesUser.vue'
 import MobileHome from './mobile/MobileHome.vue'
 import MobileContainer from './mobile/MobileContainer.vue'
+import MobileMarket from './mobile/MobileMarket.vue'
 import MobileSkills from './mobile/MobileSkills.vue'
 import SkillMarket from './SkillMarket.vue'
 import { buildAdminTabs } from '../admin-tabs'
