@@ -399,14 +399,129 @@
 }
 
 @media (max-width: 620px) {
+  .home {
+    padding: 0.75rem;
+  }
+
+  .hero {
+    padding: 2rem 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .hero h1 {
+    font-size: 1.75rem;
+  }
+
+  .subtitle {
+    font-size: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
   .features {
     grid-template-columns: 1fr;
+    gap: 1rem;
+    margin: 1.5rem 0;
   }
+
   .features .feature-card:last-child {
     grid-column: auto;
   }
+
+  .feature-card {
+    padding: 1.25rem 1rem;
+  }
+
+  .feature-card .icon {
+    font-size: 1.75rem;
+  }
+
+  .feature-card h3 {
+    font-size: 1rem;
+  }
+
+  .feature-card p {
+    font-size: 0.85rem;
+  }
+
+  .btn-large {
+    padding: 0.625rem 1.5rem;
+    font-size: 0.95rem;
+    width: 100%;
+    max-width: 280px;
+  }
+
+  .guide {
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+  }
+
+  .guide h2 {
+    font-size: 1.25rem;
+    margin-bottom: 1.25rem;
+  }
+
   .guide-steps {
     grid-template-columns: 1fr;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+  }
+
+  .guide-step {
+    padding: 1rem;
+  }
+
+  .step-num {
+    width: 1.75rem;
+    height: 1.75rem;
+    font-size: 0.9rem;
+  }
+
+  .step-body h3 {
+    font-size: 0.95rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .step-body p {
+    font-size: 0.85rem;
+  }
+
+  .guide-notes {
+    padding: 1rem;
+  }
+
+  .guide-notes h3 {
+    font-size: 0.9rem;
+  }
+
+  .guide-notes li {
+    font-size: 0.85rem;
+  }
+
+  .tiers {
+    padding: 1.25rem;
+  }
+
+  .tiers h2 {
+    font-size: 1.25rem;
+    margin-bottom: 1.25rem;
+  }
+
+  .tier-grid {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .tier-card {
+    padding: 1.25rem;
+  }
+
+  .tier-card h3 {
+    font-size: 1.1rem;
+  }
+
+  .tier-card li {
+    font-size: 0.85rem;
+    padding: 0.4rem 0;
   }
 }
 
