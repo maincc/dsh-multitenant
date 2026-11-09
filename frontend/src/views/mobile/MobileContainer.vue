@@ -276,8 +276,27 @@ async function enterDsh() {
     alert('容器未启动')
     return
   }
-  // 打开 DSH Web UI
-  window.open(`http://localhost:${userInfo.value.port}`, '_blank')
+  
+  try {
+    // 先建立会话（与 PC 版 enterDsh 一致）
+    const { res, address } = await connectWithOwnership()
+    
+    if (res.status === 200) {
+      const data = await res.json()
+      if (data?.url) {
+        // 打开后端返回的 URL（已包含会话信息）
+        window.open(data.url, '_blank', 'noopener')
+        return
+      }
+      alert(data?.message || data?.error || '进入 DSH 失败')
+      return
+    }
+    
+    alert('进入 DSH 失败: HTTP ' + res.status)
+  } catch (err) {
+    console.error('进入 DSH 失败:', err)
+    alert('进入 DSH 失败: ' + (err.message || '未知错误'))
+  }
 }
 
 async function restartDSH() {
