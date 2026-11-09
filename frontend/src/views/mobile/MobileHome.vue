@@ -1,5 +1,16 @@
 <template>
-  <div class="mobile-home">
+  <!-- 未登录状态 -->
+  <div v-if="!isLoggedIn" class="mobile-home login-state">
+    <div class="login-card">
+      <div class="login-icon">🔐</div>
+      <h2 class="login-title">欢迎使用 DSH</h2>
+      <p class="login-desc">请先连接钱包以继续使用</p>
+      <button class="login-btn" @click="goToLogin">连接钱包</button>
+    </div>
+  </div>
+
+  <!-- 已登录状态 -->
+  <div v-else class="mobile-home">
     <!-- 顶部头部区域 -->
     <div class="ghead">
       <div class="row1">
@@ -100,11 +111,14 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import axios from 'axios'
 
+const router = useRouter()
 const address = ref('')
 const role = ref('user')
 const containerStatus = ref(null)
+const isLoggedIn = ref(false)
 const stats = ref({
   totalUsers: 0,
   running: 0,
@@ -124,22 +138,31 @@ function copyAddress() {
   }
 }
 
+function goToLogin() {
+  router.push('/user')
+}
+
 async function scanOrphanVolumes() {
   alert('正在扫描孤儿数据卷…')
 }
 
-async function loadUserInfo() {
+async function checkLoginStatus() {
   try {
     const res = await axios.get('/api/user/credential-status')
+    isLoggedIn.value = true
     address.value = res.data.address || ''
     role.value = res.data.role || 'user'
   } catch (e) {
-    console.error('加载用户信息失败:', e)
+    if (e.response?.status === 401) {
+      isLoggedIn.value = false
+    } else {
+      console.error('检查登录状态失败:', e)
+    }
   }
 }
 
 async function loadContainerStatus() {
-  if (!address.value) return
+  if (!isLoggedIn.value || !address.value) return
   try {
     const res = await axios.get(`/connect-status?address=${encodeURIComponent(address.value)}`)
     containerStatus.value = res.data
@@ -149,7 +172,7 @@ async function loadContainerStatus() {
 }
 
 async function loadStats() {
-  if (role.value !== 'admin') return
+  if (!isLoggedIn.value || role.value !== 'admin') return
   try {
     // TODO: 从后端获取统计数据
     stats.value = {
@@ -164,9 +187,11 @@ async function loadStats() {
 }
 
 onMounted(async () => {
-  await loadUserInfo()
-  await loadContainerStatus()
-  await loadStats()
+  await checkLoginStatus()
+  if (isLoggedIn.value) {
+    await loadContainerStatus()
+    await loadStats()
+  }
 })
 </script>
 
@@ -174,6 +199,62 @@ onMounted(async () => {
 .mobile-home {
   min-height: 100vh;
   background: #f4f5fa;
+}
+
+/* 未登录状态 */
+.mobile-home.login-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.login-card {
+  background: #fff;
+  border-radius: 16px;
+  padding: 40px 32px;
+  text-align: center;
+  box-shadow: 0 4px 16px rgba(60, 70, 120, 0.08);
+  max-width: 320px;
+  width: 100%;
+}
+
+.login-icon {
+  font-size: 64px;
+  margin-bottom: 20px;
+}
+
+.login-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #20242f;
+  margin-bottom: 12px;
+}
+
+.login-desc {
+  font-size: 14px;
+  color: #8a90a3;
+  margin-bottom: 24px;
+  line-height: 1.6;
+}
+
+.login-btn {
+  width: 100%;
+  padding: 14px 24px;
+  background: linear-gradient(135deg, #6a72e8 0%, #9b8cf5 100%);
+  color: #fff;
+  border: none;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(106, 114, 232, 0.3);
+  transition: all 0.2s;
+}
+
+.login-btn:active {
+  transform: scale(0.98);
+  box-shadow: 0 2px 8px rgba(106, 114, 232, 0.3);
 }
 
 /* 顶部头部 */
