@@ -1,87 +1,98 @@
 <template>
   <div class="mobile-home">
-    <!-- 顶部渐变头部 -->
-    <div class="home-header">
-      <div class="welcome-card">
-        <div class="welcome-text">
-          <div class="greeting">{{ greeting }}</div>
-          <div class="address">{{ shortAddr }}</div>
-        </div>
-        <div class="role-badge" :class="role">
-          {{ role === 'admin' ? '管理员' : '用户' }}
-        </div>
+    <!-- 顶部头部区域 -->
+    <div class="ghead">
+      <div class="row1">
+        <div class="ttl">DSH 控制台</div>
+        <div class="avatar">{{ role === 'admin' ? '管' : '用' }}</div>
+      </div>
+      <div class="greet">
+        {{ role === 'admin' ? '管理员' : '用户' }} · 已连接
+        <span class="greet-hint">｜每 300s 自动刷新</span>
+      </div>
+      <div class="addr-chip" @click="copyAddress">
+        <span class="addr-icon">🔑</span>
+        <span class="addr-text">{{ shortAddr }}</span>
+        <span class="addr-act">退出</span>
       </div>
     </div>
 
-    <!-- 快捷操作 -->
-    <div class="quick-actions">
-      <div class="action-item" @click="$router.push('/mobile/container')">
-        <div class="action-icon">📦</div>
-        <div class="action-label">容器管理</div>
+    <!-- 主体内容 -->
+    <div class="body">
+      <!-- Docker 状态横幅 -->
+      <div class="docker-banner">
+        <span class="pulse"></span>
+        <div class="docker-info">
+          <div class="docker-label">Docker 状态</div>
+          <div class="docker-value">{{ containerStatus ? '运行中' : '未启动' }}</div>
+        </div>
+        <span class="docker-icon">🐳</span>
       </div>
-      <div class="action-item" @click="$router.push('/mobile/skills')">
-        <div class="action-icon">🎯</div>
-        <div class="action-label">技能市场</div>
-      </div>
-      <div class="action-item" @click="$router.push('/mobile/approvals')">
-        <div class="action-icon">✅</div>
-        <div class="action-label">审批中心</div>
-      </div>
-      <div class="action-item" @click="$router.push('/mobile/me')">
-        <div class="action-icon">👤</div>
-        <div class="action-label">我的</div>
-      </div>
-    </div>
 
-    <!-- 容器状态卡片 -->
-    <div class="card" v-if="containerStatus">
-      <div class="card-header">
-        <div class="card-title">容器状态</div>
-        <div class="status-badge" :class="containerStatus.status">
-          {{ statusText(containerStatus.status) }}
+      <!-- 统计卡片 -->
+      <div class="stat2">
+        <div class="stat">
+          <div class="sl">总用户数</div>
+          <div class="sv">{{ stats.totalUsers || 0 }}</div>
+        </div>
+        <div class="stat alt">
+          <div class="sl">运行中</div>
+          <div class="sv">{{ stats.running || 0 }}</div>
+        </div>
+        <div class="stat alt">
+          <div class="sl">基础配额</div>
+          <div class="sv">{{ stats.tier1 || 0 }}</div>
+        </div>
+        <div class="stat">
+          <div class="sl">增强配额</div>
+          <div class="sv">{{ stats.tier2 || 0 }}</div>
         </div>
       </div>
-      <div class="stats-grid">
-        <div class="stat-item">
-          <div class="stat-label">内存</div>
-          <div class="stat-value">{{ containerStatus.memory || '-' }}</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-label">CPU</div>
-          <div class="stat-value">{{ containerStatus.cpu || '-' }}</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-label">磁盘</div>
-          <div class="stat-value">{{ containerStatus.disk || '-' }}</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-label">运行时间</div>
-          <div class="stat-value">{{ containerStatus.uptime || '-' }}</div>
-        </div>
-      </div>
-    </div>
 
-    <!-- 管理员功能入口 -->
-    <div class="card" v-if="role === 'admin'">
-      <div class="card-header">
-        <div class="card-title">管理功能</div>
+      <!-- 快捷管理（仅管理员显示） -->
+      <div v-if="role === 'admin'" class="sec-t">快捷管理</div>
+      <div v-if="role === 'admin'" class="card">
+        <div class="qgrid">
+          <div class="qitem" @click="$router.push('/user?tab=adm:users')">
+            <div class="qi" style="background: #efecff">👥</div>
+            <span>用户管理</span>
+          </div>
+          <div class="qitem" @click="$router.push('/user?tab=adm:quota')">
+            <div class="qi" style="background: #eaf0ff">📊</div>
+            <span>配额配置</span>
+          </div>
+          <div class="qitem" @click="$router.push('/user?tab=adm:monitor')">
+            <div class="qi" style="background: #e6f7ee">📈</div>
+            <span>资源监控</span>
+          </div>
+          <div class="qitem" @click="$router.push('/user?tab=adm:version')">
+            <div class="qi" style="background: #fff4e3">🏷️</div>
+            <span>DSH 版本</span>
+          </div>
+          <div class="qitem" @click="$router.push('/user?tab=adm:model')">
+            <div class="qi" style="background: #efecff">🤖</div>
+            <span>模型配置</span>
+          </div>
+          <div class="qitem" @click="$router.push('/user?tab=adm:approval')">
+            <div class="qi" style="background: #fdecec">🛡️</div>
+            <span>凭证审批</span>
+          </div>
+          <div class="qitem" @click="$router.push('/user?tab=adm:env-approval')">
+            <div class="qi" style="background: #eaf0ff">🗂️</div>
+            <span>环境审批</span>
+          </div>
+          <div class="qitem" @click="$router.push('/user?tab=account')">
+            <div class="qi" style="background: #e6f7ee">🪪</div>
+            <span>我的凭证</span>
+          </div>
+        </div>
       </div>
-      <div class="admin-links">
-        <router-link to="/mobile/admin/users" class="admin-link">
-          <span class="link-icon">👥</span>
-          <span class="link-text">用户管理</span>
-          <span class="link-arrow">›</span>
-        </router-link>
-        <router-link to="/mobile/admin/quota" class="admin-link">
-          <span class="link-icon">⚙️</span>
-          <span class="link-text">配额配置</span>
-          <span class="link-arrow">›</span>
-        </router-link>
-        <router-link to="/mobile/admin/monitor" class="admin-link">
-          <span class="link-icon">📊</span>
-          <span class="link-text">资源监控</span>
-          <span class="link-arrow">›</span>
-        </router-link>
+
+      <!-- 孤儿数据清理（仅管理员显示） -->
+      <div v-if="role === 'admin'" class="card">
+        <div class="ct">🧹 孤儿数据清理</div>
+        <div class="cd">扫描并清理无人使用的残留数据卷（不影响任何在用用户与运行中的容器）</div>
+        <button class="btn btn-p" @click="scanOrphanVolumes">扫描孤儿卷</button>
       </div>
     </div>
   </div>
@@ -94,27 +105,27 @@ import axios from 'axios'
 const address = ref('')
 const role = ref('user')
 const containerStatus = ref(null)
+const stats = ref({
+  totalUsers: 0,
+  running: 0,
+  tier1: 0,
+  tier2: 0,
+})
 
 const shortAddr = computed(() => {
   const a = address.value
   return a ? `${a.slice(0, 12)}…${a.slice(-4)}` : ''
 })
 
-const greeting = computed(() => {
-  const hour = new Date().getHours()
-  if (hour < 12) return '早上好'
-  if (hour < 18) return '下午好'
-  return '晚上好'
-})
-
-function statusText(status) {
-  const map = {
-    running: '运行中',
-    stopped: '已停止',
-    creating: '创建中',
-    unknown: '未知',
+function copyAddress() {
+  if (address.value) {
+    navigator.clipboard.writeText(address.value)
+    alert('地址已复制到剪贴板')
   }
-  return map[status] || status
+}
+
+async function scanOrphanVolumes() {
+  alert('正在扫描孤儿数据卷…')
 }
 
 async function loadUserInfo() {
@@ -137,195 +148,271 @@ async function loadContainerStatus() {
   }
 }
 
+async function loadStats() {
+  if (role.value !== 'admin') return
+  try {
+    // TODO: 从后端获取统计数据
+    stats.value = {
+      totalUsers: 11,
+      running: 2,
+      tier1: 11,
+      tier2: 0,
+    }
+  } catch (e) {
+    console.error('加载统计数据失败:', e)
+  }
+}
+
 onMounted(async () => {
   await loadUserInfo()
   await loadContainerStatus()
+  await loadStats()
 })
 </script>
 
 <style scoped>
 .mobile-home {
-  padding: 0 0 20px;
-  width: 100%;
+  min-height: 100vh;
+  background: #f4f5fa;
 }
 
-.home-header {
+/* 顶部头部 */
+.ghead {
   background: linear-gradient(135deg, #6a72e8 0%, #9b8cf5 100%);
   padding: 20px 16px 24px;
-  margin-bottom: 16px;
-  width: 100%;
+  color: #fff;
 }
 
-.welcome-card {
+.row1 {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  margin-bottom: 12px;
 }
 
-.welcome-text {
-  color: #fff;
-}
-
-.greeting {
+.ttl {
   font-size: 18px;
-  font-weight: 600;
-  margin-bottom: 4px;
+  font-weight: 700;
 }
 
-.address {
-  font-size: 13px;
-  opacity: 0.9;
-  font-family: 'SF Mono', Monaco, monospace;
-}
-
-.role-badge {
-  padding: 4px 12px;
-  border-radius: 12px;
-  font-size: 12px;
-  font-weight: 600;
+.avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
   background: rgba(255, 255, 255, 0.2);
-  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
 }
 
-.role-badge.admin {
-  background: rgba(255, 255, 255, 0.3);
+.greet {
+  font-size: 14px;
+  margin-bottom: 12px;
 }
 
-.quick-actions {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
+.greet-hint {
+  opacity: 0.6;
+}
+
+.addr-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.addr-chip:active {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.addr-icon {
+  font-size: 16px;
+}
+
+.addr-text {
+  flex: 1;
+  font-family: 'SF Mono', Monaco, monospace;
+  font-size: 12px;
+}
+
+.addr-act {
+  font-size: 12px;
+  opacity: 0.8;
+  font-weight: 600;
+}
+
+/* 主体内容 */
+.body {
+  padding: 16px;
+}
+
+/* Docker 状态横幅 */
+.docker-banner {
+  display: flex;
+  align-items: center;
   gap: 12px;
-  padding: 0 16px;
+  background: linear-gradient(135deg, #1fa05c 0%, #2bb56a 100%);
+  border-radius: 14px;
+  padding: 14px 16px;
+  color: #fff;
+  margin-bottom: 16px;
+  box-shadow: 0 4px 16px rgba(60, 70, 120, 0.08);
+}
+
+.pulse {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #fff;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.docker-info {
+  flex: 1;
+}
+
+.docker-label {
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+.docker-value {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.docker-icon {
+  font-size: 22px;
+}
+
+/* 统计卡片 */
+.stat2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
   margin-bottom: 16px;
 }
 
-.action-item {
+.stat {
+  background: #fff;
+  border-radius: 14px;
+  padding: 14px;
+  box-shadow: 0 4px 16px rgba(60, 70, 120, 0.08);
+}
+
+.stat.alt {
+  background: #f6f7fb;
+}
+
+.sl {
+  font-size: 11px;
+  color: #8a90a3;
+  margin-bottom: 6px;
+}
+
+.sv {
+  font-size: 24px;
+  font-weight: 700;
+  color: #20242f;
+}
+
+/* 区块标题 */
+.sec-t {
+  font-size: 13px;
+  font-weight: 600;
+  color: #4b5162;
+  margin-bottom: 10px;
+  padding-left: 2px;
+}
+
+/* 卡片 */
+.card {
+  background: #fff;
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 4px 16px rgba(60, 70, 120, 0.08);
+  margin-bottom: 16px;
+}
+
+/* 快捷管理网格 */
+.qgrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.qitem {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  padding: 16px 8px;
-  background: #fff;
-  border-radius: 16px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
   cursor: pointer;
   transition: transform 0.2s;
 }
 
-.action-item:active {
+.qitem:active {
   transform: scale(0.95);
 }
 
-.action-icon {
-  font-size: 32px;
+.qi {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
 }
 
-.action-label {
-  font-size: 12px;
+.qitem span {
+  font-size: 11px;
   color: #4b5162;
   font-weight: 500;
 }
 
-.card {
-  background: #fff;
-  margin: 0 16px 16px;
-  padding: 16px;
-  border-radius: 16px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-}
-
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-}
-
-.card-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: #20242f;
-}
-
-.status-badge {
-  padding: 4px 12px;
-  border-radius: 12px;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.status-badge.running {
-  background: #e6f7ee;
-  color: #1fa05c;
-}
-
-.status-badge.stopped {
-  background: #fdecec;
-  color: #e5484d;
-}
-
-.status-badge.creating {
-  background: #fff4e3;
-  color: #e8930c;
-}
-
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-}
-
-.stat-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.stat-label {
-  font-size: 12px;
-  color: #8a90a3;
-}
-
-.stat-value {
-  font-size: 16px;
-  font-weight: 600;
-  color: #20242f;
-}
-
-.admin-links {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.admin-link {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px;
-  background: #f4f5fa;
-  border-radius: 12px;
-  text-decoration: none;
-  transition: background 0.2s;
-}
-
-.admin-link:active {
-  background: #eceef4;
-}
-
-.link-icon {
-  font-size: 20px;
-}
-
-.link-text {
-  flex: 1;
+/* 孤儿清理卡片 */
+.ct {
   font-size: 14px;
+  font-weight: 700;
   color: #20242f;
-  font-weight: 500;
+  margin-bottom: 8px;
 }
 
-.link-arrow {
-  font-size: 20px;
+.cd {
+  font-size: 12px;
   color: #8a90a3;
+  line-height: 1.6;
+  margin-bottom: 12px;
+}
+
+.btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-p {
+  background: linear-gradient(135deg, #f0a132, #e8930c);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(240, 161, 50, 0.3);
+}
+
+.btn:active {
+  transform: scale(0.98);
 }
 </style>
