@@ -66,7 +66,9 @@
             点击下方按钮进入你的专属 DSH 实例（每次进入需插件签名，用于运行匹配）
           </div>
           <div style="margin-top: 12px">
-            <button class="btn btn-p" @click="enterDsh">打开 DSH Web UI</button>
+            <button class="btn btn-p" @click="enterDsh" :disabled="enteringDsh">
+              {{ enteringDsh ? '正在进入...' : '打开 DSH Web UI' }}
+            </button>
           </div>
         </div>
 
@@ -111,6 +113,7 @@ import axios from 'axios'
 import { requestAccounts, signMessage, getPublicKey } from '../../api/wallet.js'
 
 const loading = ref(true)
+const enteringDsh = ref(false)
 const userInfo = ref({
   address: '',
   port: '',
@@ -282,6 +285,7 @@ async function enterDsh() {
     return
   }
   
+  enteringDsh.value = true
   try {
     console.log('[MobileContainer] enterDsh - 开始建立会话...')
     // 先建立会话（不传 action，让后端返回容器 URL）
@@ -319,6 +323,8 @@ async function enterDsh() {
   } catch (err) {
     console.error('[MobileContainer] enterDsh 失败:', err)
     alert('进入 DSH 失败: ' + (err.message || '未知错误'))
+  } finally {
+    enteringDsh.value = false
   }
 }
 
