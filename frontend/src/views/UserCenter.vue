@@ -86,7 +86,7 @@
         </div>
         <!-- 审批 -->
         <div v-else-if="mobileTab === 'approvals'" class="mobile-page">
-          <MobileApprovals @update-approval-count="checkApprovalCount" />
+          <MobileApprovals />
         </div>
         <!-- 我的 -->
         <div v-else-if="mobileTab === 'me'" class="mobile-page">
@@ -131,9 +131,7 @@
         >
           <div class="tab-icon">
             ✅
-            <span v-if="approvalCount > 0" class="tab-badge">{{
-              approvalCount > 99 ? '99+' : approvalCount
-            }}</span>
+            <span v-if="approvalCount > 0" class="tab-dot"></span>
           </div>
           <div class="tab-label">审批</div>
         </button>
@@ -1079,47 +1077,16 @@ const route = useRoute()
 // ---- 移动端检测 ----
 const isMobile = ref(window.innerWidth <= 768)
 const mobileTab = ref('home') // home/container/skills/approvals/me
-const approvalCount = ref(0) // 待审批数量
+
+// 计算待审批总数（环境模板 + CWT 申请）
+const approvalCount = computed(() => badgeFor('envtpl') + badgeFor('cred'))
 
 function updateMobile() {
   isMobile.value = window.innerWidth <= 768
 }
 
-// 检查待审批数量（CWT 申请 + 环境模板草稿）
-async function checkApprovalCount() {
-  try {
-    // 检查 CWT 待审批申请
-    const cwtRes = await axios.get('/api/admin/cwt-applications', {
-      params: { status: 'pending', limit: 1, offset: 0 },
-    })
-    const cwtPending = cwtRes.data.total || 0
-
-    // 检查环境模板待审核数量
-    const envRes = await axios.get('/api/admin/environments')
-    const envDrafts = (envRes.data.environments || []).filter((e) => e.status === 'draft').length
-
-    approvalCount.value = cwtPending + envDrafts
-  } catch (e) {
-    // 非管理员或请求失败，静默处理
-    approvalCount.value = 0
-  }
-}
-
-// 监听 tab 切换，切换到审批时立即检查
-watch(mobileTab, (newTab) => {
-  if (newTab === 'approvals' && role.value === 'admin') {
-    checkApprovalCount()
-  }
-})
-
 onMounted(() => {
   window.addEventListener('resize', updateMobile)
-  // 检查用户是否是管理员，如果是则定期检查待审批数量
-  if (role.value === 'admin') {
-    checkApprovalCount()
-    // 每 10 秒检查一次，更及时
-    setInterval(checkApprovalCount, 10000)
-  }
 })
 
 onUnmounted(() => {
@@ -3111,22 +3078,16 @@ onUnmounted(() => {
   position: relative;
 }
 
-.tab-badge {
+.tab-dot {
   position: absolute;
-  top: -4px;
-  right: -8px;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
+  top: -2px;
+  right: -6px;
+  width: 10px;
+  height: 10px;
   background: #ff4757;
-  color: #fff;
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 18px;
-  text-align: center;
-  border-radius: 9px;
+  border-radius: 50%;
   border: 2px solid #fff;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
 .tab-label {

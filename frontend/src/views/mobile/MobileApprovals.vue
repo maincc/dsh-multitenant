@@ -26,7 +26,7 @@
             @click="switchType('cwt')"
           >
             CWT 申请
-            <span v-if="pendingCount > 0" class="badge-count">{{ pendingCount }}</span>
+            <span v-if="pendingCount > 0" class="tab-dot"></span>
           </button>
           <button
             class="type-tab"
@@ -34,7 +34,7 @@
             @click="switchType('env')"
           >
             环境模板
-            <span v-if="draftCount > 0" class="badge-count">{{ draftCount }}</span>
+            <span v-if="draftCount > 0" class="tab-dot"></span>
           </button>
         </div>
 
@@ -184,8 +184,7 @@
 import { ref, onMounted } from 'vue'
 import axios from 'axios'
 import { signChallenge } from '../../api/wallet.js'
-
-const emit = defineEmits(['update-approval-count'])
+import { refreshIfWatching } from '../../composables/useAdminBadges.js'
 
 const loading = ref(true)
 const approvalType = ref('cwt') // 'cwt' | 'env'
@@ -352,7 +351,7 @@ async function approveApp(app) {
     )
     alert('已批准')
     await loadApplications()
-    emit('update-approval-count')
+    refreshIfWatching()
   } catch (e) {
     console.error('批准失败:', e)
     alert('批准失败: ' + (e.response?.data?.error || e.message))
@@ -378,7 +377,7 @@ async function rejectApp(app) {
     )
     alert('已拒绝')
     await loadApplications()
-    emit('update-approval-count')
+    refreshIfWatching()
   } catch (e) {
     console.error('拒绝失败:', e)
     alert('拒绝失败: ' + (e.response?.data?.error || e.message))
@@ -424,7 +423,7 @@ async function publishEnv(env) {
     await axios.post('/api/admin/env-publish', { id: env._id }, { headers })
     alert('已发布')
     await loadEnvironments()
-    emit('update-approval-count')
+    refreshIfWatching()
   } catch (e) {
     console.error('发布失败:', e)
     alert('发布失败: ' + (e.response?.data?.error || e.message))
@@ -446,7 +445,7 @@ async function rejectEnv(env) {
     await axios.post('/api/admin/env-reject', { id: env._id, reason }, { headers })
     alert('已驳回')
     await loadEnvironments()
-    emit('update-approval-count')
+    refreshIfWatching()
   } catch (e) {
     console.error('驳回失败:', e)
     alert('驳回失败: ' + (e.response?.data?.error || e.message))
@@ -606,13 +605,14 @@ onMounted(() => {
   box-shadow: 0 2px 8px rgba(106, 114, 232, 0.3);
 }
 
-.badge-count {
+.tab-dot {
+  width: 8px;
+  height: 8px;
   background: #ff4757;
-  color: #fff;
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 11px;
-  font-weight: 700;
+  border-radius: 50%;
+  display: inline-block;
+  margin-left: 4px;
+  vertical-align: middle;
 }
 
 /* 空状态 */
