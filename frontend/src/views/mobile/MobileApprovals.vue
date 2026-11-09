@@ -185,6 +185,8 @@ import { ref, onMounted } from 'vue'
 import axios from 'axios'
 import { signChallenge } from '../../api/wallet.js'
 
+const emit = defineEmits(['update-approval-count'])
+
 const loading = ref(true)
 const approvalType = ref('cwt') // 'cwt' | 'env'
 
@@ -350,6 +352,7 @@ async function approveApp(app) {
     )
     alert('已批准')
     await loadApplications()
+    emit('update-approval-count')
   } catch (e) {
     console.error('批准失败:', e)
     alert('批准失败: ' + (e.response?.data?.error || e.message))
@@ -375,6 +378,7 @@ async function rejectApp(app) {
     )
     alert('已拒绝')
     await loadApplications()
+    emit('update-approval-count')
   } catch (e) {
     console.error('拒绝失败:', e)
     alert('拒绝失败: ' + (e.response?.data?.error || e.message))
@@ -420,6 +424,7 @@ async function publishEnv(env) {
     await axios.post('/api/admin/env-publish', { id: env._id }, { headers })
     alert('已发布')
     await loadEnvironments()
+    emit('update-approval-count')
   } catch (e) {
     console.error('发布失败:', e)
     alert('发布失败: ' + (e.response?.data?.error || e.message))
@@ -441,6 +446,7 @@ async function rejectEnv(env) {
     await axios.post('/api/admin/env-reject', { id: env._id, reason }, { headers })
     alert('已驳回')
     await loadEnvironments()
+    emit('update-approval-count')
   } catch (e) {
     console.error('驳回失败:', e)
     alert('驳回失败: ' + (e.response?.data?.error || e.message))

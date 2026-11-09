@@ -86,7 +86,7 @@
         </div>
         <!-- 审批 -->
         <div v-else-if="mobileTab === 'approvals'" class="mobile-page">
-          <MobileApprovals />
+          <MobileApprovals @update-approval-count="checkApprovalCount" />
         </div>
         <!-- 我的 -->
         <div v-else-if="mobileTab === 'me'" class="mobile-page">
@@ -131,7 +131,9 @@
         >
           <div class="tab-icon">
             ✅
-            <span v-if="approvalCount > 0" class="tab-badge">{{ approvalCount > 99 ? '99+' : approvalCount }}</span>
+            <span v-if="approvalCount > 0" class="tab-badge">{{
+              approvalCount > 99 ? '99+' : approvalCount
+            }}</span>
           </div>
           <div class="tab-label">审批</div>
         </button>
@@ -1091,11 +1093,11 @@ async function checkApprovalCount() {
       params: { status: 'pending', limit: 1, offset: 0 },
     })
     const cwtPending = cwtRes.data.total || 0
-    
+
     // 检查环境模板待审核数量
     const envRes = await axios.get('/api/admin/environments')
     const envDrafts = (envRes.data.environments || []).filter((e) => e.status === 'draft').length
-    
+
     approvalCount.value = cwtPending + envDrafts
   } catch (e) {
     // 非管理员或请求失败，静默处理
@@ -1103,13 +1105,20 @@ async function checkApprovalCount() {
   }
 }
 
+// 监听 tab 切换，切换到审批时立即检查
+watch(mobileTab, (newTab) => {
+  if (newTab === 'approvals' && role.value === 'admin') {
+    checkApprovalCount()
+  }
+})
+
 onMounted(() => {
   window.addEventListener('resize', updateMobile)
   // 检查用户是否是管理员，如果是则定期检查待审批数量
   if (role.value === 'admin') {
     checkApprovalCount()
-    // 每 30 秒检查一次
-    setInterval(checkApprovalCount, 30000)
+    // 每 10 秒检查一次，更及时
+    setInterval(checkApprovalCount, 10000)
   }
 })
 
