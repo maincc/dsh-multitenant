@@ -1,0 +1,489 @@
+<template>
+  <div class="mobile-container">
+    <!-- Loading 状态 -->
+    <div v-if="loading" class="loading-state">
+      <div class="loading-spinner"></div>
+      <div class="loading-text">加载中...</div>
+    </div>
+
+    <!-- 数据加载完成后显示内容 -->
+    <template v-else>
+      <!-- 头部 -->
+      <div class="ghead">
+        <div class="row1">
+          <div class="ttl">容器管理</div>
+          <div class="avatar">{{ role === 'admin' ? '管' : '用' }}</div>
+        </div>
+        <div class="greet">查看容器状态与资源使用，管理你的专属 DSH 容器</div>
+      </div>
+
+      <!-- 主体内容 -->
+      <div class="body">
+        <!-- 容器信息卡片 -->
+        <div class="card">
+          <div class="kv">
+            <span class="k">专属端口</span>
+            <span class="v mono" style="font-weight: 700">{{ userInfo.port || '-' }}</span>
+          </div>
+          <div class="kv">
+            <span class="k">当前配额</span>
+            <span class="v">
+              <span class="badge" :class="tierBadgeClass">{{ tierLabel }}</span>
+            </span>
+          </div>
+          <div class="kv">
+            <span class="k">容器状态</span>
+            <span class="v">
+              <span class="badge" :class="statusBadgeClass">{{ statusText }}</span>
+            </span>
+          </div>
+        </div>
+
+        <!-- 资源使用卡片 -->
+        <div class="card">
+          <div class="kv">
+            <span class="k">CPU 使用率</span>
+            <span class="v" style="font-weight: 700">{{ userInfo.stats?.cpu || '0%' }}</span>
+          </div>
+          <div class="kv" style="border: none; padding-bottom: 4px">
+            <span class="k">内存使用</span>
+            <span class="v" style="font-weight: 700">
+              {{ userInfo.stats?.memory || '0MiB' }}
+              <span style="color: #8a90a3; font-weight: 400">
+                ({{ userInfo.stats?.memoryPercent || '0%' }})
+              </span>
+            </span>
+          </div>
+          <div class="progress">
+            <i :style="{ width: memoryPercent }"></i>
+          </div>
+        </div>
+
+        <!-- 进入 DSH 卡片 -->
+        <div class="card enter-card">
+          <div class="ct">🚀 进入 DSH</div>
+          <div class="cd">
+            点击下方按钮进入你的专属 DSH 实例（每次进入需插件签名，用于运行匹配）
+          </div>
+          <div style="margin-top: 12px">
+            <button class="btn btn-p" @click="enterDsh">打开 DSH Web UI</button>
+          </div>
+        </div>
+
+        <!-- 操作按钮 -->
+        <div class="btn-row">
+          <button class="btn btn-p" @click="restartDSH" :disabled="containerBooting">
+            🔄 重启服务
+          </button>
+          <button
+            class="btn btn-g"
+            @click="stopContainer"
+            :disabled="!connected || userInfo.status !== 'running'"
+          >
+            ■ 停止容器
+          </button>
+        </div>
+
+        <!-- 危险操作 -->
+        <button class="btn btn-r" @click="resetContainer">🗑 重置容器（删除数据）</button>
+
+        <!-- 说明卡片 -->
+        <div class="card">
+          <div class="cd">
+            <b style="color: #4b5162">重启服务：</b>
+            安装插件后需重启 DSH 服务才能生效<br /><br />
+            <b style="color: #4b5162">停止容器：</b>
+            立即结束今日使用时长并保全剩余额度，数据保留，可随时重新启动。{{
+              usageInfoLabel ? '今日已用 ' + usageInfoLabel : ''
+            }}<br /><br />
+            <b style="color: #4b5162">重置容器：</b>
+            删除所有数据和配置，重新开始（不可恢复）
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, onMounted } from 'vue'
+import axios from 'axios'
+
+const loading = ref(true)
+const userInfo = ref({
+  port: '',
+  tier: '',
+  tierLabel: '',
+  status: '',
+  stats: null,
+})
+const role = ref('user')
+const connected = ref(false)
+const containerBooting = ref(false)
+const usageInfo = ref(null)
+
+const memoryPercent = computed(() => {
+  return userInfo.value.stats?.memoryPercent || '0%'
+})
+
+const tierBadgeClass = computed(() => {
+  const tier = userInfo.value.tier
+  if (tier === 'basic' || tier === 'T1') return 'b-purple'
+  if (tier === 'enhanced' || tier === 'T2') return 'b-orange'
+  if (tier === 'performance' || tier === 'T3') return 'b-green'
+  return 'b-purple'
+})
+
+const tierLabel = computed(() => {
+  return userInfo.value.tierLabel || '基础'
+})
+
+const statusBadgeClass = computed(() => {
+  const status = userInfo.value.status
+  if (status === 'running') return 'b-green'
+  if (status === 'stopped') return 'b-red'
+  if (status === 'creating') return 'b-orange'
+  return 'b-red'
+})
+
+const statusText = computed(() => {
+  const status = userInfo.value.status
+  if (status === 'running') return '● 运行中'
+  if (status === 'stopped') return '● 已停止'
+  if (status === 'creating') return '● 创建中'
+  return '● 未知'
+})
+
+const usageInfoLabel = computed(() => {
+  const u = usageInfo.value
+  if (!u) return ''
+  if (!u.enabled) return '无限制'
+  if (u.exempt) return '豁免'
+  return `${u.usedMinutes} / ${u.dailyMinutes} 分钟`
+})
+
+async function loadUserInfo() {
+  try {
+    const res = await axios.get('/api/user/credential-status')
+    role.value = res.data.role || 'user'
+
+    // 获取容器信息
+    const containerRes = await axios.get('/api/user/container-info')
+    userInfo.value = {
+      port: containerRes.data.port || '',
+      tier: containerRes.data.tier || 'basic',
+      tierLabel: containerRes.data.tierLabel || '基础',
+      status: containerRes.data.status || 'unknown',
+      stats: containerRes.data.stats || null,
+    }
+    connected.value = true
+  } catch (e) {
+    console.error('加载用户信息失败:', e)
+  }
+}
+
+async function loadUsageInfo() {
+  try {
+    const res = await axios.get('/api/user/usage-info')
+    usageInfo.value = res.data
+  } catch (e) {
+    console.error('加载使用信息失败:', e)
+  }
+}
+
+async function enterDsh() {
+  if (!userInfo.value.port) {
+    alert('容器未启动')
+    return
+  }
+  // 打开 DSH Web UI
+  window.open(`http://localhost:${userInfo.value.port}`, '_blank')
+}
+
+async function restartDSH() {
+  if (!confirm('确定要重启 DSH 服务吗？')) return
+
+  containerBooting.value = true
+  try {
+    await axios.post('/api/user/container/restart')
+    alert('重启指令已下发，服务将稍后恢复')
+    // 重新加载容器信息
+    setTimeout(() => {
+      loadUserInfo()
+    }, 3000)
+  } catch (e) {
+    console.error('重启失败:', e)
+    alert('重启失败: ' + (e.response?.data?.error || e.message))
+  } finally {
+    containerBooting.value = false
+  }
+}
+
+async function stopContainer() {
+  if (!confirm('确定要停止容器吗？今日使用时长将结束，数据保留。')) return
+
+  try {
+    await axios.post('/api/user/container/stop')
+    alert('容器已停止，时长保留')
+    // 重新加载容器信息
+    setTimeout(() => {
+      loadUserInfo()
+    }, 2000)
+  } catch (e) {
+    console.error('停止失败:', e)
+    alert('停止失败: ' + (e.response?.data?.error || e.message))
+  }
+}
+
+async function resetContainer() {
+  if (!confirm('⚠️ 确认重置容器？将删除所有数据和配置，不可恢复！')) return
+
+  try {
+    await axios.post('/api/user/container/reset')
+    alert('重置请求已提交')
+    // 重新加载容器信息
+    setTimeout(() => {
+      loadUserInfo()
+    }, 3000)
+  } catch (e) {
+    console.error('重置失败:', e)
+    alert('重置失败: ' + (e.response?.data?.error || e.message))
+  }
+}
+
+onMounted(async () => {
+  try {
+    await Promise.all([loadUserInfo(), loadUsageInfo()])
+  } catch (e) {
+    console.error('加载数据失败:', e)
+  } finally {
+    loading.value = false
+  }
+})
+</script>
+
+<style scoped>
+.mobile-container {
+  min-height: 100vh;
+  background: #f4f5fa;
+}
+
+/* Loading 状态 */
+.loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  gap: 16px;
+}
+
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(106, 114, 232, 0.2);
+  border-top-color: #6a72e8;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.loading-text {
+  font-size: 14px;
+  color: #8a90a3;
+}
+
+/* 头部 */
+.ghead {
+  background: linear-gradient(135deg, #6a72e8 0%, #9b8cf5 100%);
+  padding: 20px 16px 24px;
+  color: #fff;
+}
+
+.row1 {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.ttl {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.greet {
+  font-size: 13px;
+  opacity: 0.9;
+  line-height: 1.5;
+}
+
+/* 主体内容 */
+.body {
+  padding: 16px;
+}
+
+/* 卡片 */
+.card {
+  background: #fff;
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 4px 16px rgba(60, 70, 120, 0.08);
+  margin-bottom: 16px;
+}
+
+.kv {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid #eceef4;
+}
+
+.kv:last-child {
+  border-bottom: none;
+}
+
+.k {
+  font-size: 13px;
+  color: #8a90a3;
+}
+
+.v {
+  font-size: 14px;
+  color: #20242f;
+  font-weight: 500;
+}
+
+.mono {
+  font-family: 'SF Mono', Monaco, monospace;
+}
+
+/* 徽章 */
+.badge {
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.b-purple {
+  background: #efecff;
+  color: #6a72e8;
+}
+
+.b-orange {
+  background: #fff4e3;
+  color: #e8930c;
+}
+
+.b-green {
+  background: #e6f7ee;
+  color: #1fa05c;
+}
+
+.b-red {
+  background: #fdecec;
+  color: #e5484d;
+}
+
+/* 进度条 */
+.progress {
+  height: 6px;
+  background: #eceef4;
+  border-radius: 3px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+
+.progress i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #6a72e8 0%, #9b8cf5 100%);
+  transition: width 0.3s;
+}
+
+/* 进入 DSH 卡片 */
+.enter-card {
+  background: linear-gradient(135deg, #f0f1ff, #faf8ff);
+}
+
+.ct {
+  font-size: 15px;
+  font-weight: 700;
+  color: #20242f;
+  margin-bottom: 8px;
+}
+
+.cd {
+  font-size: 12px;
+  color: #8a90a3;
+  line-height: 1.6;
+}
+
+/* 按钮 */
+.btn {
+  padding: 12px 20px;
+  border: none;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  width: 100%;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-p {
+  background: linear-gradient(135deg, #6a72e8 0%, #9b8cf5 100%);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(106, 114, 232, 0.3);
+}
+
+.btn-g {
+  background: #e6f7ee;
+  color: #1fa05c;
+}
+
+.btn-r {
+  background: #fdecec;
+  color: #e5484d;
+  margin-bottom: 16px;
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+/* 按钮行 */
+.btn-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.btn-row .btn {
+  flex: 1;
+}
+</style>

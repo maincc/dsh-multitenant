@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import UserCenter from '../views/UserCenter.vue'
 import Home from '../views/Home.vue'
 import SkillMarket from '../views/SkillMarket.vue'
+import MobileContainer from '../views/mobile/MobileContainer.vue'
 
 const routes = [
   { path: '/', component: Home },
@@ -12,6 +13,7 @@ const routes = [
   { path: '/user', component: UserCenter },
   { path: '/user/:address', component: UserCenter, props: true },
   { path: '/skills', component: SkillMarket },
+  { path: '/mobile/container', component: MobileContainer },
 ]
 
 const router = createRouter({
