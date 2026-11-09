@@ -111,6 +111,7 @@ import axios from 'axios'
 
 const loading = ref(true)
 const userInfo = ref({
+  address: '',
   port: '',
   tier: '',
   tierLabel: '',
@@ -171,6 +172,7 @@ async function loadUserInfo() {
     // 获取容器信息（使用 PC 端的端点）
     const containerRes = await axios.get(`/api/user/${address}`)
     userInfo.value = {
+      address: address,
       port: containerRes.data.port || '',
       tier: containerRes.data.tier || 'basic',
       tierLabel: containerRes.data.tierLabel || '基础',
@@ -211,7 +213,8 @@ async function restartDSH() {
 
   containerBooting.value = true
   try {
-    await axios.post('/api/user/container/restart')
+    const address = userInfo.value.address
+    await axios.post(`/api/user/${address}/restart`)
     alert('重启指令已下发，服务将稍后恢复')
     // 重新加载容器信息
     setTimeout(() => {
@@ -229,7 +232,8 @@ async function stopContainer() {
   if (!confirm('确定要停止容器吗？今日使用时长将结束，数据保留。')) return
 
   try {
-    await axios.post('/api/user/container/stop')
+    const address = userInfo.value.address
+    await axios.post(`/api/user/${address}/stop`)
     alert('容器已停止，时长保留')
     // 重新加载容器信息
     setTimeout(() => {
@@ -245,8 +249,13 @@ async function resetContainer() {
   if (!confirm('⚠️ 确认重置容器？将删除所有数据和配置，不可恢复！')) return
 
   try {
-    await axios.post('/api/user/container/reset')
+    const address = userInfo.value.address
+    const res = await axios.post(`/api/user/${address}/reset`)
     alert('重置请求已提交')
+    // 如果返回了新 URL，打开它
+    if (res.data?.url) {
+      window.open(res.data.url, '_blank')
+    }
     // 重新加载容器信息
     setTimeout(() => {
       loadUserInfo()
