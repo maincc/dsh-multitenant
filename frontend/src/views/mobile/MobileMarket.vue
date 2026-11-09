@@ -186,10 +186,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import axios from 'axios'
 import { skillsApi } from '../../api/skills.js'
-import { signChallenge } from '../../api/wallet.js'
+import { signChallenge, ccdaoAvailable, watchAccountsChanged, friendlyPluginError } from '../../api/wallet.js'
 
 const loading = ref(true)
 const role = ref('user')
@@ -202,6 +202,11 @@ const mySkills = ref({
 })
 const mySkillsLoading = ref(false)
 const installing = ref(false)
+const connected = ref(false)
+const ccdao = ref(false)
+
+// 账户监听解绑函数
+let unbindAccounts = null
 
 // 详情弹窗
 const showDetail = ref(false)
@@ -281,7 +286,7 @@ async function viewDetail(name) {
     detailSkill.value = res.skill || {}
   } catch (e) {
     console.error('加载技能详情失败:', e)
-    alert('加载详情失败: ' + (e.response?.data?.error || e.message))
+    alert('加载详情失败: ' + friendlyPluginError(e))
     closeDetail()
   } finally {
     detailLoading.value = false
@@ -295,7 +300,24 @@ function closeDetail() {
 }
 
 async function installSkill(skill) {
-  if (!confirm(`确定要安装技能 "${skill.name}" 吗？`)) return
+  if (!connected.value) {
+    alert('请先连接钱包')
+    return
+  }
+
+  // 详细的风险确认
+  const publisher = skill.sharer ? shortAddress(skill.sharer) : '未知'
+  const autoLine = skill.modelAutoInvoke 
+    ? '此技能可以被模型自动调用' 
+    : '此技能只能由用户手动触发'
+  
+  const confirmMsg = `确定要安装技能 "${skill.name}" 吗？\n\n` +
+    `风险提示：技能来自第三方，可能存在安全风险\n` +
+    `发布者：${publisher}\n` +
+    `${autoLine}\n\n` +
+    `是否继续安装？`
+
+  if (!confirm(confirmMsg)) return
 
   installing.value = true
   try {
@@ -307,13 +329,27 @@ async function installSkill(skill) {
     closeDetail()
   } catch (e) {
     console.error('安装技能失败:', e)
-    alert('安装失败: ' + (e.response?.data?.error || e.message))
+    alert('安装失败: ' + friendlyPluginError(e))
   } finally {
     installing.value = false
   }
 }
 
 onMounted(async () => {
+  // 检测 CCDAO 插件和连接状态
+  ccdao.value = ccdaoAvailable()
+  connected.value = Boolean(localStorage.getItem('swtc_address'))
+  
+  // 监听账户变化
+  unbindAccounts = watchAccountsChanged((accounts) => {
+    const hasAccount = Boolean(accounts && accounts.length > 0)
+    connected.value = hasAccount
+    if (hasAccount) {
+      loadMarketSkills()
+      loadMySkills()
+    }
+  })
+  
   try {
     await Promise.all([loadUserInfo(), loadMarketSkills()])
   } catch (e) {
@@ -321,6 +357,11 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
+})
+
+onUnmounted(() => {
+  unbindAccounts?.()
+  unbindAccounts = null
 })
 </script>
 
