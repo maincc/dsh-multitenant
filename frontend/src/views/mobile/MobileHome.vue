@@ -1,125 +1,120 @@
 <template>
-  <!-- 未登录状态 -->
-  <div v-if="!isLoggedIn" class="mobile-home login-state">
-    <div class="login-card">
-      <div class="login-icon">🔐</div>
-      <h2 class="login-title">欢迎使用 DSH</h2>
-      <p class="login-desc">请先连接钱包以继续使用</p>
-      <button class="login-btn" @click="goToLogin">连接钱包</button>
-    </div>
-  </div>
-
-  <!-- 已登录状态 -->
-  <div v-else class="mobile-home">
-    <!-- 顶部头部区域 -->
-    <div class="ghead">
-      <div class="row1">
-        <div class="ttl">DSH 控制台</div>
-        <div class="avatar">{{ role === 'admin' ? '管' : '用' }}</div>
-      </div>
-      <div class="greet">
-        {{ role === 'admin' ? '管理员' : '用户' }} · 已连接
-        <span class="greet-hint">｜每 300s 自动刷新</span>
-      </div>
-      <div class="addr-chip" @click="copyAddress">
-        <span class="addr-icon">🔑</span>
-        <span class="addr-text">{{ shortAddr }}</span>
-        <span class="addr-act">退出</span>
-      </div>
+  <div class="mobile-home">
+    <!-- Loading 状态 -->
+    <div v-if="loading" class="loading-state">
+      <div class="loading-spinner"></div>
+      <div class="loading-text">加载中...</div>
     </div>
 
-    <!-- 主体内容 -->
-    <div class="body">
-      <!-- Docker 状态横幅 -->
-      <div class="docker-banner">
-        <span class="pulse"></span>
-        <div class="docker-info">
-          <div class="docker-label">Docker 状态</div>
-          <div class="docker-value">{{ containerStatus ? '运行中' : '未启动' }}</div>
+    <!-- 数据加载完成后显示内容 -->
+    <template v-else>
+      <!-- 顶部头部区域 -->
+      <div class="ghead">
+        <div class="row1">
+          <div class="ttl">DSH 控制台</div>
+          <div class="avatar">{{ role === 'admin' ? '管' : '用' }}</div>
         </div>
-        <span class="docker-icon">🐳</span>
-      </div>
-
-      <!-- 统计卡片 -->
-      <div class="stat2">
-        <div class="stat">
-          <div class="sl">总用户数</div>
-          <div class="sv">{{ stats.totalUsers || 0 }}</div>
+        <div class="greet">
+          {{ role === 'admin' ? '管理员' : '用户' }} · 已连接
+          <span class="greet-hint">｜每 300s 自动刷新</span>
         </div>
-        <div class="stat alt">
-          <div class="sl">运行中</div>
-          <div class="sv">{{ stats.running || 0 }}</div>
-        </div>
-        <div class="stat alt">
-          <div class="sl">基础配额</div>
-          <div class="sv">{{ stats.tier1 || 0 }}</div>
-        </div>
-        <div class="stat">
-          <div class="sl">增强配额</div>
-          <div class="sv">{{ stats.tier2 || 0 }}</div>
+        <div class="addr-chip" @click="copyAddress">
+          <span class="addr-icon">🔑</span>
+          <span class="addr-text">{{ shortAddr }}</span>
+          <span class="addr-act">退出</span>
         </div>
       </div>
 
-      <!-- 快捷管理（仅管理员显示） -->
-      <div v-if="role === 'admin'" class="sec-t">快捷管理</div>
-      <div v-if="role === 'admin'" class="card">
-        <div class="qgrid">
-          <div class="qitem" @click="$router.push('/user?tab=adm:users')">
-            <div class="qi" style="background: #efecff">👥</div>
-            <span>用户管理</span>
+      <!-- 主体内容 -->
+      <div class="body">
+        <!-- Docker 状态横幅 -->
+        <div class="docker-banner">
+          <span class="pulse"></span>
+          <div class="docker-info">
+            <div class="docker-label">Docker 状态</div>
+            <div class="docker-value">{{ containerStatus ? '运行中' : '未启动' }}</div>
           </div>
-          <div class="qitem" @click="$router.push('/user?tab=adm:quota')">
-            <div class="qi" style="background: #eaf0ff">📊</div>
-            <span>配额配置</span>
+          <span class="docker-icon">🐳</span>
+        </div>
+
+        <!-- 统计卡片 -->
+        <div class="stat2">
+          <div class="stat">
+            <div class="sl">总用户数</div>
+            <div class="sv">{{ stats.totalUsers || 0 }}</div>
           </div>
-          <div class="qitem" @click="$router.push('/user?tab=adm:monitor')">
-            <div class="qi" style="background: #e6f7ee">📈</div>
-            <span>资源监控</span>
+          <div class="stat alt">
+            <div class="sl">运行中</div>
+            <div class="sv">{{ stats.running || 0 }}</div>
           </div>
-          <div class="qitem" @click="$router.push('/user?tab=adm:version')">
-            <div class="qi" style="background: #fff4e3">🏷️</div>
-            <span>DSH 版本</span>
+          <div class="stat alt">
+            <div class="sl">基础配额</div>
+            <div class="sv">{{ stats.tier1 || 0 }}</div>
           </div>
-          <div class="qitem" @click="$router.push('/user?tab=adm:model')">
-            <div class="qi" style="background: #efecff">🤖</div>
-            <span>模型配置</span>
-          </div>
-          <div class="qitem" @click="$router.push('/user?tab=adm:approval')">
-            <div class="qi" style="background: #fdecec">🛡️</div>
-            <span>凭证审批</span>
-          </div>
-          <div class="qitem" @click="$router.push('/user?tab=adm:env-approval')">
-            <div class="qi" style="background: #eaf0ff">🗂️</div>
-            <span>环境审批</span>
-          </div>
-          <div class="qitem" @click="$router.push('/user?tab=account')">
-            <div class="qi" style="background: #e6f7ee">🪪</div>
-            <span>我的凭证</span>
+          <div class="stat">
+            <div class="sl">增强配额</div>
+            <div class="sv">{{ stats.tier2 || 0 }}</div>
           </div>
         </div>
-      </div>
 
-      <!-- 孤儿数据清理（仅管理员显示） -->
-      <div v-if="role === 'admin'" class="card">
-        <div class="ct">🧹 孤儿数据清理</div>
-        <div class="cd">扫描并清理无人使用的残留数据卷（不影响任何在用用户与运行中的容器）</div>
-        <button class="btn btn-p" @click="scanOrphanVolumes">扫描孤儿卷</button>
+        <!-- 快捷管理（仅管理员显示） -->
+        <div v-if="role === 'admin'" class="sec-t">快捷管理</div>
+        <div v-if="role === 'admin'" class="card">
+          <div class="qgrid">
+            <div class="qitem" @click="$router.push('/user?tab=adm:users')">
+              <div class="qi" style="background: #efecff">👥</div>
+              <span>用户管理</span>
+            </div>
+            <div class="qitem" @click="$router.push('/user?tab=adm:quota')">
+              <div class="qi" style="background: #eaf0ff">📊</div>
+              <span>配额配置</span>
+            </div>
+            <div class="qitem" @click="$router.push('/user?tab=adm:monitor')">
+              <div class="qi" style="background: #e6f7ee">📈</div>
+              <span>资源监控</span>
+            </div>
+            <div class="qitem" @click="$router.push('/user?tab=adm:version')">
+              <div class="qi" style="background: #fff4e3">🏷️</div>
+              <span>DSH 版本</span>
+            </div>
+            <div class="qitem" @click="$router.push('/user?tab=adm:model')">
+              <div class="qi" style="background: #efecff">🤖</div>
+              <span>模型配置</span>
+            </div>
+            <div class="qitem" @click="$router.push('/user?tab=adm:approval')">
+              <div class="qi" style="background: #fdecec">🛡️</div>
+              <span>凭证审批</span>
+            </div>
+            <div class="qitem" @click="$router.push('/user?tab=adm:env-approval')">
+              <div class="qi" style="background: #eaf0ff">🗂️</div>
+              <span>环境审批</span>
+            </div>
+            <div class="qitem" @click="$router.push('/user?tab=account')">
+              <div class="qi" style="background: #e6f7ee">🪪</div>
+              <span>我的凭证</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 孤儿数据清理（仅管理员显示） -->
+        <div v-if="role === 'admin'" class="card">
+          <div class="ct">🧹 孤儿数据清理</div>
+          <div class="cd">扫描并清理无人使用的残留数据卷（不影响任何在用用户与运行中的容器）</div>
+          <button class="btn btn-p" @click="scanOrphanVolumes">扫描孤儿卷</button>
+        </div>
       </div>
-    </div>
+    </template>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onActivated, watch } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 
-const router = useRouter()
-const route = useRoute()
+const loading = ref(true)
 const address = ref('')
 const role = ref('user')
 const containerStatus = ref(null)
-const isLoggedIn = ref(false)
 const stats = ref({
   totalUsers: 0,
   running: 0,
@@ -139,45 +134,22 @@ function copyAddress() {
   }
 }
 
-function goToLogin() {
-  router.push('/user')
-}
-
 async function scanOrphanVolumes() {
   alert('正在扫描孤儿数据卷…')
 }
 
-async function checkLoginStatus() {
-  // 先检查 localStorage 中是否有钱包地址（UserCenter 连接后保存）
-  const savedAddress = localStorage.getItem('swtc_address')
-  console.log('[MobileHome] checkLoginStatus - localStorage swtc_address:', savedAddress)
-
-  if (!savedAddress) {
-    console.log('[MobileHome] No saved address in localStorage, setting isLoggedIn to false')
-    isLoggedIn.value = false
-    return
-  }
-
-  // 检查后端 session
+async function loadUserInfo() {
   try {
-    console.log('[MobileHome] Checking backend session...')
     const res = await axios.get('/api/user/credential-status')
-    console.log('[MobileHome] Backend session check success:', res.data)
-    isLoggedIn.value = true
     address.value = res.data.address || ''
     role.value = res.data.role || 'user'
   } catch (e) {
-    console.log('[MobileHome] Backend session check failed:', e.response?.status, e.response?.data)
-    if (e.response?.status === 401) {
-      isLoggedIn.value = false
-    } else {
-      console.error('检查登录状态失败:', e)
-    }
+    console.error('加载用户信息失败:', e)
   }
 }
 
 async function loadContainerStatus() {
-  if (!isLoggedIn.value || !address.value) return
+  if (!address.value) return
   try {
     const res = await axios.get(`/connect-status?address=${encodeURIComponent(address.value)}`)
     containerStatus.value = res.data
@@ -187,7 +159,7 @@ async function loadContainerStatus() {
 }
 
 async function loadStats() {
-  if (!isLoggedIn.value || role.value !== 'admin') return
+  if (role.value !== 'admin') return
   try {
     // TODO: 从后端获取统计数据
     stats.value = {
@@ -202,38 +174,18 @@ async function loadStats() {
 }
 
 onMounted(async () => {
-  console.log('[MobileHome] Component mounted')
-  await checkLoginStatus()
-  if (isLoggedIn.value) {
-    await loadContainerStatus()
-    await loadStats()
+  try {
+    // 先加载用户信息（其他数据依赖 address）
+    await loadUserInfo()
+
+    // 并行加载容器状态和统计数据
+    await Promise.all([loadContainerStatus(), loadStats()])
+  } catch (e) {
+    console.error('加载数据失败:', e)
+  } finally {
+    loading.value = false
   }
 })
-
-// 组件被激活时（从缓存中恢复）重新检查登录状态
-onActivated(async () => {
-  console.log('[MobileHome] Component activated, rechecking login status')
-  await checkLoginStatus()
-  if (isLoggedIn.value) {
-    await loadContainerStatus()
-    await loadStats()
-  }
-})
-
-// 监听路由变化，当回到首页时重新检查登录状态
-watch(
-  () => route.path,
-  async (newPath) => {
-    if (newPath === '/') {
-      console.log('[MobileHome] Route changed to /, rechecking login status')
-      await checkLoginStatus()
-      if (isLoggedIn.value) {
-        await loadContainerStatus()
-        await loadStats()
-      }
-    }
-  },
-)
 </script>
 
 <style scoped>
@@ -242,60 +194,34 @@ watch(
   background: #f4f5fa;
 }
 
-/* 未登录状态 */
-.mobile-home.login-state {
+/* Loading 状态 */
+.loading-state {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  min-height: 100vh;
+  gap: 16px;
 }
 
-.login-card {
-  background: #fff;
-  border-radius: 16px;
-  padding: 40px 32px;
-  text-align: center;
-  box-shadow: 0 4px 16px rgba(60, 70, 120, 0.08);
-  max-width: 320px;
-  width: 100%;
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(106, 114, 232, 0.2);
+  border-top-color: #6a72e8;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
 }
 
-.login-icon {
-  font-size: 64px;
-  margin-bottom: 20px;
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
-.login-title {
-  font-size: 20px;
-  font-weight: 700;
-  color: #20242f;
-  margin-bottom: 12px;
-}
-
-.login-desc {
+.loading-text {
   font-size: 14px;
   color: #8a90a3;
-  margin-bottom: 24px;
-  line-height: 1.6;
-}
-
-.login-btn {
-  width: 100%;
-  padding: 14px 24px;
-  background: linear-gradient(135deg, #6a72e8 0%, #9b8cf5 100%);
-  color: #fff;
-  border: none;
-  border-radius: 12px;
-  font-size: 15px;
-  font-weight: 600;
-  cursor: pointer;
-  box-shadow: 0 4px 12px rgba(106, 114, 232, 0.3);
-  transition: all 0.2s;
-}
-
-.login-btn:active {
-  transform: scale(0.98);
-  box-shadow: 0 2px 8px rgba(106, 114, 232, 0.3);
 }
 
 /* 顶部头部 */
