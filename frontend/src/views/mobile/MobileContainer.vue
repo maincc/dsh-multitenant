@@ -203,26 +203,13 @@
 
         <!-- 环境现场 tab -->
         <div v-show="cSub === 'env'">
-          <div v-if="envLoading" class="loading-state">
-            <div class="loading-spinner"></div>
-            <div class="loading-text">加载环境变量...</div>
+          <div class="card">
+            <div class="ct">🌍 环境变量</div>
+            <div class="empty-hint">
+              环境变量管理功能较复杂，请在 PC 端访问<br /><br />
+              路径：用户中心 → 容器管理 → 环境现场
+            </div>
           </div>
-          <template v-else>
-            <div v-if="envVars.length === 0" class="card">
-              <div class="empty-hint">
-                暂无环境变量<br />
-                你可以在环境市场中配置环境变量
-              </div>
-            </div>
-            <div v-else class="card">
-              <div class="ct">🌍 环境变量</div>
-              <div v-for="env in envVars" :key="env.name" class="env-item">
-                <div class="env-name">{{ env.name }}</div>
-                <div class="env-value">{{ env.value }}</div>
-                <div v-if="env.description" class="env-desc">{{ env.description }}</div>
-              </div>
-            </div>
-          </template>
         </div>
       </div>
     </template>
@@ -233,6 +220,7 @@
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 import { requestAccounts, signMessage, getPublicKey } from '../../api/wallet.js'
+import { skillsApi } from '../../api/skills.js'
 
 const loading = ref(true)
 const enteringDsh = ref(false)
@@ -537,11 +525,17 @@ onMounted(async () => {
 async function loadMySkills() {
   skillsLoading.value = true
   try {
-    const res = await axios.get('/api/skills/mine')
+    const address = userInfo.value.address
+    if (!address) {
+      console.error('无法加载技能数据：用户地址为空')
+      return
+    }
+    // 使用 skillsApi.mineView，只需要地址，不需要签名
+    const res = await skillsApi.mineView(address)
     mySkills.value = {
-      published: res.data.published || [],
-      installed: res.data.installed || [],
-      plugins: res.data.plugins || [],
+      published: res.published || [],
+      installed: res.installed || [],
+      plugins: res.plugins || [],
     }
   } catch (e) {
     console.error('加载技能数据失败:', e)
@@ -552,15 +546,10 @@ async function loadMySkills() {
 
 // 加载环境变量
 async function loadEnvVars() {
-  envLoading.value = true
-  try {
-    const res = await axios.get('/api/env/mine')
-    envVars.value = res.data || []
-  } catch (e) {
-    console.error('加载环境变量失败:', e)
-  } finally {
-    envLoading.value = false
-  }
+  // 环境变量功能较复杂，移动端暂不支持
+  // 用户需要在 PC 端管理环境变量
+  envLoading.value = false
+  envVars.value = []
 }
 
 // 卸载技能
