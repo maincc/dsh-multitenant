@@ -19,23 +19,43 @@
 
       <!-- 主体内容 -->
       <div class="body">
-        <!-- Tab 切换 -->
-        <div class="tab-bar">
+        <!-- 顶级分类切换：技能市场 / 环境市场 -->
+        <div class="category-bar">
           <button
-            class="tab-btn"
-            :class="{ active: activeTab === 'market' }"
-            @click="switchTab('market')"
+            class="category-btn"
+            :class="{ active: marketCategory === 'skills' }"
+            @click="marketCategory = 'skills'"
           >
-            市场
+            🧩 技能市场
           </button>
           <button
-            class="tab-btn"
-            :class="{ active: activeTab === 'mine' }"
-            @click="switchTab('mine')"
+            class="category-btn"
+            :class="{ active: marketCategory === 'env' }"
+            @click="marketCategory = 'env'"
           >
-            我的技能
+            🌍 环境市场
           </button>
         </div>
+
+        <!-- 技能市场 -->
+        <template v-if="marketCategory === 'skills'">
+          <!-- Tab 切换 -->
+          <div class="tab-bar">
+            <button
+              class="tab-btn"
+              :class="{ active: activeTab === 'market' }"
+              @click="switchTab('market')"
+            >
+              市场
+            </button>
+            <button
+              class="tab-btn"
+              :class="{ active: activeTab === 'mine' }"
+              @click="switchTab('mine')"
+            >
+              我的技能
+            </button>
+          </div>
 
         <!-- 市场 Tab -->
         <div v-if="activeTab === 'market'" class="tab-content">
@@ -162,6 +182,12 @@
             </template>
           </template>
         </div>
+        </template>
+
+        <!-- 环境市场 -->
+        <template v-else-if="marketCategory === 'env'">
+          <MobileEnvMarket />
+        </template>
       </div>
     </template>
 
@@ -209,9 +235,11 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import axios from 'axios'
 import { skillsApi } from '../../api/skills.js'
 import { signChallenge, ccdaoAvailable, watchAccountsChanged, friendlyPluginError } from '../../api/wallet.js'
+import MobileEnvMarket from './MobileEnvMarket.vue'
 
 const loading = ref(true)
 const role = ref('user')
+const marketCategory = ref('skills') // skills / env
 const activeTab = ref('market')
 const keyword = ref('')
 const skills = ref([])
@@ -468,6 +496,36 @@ onUnmounted(() => {
 /* 主体内容 */
 .body {
   padding: 16px;
+}
+
+/* 顶级分类切换 */
+.category-bar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  background: #fff;
+  padding: 8px;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(60, 70, 120, 0.06);
+}
+
+.category-btn {
+  flex: 1;
+  padding: 12px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #8a90a3;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.category-btn.active {
+  background: linear-gradient(135deg, #6a72e8 0%, #9b8cf5 100%);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(106, 114, 232, 0.3);
 }
 
 /* Tab 切换 */
