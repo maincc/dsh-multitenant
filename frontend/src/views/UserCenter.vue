@@ -129,7 +129,10 @@
           :class="{ active: mobileTab === 'approvals' }"
           @click="mobileTab = 'approvals'"
         >
-          <div class="tab-icon">✅</div>
+          <div class="tab-icon">
+            ✅
+            <span v-if="approvalCount > 0" class="tab-badge">{{ approvalCount > 99 ? '99+' : approvalCount }}</span>
+          </div>
           <div class="tab-label">审批</div>
         </button>
         <button class="tab-item" :class="{ active: mobileTab === 'me' }" @click="mobileTab = 'me'">
@@ -1074,13 +1077,40 @@ const route = useRoute()
 // ---- 移动端检测 ----
 const isMobile = ref(window.innerWidth <= 768)
 const mobileTab = ref('home') // home/container/skills/approvals/me
+const approvalCount = ref(0) // 待审批数量
 
 function updateMobile() {
   isMobile.value = window.innerWidth <= 768
 }
 
+// 检查待审批数量（CWT 申请 + 环境模板草稿）
+async function checkApprovalCount() {
+  try {
+    // 检查 CWT 待审批申请
+    const cwtRes = await axios.get('/api/admin/cwt-applications', {
+      params: { status: 'pending', limit: 1, offset: 0 },
+    })
+    const cwtPending = cwtRes.data.total || 0
+    
+    // 检查环境模板待审核数量
+    const envRes = await axios.get('/api/admin/environments')
+    const envDrafts = (envRes.data.environments || []).filter((e) => e.status === 'draft').length
+    
+    approvalCount.value = cwtPending + envDrafts
+  } catch (e) {
+    // 非管理员或请求失败，静默处理
+    approvalCount.value = 0
+  }
+}
+
 onMounted(() => {
   window.addEventListener('resize', updateMobile)
+  // 检查用户是否是管理员，如果是则定期检查待审批数量
+  if (role.value === 'admin') {
+    checkApprovalCount()
+    // 每 30 秒检查一次
+    setInterval(checkApprovalCount, 30000)
+  }
 })
 
 onUnmounted(() => {
@@ -3069,6 +3099,25 @@ onUnmounted(() => {
 
 .tab-icon {
   font-size: 24px;
+  position: relative;
+}
+
+.tab-badge {
+  position: absolute;
+  top: -4px;
+  right: -8px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  background: #ff4757;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  border-radius: 9px;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
 .tab-label {
