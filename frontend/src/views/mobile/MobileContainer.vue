@@ -164,13 +164,13 @@ const usageInfoLabel = computed(() => {
   return `${u.usedMinutes} / ${u.dailyMinutes} 分钟`
 })
 
-// 连接钱包并建立会话（简化版 connectWithOwnership）
-async function connectWithOwnership(address) {
+// 连接钱包并建立会话（与 PC 版 connectWithOwnership 保持一致）
+async function connectWithOwnership() {
   try {
-    // 1. 请求钱包账户
+    // 1. 请求钱包账户（获取当前地址）
     const pluginAddress = await requestAccounts()
     
-    // 2. 领取挑战
+    // 2. 领取挑战（用插件地址）
     const chalRes = await fetch(`/connect-challenge?address=${encodeURIComponent(pluginAddress)}`)
     const challenge = await chalRes.json()
     const nonce = challenge.nonce
@@ -183,9 +183,9 @@ async function connectWithOwnership(address) {
     const signature = await signMessage(pluginAddress, message)
     const publicKey = await getPublicKey(pluginAddress)
     
-    // 4. 带签名访问 /connect，建立会话
+    // 4. 带签名访问 /connect，建立会话（用插件地址，与 PC 版一致）
     const params = new URLSearchParams({
-      address,
+      address: pluginAddress,
       nonce,
       signature,
       publicKey,
@@ -193,7 +193,7 @@ async function connectWithOwnership(address) {
       action: 'login',
     })
     const cRes = await fetch(`/connect?${params}`)
-    return cRes
+    return { res: cRes, address: pluginAddress }
   } catch (err) {
     console.error('连接失败:', err)
     throw err
@@ -201,43 +201,47 @@ async function connectWithOwnership(address) {
 }
 
 // 检查并建立登录会话
-async function ensureLogin(address) {
+async function ensureLogin() {
+  console.log('[MobileContainer] ensureLogin - 检查会话状态')
   try {
     // 先检查是否已有有效会话
     const sessionRes = await axios.get('/api/user/session-info')
-    if (sessionRes.data?.address && 
-        String(sessionRes.data.address).toLowerCase() === String(address).toLowerCase()) {
-      return true // 已有有效会话
+    console.log('[MobileContainer] 会话检查结果:', sessionRes.data)
+    if (sessionRes.data?.address) {
+      console.log('[MobileContainer] 已有有效会话，地址:', sessionRes.data.address)
+      return { success: true, address: sessionRes.data.address }
     }
-  } catch {
-    // 会话查询失败，需要登录
+  } catch (e) {
+    console.log('[MobileContainer] 会话查询失败，需要登录:', e.response?.status)
   }
   
   // 没有有效会话，调用钱包登录
+  console.log('[MobileContainer] 开始调用钱包登录...')
   try {
-    const res = await connectWithOwnership(address)
-    return res.status === 200
+    const { res, address } = await connectWithOwnership()
+    console.log('[MobileContainer] 登录响应:', res.status, '地址:', address)
+    return { success: res.status === 200, address }
   } catch (err) {
-    console.error('登录失败:', err)
+    console.error('[MobileContainer] 登录失败:', err)
     alert('登录失败: ' + (err.message || '未知错误'))
-    return false
+    return { success: false, address: null }
   }
 }
 
 async function loadUserInfo() {
   try {
-    const res = await axios.get('/api/user/credential-status')
-    role.value = res.data.role || 'user'
-    const address = res.data.address
-
     // 确保已登录（建立会话）
-    const loginSuccess = await ensureLogin(address)
-    if (!loginSuccess) {
+    const { success, address } = await ensureLogin()
+    if (!success || !address) {
       console.error('登录失败，无法加载容器信息')
       return
     }
 
-    // 获取容器信息（使用 PC 端的端点）
+    // 获取角色信息
+    const credRes = await axios.get('/api/user/credential-status')
+    role.value = credRes.data.role || 'user'
+
+    // 获取容器信息（使用登录时确定的地址）
     const containerRes = await axios.get(`/api/user/${address}`)
     userInfo.value = {
       address: address,
