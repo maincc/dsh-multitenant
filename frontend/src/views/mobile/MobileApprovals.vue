@@ -181,20 +181,25 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 import { signChallenge } from '../../api/wallet.js'
-import { refreshIfWatching } from '../../composables/useAdminBadges.js'
+import { useAdminBadges, refreshIfWatching } from '../../composables/useAdminBadges.js'
+
+const { badgeFor } = useAdminBadges()
 
 const loading = ref(true)
 const approvalType = ref('cwt') // 'cwt' | 'env'
+
+// 使用 composable 的红点数据
+const pendingCount = computed(() => badgeFor('cred'))
+const draftCount = computed(() => badgeFor('envtpl'))
 
 // CWT 申请相关
 const applications = ref([])
 const total = ref(0)
 const offset = ref(0)
 const currentStatus = ref('pending')
-const pendingCount = ref(0)
 const busy = ref('')
 
 const statuses = [
@@ -208,7 +213,6 @@ const currentStatusLabel = ref('待审批')
 // 环境模板相关
 const environments = ref([])
 const currentEnvStatus = ref('draft')
-const draftCount = ref(0)
 
 const envStatuses = [
   { key: 'draft', label: '待审核' },
@@ -294,11 +298,6 @@ async function loadApplications() {
     })
     applications.value = res.data.applications || []
     total.value = res.data.total || 0
-
-    // 如果是待审批状态，记录待审批数量
-    if (currentStatus.value === 'pending') {
-      pendingCount.value = total.value
-    }
   } catch (e) {
     console.error('加载申请列表失败:', e)
     alert('加载失败: ' + (e.response?.data?.error || e.message))
@@ -395,11 +394,6 @@ async function loadEnvironments() {
 
     // 根据状态筛选
     environments.value = allEnvs.filter((env) => env.status === currentEnvStatus.value)
-
-    // 如果是待审核状态，记录待审核数量
-    if (currentEnvStatus.value === 'draft') {
-      draftCount.value = allEnvs.filter((env) => env.status === 'draft').length
-    }
   } catch (e) {
     console.error('加载环境模板列表失败:', e)
     alert('加载失败: ' + (e.response?.data?.error || e.message))
