@@ -1,17 +1,5 @@
 <template>
   <div class="mobile-home">
-    <!-- 未登录状态 -->
-    <div v-if="!isLoggedIn" class="login-prompt">
-      <div class="login-icon">🔐</div>
-      <div class="login-title">请先登录</div>
-      <div class="login-desc">连接钱包以继续使用</div>
-      <button class="login-btn" @click="goToLogin">
-        前往登录
-      </button>
-    </div>
-
-    <!-- 已登录状态 -->
-    <template v-else>
     <!-- 顶部渐变头部 -->
     <div class="home-header">
       <div class="welcome-card">
@@ -96,20 +84,16 @@
         </router-link>
       </div>
     </div>
-    </template>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 import axios from 'axios'
 
-const router = useRouter()
 const address = ref('')
 const role = ref('user')
 const containerStatus = ref(null)
-const isLoggedIn = ref(false)
 
 const shortAddr = computed(() => {
   const a = address.value
@@ -133,22 +117,13 @@ function statusText(status) {
   return map[status] || status
 }
 
-function goToLogin() {
-  router.push('/user')
-}
-
-async function checkLoginStatus() {
+async function loadUserInfo() {
   try {
     const res = await axios.get('/api/user/credential-status')
-    isLoggedIn.value = true
     address.value = res.data.address || ''
     role.value = res.data.role || 'user'
   } catch (e) {
-    if (e.response?.status === 401) {
-      isLoggedIn.value = false
-    } else {
-      console.error('检查登录状态失败:', e)
-    }
+    console.error('加载用户信息失败:', e)
   }
 }
 
@@ -163,10 +138,8 @@ async function loadContainerStatus() {
 }
 
 onMounted(async () => {
-  await checkLoginStatus()
-  if (isLoggedIn.value) {
-    await loadContainerStatus()
-  }
+  await loadUserInfo()
+  await loadContainerStatus()
 })
 </script>
 
@@ -175,54 +148,6 @@ onMounted(async () => {
   padding: 0 0 20px;
 }
 
-/* 未登录状态 */
-.login-prompt {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 60vh;
-  padding: 40px 20px;
-  text-align: center;
-}
-
-.login-icon {
-  font-size: 64px;
-  margin-bottom: 24px;
-}
-
-.login-title {
-  font-size: 20px;
-  font-weight: 600;
-  color: #20242f;
-  margin-bottom: 12px;
-}
-
-.login-desc {
-  font-size: 14px;
-  color: #8a90a3;
-  margin-bottom: 32px;
-}
-
-.login-btn {
-  padding: 14px 48px;
-  background: linear-gradient(135deg, #6a72e8 0%, #9b8cf5 100%);
-  color: #fff;
-  border: none;
-  border-radius: 12px;
-  font-size: 16px;
-  font-weight: 600;
-  cursor: pointer;
-  box-shadow: 0 4px 12px rgba(106, 114, 232, 0.3);
-  transition: transform 0.2s, box-shadow 0.2s;
-}
-
-.login-btn:active {
-  transform: scale(0.98);
-  box-shadow: 0 2px 8px rgba(106, 114, 232, 0.3);
-}
-
-/* 已登录状态 */
 .home-header {
   background: linear-gradient(135deg, #6a72e8 0%, #9b8cf5 100%);
   padding: 20px 16px 24px;

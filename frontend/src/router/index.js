@@ -2,12 +2,6 @@ import { createRouter, createWebHistory } from 'vue-router'
 import UserCenter from '../views/UserCenter.vue'
 import Home from '../views/Home.vue'
 import SkillMarket from '../views/SkillMarket.vue'
-import MobileLayout from '../layouts/MobileLayout.vue'
-import MobileHome from '../views/mobile/MobileHome.vue'
-import MobileContainer from '../views/mobile/MobileContainer.vue'
-import MobileSkills from '../views/mobile/MobileSkills.vue'
-import MobileApprovals from '../views/mobile/MobileApprovals.vue'
-import MobileMe from '../views/mobile/MobileMe.vue'
 
 const routes = [
   { path: '/', component: Home },
@@ -18,18 +12,6 @@ const routes = [
   { path: '/user', component: UserCenter },
   { path: '/user/:address', component: UserCenter, props: true },
   { path: '/skills', component: SkillMarket },
-  // 移动端路由
-  {
-    path: '/mobile',
-    component: MobileLayout,
-    children: [
-      { path: 'home', component: MobileHome },
-      { path: 'container', component: MobileContainer },
-      { path: 'skills', component: MobileSkills },
-      { path: 'approvals', component: MobileApprovals },
-      { path: 'me', component: MobileMe },
-    ],
-  },
 ]
 
 const router = createRouter({

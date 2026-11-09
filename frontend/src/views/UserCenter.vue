@@ -68,6 +68,94 @@
     </div>
 
     <!-- 用户信息页面：左侧栏 + 右侧内容（与 React 原型稿一致） -->
+    <!-- 移动端布局：底部 Tab 导航 -->
+    <div v-else-if="isMobile" class="mobile-shell">
+      <!-- 移动端内容区 -->
+      <div class="mobile-content">
+        <!-- 首页 -->
+        <div v-if="mobileTab === 'home'" class="mobile-page">
+          <MobileHome />
+        </div>
+        <!-- 容器 -->
+        <div v-else-if="mobileTab === 'container'" class="mobile-page">
+          <div class="mobile-placeholder">
+            <div class="placeholder-icon">📦</div>
+            <div class="placeholder-text">容器管理</div>
+            <div class="placeholder-hint">待实现</div>
+          </div>
+        </div>
+        <!-- 技能 -->
+        <div v-else-if="mobileTab === 'skills'" class="mobile-page">
+          <div class="mobile-placeholder">
+            <div class="placeholder-icon">🎯</div>
+            <div class="placeholder-text">技能市场</div>
+            <div class="placeholder-hint">待实现</div>
+          </div>
+        </div>
+        <!-- 审批 -->
+        <div v-else-if="mobileTab === 'approvals'" class="mobile-page">
+          <div class="mobile-placeholder">
+            <div class="placeholder-icon">✅</div>
+            <div class="placeholder-text">审批中心</div>
+            <div class="placeholder-hint">待实现</div>
+          </div>
+        </div>
+        <!-- 我的 -->
+        <div v-else-if="mobileTab === 'me'" class="mobile-page">
+          <div class="mobile-placeholder">
+            <div class="placeholder-icon">👤</div>
+            <div class="placeholder-text">我的</div>
+            <div class="placeholder-hint">待实现</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 底部 Tab 导航 -->
+      <nav class="mobile-tabbar">
+        <button 
+          class="tab-item" 
+          :class="{ active: mobileTab === 'home' }"
+          @click="mobileTab = 'home'"
+        >
+          <div class="tab-icon">🏠</div>
+          <div class="tab-label">首页</div>
+        </button>
+        <button 
+          class="tab-item" 
+          :class="{ active: mobileTab === 'container' }"
+          @click="mobileTab = 'container'"
+        >
+          <div class="tab-icon">📦</div>
+          <div class="tab-label">容器</div>
+        </button>
+        <button 
+          class="tab-item" 
+          :class="{ active: mobileTab === 'skills' }"
+          @click="mobileTab = 'skills'"
+        >
+          <div class="tab-icon">🎯</div>
+          <div class="tab-label">技能</div>
+        </button>
+        <button 
+          class="tab-item" 
+          :class="{ active: mobileTab === 'approvals' }"
+          @click="mobileTab = 'approvals'"
+        >
+          <div class="tab-icon">✅</div>
+          <div class="tab-label">审批</div>
+        </button>
+        <button 
+          class="tab-item" 
+          :class="{ active: mobileTab === 'me' }"
+          @click="mobileTab = 'me'"
+        >
+          <div class="tab-icon">👤</div>
+          <div class="tab-label">我的</div>
+        </button>
+      </nav>
+    </div>
+
+    <!-- 桌面端布局：左侧栏 + 右侧内容 -->
     <div v-else class="gate-shell">
       <!-- 左侧栏 -->
       <aside class="gate-sidebar">
@@ -980,6 +1068,7 @@ import { skillsApi } from '../api/skills.js'
 import { sha256Hex as sha256HexFallback } from '../utils/sha256.js'
 import AdminPanel from './AdminPanel.vue'
 import EnvTemplatesUser from '../components/EnvTemplatesUser.vue'
+import MobileHome from './mobile/MobileHome.vue'
 import SkillMarket from './SkillMarket.vue'
 import { buildAdminTabs } from '../admin-tabs'
 import {
@@ -993,6 +1082,22 @@ import {
 
 const { t } = useI18n()
 const route = useRoute()
+
+// ---- 移动端检测 ----
+const isMobile = ref(window.innerWidth <= 768)
+const mobileTab = ref('home') // home/container/skills/approvals/me
+
+function updateMobile() {
+  isMobile.value = window.innerWidth <= 768
+}
+
+onMounted(() => {
+  window.addEventListener('resize', updateMobile)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', updateMobile)
+})
 
 // ---- 侧栏导航（与 React 原型稿一致） ----
 // 落地页 = 容器管理：多数操作（进入 DSH、启停、资源查看）都发生在这里，
@@ -2897,6 +3002,87 @@ onUnmounted(() => {
 /* 技能动作行：紧凑贴标题，别再让全局 action-buttons 的 1.25rem 上下大空档 */
 .skill-actions {
   margin: 0.5rem 0 1rem;
+}
+
+/* 移动端布局 */
+.mobile-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #f4f5fa;
+}
+
+.mobile-content {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mobile-page {
+  min-height: 100%;
+}
+
+.mobile-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  background: #fff;
+  margin: 16px;
+  border-radius: 16px;
+}
+
+.placeholder-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.placeholder-text {
+  font-size: 16px;
+  font-weight: 600;
+  color: #20242f;
+  margin-bottom: 8px;
+}
+
+.placeholder-hint {
+  font-size: 14px;
+  color: #8a90a3;
+}
+
+.mobile-tabbar {
+  display: flex;
+  background: #fff;
+  border-top: 1px solid #eceef4;
+  padding: 8px 0 calc(8px + env(safe-area-inset-bottom));
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.tab-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0;
+  background: none;
+  border: none;
+  color: #8a90a3;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.tab-item.active {
+  color: #6a72e8;
+}
+
+.tab-icon {
+  font-size: 24px;
+}
+
+.tab-label {
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .user-center {
