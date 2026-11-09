@@ -165,7 +165,7 @@ const usageInfoLabel = computed(() => {
 })
 
 // 连接钱包并建立会话（与 PC 版 connectWithOwnership 保持一致）
-async function connectWithOwnership() {
+async function connectWithOwnership(action = null) {
   try {
     // 1. 请求钱包账户（获取当前地址）
     const pluginAddress = await requestAccounts()
@@ -190,8 +190,13 @@ async function connectWithOwnership() {
       signature,
       publicKey,
       format: 'json',
-      action: 'login',
     })
+    
+    // 如果指定了 action，添加到参数中
+    if (action) {
+      params.append('action', action)
+    }
+    
     const cRes = await fetch(`/connect?${params}`)
     return { res: cRes, address: pluginAddress }
   } catch (err) {
@@ -218,7 +223,7 @@ async function ensureLogin() {
   // 没有有效会话，调用钱包登录
   console.log('[MobileContainer] 开始调用钱包登录...')
   try {
-    const { res, address } = await connectWithOwnership()
+    const { res, address } = await connectWithOwnership('login')
     console.log('[MobileContainer] 登录响应:', res.status, '地址:', address)
     return { success: res.status === 200, address }
   } catch (err) {
@@ -279,7 +284,7 @@ async function enterDsh() {
   
   try {
     console.log('[MobileContainer] enterDsh - 开始建立会话...')
-    // 先建立会话（与 PC 版 enterDsh 一致）
+    // 先建立会话（不传 action，让后端返回容器 URL）
     const { res, address } = await connectWithOwnership()
     console.log('[MobileContainer] enterDsh - 响应状态:', res.status, '地址:', address)
     
