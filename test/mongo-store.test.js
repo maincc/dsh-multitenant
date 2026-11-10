@@ -15,7 +15,7 @@ let available = false
 const skip = (ctx) => (available ? true : (ctx.skip(), false))
 
 beforeAll(async () => {
-  store = new MongoStore({ dbName: 'dsh_test', mongodbUri: CONFIG.storage.mongodbUri })
+  store = new MongoStore({ dbName: 'dsh_test', mongodbUri: mongoTestUri('dsh_test') })
   try {
     await store.connect()
     available = true
