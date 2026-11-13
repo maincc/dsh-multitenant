@@ -177,14 +177,40 @@
         </template>
       </div>
     </template>
+
+    <!-- 拒绝/驳回原因薄 sheet（T1：native prompt 退场） -->
+    <div v-if="rejectSheet" class="sheet-mask" @click.self="rejectSheet = null">
+      <div class="sheet">
+        <div class="sheet-title">
+          {{
+            rejectSheet.kind === 'cwt'
+              ? `拒绝 CWT 申请：${shortAddress(rejectSheet.target.address)}`
+              : `驳回环境模板 "${rejectSheet.target.name}"`
+          }}
+        </div>
+        <textarea
+          v-model="rejectSheet.reason"
+          class="sheet-textarea"
+          rows="3"
+          :placeholder="rejectSheet.kind === 'cwt' ? '拒绝原因（可选）' : '驳回原因（必填）'"
+        ></textarea>
+        <div class="sheet-actions">
+          <button class="btn btn-outline" @click="rejectSheet = null">取消</button>
+          <button class="btn btn-red" @click="submitRejectSheet">
+            {{ rejectSheet.kind === 'cwt' ? '确认拒绝' : '确认驳回' }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
-import { requestAccounts, signMessage, getPublicKey } from '../../api/wallet.js'
+import { signAdminOperation } from '../../api/adminSign.js'
 import { useAdminBadges, refreshIfWatching } from '../../composables/useAdminBadges.js'
+import { toast, askConfirm } from '../../composables/useDialog'
 
 const { badgeFor } = useAdminBadges()
 
@@ -201,6 +227,9 @@ const total = ref(0)
 const offset = ref(0)
 const currentStatus = ref('pending')
 const busy = ref('')
+// 拒绝/驳回原因薄 sheet（T1 2026-11-10：弃 native prompt——GlobalDialog 无输入态，
+// 按"不扩共享件"先例组件内自建；桌面 reject 不收原因是其口径，移动保留收单能力）
+const rejectSheet = ref(null) // { kind:'cwt'|'env', target, reason }
 
 const statuses = [
   { key: 'pending', label: '待审批' },
@@ -300,7 +329,7 @@ async function loadApplications() {
     total.value = res.data.total || 0
   } catch (e) {
     console.error('加载申请列表失败:', e)
-    alert('加载失败: ' + (e.response?.data?.error || e.message))
+    toast('加载失败: ' + (e.response?.data?.error || e.message))
   } finally {
     loading.value = false
   }
@@ -323,34 +352,16 @@ function nextPage() {
   loadApplications()
 }
 
-async function signAdminOperation(operation, payload) {
-  // 获取钱包地址
-  const pluginAddress = await requestAccounts()
-  
-  // 调用 challenge 接口
-  const chalRes = await axios.post('/api/admin/challenge', {
-    address: pluginAddress.toLowerCase(),
-    operation,
-    payload,
-  })
-  
-  const { message, nonce } = chalRes.data
-  
-  // 签名
-  const signature = await signMessage(pluginAddress, message)
-  const publicKey = await getPublicKey(pluginAddress)
-  
-  const sigStr = typeof signature === 'string' ? signature : (signature?.signature ?? '')
-  
-  return {
-    'x-admin-nonce': nonce,
-    'x-admin-signature': sigStr,
-    'x-admin-pubkey': publicKey,
-  }
-}
-
+// signAdminOperation 收敛到 ../../api/adminSign.js（本地副本缺 2026-11-02
+// 材料校验加固——插件未解锁时半路蒸发成无签裸 POST，判例在前）
 async function approveApp(app) {
-  if (!confirm(`确定要批准地址 ${shortAddress(app.address)} 的 CWT 解限申请吗？`)) return
+  if (
+    !(await askConfirm({
+      message: `确定要批准地址 ${shortAddress(app.address)} 的 CWT 解限申请吗？`,
+      confirmLabel: '批准',
+    }))
+  )
+    return
 
   busy.value = app._id
   try {
@@ -363,41 +374,19 @@ async function approveApp(app) {
       {},
       { headers },
     )
-    alert('已批准')
+    toast('已批准')
     await loadApplications()
     refreshIfWatching()
   } catch (e) {
     console.error('批准失败:', e)
-    alert('批准失败: ' + (e.response?.data?.error || e.message))
+    toast('批准失败: ' + (e.response?.data?.error || e.message))
   } finally {
     busy.value = ''
   }
 }
 
 async function rejectApp(app) {
-  const reason = prompt('请输入拒绝原因（可选）：')
-  if (reason === null) return // 用户取消
-
-  busy.value = app._id
-  try {
-    const headers = await signAdminOperation('cwt/reject', {
-      id: app._id,
-      address: app.address,
-    })
-    await axios.post(
-      `/api/admin/cwt-applications/${encodeURIComponent(app._id)}/reject`,
-      { reason },
-      { headers },
-    )
-    alert('已拒绝')
-    await loadApplications()
-    refreshIfWatching()
-  } catch (e) {
-    console.error('拒绝失败:', e)
-    alert('拒绝失败: ' + (e.response?.data?.error || e.message))
-  } finally {
-    busy.value = ''
-  }
+  rejectSheet.value = { kind: 'cwt', target: app, reason: '' }
 }
 
 // 环境模板相关函数
@@ -411,7 +400,7 @@ async function loadEnvironments() {
     environments.value = allEnvs.filter((env) => env.status === currentEnvStatus.value)
   } catch (e) {
     console.error('加载环境模板列表失败:', e)
-    alert('加载失败: ' + (e.response?.data?.error || e.message))
+    toast('加载失败: ' + (e.response?.data?.error || e.message))
   } finally {
     loading.value = false
   }
@@ -424,40 +413,69 @@ function switchEnvStatus(status) {
 }
 
 async function publishEnv(env) {
-  if (!confirm(`确定要发布环境模板 "${env.name}" 吗？`)) return
+  if (
+    !(await askConfirm({
+      message: `确定要发布环境模板 "${env.name}" 吗？`,
+      confirmLabel: '发布',
+    }))
+  )
+    return
 
   busy.value = env._id
   try {
     const headers = await signAdminOperation('env-publish', { id: env._id })
     await axios.post('/api/admin/env-publish', { id: env._id }, { headers })
-    alert('已发布')
+    toast('已发布')
     await loadEnvironments()
     refreshIfWatching()
   } catch (e) {
     console.error('发布失败:', e)
-    alert('发布失败: ' + (e.response?.data?.error || e.message))
+    toast('发布失败: ' + (e.response?.data?.error || e.message))
   } finally {
     busy.value = ''
   }
 }
 
 async function rejectEnv(env) {
-  const reason = prompt('请输入驳回原因（必填）：')
-  if (!reason) {
-    alert('驳回原因不能为空')
+  rejectSheet.value = { kind: 'env', target: env, reason: '' }
+}
+
+// sheet 提交：cwt 拒绝原因可选（原 prompt 口径保留，移动比桌面多收单）；
+// env 驳回原因必填（原口径）。签名/端点/payload 与改造前逐字一致。
+async function submitRejectSheet() {
+  const s = rejectSheet.value
+  if (!s) return
+  const reason = String(s.reason || '').trim()
+  if (s.kind === 'env' && !reason) {
+    toast('驳回原因不能为空')
     return
   }
-
-  busy.value = env._id
+  const target = s.target
+  rejectSheet.value = null
+  busy.value = target._id
   try {
-    const headers = await signAdminOperation('env-reject', { id: env._id })
-    await axios.post('/api/admin/env-reject', { id: env._id, reason }, { headers })
-    alert('已驳回')
-    await loadEnvironments()
+    if (s.kind === 'cwt') {
+      const headers = await signAdminOperation('cwt/reject', {
+        id: target._id,
+        address: target.address,
+      })
+      await axios.post(
+        `/api/admin/cwt-applications/${encodeURIComponent(target._id)}/reject`,
+        { reason },
+        { headers },
+      )
+      toast('已拒绝')
+      await loadApplications()
+    } else {
+      const headers = await signAdminOperation('env-reject', { id: target._id })
+      await axios.post('/api/admin/env-reject', { id: target._id, reason }, { headers })
+      toast('已驳回')
+      await loadEnvironments()
+    }
     refreshIfWatching()
   } catch (e) {
-    console.error('驳回失败:', e)
-    alert('驳回失败: ' + (e.response?.data?.error || e.message))
+    console.error('拒绝/驳回失败:', e)
+    toast('拒绝/驳回失败: ' + (e.response?.data?.error || e.message))
   } finally {
     busy.value = ''
   }
@@ -471,7 +489,7 @@ onMounted(() => {
 <style scoped>
 .mobile-approvals {
   min-height: 100vh;
-  background: #f4f5fa;
+  background: var(--m-bg);
 }
 
 /* Loading 状态 */
@@ -488,7 +506,7 @@ onMounted(() => {
   width: 40px;
   height: 40px;
   border: 3px solid rgba(106, 114, 232, 0.2);
-  border-top-color: #6a72e8;
+  border-top-color: var(--m-primary);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -501,12 +519,12 @@ onMounted(() => {
 
 .loading-text {
   font-size: 14px;
-  color: #8a90a3;
+  color: var(--m-muted);
 }
 
 /* 头部 */
 .ghead {
-  background: linear-gradient(135deg, #6a72e8 0%, #9b8cf5 100%);
+  background: linear-gradient(135deg, var(--m-primary) 0%, var(--m-primary-2) 100%);
   padding: 20px 16px 24px;
   color: #fff;
 }
@@ -565,7 +583,7 @@ onMounted(() => {
   border-radius: 8px;
   font-size: 14px;
   font-weight: 600;
-  color: #8a90a3;
+  color: var(--m-muted);
   cursor: pointer;
   transition: all 0.2s;
   display: flex;
@@ -576,7 +594,7 @@ onMounted(() => {
 }
 
 .type-tab.active {
-  background: linear-gradient(135deg, #6a72e8 0%, #9b8cf5 100%);
+  background: linear-gradient(135deg, var(--m-primary) 0%, var(--m-primary-2) 100%);
   color: #fff;
   box-shadow: 0 2px 8px rgba(106, 114, 232, 0.3);
 }
@@ -600,7 +618,7 @@ onMounted(() => {
   border-radius: 8px;
   font-size: 14px;
   font-weight: 600;
-  color: #8a90a3;
+  color: var(--m-muted);
   cursor: pointer;
   transition: all 0.2s;
   display: flex;
@@ -610,7 +628,7 @@ onMounted(() => {
 }
 
 .filter-btn.active {
-  background: linear-gradient(135deg, #6a72e8 0%, #9b8cf5 100%);
+  background: linear-gradient(135deg, var(--m-primary) 0%, var(--m-primary-2) 100%);
   color: #fff;
   box-shadow: 0 2px 8px rgba(106, 114, 232, 0.3);
 }
@@ -618,7 +636,7 @@ onMounted(() => {
 .tab-dot {
   width: 8px;
   height: 8px;
-  background: #ff4757;
+  background: var(--m-danger-bright);
   border-radius: 50%;
   display: inline-block;
   margin-left: 4px;
@@ -641,7 +659,7 @@ onMounted(() => {
 
 .empty-text {
   font-size: 14px;
-  color: #8a90a3;
+  color: var(--m-muted);
 }
 
 /* 申请列表 */
@@ -665,26 +683,26 @@ onMounted(() => {
 .app-address {
   font-size: 15px;
   font-weight: 700;
-  color: #20242f;
+  color: var(--m-ink);
   margin-bottom: 6px;
   font-family: 'SF Mono', Monaco, monospace;
 }
 
 .app-time {
   font-size: 12px;
-  color: #8a90a3;
+  color: var(--m-muted);
   margin-bottom: 4px;
 }
 
 .app-decided {
   font-size: 12px;
-  color: #6a72e8;
+  color: var(--m-primary);
   margin-bottom: 4px;
 }
 
 .app-reason {
   font-size: 12px;
-  color: #ff4757;
+  color: var(--m-danger-bright);
   margin-top: 8px;
   padding: 8px;
   background: #fff5f5;
@@ -713,23 +731,23 @@ onMounted(() => {
 }
 
 .b-orange {
-  background: #fff4e3;
-  color: #e8930c;
+  background: var(--m-amber-soft);
+  color: var(--m-amber);
 }
 
 .b-green {
-  background: #e6f7ee;
-  color: #1fa05c;
+  background: var(--m-green-soft);
+  color: var(--m-green);
 }
 
 .b-red {
   background: #ffe6e6;
-  color: #ff4757;
+  color: var(--m-danger-bright);
 }
 
 .b-gray {
   background: #f0f0f0;
-  color: #8a90a3;
+  color: var(--m-muted);
 }
 
 /* 按钮 */
@@ -754,19 +772,19 @@ onMounted(() => {
 }
 
 .btn-green {
-  background: #1fa05c;
+  background: var(--m-green);
   color: #fff;
 }
 
 .btn-red {
-  background: #ff4757;
+  background: var(--m-danger-bright);
   color: #fff;
 }
 
 .btn-outline {
   background: #fff;
-  color: #6a72e8;
-  border: 1px solid #6a72e8;
+  color: var(--m-primary);
+  border: 1px solid var(--m-primary);
 }
 
 .btn:active:not(:disabled) {
@@ -788,6 +806,57 @@ onMounted(() => {
 
 .page-info {
   font-size: 13px;
-  color: #8a90a3;
+  color: var(--m-muted);
+}
+
+/* 拒绝/驳回原因薄 sheet（T1 2026-11-10） */
+.sheet-mask {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.sheet {
+  background: #fff;
+  width: 100%;
+  max-width: 500px;
+  border-radius: 16px 16px 0 0;
+  padding: 18px 16px 22px;
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.2);
+}
+
+.sheet-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--m-ink);
+  margin-bottom: 12px;
+}
+
+.sheet-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #d9dde8;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+  resize: vertical;
+  min-height: 72px;
+  background: #fafbfe;
+  color: var(--m-ink);
+  margin-bottom: 12px;
+  font-family: inherit;
+}
+
+.sheet-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
 }
 </style>

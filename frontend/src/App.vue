@@ -28,25 +28,14 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import dshLogo from './assets/dsh-logo-white.svg'
 import GlobalDialog from './components/GlobalDialog.vue'
+import { useIsMobile } from './composables/useIsMobile.js'
 
 const route = useRoute()
-const isMobile = ref(window.innerWidth <= 768)
-
-function updateMobile() {
-  isMobile.value = window.innerWidth <= 768
-}
-
-onMounted(() => {
-  window.addEventListener('resize', updateMobile)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('resize', updateMobile)
-})
+// T3 收敛（2026-11-10）：isMobile 旧为 App/Home/UserCenter 三份复制，改全站单例
+const isMobile = useIsMobile()
 </script>
 
 <style scoped>

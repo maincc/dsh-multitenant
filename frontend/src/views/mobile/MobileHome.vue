@@ -16,12 +16,14 @@
         </div>
         <div class="greet">
           {{ role === 'admin' ? '管理员' : '用户' }} · 已连接
-          <span class="greet-hint">｜每 300s 自动刷新</span>
+          <span class="greet-hint">｜每 {{ refreshSec }}s 自动刷新</span>
         </div>
+        <!-- T7 治错位（2026-11-10）：原文案"退出"但行为是复制——文案改如实"复制"；
+             真退出落点在"我的"tab（MobileMe） -->
         <div class="addr-chip" @click="copyAddress">
           <span class="addr-icon">🔑</span>
           <span class="addr-text">{{ shortAddr }}</span>
-          <span class="addr-act">退出</span>
+          <span class="addr-act">复制</span>
         </div>
       </div>
 
@@ -37,8 +39,8 @@
           <span class="docker-icon">🐳</span>
         </div>
 
-        <!-- 统计卡片 -->
-        <div class="stat2">
+        <!-- 统计卡片（数据源 /api/stats 为管理端点：普通用户不摆零值假数据） -->
+        <div v-if="role === 'admin'" class="stat2">
           <div class="stat">
             <div class="sl">总用户数</div>
             <div class="sv">{{ stats.totalUsers || 0 }}</div>
@@ -62,7 +64,7 @@
         <div v-if="role === 'admin'" class="card">
           <div class="qgrid">
             <div class="qitem" @click="$router.push('/user?tab=adm:users')">
-              <div class="qi" style="background: #efecff">👥</div>
+              <div class="qi" style="background: var(--m-purple-soft)">👥</div>
               <span>用户管理</span>
             </div>
             <div class="qitem" @click="$router.push('/user?tab=adm:quota')">
@@ -70,19 +72,19 @@
               <span>配额配置</span>
             </div>
             <div class="qitem" @click="$router.push('/user?tab=adm:monitor')">
-              <div class="qi" style="background: #e6f7ee">📈</div>
+              <div class="qi" style="background: var(--m-green-soft)">📈</div>
               <span>资源监控</span>
             </div>
             <div class="qitem" @click="$router.push('/user?tab=adm:version')">
-              <div class="qi" style="background: #fff4e3">🏷️</div>
+              <div class="qi" style="background: var(--m-amber-soft)">🏷️</div>
               <span>DSH 版本</span>
             </div>
-            <div class="qitem" @click="$router.push('/user?tab=adm:model')">
-              <div class="qi" style="background: #efecff">🤖</div>
+            <div class="qitem" @click="$router.push('/user?tab=model')">
+              <div class="qi" style="background: var(--m-purple-soft)">🤖</div>
               <span>模型配置</span>
             </div>
             <div class="qitem" @click="$router.push('/user?tab=adm:approval')">
-              <div class="qi" style="background: #fdecec">🛡️</div>
+              <div class="qi" style="background: var(--m-danger-soft)">🛡️</div>
               <span>凭证审批</span>
             </div>
             <div class="qitem" @click="$router.push('/user?tab=adm:env-approval')">
@@ -90,17 +92,32 @@
               <span>环境审批</span>
             </div>
             <div class="qitem" @click="$router.push('/user?tab=account')">
-              <div class="qi" style="background: #e6f7ee">🪪</div>
+              <div class="qi" style="background: var(--m-green-soft)">🪪</div>
               <span>我的凭证</span>
             </div>
           </div>
         </div>
 
-        <!-- 孤儿数据清理（仅管理员显示） -->
+        <!-- 孤儿数据清理（仅管理员显示；与桌面 AdminPanel 同闸：会话判权 + 删除当场签名） -->
         <div v-if="role === 'admin'" class="card">
           <div class="ct">🧹 孤儿数据清理</div>
           <div class="cd">扫描并清理无人使用的残留数据卷（不影响任何在用用户与运行中的容器）</div>
-          <button class="btn btn-p" @click="scanOrphanVolumes">扫描孤儿卷</button>
+          <button class="btn btn-p" @click="scanOrphanVolumes" :disabled="orphanScanning">
+            {{ orphanScanning ? '扫描中…' : '扫描孤儿卷' }}
+          </button>
+          <div v-if="orphanNotice" class="orphan-notice">{{ orphanNotice }}</div>
+          <div v-if="orphanVolumes.length" class="orphan-list">
+            <div v-for="v in orphanVolumes" :key="v" class="orphan-item">{{ v }}</div>
+          </div>
+          <button
+            v-if="orphanVolumes.length"
+            class="btn btn-danger"
+            style="margin-top: 12px"
+            @click="cleanupOrphanVolumes"
+            :disabled="orphanCleaning"
+          >
+            {{ orphanCleaning ? '清理中…' : `清理 ${orphanVolumes.length} 个孤儿卷` }}
+          </button>
         </div>
       </div>
     </template>
@@ -108,8 +125,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import axios from 'axios'
+import { askConfirm, toast } from '../../composables/useDialog'
+import { signAdminOperation } from '../../api/adminSign.js'
 
 const loading = ref(true)
 const address = ref('')
@@ -122,6 +141,20 @@ const stats = ref({
   tier2: 0,
 })
 
+// 自动刷新节拍（T6 修复：原"每 300s"是假文案、无 timer）。默认 15s 与桌面/红点
+// 节拍同源——管理员在场时读 /api/stats 的 uiConfig.refreshIntervalMs 真值重建定时器
+// （AdminPanel 同款通道），改 config.json 重启服务即生效、无需重 build 前端。
+const intervalMs = ref(15000)
+const refreshSec = computed(() => Math.round(intervalMs.value / 1000))
+
+// 孤儿数据卷（T6 修复：原扫描按钮只弹 alert 空壳）。口径对齐桌面 AdminPanel：
+// GET 列孤儿只判会话；批量删卷不可逆 → askConfirm 明细 + cleanup-orphan-volumes
+// 当场签名（服务端只删 签署清单∩仍是孤儿 交集）
+const orphanVolumes = ref([])
+const orphanScanning = ref(false)
+const orphanCleaning = ref(false)
+const orphanNotice = ref('')
+
 const shortAddr = computed(() => {
   const a = address.value
   return a ? `${a.slice(0, 12)}…${a.slice(-4)}` : ''
@@ -130,12 +163,59 @@ const shortAddr = computed(() => {
 function copyAddress() {
   if (address.value) {
     navigator.clipboard.writeText(address.value)
-    alert('地址已复制到剪贴板')
+    toast('地址已复制到剪贴板')
   }
 }
 
 async function scanOrphanVolumes() {
-  alert('正在扫描孤儿数据卷…')
+  orphanScanning.value = true
+  orphanNotice.value = ''
+  try {
+    const res = await axios.get('/api/admin/orphan-volumes')
+    orphanVolumes.value = res.data.orphanVolumes || []
+    orphanNotice.value = orphanVolumes.value.length
+      ? `发现 ${orphanVolumes.value.length} 个孤儿数据卷`
+      : '未发现孤儿数据卷'
+  } catch (e) {
+    toast(`扫描失败：${e.response?.data?.error || e.message}`)
+  } finally {
+    orphanScanning.value = false
+  }
+}
+
+async function cleanupOrphanVolumes() {
+  if (!orphanVolumes.value.length || orphanCleaning.value) return
+  await askConfirm({
+    message: `确认删除 ${orphanVolumes.value.length} 个孤儿数据卷？删除后数据不可恢复`,
+    details: [...orphanVolumes.value],
+    danger: true,
+    confirmLabel: `删除 ${orphanVolumes.value.length} 个卷`,
+    run: async () => {
+      orphanCleaning.value = true
+      try {
+        // 单一快照：签名清单与 POST body 必须同源——分两次展开时，钱包弹窗等待
+        // 期间列表若变化会造成服务端 binding 校验不过（拒签方向正确但白费一次签名）
+        const snapshot = [...orphanVolumes.value]
+        const headers = await signAdminOperation('cleanup-orphan-volumes', { volumes: snapshot })
+        const res = await axios.post(
+          '/api/admin/cleanup-orphan-volumes',
+          { volumes: snapshot },
+          { headers },
+        )
+        const { removed = [], failed = [], skipped = [] } = res.data || {}
+        const parts = [`已删除 ${removed.length} 个，失败 ${failed.length} 个`]
+        if (skipped.length) parts.push(`跳过 ${skipped.length} 个（已被重新认领）`)
+        orphanNotice.value = parts.join('，')
+        toast(orphanNotice.value)
+        // 列表只剩删除失败的（与桌面同款收口）
+        orphanVolumes.value = (failed || []).map((f) => f.name)
+      } catch (e) {
+        toast(`清理失败：${e.response?.data?.error || e.message}`)
+      } finally {
+        orphanCleaning.value = false
+      }
+    },
+  })
 }
 
 async function loadUserInfo() {
@@ -161,15 +241,46 @@ async function loadContainerStatus() {
 async function loadStats() {
   if (role.value !== 'admin') return
   try {
-    // TODO: 从后端获取统计数据
+    const res = await axios.get('/api/stats')
+    const d = res.data || {}
     stats.value = {
-      totalUsers: 11,
-      running: 2,
-      tier1: 11,
-      tier2: 0,
+      totalUsers: d.totalUsers ?? 0,
+      running: d.runningUsers ?? 0,
+      tier1: d.tierCounts?.[1] ?? 0,
+      tier2: d.tierCounts?.[2] ?? 0,
+    }
+    // 节拍交还后端真值（3s 下限防配疯；变了就重建定时器，AdminPanel 同款）
+    const iv = Number(d.uiConfig?.refreshIntervalMs)
+    if (Number.isFinite(iv) && iv >= 3000 && iv !== intervalMs.value) {
+      intervalMs.value = iv
+      startTimer()
     }
   } catch (e) {
     console.error('加载统计数据失败:', e)
+  }
+}
+
+// ---- 定时器：页面可见才打表，回前台先刷一次再续表（红点节拍器同纪律） ----
+let timer = null
+function startTimer() {
+  stopTimer()
+  timer = setInterval(silentRefresh, intervalMs.value)
+}
+function stopTimer() {
+  if (timer) {
+    clearInterval(timer)
+    timer = null
+  }
+}
+async function silentRefresh() {
+  await loadUserInfo()
+  await Promise.all([loadContainerStatus(), loadStats()])
+}
+function onVisibility() {
+  if (document.hidden) stopTimer()
+  else {
+    silentRefresh()
+    startTimer()
   }
 }
 
@@ -185,13 +296,20 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
+  document.addEventListener('visibilitychange', onVisibility)
+  if (!document.hidden) startTimer()
+})
+
+onUnmounted(() => {
+  document.removeEventListener('visibilitychange', onVisibility)
+  stopTimer()
 })
 </script>
 
 <style scoped>
 .mobile-home {
   min-height: 100vh;
-  background: #f4f5fa;
+  background: var(--m-bg);
 }
 
 /* Loading 状态 */
@@ -208,7 +326,7 @@ onMounted(async () => {
   width: 40px;
   height: 40px;
   border: 3px solid rgba(106, 114, 232, 0.2);
-  border-top-color: #6a72e8;
+  border-top-color: var(--m-primary);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -221,12 +339,12 @@ onMounted(async () => {
 
 .loading-text {
   font-size: 14px;
-  color: #8a90a3;
+  color: var(--m-muted);
 }
 
 /* 顶部头部 */
 .ghead {
-  background: linear-gradient(135deg, #6a72e8 0%, #9b8cf5 100%);
+  background: linear-gradient(135deg, var(--m-primary) 0%, var(--m-primary-2) 100%);
   padding: 20px 16px 24px;
   color: #fff;
 }
@@ -305,7 +423,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 12px;
-  background: linear-gradient(135deg, #1fa05c 0%, #2bb56a 100%);
+  background: linear-gradient(135deg, var(--m-green) 0%, #2bb56a 100%);
   border-radius: 14px;
   padding: 14px 16px;
   color: #fff;
@@ -370,21 +488,21 @@ onMounted(async () => {
 
 .sl {
   font-size: 11px;
-  color: #8a90a3;
+  color: var(--m-muted);
   margin-bottom: 6px;
 }
 
 .sv {
   font-size: 24px;
   font-weight: 700;
-  color: #20242f;
+  color: var(--m-ink);
 }
 
 /* 区块标题 */
 .sec-t {
   font-size: 13px;
   font-weight: 600;
-  color: #4b5162;
+  color: var(--m-text);
   margin-bottom: 10px;
   padding-left: 2px;
 }
@@ -430,7 +548,7 @@ onMounted(async () => {
 
 .qitem span {
   font-size: 11px;
-  color: #4b5162;
+  color: var(--m-text);
   font-weight: 500;
 }
 
@@ -438,13 +556,13 @@ onMounted(async () => {
 .ct {
   font-size: 14px;
   font-weight: 700;
-  color: #20242f;
+  color: var(--m-ink);
   margin-bottom: 8px;
 }
 
 .cd {
   font-size: 12px;
-  color: #8a90a3;
+  color: var(--m-muted);
   line-height: 1.6;
   margin-bottom: 12px;
 }
@@ -460,12 +578,52 @@ onMounted(async () => {
 }
 
 .btn-p {
-  background: linear-gradient(135deg, #f0a132, #e8930c);
+  background: linear-gradient(135deg, #f0a132, var(--m-amber));
   color: #fff;
   box-shadow: 0 4px 12px rgba(240, 161, 50, 0.3);
 }
 
 .btn:active {
   transform: scale(0.98);
+}
+
+.btn-danger {
+  background: linear-gradient(135deg, var(--m-danger), #c53030);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(214, 69, 69, 0.3);
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* 孤儿卷扫描结果 */
+.orphan-notice {
+  font-size: 12px;
+  color: var(--m-text);
+  margin-top: 10px;
+}
+
+.orphan-list {
+  margin-top: 10px;
+  max-height: 160px;
+  overflow-y: auto;
+  border: 1px solid #edeff5;
+  border-radius: 10px;
+  padding: 6px 10px;
+}
+
+.orphan-item {
+  font-family: 'SF Mono', Monaco, monospace;
+  font-size: 11px;
+  color: var(--m-muted);
+  padding: 4px 0;
+  border-bottom: 1px dashed #edeff5;
+  word-break: break-all;
+}
+
+.orphan-item:last-child {
+  border-bottom: none;
 }
 </style>

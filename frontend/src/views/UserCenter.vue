@@ -15,8 +15,10 @@
       </div>
     </div>
 
-    <!-- 连接钱包页面 -->
-    <div v-else-if="!connected" class="state-card connect-card">
+    <!-- 连接钱包页面（桌面专属 2026-11-10：判例·挂机跌落报障——这张全屏卡曾顶掉
+         整个移动壳，底部 tab 跟着消失；且它让手机"装 Chrome 扩展"，移动端无从点击。
+         移动失联不再换卡：壳常驻，自动回落「我的」tab 用 MobileMe 登录面板恢复。） -->
+    <div v-else-if="!connected && !isMobile" class="state-card connect-card">
       <h2>{{ $t('user.connectTitle') }}</h2>
       <p>{{ $t('user.connectHint') }}</p>
 
@@ -37,8 +39,9 @@
       </button>
     </div>
 
-    <!-- 等待队列页面 -->
-    <div v-else-if="waiting" class="state-card waiting-card">
+    <!-- 等待队列页面（桌面专属，同连接卡：移动壳不许被全屏卡顶掉——tab 常驻是
+         2026-11-10 报障定下的移动端铁律；移动排队进度由 MobileMe/容器 tab 自述） -->
+    <div v-else-if="waiting && !isMobile" class="state-card waiting-card">
       <div class="waiting-icon">⏳</div>
       <h2>{{ $t('user.waitingTitle') }}</h2>
       <p class="waiting-message">{{ $t('user.waitingMsg1') }}</p>
@@ -78,7 +81,10 @@
         </div>
         <!-- 容器 -->
         <div v-else-if="mobileTab === 'container'" class="mobile-page">
-          <MobileContainer />
+          <MobileContainer
+            :initial-sub="containerInitialSub"
+            @sub-consumed="containerInitialSub = ''"
+          />
         </div>
         <!-- 技能市场 -->
         <div v-else-if="mobileTab === 'skills'" class="mobile-page">
@@ -88,13 +94,9 @@
         <div v-else-if="mobileTab === 'approvals'" class="mobile-page">
           <MobileApprovals />
         </div>
-        <!-- 我的 -->
+        <!-- 我的（P1 落地 2026-11-10：登录/退出+配额+v1.4 凭证，替换原占位） -->
         <div v-else-if="mobileTab === 'me'" class="mobile-page">
-          <div class="mobile-placeholder">
-            <div class="placeholder-icon">👤</div>
-            <div class="placeholder-text">我的</div>
-            <div class="placeholder-hint">待实现</div>
-          </div>
+          <MobileMe />
         </div>
       </div>
 
@@ -124,7 +126,10 @@
           <div class="tab-icon">🏪</div>
           <div class="tab-label">市场</div>
         </button>
+        <!-- B3（2026-11-10）：审批是管理面，普通用户从装配层移除（桌面侧栏同款基调，
+             不再靠后端 403 兜底） -->
         <button
+          v-if="role === 'admin'"
           class="tab-item"
           :class="{ active: mobileTab === 'approvals' }"
           @click="mobileTab = 'approvals'"
@@ -1043,23 +1048,30 @@
 
 <script setup>
 import { askConfirm, toast } from '../composables/useDialog'
-import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { useIsMobile } from '../composables/useIsMobile.js'
+import { ref, onMounted, onUnmounted, computed, watch, defineAsyncComponent } from 'vue'
 import { useAdminBadges, startAdminBadges, stopAdminBadges } from '../composables/useAdminBadges'
 const { badgeFor } = useAdminBadges()
 // 红点节拍起停的组件侧凭证：防角色状态反复刷新叠加引用计数（起一次=守一次）
 let badgesStarted = false
 import axios from 'axios'
 import { useI18n } from 'vue-i18n'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { skillsApi } from '../api/skills.js'
 import { sha256Hex as sha256HexFallback } from '../utils/sha256.js'
 import AdminPanel from './AdminPanel.vue'
 import EnvTemplatesUser from '../components/EnvTemplatesUser.vue'
-import MobileHome from './mobile/MobileHome.vue'
-import MobileContainer from './mobile/MobileContainer.vue'
-import MobileMarket from './mobile/MobileMarket.vue'
-import MobileApprovals from './mobile/MobileApprovals.vue'
-import MobileSkills from './mobile/MobileSkills.vue'
+// T5 移动 chunk 拆分（2026-11-10）：五个移动组件按 isMobile 条件渲染，改 defineAsyncComponent
+// 懒加载——桌面首屏 chunk 不再打包移动全量（~数百行），移动侧单独异步包。切换首帧由
+// 各组件自带 loading spinner 兜底（无感）；判权/签名链与同步 import 逐字节一致，仅装载时机变。
+const MobileHome = defineAsyncComponent(() => import('./mobile/MobileHome.vue'))
+const MobileContainer = defineAsyncComponent(() => import('./mobile/MobileContainer.vue'))
+const MobileMarket = defineAsyncComponent(() => import('./mobile/MobileMarket.vue'))
+const MobileApprovals = defineAsyncComponent(() => import('./mobile/MobileApprovals.vue'))
+const MobileMe = defineAsyncComponent(() => import('./mobile/MobileMe.vue'))
+// B2 清理（2026-11-10）：MobileSkills 系孤儿组件（import 未挂载，且其无签名 API 与后端
+// 签名要求分叉）。P2 移动发布链路改在 MobileContainer 另建（走 signChallenge+skillsApi
+// 真签名口径），旧孤儿文件已于 P2 删除——双实现收敛完毕，不再留"暂留"尾巴。
 import SkillMarket from './SkillMarket.vue'
 import { buildAdminTabs } from '../admin-tabs'
 import {
@@ -1070,28 +1082,61 @@ import {
   getIpfsPublicKey,
   watchAccountsChanged,
 } from '../api/wallet.js'
+import { signConnectPlugin, buildConnectUrl } from '../api/connect.js'
 
 const { t } = useI18n()
 const route = useRoute()
+const router = useRouter()
 
-// ---- 移动端检测 ----
-const isMobile = ref(window.innerWidth <= 768)
+// ---- 移动端检测（T3 收敛 2026-11-10：走全站单例，旧本地 ref+resize 监听已摘） ----
+const isMobile = useIsMobile()
 const mobileTab = ref('home') // home/container/skills/approvals/me
+// 移动深链→容器子页签的一次性接力（applyMobileTabLink 写入，MobileContainer 挂载
+// 消费后经 sub-consumed 清空——不清的话用户再点「容器」top tab 重挂载会误跳子页）
+const containerInitialSub = ref('')
+
+// ---- 移动深链消费（B1 修复 2026-11-10）----
+// MobileHome 管理员 8 宫格 push 的 /user?tab=adm:* 过去只被桌面侧栏 activeTab 消费，
+// 移动壳根本不读 query——八条快捷全成死链（全景报告 B1）。现在移动壳消费同款深链，
+// 落定即清 query（同一条目重复点击可重放）。角色未定时先寄存、credential-status 回落后
+// 消费——防把"还在查角色"误判成"不是管理员"。注意 roleSettled / mobileDeepLinkPending
+// 与 initialTabApplied 同款刻意用裸非响应值（2026-10-23"裸布尔按 ref 用"判例在前）。
+let roleSettled = false
+let mobileDeepLinkPending = null
+
+function applyMobileTabLink(s) {
+  const str = String(s)
+  const isAdm = str.startsWith('adm:') || str === 'system'
+  if (isAdm && role.value !== 'admin') toast(t('user.adminEntryLocked'))
+  else if (isAdm && /approval|cred|cwt|env/i.test(str)) mobileTab.value = 'approvals'
+  else if (isAdm) toast('该管理功能移动端暂未提供，请在 PC 端使用')
+  else if (str === 'account' || str === 'me') mobileTab.value = 'me'
+  else if (str === 'market') mobileTab.value = 'skills'
+  // 模型配置是**用户域**功能（桌面侧栏 key:'model' 人人可见；管理注册表 admin-tabs.js
+  // 从未有 model——首页八宫格旧链 adm:model 是幻影键：移动 toast 谎称"PC 才有"，桌面
+  // 直落空白页签）。2026-11-11 裁定模型配置上移动端后，此处正链为 tab=model：
+  // 落容器 tab 并穿透到「模型配置」子页签（initial-sub 一次性消费，见 MobileContainer）。
+  else if (str === 'model') {
+    mobileTab.value = 'container'
+    containerInitialSub.value = 'model'
+  } else if (['home', 'container', 'skills', 'approvals'].includes(str)) mobileTab.value = str
+  router.replace({ query: {} })
+}
+
+watch(
+  () => route.query.tab,
+  (q) => {
+    if (!isMobile.value || !q) return
+    if (!roleSettled) {
+      mobileDeepLinkPending = String(q)
+      return
+    }
+    applyMobileTabLink(String(q))
+  },
+)
 
 // 计算待审批总数（环境模板 + CWT 申请）
 const approvalCount = computed(() => badgeFor('envtpl') + badgeFor('cred'))
-
-function updateMobile() {
-  isMobile.value = window.innerWidth <= 768
-}
-
-onMounted(() => {
-  window.addEventListener('resize', updateMobile)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('resize', updateMobile)
-})
 
 // ---- 侧栏导航（与 React 原型稿一致） ----
 // 落地页 = 容器管理：多数操作（进入 DSH、启停、资源查看）都发生在这里，
@@ -1147,6 +1192,12 @@ const shortAddrText = computed(() => {
 })
 
 const connected = ref(false)
+// 挂机跌落兜底（2026-11-10 报障"长时间不管底部 tab 消失"）：移动失联不再换全屏卡
+// （模板两处 !isMobile），tab 壳常驻；失联瞬间自动回落「我的」——MobileMe 登录
+// 面板是移动端唯一重登录门（桌面那张卡让手机装 Chrome 扩展，本来就点不动）。
+watch(connected, (v) => {
+  if (!v && isMobile.value) mobileTab.value = 'me'
+})
 const connecting = ref(false)
 const hasCCDAO = ref(false)
 const userInfo = ref({})
@@ -1393,10 +1444,18 @@ const loadCredentialStatus = async (address) => {
       badgesStarted = false
       stopAdminBadges()
     }
-    // （2026-10-23 修重大 bug：initialTabApplied 声明是裸布尔（:918），这里曾按
-    // ref 用 .value——赋值即 TypeError，管理员每次装配都在此 throw，深链页签/
-    // 续发提示/申请单态全被 catch 吞掉。恢复纯布尔用法，语义不变=仅首次生效）
-    if (role.value === 'admin' && !initialTabApplied) {
+    roleSettled = true
+    // 移动深链首落（B1 修复 2026-11-10）：角色定盘后才消费寄存/首见 query，
+    // 后续 query 变化由 watch 走同一 applyMobileTabLink；桌面分支原样不动
+    if (isMobile.value && !initialTabApplied) {
+      initialTabApplied = true
+      const mq = mobileDeepLinkPending ?? String(route.query.tab || '')
+      mobileDeepLinkPending = null
+      if (mq) applyMobileTabLink(mq)
+    } else if (role.value === 'admin' && !initialTabApplied) {
+      // （2026-10-23 修重大 bug：initialTabApplied 声明是裸布尔（:918），这里曾按
+      // ref 用 .value——赋值即 TypeError，管理员每次装配都在此 throw，深链页签/
+      // 续发提示/申请单态全被 catch 吞掉。恢复纯布尔用法，语义不变=仅首次生效）
       initialTabApplied = true
       // 深链落地：?tab=adm:cred 直达子页；旧入口 ?tab=system（/admin 重定向）落管理总览
       const q = String(route.query.tab || '')
@@ -1410,8 +1469,10 @@ const loadCredentialStatus = async (address) => {
       const q0 = String(route.query.tab || '')
       if (q0.startsWith('adm:') || q0 === 'system') toast(t('user.adminEntryLocked'))
     }
-    // 撤销即时收面：角色掉出 admin 且正停在管理页 → 弹回账户信息
+    // 撤销即时收面：角色掉出 admin 且正停在管理页 → 弹回账户信息（移动壳同闸：
+    // 审批 tab 是管理面，角色跌落/登出重入非 admin 时从审批页弹回首页）
     if (role.value !== 'admin' && isSystemTab.value) activeTab.value = 'account'
+    if (role.value !== 'admin' && mobileTab.value === 'approvals') mobileTab.value = 'home'
     if (data.renewed) {
       // 平台按台账 cwt/did 记录自动续发了新凭证（链上登记册同步换卡）
       credVc.value = null
@@ -2192,42 +2253,30 @@ const connectWithOwnership = async (address, opts = {}) => {
   const progress0 = opts.progress ?? 10
   try {
     // 阶段化 loading（每次 show 不 hide，由调用方统一 hideLoading）：
-    // 覆盖"钱包弹窗请求账户 → 领取挑战 → 等待签名 → 建立连接"的每个耗时环节
+    // 覆盖"钱包弹窗请求账户 → 领取挑战 → 等待签名 → 建立连接"的每个耗时环节。
+    // T4 收敛（2026-11-10）：requestAccounts→/connect-challenge→signMessage→getPublicKey
+    // 的签名原语走 api/connect.js 唯一权威支（与 MobileContainer 同支，判例 58 漂移根治）；
+    // 拼法记录（rememberPluginCase）与阶段 loading 经回调注入，语义与逐点时序同改造前。
     if (!quiet) showLoading(title, t('user.loadingVerify'), progress0)
 
-    const pluginAddress = await requestAccounts()
-    rememberPluginCase(pluginAddress)
-    // 1) 领取一次性挑战：走 /connect-challenge（200 正身；旧链路借 /connect 的
-    //    无签名 401 下发挑战，浏览器必标红、每次登录都像"报错"）。用途仍是
-    //    CONNECT 专属——挑战池按用途隔离，借别的 nonce 在 /connect 取不到
-    //    （防跨端点凭证混淆），兑现也只由后续带签名 /connect 一步完成。
-    if (!quiet) showLoading(title, t('user.loadingWalletConnect'), Math.max(progress0, 25))
-    const chalRes = await fetch(`/connect-challenge?address=${encodeURIComponent(pluginAddress)}`)
-    const challenge = await chalRes.json()
-    const nonce = challenge.nonce
-    const message = challenge.message
-    if (!nonce || !message) {
-      throw new Error(challenge.error || '领取连接挑战失败，请重试')
-    }
-    // 2) 插件签名（用户确认弹窗，可能等待较久）：签的是用途绑定消息（hex）
-    if (!quiet) showLoading(title, t('user.loadingSign'), Math.max(progress0, 45))
-    const signature = await signMessage(pluginAddress, message)
-    const publicKey = await getPublicKey(pluginAddress)
+    const core = await signConnectPlugin({
+      onPluginAddress: rememberPluginCase,
+      onPhase: (phase) => {
+        if (quiet) return
+        if (phase === 'challenge') {
+          showLoading(title, t('user.loadingWalletConnect'), Math.max(progress0, 25))
+        } else if (phase === 'sign') {
+          showLoading(title, t('user.loadingSign'), Math.max(progress0, 45))
+        }
+      },
+    })
     // 3) 带签名访问 /connect（已存在容器同样验签并发 cookie）
     // format=json：浏览器 fetch 的 redirect:manual 会把 302 包成 opaque (status 0)，
     // 取不到 location → 后端直接回 200 JSON {url}，前端 window.open。
     if (!quiet) showLoading(title, t('user.loadingEstablish'), Math.max(progress0, 70))
     // action=login（v1.5 反馈②）：只换 cookie 不建容器——签的仍是 CONNECT 用途同一消息，
     // 额外 query 不参与签名内容，防重放语义不变。
-    const params = new URLSearchParams({
-      address,
-      nonce,
-      signature,
-      publicKey,
-      format: 'json',
-      ...(opts.action ? { action: opts.action } : {}),
-    })
-    const cRes = await fetch(`/connect?${params}`)
+    const cRes = await fetch(buildConnectUrl(address, core, opts.action || null))
     return cRes
   } finally {
     ownershipInFlight = false
@@ -2746,6 +2795,10 @@ onMounted(async () => {
       await handleAddressChange(savedAddress, true)
     }
   }
+  // 首帧失联落位（watcher 只管"连上过又掉"）：移动端开机即无会话 → 直接进
+  // 「我的」亮登录面板，而不是对着一屏 '-' 的首页（2026-11-10 挂机报障）。
+  // 置于 loadMine 前：connected 此刻已是终值，且不惧 loadMine 异常吞掉落位。
+  if (!connected.value && isMobile.value) mobileTab.value = 'me'
   await loadMine()
 })
 

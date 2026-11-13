@@ -243,7 +243,7 @@ import { useI18n } from 'vue-i18n'
 import axios from 'axios'
 import { toast, askConfirm } from '../composables/useDialog'
 import { useAdminBadges } from '../composables/useAdminBadges'
-import { requestAccounts, signMessage, getPublicKey } from '../api/wallet'
+import { signAdminOperation } from '../api/adminSign.js'
 
 const { t } = useI18n()
 const { syncEnvRows } = useAdminBadges()
@@ -343,21 +343,12 @@ async function toggle(row) {
   }
 }
 
-// —— 钱包签名（AdminPanel signAdminOperation 同款；会话地址校验由服务端把关） ——
+// —— 钱包签名（P3 孪生收敛 2026-11-10）——
+// 旧本地拷贝缺 2026-11-02 材料校验加固（插件未解锁时 nonce/签/公钥半路蒸发→裸 POST
+// 撞 SIGNATURE_REQUIRED，报错误导为"没签名"）。现委托 ../api/adminSign.js 唯一权威支：
+// 材料不齐就地刹车；t 注入走桌面 i18n 话术；会话地址校验照旧由服务端 challenge 把关。
 async function signOp(operation, payload) {
-  const pluginAddress = await requestAccounts()
-  const chal = await axios.post('/api/admin/challenge', {
-    address: pluginAddress.toLowerCase(),
-    operation,
-    payload,
-  })
-  const signature = await signMessage(pluginAddress, chal.data.message)
-  const publicKey = await getPublicKey(pluginAddress)
-  return {
-    'x-admin-nonce': chal.data.nonce,
-    'x-admin-signature': signature,
-    'x-admin-pubkey': publicKey,
-  }
+  return signAdminOperation(operation, payload, { t })
 }
 
 async function publish(doc) {

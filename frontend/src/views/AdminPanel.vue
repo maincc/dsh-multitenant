@@ -1378,6 +1378,7 @@ import {
   watchAccountsChanged,
   friendlyPluginError,
 } from '../api/wallet.js'
+import { signAdminOperation as signAdminCore } from '../api/adminSign.js'
 
 const { t } = useI18n()
 
@@ -1859,54 +1860,18 @@ const signLogin = async (pluginAddress) => {
  * @param {object} payload   会改变行为的入参（含目标 address）
  * @returns {Promise<object>} 可直接展开进 axios config 的 headers
  */
+// P3 孪生收敛（2026-11-10）：challenge→sign→材料校验→三头 的权威流程唯 ../api/adminSign.js
+// 一支（旧本地全装拷贝退役，判例 58 孪生面漂移根治）。此处只留桌面本地关注：
+// hasCCDAO 前置闸 + 钱包≠会话预检（opts.sessionAddress 注入）+ friendlyPluginError 包装。
 const signAdminOperation = async (operation, payload) => {
   if (!hasCCDAO.value) {
     throw new Error(t('admin.signNeedsWallet'))
   }
-  // 插件原始大小写地址（签名用）；挑战必须绑在**当前登录会话**的地址上
-  const pluginAddress = await requestAccounts()
-  // 预检：钱包已切走而登录会话还是旧地址（账户监听有竞态/漏检窗口）——
-  // 立刻说人话指引，不必等后端 403 再猜"是不是只能操作自己的数据"（不是）
-  if (currentAddress.value && pluginAddress.toLowerCase() !== currentAddress.value) {
-    throw new Error(
-      `钱包当前账户与登录管理面板的账户不一致（${currentAddress.value.slice(0, 10)}…）。` +
-        '请在 CCDAO 插件切回登录时的账户，或退出重新登录。',
-    )
-  }
   try {
-    const chalRes = await axios.post('/api/admin/challenge', {
-      address: pluginAddress.toLowerCase(),
-      operation,
-      payload,
+    return await signAdminCore(operation, payload, {
+      sessionAddress: currentAddress.value,
+      t,
     })
-    const { message } = chalRes.data
-    const signature = await signMessage(pluginAddress, message)
-    const publicKey = await getPublicKey(pluginAddress)
-    // 材料不齐就地刹车（线上案 2026-11-02：插件未解锁时 swtc_getPublicKey 可回
-    // undefined/对象——axios 静默丢非串头，裸 POST 撞上 SIGNATURE_REQUIRED，
-    // 报错文案把人引向"没签名"，实际是"签了但材料半路蒸发"）。绝不再提交无签请求。
-    const nonce = chalRes.data.nonce
-    const sigStr = typeof signature === 'string' ? signature : (signature?.signature ?? '')
-    const pubStr =
-      typeof publicKey === 'string' ? publicKey : (publicKey?.publicKey ?? publicKey?.pubKey ?? '')
-    if (!nonce || !sigStr || !pubStr) {
-      throw new Error(
-        t('admin.sigMaterialMissing', {
-          miss: [
-            !nonce && 'nonce',
-            !sigStr && t('admin.sigKindSign'),
-            !pubStr && t('admin.sigKindPub'),
-          ]
-            .filter(Boolean)
-            .join('、'),
-        }),
-      )
-    }
-    return {
-      'x-admin-nonce': nonce,
-      'x-admin-signature': sigStr,
-      'x-admin-pubkey': pubStr,
-    }
   } catch (err) {
     throw new Error(friendlyPluginError(err))
   }

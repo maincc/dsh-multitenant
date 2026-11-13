@@ -44,12 +44,12 @@
 
       <!-- 环境模板列表 -->
       <div class="section-title">🏪 可用环境</div>
-      
+
       <div v-if="list.length === 0" class="empty-state">
         <div class="empty-icon">🌍</div>
         <div class="empty-text">暂无可用环境</div>
       </div>
-      
+
       <div v-else class="env-list">
         <div v-for="tpl in list" :key="tpl.id" class="env-card">
           <div class="env-info">
@@ -146,6 +146,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import axios from 'axios'
+import { toast, askConfirm } from '../../composables/useDialog'
 
 const loading = ref(true)
 const busy = ref(false)
@@ -162,7 +163,7 @@ function fmtBytes(bytes) {
   const k = 1024
   const sizes = ['B', 'KB', 'MB', 'GB']
   const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
+  return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i]
 }
 
 async function loadList() {
@@ -192,51 +193,72 @@ function closeDetail() {
 }
 
 async function applyEnv(tpl) {
-  if (!confirm(`确定要应用环境 "${tpl.name}" 吗？\n\n这将重置你的容器环境，应用此环境的配置。`)) return
-  
+  if (
+    !(await askConfirm({
+      message: `确定要应用环境 "${tpl.name}" 吗？\n\n这将重置你的容器环境，应用此环境的配置。`,
+      danger: true,
+      confirmLabel: '应用',
+    }))
+  )
+    return
+
   busy.value = true
   try {
     await axios.post('/api/user/environment/apply', { id: tpl.id })
-    alert(`环境 "${tpl.name}" 应用成功！`)
+    toast(`环境 "${tpl.name}" 应用成功！`)
     await loadCurrent()
     await loadList()
     closeDetail()
   } catch (e) {
     console.error('应用环境失败:', e)
-    alert('应用失败: ' + (e.response?.data?.error || e.message))
+    toast('应用失败: ' + (e.response?.data?.error || e.message))
   } finally {
     busy.value = false
   }
 }
 
 async function revertEnv() {
-  if (!confirm('确定要回退到默认环境吗？')) return
-  
+  if (
+    !(await askConfirm({
+      message: '确定要回退到默认环境吗？',
+      danger: true,
+      confirmLabel: '回退',
+    }))
+  )
+    return
+
   busy.value = true
   try {
     await axios.post('/api/user/environment/revert', { alsoClean: true })
-    alert('已回退到默认环境')
+    toast('已回退到默认环境')
     await loadCurrent()
     await loadList()
   } catch (e) {
     console.error('回退环境失败:', e)
-    alert('回退失败: ' + (e.response?.data?.error || e.message))
+    toast('回退失败: ' + (e.response?.data?.error || e.message))
   } finally {
     busy.value = false
   }
 }
 
 async function unpublishEnv(tpl) {
-  if (!confirm(`确定要下架环境 "${tpl.name}" 吗？`)) return
-  
+  if (
+    !(await askConfirm({
+      message: `确定要下架环境 "${tpl.name}" 吗？`,
+      danger: true,
+      confirmLabel: '下架',
+    }))
+  )
+    return
+
   busy.value = true
   try {
     await axios.post('/api/user/environment/unpublish', { id: tpl.id })
-    alert('已下架')
+    toast('已下架')
     await loadList()
   } catch (e) {
     console.error('下架失败:', e)
-    alert('下架失败: ' + (e.response?.data?.error || e.message))
+    toast('下架失败: ' + (e.response?.data?.error || e.message))
   } finally {
     busy.value = false
   }
@@ -269,7 +291,7 @@ onMounted(async () => {
 .intro-title {
   font-size: 14px;
   font-weight: 700;
-  color: #4b5162;
+  color: var(--m-text);
   margin-bottom: 8px;
 }
 
@@ -300,7 +322,7 @@ onMounted(async () => {
 
 .current-label {
   font-size: 12px;
-  color: #8a90a3;
+  color: var(--m-muted);
   margin-bottom: 4px;
 }
 
@@ -311,21 +333,21 @@ onMounted(async () => {
 .current-name {
   font-size: 15px;
   font-weight: 700;
-  color: #20242f;
+  color: var(--m-ink);
   display: block;
   margin-bottom: 4px;
 }
 
 .current-author {
   font-size: 12px;
-  color: #8a90a3;
+  color: var(--m-muted);
 }
 
 /* 分区标题 */
 .section-title {
   font-size: 16px;
   font-weight: 700;
-  color: #20242f;
+  color: var(--m-ink);
   margin-bottom: 12px;
 }
 
@@ -350,7 +372,7 @@ onMounted(async () => {
 .env-name {
   font-size: 15px;
   font-weight: 700;
-  color: #20242f;
+  color: var(--m-ink);
   margin-bottom: 6px;
   display: flex;
   align-items: center;
@@ -362,7 +384,7 @@ onMounted(async () => {
   display: flex;
   gap: 12px;
   font-size: 12px;
-  color: #8a90a3;
+  color: var(--m-muted);
   margin-bottom: 8px;
   flex-wrap: wrap;
 }
@@ -410,13 +432,13 @@ onMounted(async () => {
   justify-content: space-between;
   align-items: center;
   padding: 20px;
-  border-bottom: 1px solid #eceef4;
+  border-bottom: 1px solid var(--m-line);
 }
 
 .modal-head h3 {
   font-size: 18px;
   font-weight: 700;
-  color: #20242f;
+  color: var(--m-ink);
   margin: 0;
 }
 
@@ -424,7 +446,7 @@ onMounted(async () => {
   width: 32px;
   height: 32px;
   border: none;
-  background: #f4f5fa;
+  background: var(--m-bg);
   border-radius: 8px;
   font-size: 18px;
   cursor: pointer;
@@ -446,10 +468,10 @@ onMounted(async () => {
   flex-direction: column;
   gap: 8px;
   font-size: 13px;
-  color: #8a90a3;
+  color: var(--m-muted);
   margin-bottom: 16px;
   padding: 12px;
-  background: #f4f5fa;
+  background: var(--m-bg);
   border-radius: 8px;
 }
 
@@ -460,7 +482,7 @@ onMounted(async () => {
 .section-label {
   font-size: 14px;
   font-weight: 600;
-  color: #4b5162;
+  color: var(--m-text);
   margin-bottom: 8px;
 }
 
@@ -479,7 +501,7 @@ onMounted(async () => {
 .tag {
   padding: 4px 12px;
   background: #f0f4ff;
-  color: #6a72e8;
+  color: var(--m-primary);
   border-radius: 12px;
   font-size: 12px;
 }
@@ -493,7 +515,7 @@ onMounted(async () => {
   display: flex;
   gap: 12px;
   padding: 20px;
-  border-top: 1px solid #eceef4;
+  border-top: 1px solid var(--m-line);
 }
 
 .modal-footer .btn {

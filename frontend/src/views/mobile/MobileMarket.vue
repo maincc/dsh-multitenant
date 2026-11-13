@@ -57,131 +57,148 @@
             </button>
           </div>
 
-        <!-- 市场 Tab -->
-        <div v-if="activeTab === 'market'" class="tab-content">
-          <!-- CCDAO 插件未安装提示 -->
-          <div v-if="!ccdao" class="notice notice-error">
-            请安装 CCDAO Connector 浏览器插件以使用技能市场功能。
-            <a
-              href="https://chromewebstore.google.com/detail/ccdao-connector/fpondiojcgaollhcmjgpjmldjjkealjb"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="notice-link"
-            >
-              点击下载安装
-            </a>
-          </div>
-          
-          <!-- 未连接钱包提示 -->
-          <div v-else-if="!connected" class="notice notice-info">
-            您可以浏览技能市场，但安装和下载需要连接钱包。
-            <router-link to="/user" class="notice-link">前往连接</router-link>
-          </div>
-
-          <!-- 搜索框和刷新按钮 -->
-          <div class="search-box">
-            <div class="search-row">
-              <input v-model="keyword" type="text" class="search-input" placeholder="搜索技能..." />
-              <button class="btn btn-sm btn-outline" @click="loadMarketSkills" :disabled="loading">
-                刷新
-              </button>
+          <!-- 市场 Tab -->
+          <div v-if="activeTab === 'market'" class="tab-content">
+            <!-- CCDAO 插件未安装提示 -->
+            <div v-if="!ccdao" class="notice notice-error">
+              请安装 CCDAO Connector 浏览器插件以使用技能市场功能。
+              <a
+                href="https://chromewebstore.google.com/detail/ccdao-connector/fpondiojcgaollhcmjgpjmldjjkealjb"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="notice-link"
+              >
+                点击下载安装
+              </a>
             </div>
-          </div>
 
-          <div v-if="loading" class="loading-state">
-            <div class="loading-spinner"></div>
-            <div class="loading-text">加载中...</div>
-          </div>
-          <div v-else-if="filteredSkills.length === 0" class="empty-state">
-            <div class="empty-icon">🎯</div>
-            <div class="empty-text">暂无可用技能</div>
-          </div>
-          <div v-else class="skill-list">
-            <div v-for="skill in filteredSkills" :key="skill.name" class="skill-card">
-              <div class="skill-info">
-                <div class="skill-name">
-                  {{ skill.name }}
-                  <span v-if="skill.installed" class="badge b-green">已安装</span>
-                  <span v-if="skill.disableModelInvocation" class="badge b-orange">仅用户触发</span>
-                </div>
-                <div class="skill-desc">{{ skill.description || '暂无描述' }}</div>
-                <div class="skill-meta">
-                  <span class="meta-item">👤 {{ shortAddress(skill.sharer) }}</span>
-                  <span class="meta-item">📅 {{ formatDate(skill.sharedAt) }}</span>
-                  <span v-if="skill.hasResources" class="badge b-blue">包含资源</span>
-                </div>
-              </div>
-              <div class="skill-actions">
-                <button class="btn btn-sm btn-outline" @click="viewDetail(skill.name)">预览</button>
-                <a class="btn btn-sm btn-outline" :href="downloadUrl(skill.name)" download>下载</a>
+            <!-- 未连接钱包提示 -->
+            <div v-else-if="!connected" class="notice notice-info">
+              您可以浏览技能市场，但安装和下载需要连接钱包。
+              <router-link to="/user" class="notice-link">前往连接</router-link>
+            </div>
+
+            <!-- 搜索框和刷新按钮 -->
+            <div class="search-box">
+              <div class="search-row">
+                <input
+                  v-model="keyword"
+                  type="text"
+                  class="search-input"
+                  placeholder="搜索技能..."
+                />
                 <button
-                  class="btn btn-sm btn-p"
-                  @click="installSkill(skill)"
-                  :disabled="!connected || installing"
+                  class="btn btn-sm btn-outline"
+                  @click="loadMarketSkills"
+                  :disabled="loading"
                 >
-                  {{ skill.installed ? '重新安装' : '安装' }}
+                  刷新
                 </button>
               </div>
             </div>
-          </div>
-        </div>
 
-        <!-- 我的技能 Tab -->
-        <div v-else-if="activeTab === 'mine'" class="tab-content">
-          <div v-if="mySkillsLoading" class="loading-state">
-            <div class="loading-spinner"></div>
-            <div class="loading-text">加载中...</div>
+            <div v-if="loading" class="loading-state">
+              <div class="loading-spinner"></div>
+              <div class="loading-text">加载中...</div>
+            </div>
+            <div v-else-if="filteredSkills.length === 0" class="empty-state">
+              <div class="empty-icon">🎯</div>
+              <div class="empty-text">暂无可用技能</div>
+            </div>
+            <div v-else class="skill-list">
+              <div v-for="skill in filteredSkills" :key="skill.name" class="skill-card">
+                <div class="skill-info">
+                  <div class="skill-name">
+                    {{ skill.name }}
+                    <span v-if="skill.installed" class="badge b-green">已安装</span>
+                    <span v-if="skill.disableModelInvocation" class="badge b-orange"
+                      >仅用户触发</span
+                    >
+                  </div>
+                  <div class="skill-desc">{{ skill.description || '暂无描述' }}</div>
+                  <div class="skill-meta">
+                    <span class="meta-item">👤 {{ shortAddress(skill.sharer) }}</span>
+                    <span class="meta-item">📅 {{ formatDate(skill.sharedAt) }}</span>
+                    <span v-if="skill.hasResources" class="badge b-blue">包含资源</span>
+                  </div>
+                </div>
+                <div class="skill-actions">
+                  <button class="btn btn-sm btn-outline" @click="viewDetail(skill.name)">
+                    预览
+                  </button>
+                  <a class="btn btn-sm btn-outline" :href="downloadUrl(skill.name)" download
+                    >下载</a
+                  >
+                  <button
+                    class="btn btn-sm btn-p"
+                    @click="installSkill(skill)"
+                    :disabled="!connected || installing"
+                  >
+                    {{ skill.installed ? '重新安装' : '安装' }}
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
-          <template v-else>
-            <div
-              v-if="mySkills.published.length === 0 && mySkills.installed.length === 0"
-              class="empty-state"
-            >
-              <div class="empty-icon">🧩</div>
-              <div class="empty-text">你还没有安装或发布任何技能</div>
+
+          <!-- 我的技能 Tab -->
+          <div v-else-if="activeTab === 'mine'" class="tab-content">
+            <div v-if="mySkillsLoading" class="loading-state">
+              <div class="loading-spinner"></div>
+              <div class="loading-text">加载中...</div>
             </div>
             <template v-else>
-              <!-- 已发布的技能 -->
-              <div v-if="mySkills.published.length > 0" class="section">
-                <div class="section-title">📤 已发布的技能</div>
-                <div class="skill-list">
-                  <div
-                    v-for="skill in mySkills.published"
-                    :key="'p-' + skill.name"
-                    class="skill-card"
-                  >
-                    <div class="skill-info">
-                      <div class="skill-name">{{ skill.name }}</div>
-                      <div class="skill-desc">{{ skill.description || '暂无描述' }}</div>
-                    </div>
-                    <span class="badge b-purple">已发布</span>
-                  </div>
-                </div>
+              <!-- P2 去向指引：发布/导入的动作行在容器 tab（fe46075 桌面同位次） -->
+              <div class="mine-hint">想发布或导入技能？去底部「容器」tab → 技能插件。</div>
+              <div
+                v-if="mySkills.published.length === 0 && mySkills.installed.length === 0"
+                class="empty-state"
+              >
+                <div class="empty-icon">🧩</div>
+                <div class="empty-text">你还没有安装或发布任何技能</div>
               </div>
-
-              <!-- 已安装的技能 -->
-              <div v-if="mySkills.installed.length > 0" class="section">
-                <div class="section-title">📦 已安装的技能</div>
-                <div class="skill-list">
-                  <div
-                    v-for="skill in mySkills.installed"
-                    :key="'i-' + skill.name"
-                    class="skill-card"
-                  >
-                    <div class="skill-info">
-                      <div class="skill-name">{{ skill.name }}</div>
-                      <div class="skill-desc">{{ skill.description || '暂无描述' }}</div>
-                      <div v-if="skill.installedAt" class="skill-meta">
-                        安装于 {{ formatDate(skill.installedAt) }}
+              <template v-else>
+                <!-- 已发布的技能 -->
+                <div v-if="mySkills.published.length > 0" class="section">
+                  <div class="section-title">📤 已发布的技能</div>
+                  <div class="skill-list">
+                    <div
+                      v-for="skill in mySkills.published"
+                      :key="'p-' + skill.name"
+                      class="skill-card"
+                    >
+                      <div class="skill-info">
+                        <div class="skill-name">{{ skill.name }}</div>
+                        <div class="skill-desc">{{ skill.description || '暂无描述' }}</div>
                       </div>
+                      <span class="badge b-purple">已发布</span>
                     </div>
-                    <span class="badge b-green">已安装</span>
                   </div>
                 </div>
-              </div>
+
+                <!-- 已安装的技能 -->
+                <div v-if="mySkills.installed.length > 0" class="section">
+                  <div class="section-title">📦 已安装的技能</div>
+                  <div class="skill-list">
+                    <div
+                      v-for="skill in mySkills.installed"
+                      :key="'i-' + skill.name"
+                      class="skill-card"
+                    >
+                      <div class="skill-info">
+                        <div class="skill-name">{{ skill.name }}</div>
+                        <div class="skill-desc">{{ skill.description || '暂无描述' }}</div>
+                        <div v-if="skill.installedAt" class="skill-meta">
+                          安装于 {{ formatDate(skill.installedAt) }}
+                        </div>
+                      </div>
+                      <span class="badge b-green">已安装</span>
+                    </div>
+                  </div>
+                </div>
+              </template>
             </template>
-          </template>
-        </div>
+          </div>
         </template>
 
         <!-- 环境市场 -->
@@ -210,7 +227,9 @@
             <div class="detail-meta">
               <div>👤 发布者：{{ shortAddress(detailSkill.sharer) }}</div>
               <div>📅 发布时间：{{ formatDate(detailSkill.sharedAt) }}</div>
-              <div v-if="detailSkill.contentHash">🔒 内容哈希：{{ shortHash(detailSkill.contentHash) }}</div>
+              <div v-if="detailSkill.contentHash">
+                🔒 内容哈希：{{ shortHash(detailSkill.contentHash) }}
+              </div>
               <div v-if="detailSkill.disableModelInvocation" class="badge b-orange">仅用户触发</div>
             </div>
             <div class="detail-content">
@@ -234,7 +253,13 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import axios from 'axios'
 import { skillsApi } from '../../api/skills.js'
-import { signChallenge, ccdaoAvailable, watchAccountsChanged, friendlyPluginError } from '../../api/wallet.js'
+import {
+  signChallenge,
+  ccdaoAvailable,
+  watchAccountsChanged,
+  friendlyPluginError,
+} from '../../api/wallet.js'
+import { toast, askConfirm } from '../../composables/useDialog'
 import MobileEnvMarket from './MobileEnvMarket.vue'
 
 const loading = ref(true)
@@ -341,7 +366,7 @@ async function viewDetail(name) {
     detailSkill.value = res.skill || {}
   } catch (e) {
     console.error('加载技能详情失败:', e)
-    alert('加载详情失败: ' + friendlyPluginError(e))
+    toast('加载详情失败: ' + friendlyPluginError(e))
     closeDetail()
   } finally {
     detailLoading.value = false
@@ -356,35 +381,34 @@ function closeDetail() {
 
 async function installSkill(skill) {
   if (!connected.value) {
-    alert('请先连接钱包')
+    toast('请先连接钱包')
     return
   }
 
   // 详细的风险确认
   const publisher = skill.sharer ? shortAddress(skill.sharer) : '未知'
-  const autoLine = skill.modelAutoInvoke 
-    ? '此技能可以被模型自动调用' 
-    : '此技能只能由用户手动触发'
-  
-  const confirmMsg = `确定要安装技能 "${skill.name}" 吗？\n\n` +
+  const autoLine = skill.modelAutoInvoke ? '此技能可以被模型自动调用' : '此技能只能由用户手动触发'
+
+  const confirmMsg =
+    `确定要安装技能 "${skill.name}" 吗？\n\n` +
     `风险提示：技能来自第三方，可能存在安全风险\n` +
     `发布者：${publisher}\n` +
     `${autoLine}\n\n` +
     `是否继续安装？`
 
-  if (!confirm(confirmMsg)) return
+  if (!(await askConfirm(confirmMsg))) return
 
   installing.value = true
   try {
     const auth = await signChallenge()
     await skillsApi.install(auth, skill.name)
-    alert(`技能 "${skill.name}" 安装成功！`)
+    toast(`技能 "${skill.name}" 安装成功！`)
     await loadMarketSkills()
     await loadMySkills()
     closeDetail()
   } catch (e) {
     console.error('安装技能失败:', e)
-    alert('安装失败: ' + friendlyPluginError(e))
+    toast('安装失败: ' + friendlyPluginError(e))
   } finally {
     installing.value = false
   }
@@ -394,7 +418,7 @@ onMounted(async () => {
   // 检测 CCDAO 插件和连接状态
   ccdao.value = ccdaoAvailable()
   connected.value = Boolean(localStorage.getItem('swtc_address'))
-  
+
   // 监听账户变化
   unbindAccounts = watchAccountsChanged((accounts) => {
     const hasAccount = Boolean(accounts && accounts.length > 0)
@@ -404,7 +428,7 @@ onMounted(async () => {
       loadMySkills()
     }
   })
-  
+
   try {
     await Promise.all([loadUserInfo(), loadMarketSkills()])
   } catch (e) {
@@ -423,7 +447,7 @@ onUnmounted(() => {
 <style scoped>
 .mobile-market {
   min-height: 100vh;
-  background: #f4f5fa;
+  background: var(--m-bg);
 }
 
 /* Loading 状态 */
@@ -440,7 +464,7 @@ onUnmounted(() => {
   width: 40px;
   height: 40px;
   border: 3px solid rgba(106, 114, 232, 0.2);
-  border-top-color: #6a72e8;
+  border-top-color: var(--m-primary);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -453,12 +477,12 @@ onUnmounted(() => {
 
 .loading-text {
   font-size: 14px;
-  color: #8a90a3;
+  color: var(--m-muted);
 }
 
 /* 头部 */
 .ghead {
-  background: linear-gradient(135deg, #6a72e8 0%, #9b8cf5 100%);
+  background: linear-gradient(135deg, var(--m-primary) 0%, var(--m-primary-2) 100%);
   padding: 20px 16px 24px;
   color: #fff;
 }
@@ -516,14 +540,14 @@ onUnmounted(() => {
   background: transparent;
   font-size: 15px;
   font-weight: 600;
-  color: #8a90a3;
+  color: var(--m-muted);
   cursor: pointer;
   transition: all 0.2s;
   position: relative;
 }
 
 .tab-group-btn.active {
-  color: #6a72e8;
+  color: var(--m-primary);
   background: #f0f4ff;
 }
 
@@ -534,7 +558,7 @@ onUnmounted(() => {
   left: 20%;
   right: 20%;
   height: 3px;
-  background: #6a72e8;
+  background: var(--m-primary);
   border-radius: 3px 3px 0 0;
 }
 
@@ -543,7 +567,7 @@ onUnmounted(() => {
   display: flex;
   gap: 8px;
   margin-bottom: 16px;
-  background: #f4f5fa;
+  background: var(--m-bg);
   padding: 6px;
   border-radius: 10px;
 }
@@ -556,14 +580,14 @@ onUnmounted(() => {
   border-radius: 8px;
   font-size: 13px;
   font-weight: 600;
-  color: #8a90a3;
+  color: var(--m-muted);
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .sub-tab-btn.active {
   background: #fff;
-  color: #6a72e8;
+  color: var(--m-primary);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
 
@@ -605,7 +629,7 @@ onUnmounted(() => {
 
 .search-input:focus {
   outline: none;
-  border-color: #6a72e8;
+  border-color: var(--m-primary);
   box-shadow: 0 0 0 3px rgba(106, 114, 232, 0.1);
 }
 
@@ -625,7 +649,17 @@ onUnmounted(() => {
 
 .empty-text {
   font-size: 14px;
-  color: #8a90a3;
+  color: var(--m-muted);
+}
+
+.mine-hint {
+  background: #f6f5ff;
+  border: 1px solid #e6e3fb;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--m-primary);
+  margin-bottom: 12px;
 }
 
 /* 技能列表 */
@@ -653,7 +687,7 @@ onUnmounted(() => {
 .skill-name {
   font-size: 15px;
   font-weight: 700;
-  color: #20242f;
+  color: var(--m-ink);
   margin-bottom: 6px;
   display: flex;
   align-items: center;
@@ -663,7 +697,7 @@ onUnmounted(() => {
 
 .skill-desc {
   font-size: 13px;
-  color: #8a90a3;
+  color: var(--m-muted);
   line-height: 1.5;
   margin-bottom: 8px;
 }
@@ -699,18 +733,18 @@ onUnmounted(() => {
 }
 
 .b-purple {
-  background: #efecff;
-  color: #6a72e8;
+  background: var(--m-purple-soft);
+  color: var(--m-primary);
 }
 
 .b-green {
-  background: #e6f7ee;
-  color: #1fa05c;
+  background: var(--m-green-soft);
+  color: var(--m-green);
 }
 
 .b-orange {
-  background: #fff4e3;
-  color: #e8930c;
+  background: var(--m-amber-soft);
+  color: var(--m-amber);
 }
 
 .b-blue {
@@ -735,15 +769,15 @@ onUnmounted(() => {
 }
 
 .btn-p {
-  background: linear-gradient(135deg, #6a72e8 0%, #9b8cf5 100%);
+  background: linear-gradient(135deg, var(--m-primary) 0%, var(--m-primary-2) 100%);
   color: #fff;
   box-shadow: 0 4px 12px rgba(106, 114, 232, 0.3);
 }
 
 .btn-outline {
   background: #fff;
-  color: #6a72e8;
-  border: 1px solid #6a72e8;
+  color: var(--m-primary);
+  border: 1px solid var(--m-primary);
 }
 
 .btn-sm {
@@ -763,7 +797,7 @@ onUnmounted(() => {
 .section-title {
   font-size: 16px;
   font-weight: 700;
-  color: #20242f;
+  color: var(--m-ink);
   margin-bottom: 12px;
 }
 
@@ -798,13 +832,13 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 20px;
-  border-bottom: 1px solid #eceef4;
+  border-bottom: 1px solid var(--m-line);
 }
 
 .modal-head h3 {
   font-size: 18px;
   font-weight: 700;
-  color: #20242f;
+  color: var(--m-ink);
   margin: 0;
 }
 
@@ -812,7 +846,7 @@ onUnmounted(() => {
   width: 32px;
   height: 32px;
   border: none;
-  background: #f4f5fa;
+  background: var(--m-bg);
   border-radius: 8px;
   font-size: 18px;
   cursor: pointer;
@@ -831,7 +865,7 @@ onUnmounted(() => {
 
 .detail-desc {
   font-size: 14px;
-  color: #4b5162;
+  color: var(--m-text);
   line-height: 1.6;
   margin-bottom: 16px;
 }
@@ -841,15 +875,15 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 8px;
   font-size: 13px;
-  color: #8a90a3;
+  color: var(--m-muted);
   margin-bottom: 16px;
   padding: 12px;
-  background: #f4f5fa;
+  background: var(--m-bg);
   border-radius: 8px;
 }
 
 .detail-content {
-  background: #f4f5fa;
+  background: var(--m-bg);
   border-radius: 8px;
   padding: 16px;
   overflow-x: auto;
@@ -867,7 +901,7 @@ onUnmounted(() => {
   display: flex;
   gap: 12px;
   padding: 20px;
-  border-top: 1px solid #eceef4;
+  border-top: 1px solid var(--m-line);
 }
 
 .modal-footer .btn {

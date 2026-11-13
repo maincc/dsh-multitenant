@@ -242,18 +242,18 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, onActivated, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { ref, onMounted, onActivated, watch, defineAsyncComponent } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
-import MobileHome from './mobile/MobileHome.vue'
+// T5 移动 chunk 拆分（2026-11-10）：MobileHome 仅 isMobile 时渲染，改懒加载剥出桌面首屏
+const MobileHome = defineAsyncComponent(() => import('./mobile/MobileHome.vue'))
+import { useIsMobile } from '../composables/useIsMobile.js'
 
 const route = useRoute()
-const isMobile = ref(window.innerWidth <= 768)
+const router = useRouter()
+// T3 收敛（2026-11-10）：isMobile 走全站单例
+const isMobile = useIsMobile()
 const isLoggedIn = ref(false)
-
-function updateMobile() {
-  isMobile.value = window.innerWidth <= 768
-}
 
 // 检查登录状态
 async function checkLoginStatus() {
@@ -276,18 +276,21 @@ async function checkLoginStatus() {
 }
 
 onMounted(() => {
-  window.addEventListener('resize', updateMobile)
   checkLoginStatus()
-})
-
-onUnmounted(() => {
-  window.removeEventListener('resize', updateMobile)
 })
 
 // 组件被激活时重新检查登录状态
 onActivated(() => {
   checkLoginStatus()
 })
+
+// 移动端工作台统一收进 /user 壳（2026-11-10 挂机跌落报障补刀）：'/' 的移动分支
+// ——登出=营销引导页、登录=裸 MobileHome——都没有底部 tab 壳（壳只在 UserCenter）。
+// 会话失联后浏览器 reload 回 '/' 的用户会再次面对"tab 消失"。移动一律直进 /user，
+// 失联恢复/首登由壳内「我的」tab（MobileMe 登录面板）承担；桌面 '/' 行为不变。
+if (isMobile.value) {
+  router.replace('/user')
+}
 
 // 监听路由变化
 watch(

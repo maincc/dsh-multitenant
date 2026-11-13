@@ -226,10 +226,13 @@ export function watchAccountsChanged(handler, { pollIntervalMs = 3000 } = {}) {
   }
 }
 
-/** 钱包签名挑战-响应：返回 { address, nonce, signature, publicKey }（技能市场用） */
-export async function signChallenge() {
+/** 钱包签名挑战-响应：返回 { address, nonce, signature, publicKey }。
+ *  challengeUrl 决定签名用途池：默认技能（'/api/skills/challenge'）；模型配置传
+ *  '/api/user/config-challenge'（TENANT_CONFIG 池）。两池 nonce 互不兑现（用途绑定
+ *  消息），一次操作一次签名（钱包弹窗逐个确认，与桌面 UserCenter 同款语义）。 */
+export async function signChallenge(challengeUrl = '/api/skills/challenge') {
   const pluginAddress = await requestAccounts()
-  const challengeRes = await axios.post('/api/skills/challenge', { address: pluginAddress })
+  const challengeRes = await axios.post(challengeUrl, { address: pluginAddress })
   // 签的是服务端下发的**用途绑定消息**（message，hex），不是裸 nonce：
   // 这样为其它用途取得的签名不能在此处兑现（跨端点凭证混淆加固）。
   const { nonce, message } = challengeRes.data
