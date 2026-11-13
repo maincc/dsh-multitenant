@@ -17,7 +17,8 @@
 import { createServer } from 'node:http'
 import { request as httpRequest } from 'node:http'
 import { connect as netConnect } from 'node:net'
-import { randomBytes, createHash } from 'node:crypto'
+import { randomBytes, createHash, createHmac } from 'node:crypto'
+import { secureFlag } from '../utils/cookie-flags.js'
 import { getUserSession, userSessionStore } from '../middleware/user-auth.middleware.js'
 import { getAdminSession } from '../middleware/auth.middleware.js'
 import { CONFIG } from '../config/config.js'
@@ -346,8 +347,8 @@ const VERIFY_PAGE_TEMPLATE = `<!doctype html>
       valid = (await vr.json()).valid === true
     } catch (e) { valid = false }
     if (valid) {
-      // 签名证明通过：5 分钟放行窗口（期间刷新/重进不再弹签名）
-      document.cookie = 'gw_ok=__GWOK_TOKEN__; path=/; max-age=300'
+      // S2：放行 cookie 由 /__gw__/verify 验签通过时【服务端 Set-Cookie】签发——
+      // 页面手里从来没有任何放行凭证，没签过名就什么也带不走
       location.replace(location.href)
     } else {
       show('身份验证未通过，已注销本次访问',
@@ -416,29 +417,47 @@ function isNavigationRequest(req) {
 }
 
 /**
- * 放行凭证与"租户+端口"绑定（2026-10 全面审计）。
- * 旧值是常量 "1"：cookie 按 host 共享、**不分端口**——在同宿主先进租户 A
- * 过校验的用户，访问租户 B 时浏览器照带 gw_ok=1，B 的签名校验被整体跳过
- * （插件地址一致性防线对"串门"用户失效）。按 (address, port) 派生后，
- * A 的放行只解 A 的门。
+ * 放行凭证（S2 修复 2026-11-12，审计 P1）：
+ * 旧配方 `sha256('gw-ok|addr|port')[:32]` 无密钥且**校验页在签名前就把它嵌进
+ * HTML**——任何知道地址+端口的人都能离线算出 token、写进 cookie，把"钱包签名
+ * 证明"这道闸整个绕开（闸形同虚设）。三道收紧，缺一不可：
+ *   ① HMAC + 进程级随机密钥：客户端再也算不出合法值；重启即废旧票（代价=重签
+ *      一次，5 分钟放行窗本来就短，刻意不持久化——留盘密钥反而多个保管义务）。
+ *   ② 令牌只在 /__gw__/verify **验签通过之后**签发（Set-Cookie 直发），校验页
+ *      不再携带任何可提前提货的东西——未签名者手里什么都没有。
+ *   ③ 令牌带 5 分钟滚动窗口（与 max-age=300 同长），跨窗宽容一格：过期自动
+ *      回到校验页重签，cookie 被拷走也过不了时间关。
+ * (address, port) 绑定语义保留（2026-10 串门判例）：A 的放行解不开 B 的门。
  */
-export function gwOkToken(address, publicPort) {
-  return createHash('sha256').update(`gw-ok|${address}|${publicPort}`).digest('hex').slice(0, 32)
+const GW_OK_WINDOW_MS = 300_000
+const GW_OK_SECRET = randomBytes(32)
+
+export function gwOkToken(
+  address,
+  publicPort,
+  windowIdx = Math.floor(Date.now() / GW_OK_WINDOW_MS),
+) {
+  return createHmac('sha256', GW_OK_SECRET)
+    .update(`gw-ok|${address}|${publicPort}|${windowIdx}`)
+    .digest('hex')
+    .slice(0, 32)
 }
 
-/** 校验放行 cookie：5 秒窗口（校验页跳回后的本次页面加载），不足则重新校验 */
-function hasGwOk(req, token) {
-  if (!token) return false
+/** 校验放行 cookie：当前窗或上一窗（边界宽容一格），其余一律不算放行 */
+function hasGwOk(req, address, publicPort) {
+  if (!address) return false
   const m = /(^|;\s*)gw_ok=([^;]*)/.exec(req.headers.cookie || '')
-  return !!m && m[2] === token
+  if (!m) return false
+  const w = Math.floor(Date.now() / GW_OK_WINDOW_MS)
+  return (
+    m[2] === gwOkToken(address, publicPort, w) || m[2] === gwOkToken(address, publicPort, w - 1)
+  )
 }
 
-/** 组装校验页（平台 URL 推导共用 derivePlatformUrl——Host 投毒防护单点） */
-function buildVerifyPage(req, gwToken) {
-  return VERIFY_PAGE_TEMPLATE.replaceAll('__PLATFORM_URL__', derivePlatformUrl(req)).replaceAll(
-    '__GWOK_TOKEN__',
-    String(gwToken || ''),
-  )
+/** 组装校验页（平台 URL 推导共用 derivePlatformUrl——Host 投毒防护单点）。
+ *  S2：不再接收/嵌入 gwToken——通过前页面无钥匙可拿（见 gwOkToken 判例块）。 */
+function buildVerifyPage(req) {
+  return VERIFY_PAGE_TEMPLATE.replaceAll('__PLATFORM_URL__', derivePlatformUrl(req))
 }
 
 // 环境切换自感知（用户验收：回退/选用后不刷新，平台捕捉到）：容器一换，
@@ -532,10 +551,13 @@ class TenantGateway {
     this.tickets.delete(ticket) // 一次性
     if (rec.address !== owner || rec.expiresAt < Date.now()) return false
     // 换取正式会话（后续请求带 cookie，不再依赖 URL 里的 ticket；管理员代开 1h）
+    // 票据签发 2026-11-10：cookie 不带 max-age（会话 cookie，活到浏览器关闭）——
+    // 旧的固定 12h 到点浏览器必丢 cookie，服务端滑动续期再勤也救不回客户端寿命，
+    // 手机端挂机过夜就被无声踢出（用户报障：底部 tab 消失的根因）。生死簿归服务端。
     const token = userSessionStore.create(owner, 60 * 60 * 1000)
     res.setHeader(
       'set-cookie',
-      `user_session=${token}; path=/; max-age=43200; httponly; samesite=strict`,
+      `user_session=${token}; path=/; httponly; samesite=strict${secureFlag(req)}`,
     )
     return true
   }
@@ -900,7 +922,7 @@ class TenantGateway {
       res.writeHead(200, {
         'content-type': 'application/json; charset=utf-8',
         'set-cookie': [
-          'user_session=; path=/; max-age=0; httponly; samesite=strict',
+          `user_session=; path=/; max-age=0; httponly; samesite=strict${secureFlag(req)}`,
           'gw_ok=; path=/; max-age=0',
         ],
       })
@@ -948,7 +970,7 @@ class TenantGateway {
         const publicKey = String(body.publicKey || '')
         const cookieM = (req.headers.cookie || '').match(/user_session=([^;]+)/)
         const sessionAddr = cookieM ? getUserSession(req) : null
-        const valid =
+        let valid =
           Boolean(sessionAddr) &&
           sessionAddr === address &&
           Boolean(nonce) &&
@@ -958,9 +980,19 @@ class TenantGateway {
             signature,
             publicKey,
           )
-        // 一次性消费：必须是为 GATEWAY 用途发放的挑战，且不可重放
-        if (valid) tenantConfigService.consumeChallenge(address, nonce, SIGN_PURPOSE.GATEWAY)
-        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+        // 一次性消费：必须是为 GATEWAY 用途发放的挑战，且不可重放。
+        // S2 修复：consume 的返回值就是重放判决——旧代码只调不判，同一份
+        // (address, nonce, signature) 可以无限次兑换"通过"。
+        if (valid)
+          valid = tenantConfigService.consumeChallenge(address, nonce, SIGN_PURPOSE.GATEWAY)
+        const headers = { 'content-type': 'application/json; charset=utf-8' }
+        // 放行票只发给通过者（S2②）：httponly+samesite 与平台会话同规；
+        // 窗口值由服务端现算，页面前端再也拿不到"未验先有"的钥匙
+        if (valid) {
+          headers['set-cookie'] =
+            `gw_ok=${gwOkToken(address, publicPort)}; path=/; max-age=300; httponly; samesite=lax${secureFlag(req)}`
+        }
+        res.writeHead(200, headers)
         res.end(JSON.stringify({ ok: true, valid, address }))
       })()
       return
@@ -972,8 +1004,7 @@ class TenantGateway {
     //         ②无会话 → ticket → 403
     // 放行凭证按 (租户, 端口) 派生：A 的 gw_ok 解不开 B 的门（审计串门绕过）
     const navRoute = this.routes.get(publicPort)
-    const gwToken = navRoute ? gwOkToken(navRoute.address, publicPort) : null
-    if (isNavigationRequest(req) && !hasGwOk(req, gwToken)) {
+    if (isNavigationRequest(req) && !(navRoute && hasGwOk(req, navRoute.address, publicPort))) {
       // v1.5 刀5B·准入闸（顶层导航换牌）：属主无有效凭证 → 不演进校验页，
       // 直接"凭证缺失/失效"页（读本地快照零 I/O；快照未水合放行不误锁）。
       // 只拦"进"，在跑会话不爆破（fail-open-to-finish）。
@@ -988,7 +1019,7 @@ class TenantGateway {
           // 无 ticket → 签名校验页（插件在容器域读到的账户不可靠，
           // 改为"插件对会话地址签名"证明：能签出来 = 身份一致，才放行）
           res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-          res.end(buildVerifyPage(req, gwToken))
+          res.end(buildVerifyPage(req))
           return
         }
       } else if (!this.tryTicket(req, res, publicPort)) {

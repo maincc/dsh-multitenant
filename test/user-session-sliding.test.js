@@ -6,6 +6,12 @@
  * 凭证"。修复=①create 统一用 12h 默认（与 cookie 对齐）②resolve 过半程滑动
  * 续期（活跃不掉线，闲置满 12h 才需重签）。本测钉死三条语义防回退：
  *   过半续满 / 未过半不写 / 过期判死绝不被"救活"。
+ *
+ * 二轮修正（2026-11-10 手机端报障"挂机后底部 tab 消失"）：cookie 侧 fixed
+ * max-age=43200 与服务端滑动续期天然错位——浏览器到点必丢 cookie，服务端表
+ * 续得再勤也无济于事。全平台 user_session 签发点（含网关 ticket 换取）改发
+ * 会话 cookie（无 max-age，活到浏览器关闭），生死只由本测的服务端 12h 滑动
+ * 决定；退出仍是 max-age=0 即时清除，不受影响。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
@@ -35,7 +41,7 @@ describe('user_session 滑动续期', () => {
     vi.useRealTimers()
   })
 
-  it('创建即默认 12h（与 cookie max-age 一致，不再有 2h 错配窗口）', () => {
+  it('创建即默认 12h（服务端生死簿唯一时效；cookie 已改会话型，见文件头二轮修正）', () => {
     expect(USER_SESSION_TTL_MS).toBe(12 * 60 * 60 * 1000)
     userSessionStore.create('addr_new')
     const rec = userSessionStore.sessions[Object.keys(userSessionStore.sessions)[0]]

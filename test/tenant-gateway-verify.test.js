@@ -29,6 +29,7 @@ vi.mock('../src/services/data.service.js', async (importOriginal) => {
 })
 
 import { tenantGateway, gwOkToken } from '../src/services/tenant-proxy.service.js'
+import { createHash } from 'node:crypto'
 import { userSessionStore } from '../src/middleware/user-auth.middleware.js'
 import { tenantConfigService, SIGN_PURPOSE } from '../src/services/tenant-config.service.js'
 import { Keypairs } from '@swtc/keypairs'
@@ -288,6 +289,88 @@ describe('租户网关门禁：顶层导航一致性校验（插件地址 vs 会
     })
     const j = await vRes.json()
     expect(j.valid).toBe(true) // body 被正确解析 + 真实签名验证通过
+  })
+
+  // ---- S2 修复回归（2026-11-12 审计 P1）----
+  it('S2 配方不可离线铸造：裸 sha256("gw-ok|addr|port") 旧值换不来放行', async () => {
+    const legacy = createHash('sha256')
+      .update(`gw-ok|${OWNER}|${publicPort}`)
+      .digest('hex')
+      .slice(0, 32)
+    const token = userSessionStore.create(OWNER)
+    const res = await fetch(`http://127.0.0.1:${publicPort}/`, {
+      headers: {
+        'sec-fetch-mode': 'navigate',
+        accept: 'text/html',
+        cookie: `user_session=${token}; gw_ok=${legacy}`,
+      },
+    })
+    const body = await res.text()
+    expect(body).toContain('正在校验访问身份') // 旧配方被拒 → 回校验页
+  })
+
+  it('S2 校验页不再预埋放行 token（页内任何地方都取不到可提前用的钥匙）', async () => {
+    const token = userSessionStore.create(OWNER)
+    const res = await fetch(`http://127.0.0.1:${publicPort}/`, {
+      headers: {
+        'sec-fetch-mode': 'navigate',
+        accept: 'text/html',
+        cookie: `user_session=${token}`,
+      },
+    })
+    const body = await res.text()
+    expect(body).not.toContain('__GWOK_TOKEN__')
+    expect(body).not.toContain(gwOkToken(OWNER, publicPort))
+    expect(body).not.toContain('gw_ok=')
+  })
+
+  it('S2 重放判决：同一份签名第二次兑换 → valid:false 且不再签发放行 cookie', async () => {
+    const seed = Keypairs.generateSeed()
+    const kp = Keypairs.deriveKeypair(seed)
+    const addr = Keypairs.deriveAddress(kp.publicKey).toLowerCase()
+    const token = userSessionStore.create(addr)
+    const cRes = await fetch(`http://127.0.0.1:${publicPort}/__gw__/challenge`, {
+      headers: { cookie: `user_session=${token}` },
+    })
+    const { nonce, message } = await cRes.json()
+    const signature = Keypairs.sign(message, kp.privateKey)
+    const body = JSON.stringify({ address: addr, nonce, signature, publicKey: kp.publicKey })
+    const first = await fetch(`http://127.0.0.1:${publicPort}/__gw__/verify`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: `user_session=${token}` },
+      body,
+    })
+    expect((await first.json()).valid).toBe(true)
+    // 消费成功必须由 Set-Cookie 现签放行票（S2②：票只发给通过者）
+    expect(first.headers.get('set-cookie') || '').toContain('gw_ok=')
+    const second = await fetch(`http://127.0.0.1:${publicPort}/__gw__/verify`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: `user_session=${token}` },
+      body,
+    })
+    const j2 = await second.json()
+    expect(j2.valid).toBe(false) // 旧代码只调不判 consume——重放必 true（已修）
+    expect(second.headers.get('set-cookie') || '').not.toContain('gw_ok=')
+  })
+
+  it('S2 窗口滚动：上一窗的票仍可用（边界宽容一格），更早窗一律作废', async () => {
+    const token = userSessionStore.create(OWNER)
+    const w = Math.floor(Date.now() / 300_000)
+    for (const [win, pass] of [
+      [w, true],
+      [w - 1, true],
+      [w - 2, false],
+    ]) {
+      const res = await fetch(`http://127.0.0.1:${publicPort}/`, {
+        headers: {
+          'sec-fetch-mode': 'navigate',
+          accept: 'text/html',
+          cookie: `user_session=${token}; gw_ok=${gwOkToken(OWNER, publicPort, win)}`,
+        },
+      })
+      const body = await res.text()
+      expect(body.includes('正在校验访问身份')).toBe(!pass)
+    }
   })
 
   it('用途绑定：拿 LOGIN 用途的挑战/签名过网关校验 → valid:false（跨用途加固）', async () => {

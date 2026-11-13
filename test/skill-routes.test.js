@@ -21,6 +21,21 @@ vi.mock('../src/services/tenant-config.service.js', async (importOriginal) => {
   }
 })
 
+// S1 用例需要 userSessionStore.create——会话表读写换成内存空轨，
+// 防测试把假会话落进真实 data/config/user-sessions.json（gateway 测试同款）
+vi.mock('../src/services/data.service.js', async (importOriginal) => {
+  const mod = await importOriginal()
+  const orig = mod.dataService
+  // 原型方法（readJson/loadSkillsIndex 等）必须保留——spread 只拷 own 属性会丢
+  // 类方法（现场炸过 readJson is not a function），故克隆原型链再覆盖两枚
+  // 会话持久化函数
+  const clone = Object.assign(Object.create(Object.getPrototypeOf(orig)), orig, {
+    loadUserSessions: vi.fn(() => ({})),
+    saveUserSessions: vi.fn(() => {}),
+  })
+  return { ...mod, dataService: clone }
+})
+
 import { handleSkillRoutes } from '../src/routes/skill.routes.js'
 import { tenantConfigService } from '../src/services/tenant-config.service.js'
 import { dataService } from '../src/services/data.service.js'
@@ -140,8 +155,16 @@ describe('技能市场路由冒烟', () => {
     expect(res.statusCode).toBe(404)
   })
 
-  it('GET /api/skills/mine?address=合法 返回个人视图（无需签名）', async () => {
-    const req = makeReq({ method: 'GET', url: `/api/skills/mine?address=${VALID_ADDR}` })
+  it('GET /api/skills/mine?address= 本人会话 → 200 个人视图（S1：仍需本人，不再匿名）', async () => {
+    // S1 修复（2026-11-12 审计）：mineView 读他人安装账 + 探目标容器卷 + 就地销账，
+    // 匿名可读是侦察/篡改面——现在只有【会话地址===目标】或管理员能读。
+    const { userSessionStore } = await import('../src/middleware/user-auth.middleware.js')
+    const token = userSessionStore.create(VALID_ADDR)
+    const req = makeReq({
+      method: 'GET',
+      url: `/api/skills/mine?address=${VALID_ADDR}`,
+      cookie: `user_session=${token}`,
+    })
     const res = makeRes()
     const handled = await handleSkillRoutes(req, res, '/api/skills/mine')
     expect(handled).toBe(true)
@@ -149,6 +172,26 @@ describe('技能市场路由冒烟', () => {
     const data = JSON.parse(res.body)
     expect(Array.isArray(data.published)).toBe(true)
     expect(Array.isArray(data.installed)).toBe(true)
+  })
+
+  it('GET /api/skills/mine 匿名（无会话）读他人 → 403（S1）', async () => {
+    const req = makeReq({ method: 'GET', url: `/api/skills/mine?address=${VALID_ADDR}` })
+    const res = makeRes()
+    await handleSkillRoutes(req, res, '/api/skills/mine')
+    expect(res.statusCode).toBe(403)
+  })
+
+  it('GET /api/skills/mine 他人会话读 → 403（S1：装了别人的 cookie 也看不了别人的账）', async () => {
+    const { userSessionStore } = await import('../src/middleware/user-auth.middleware.js')
+    const token = userSessionStore.create('jpp9j9tkqtbcuohe2zqhvffbguved6o9oa')
+    const req = makeReq({
+      method: 'GET',
+      url: `/api/skills/mine?address=${VALID_ADDR}`,
+      cookie: `user_session=${token}`,
+    })
+    const res = makeRes()
+    await handleSkillRoutes(req, res, '/api/skills/mine')
+    expect(res.statusCode).toBe(403)
   })
 
   it('GET /api/skills/mine 缺地址或非法地址 → 400', async () => {

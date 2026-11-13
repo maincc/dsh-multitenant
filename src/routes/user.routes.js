@@ -24,6 +24,7 @@ import { userSessionStore } from '../middleware/user-auth.middleware.js'
 import { normalizeAddress, swtcContainerName } from '../utils/address.js'
 import { rateLimit } from '../middleware/rate-limit.middleware.js'
 import { getAdminSession, getRequestAddress } from '../middleware/auth.middleware.js'
+import { secureFlag } from '../utils/cookie-flags.js'
 import { credentialService } from '../services/credential.service.js'
 import { validateSwtcAddress } from '../middleware/validate.middleware.js'
 import { NotFoundError, ForbiddenError, handleError } from '../utils/errors.js'
@@ -100,9 +101,13 @@ export async function handleUserRoutes(req, res, path) {
       return true
     }
     const sessionToken = userSessionStore.create(addrLower)
+    // 票据签发 2026-11-10：user_session 全平台改发会话 cookie（无 max-age，活到浏览器
+    // 关闭）。此前固定 max-age=43200（12h）与服务端滑动续期错位：浏览器照丢、服务端
+    // 表还活着 → 挂机超 12h 的请求集体 401，手机端无声跌回登录引导（用户报障根因）。
+    // 会话生死只由服务端 12h 滑动过期说了算；退出清理走 max-age=0 不受影响。
     res.writeHead(200, {
       'content-type': 'application/json; charset=utf-8',
-      'set-cookie': `user_session=${sessionToken}; path=/; max-age=43200; httponly; samesite=strict`,
+      'set-cookie': `user_session=${sessionToken}; path=/; httponly; samesite=strict${secureFlag(req)}`,
     })
     res.end(JSON.stringify({ ok: true, address: addrLower }))
     return true
@@ -134,7 +139,7 @@ export async function handleUserRoutes(req, res, path) {
     }
     res.writeHead(200, {
       'content-type': 'application/json; charset=utf-8',
-      'set-cookie': 'user_session=; path=/; max-age=0; httponly; samesite=strict',
+      'set-cookie': `user_session=; path=/; max-age=0; httponly; samesite=strict${secureFlag(req)}`,
     })
     res.end(JSON.stringify({ ok: true }))
     return true

@@ -23,6 +23,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { requireAdmin, getAdminSession } from '../middleware/auth.middleware.js'
 import { userSessionStore } from '../middleware/user-auth.middleware.js'
+import { secureFlag } from '../utils/cookie-flags.js'
 import {
   attachAdminSignature,
   issueAdminSignatureChallenge,
@@ -210,7 +211,7 @@ export async function handleAdminRoutes(req, res, path, url) {
       const token = userSessionStore.create(addrLower)
       res.writeHead(200, {
         'content-type': 'application/json; charset=utf-8',
-        'set-cookie': `user_session=${token}; path=/; max-age=43200; httponly; samesite=strict`,
+        'set-cookie': `user_session=${token}; path=/; httponly; samesite=strict${secureFlag(req)}`,
       })
       res.end(JSON.stringify({ ok: true, address: addrLower, isAdmin: true }))
 
@@ -242,8 +243,7 @@ export async function handleAdminRoutes(req, res, path, url) {
     }
     res.writeHead(200, {
       'content-type': 'application/json; charset=utf-8',
-      'set-cookie':
-        'user_session=; path=/; max-age=0; httponly; samesite=strict, admin_session=; path=/; max-age=0; httponly; samesite=strict',
+      'set-cookie': `user_session=; path=/; max-age=0; httponly; samesite=strict${secureFlag(req)}, admin_session=; path=/; max-age=0; httponly; samesite=strict${secureFlag(req)}`,
     })
     res.end(JSON.stringify({ ok: true }))
     return true

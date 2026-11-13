@@ -10,8 +10,9 @@
 
 import { skillService } from '../services/skill.service.js'
 import { tenantConfigService, SIGN_PURPOSE } from '../services/tenant-config.service.js'
-import { requireAdmin, getAdminSession } from '../middleware/auth.middleware.js'
+import { requireAdmin, getAdminSession, getRequestAddress } from '../middleware/auth.middleware.js'
 import { validateSwtcAddress } from '../middleware/validate.middleware.js'
+import { normalizeAddress } from '../utils/address.js'
 import { credentialService } from '../services/credential.service.js'
 import { handleError } from '../utils/errors.js'
 import { parseBody, parseJsonBody } from '../utils/parse-body.js'
@@ -116,8 +117,13 @@ export async function handleSkillRoutes(req, res, path) {
     return true
   }
 
-  // ---- 我的（视图，无需签名）----
+  // ---- 我的（视图，本人会话即可，无需签名）----
   // GET /api/skills/mine?address= - 我的发布 + 我的安装（个人视图；须先于 :name 匹配）
+  // S1 修复（2026-11-12 审计）：此面此前匿名+任意地址可读——不止泄他人安装/发布
+  // 记录，mineView 还会【挂目标容器卷做实物探测】并【就地销账 removeInstallRecord】：
+  // 攻击者拿任意地址即可枚举谁装了什么 + 反复触发对受害者卷的 docker 执行 +
+  // 写侧篡改他人安装账。个人数据面按 tenant-config GET 同判例：仅本人（会话地址
+  // ===目标）或管理员可读；地址格式校验保留。
   if (path === `${PREFIX}/mine` && req.method === 'GET') {
     try {
       const url = new URL(req.url, `http://${req.headers.host}`)
@@ -126,7 +132,13 @@ export async function handleSkillRoutes(req, res, path) {
         send(res, 400, { error: 'address 参数非法', code: 'BAD_REQUEST' })
         return true
       }
-      const mine = await skillService.mineView(address)
+      const target = normalizeAddress(address)
+      const session = getRequestAddress(req)
+      if (session !== target && !(session && credentialService.isAdmSync(session))) {
+        send(res, 403, { error: '只能查看自己的技能视图', code: 'FORBIDDEN' })
+        return true
+      }
+      const mine = await skillService.mineView(target)
       send(res, 200, { ok: true, ...mine })
     } catch (err) {
       handleError(err, res)
@@ -149,10 +161,22 @@ export async function handleSkillRoutes(req, res, path) {
 
   // ---- 公开列表 ----
   // GET /api/skills?address= - 市场列表（可选标记已安装）
+  // S1 修复（同上判例）：列表本体公开，但 address 标记位会【探目标容器卷】读他人
+  // 安装名单——非本人/管理员的 address 一律忽略（不探卷、不泄标记）。
   if (path === PREFIX && req.method === 'GET') {
     try {
       const url = new URL(req.url, `http://${req.headers.host}`)
-      const address = url.searchParams.get('address') || undefined
+      const rawAddr = url.searchParams.get('address') || undefined
+      let address
+      if (rawAddr) {
+        const session = getRequestAddress(req)
+        if (
+          session === normalizeAddress(rawAddr) ||
+          (session && credentialService.isAdmSync(session))
+        ) {
+          address = rawAddr
+        }
+      }
       const skills = await skillService.list({ address })
       send(res, 200, { ok: true, skills })
     } catch (err) {
