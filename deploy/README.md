@@ -1,7 +1,7 @@
 # 部署工具集（deploy/）
 
-> 本文是 `deploy/` 脚本的常驻运维手册。平台形态选型（接管/平行测试）、`data/keys/`
-> 签发钥红线、跨平台共存验收回归点：见仓库根 **`DEPLOY.md`**（本轮变更增量指南）。
+> 本文是 `deploy/` 脚本的常驻运维手册。平台形态选型判据见下文装配段；`data/keys/`
+> 签发钥完整红线见 [docs/keys-provisioning.md](../docs/keys-provisioning.md)。
 
 把 dsh-multitenant 一键部署到 Linux 服务器（要求：Docker；若在服务器上构建前端还需 Node ≥ 18）。
 
@@ -64,7 +64,8 @@ node -e "const {Keypairs}=require('@swtc/keypairs'); console.log(Keypairs.genera
 ② 或已有平台/钱包导出的 `ss` 开头 seed（形态 A 用）。**seed 就是备份本体**：一条
 `ss` 串可数学还原私钥，抄进密码管理器即可——`.key` 文件丢了用 seed 重转就是。
 
-**二选一装配**（判据：要用的 DID 是否已在官网存在；选型细节见 DEPLOY.md §1-2）：
+**二选一装配**（判据：把服务器 `issuer-profile.json` 的 DID 与官网正式平台
+`did:swtc:jh7Gc6hGpu7kj9sytaUPFHoV6dwEYU3P9y` 对比——一致=形态 A 接管，不一致=形态 B 平行测试）：
 
 - **形态 A · 接管现有平台**：把私钥放进 `data/keys/issuer.key`（ss seed 转 PEM：
   `node scripts/seed-to-pem.mjs '<ss-seed>' > data/keys/issuer.key && chmod 600 data/keys/issuer.key`
@@ -105,21 +106,89 @@ systemctl status dsh-multitenant
 # 浏览器装 CCDAO 插件 → http://<PUBLIC_HOST>:8090/ → 连接钱包 → 应自动发卡（冷启动级联）
 ```
 
-本轮新架构的追加验收点（跨平台共存/容器 tab/镜像预热）见 DEPLOY.md §5。
+追加验收点（冒烟之上，浏览器实走）：
+
+- **跨平台共存**：官网档案页"测试平台"卡与"DSH 平台"卡**并存、互不摘除**——
+  `isOurIssuedCard` 窄闸修复的实弹验证（credential.test.js 4 条回归用例钉死），
+  形态 B 可放心与正式平台共用官网 relay
+- **容器 tab**：未跑则后台自动拉起 + tab 右侧转圈 → 完毕弹窗【确定】跳容器管理；
+  期间「启动容器」按钮置灰
+- **F9 会话**：切换插件账户自动重签一次即闭环，不再循环报"会话主人不一致"
+- **冷启动级联**：空台账直接跑**不需预造凭证**——无档案无卡 → 自动签发 assigned →
+  登录弹窗领取 → 落档；即便迁库丢档，用户首登也经"档案优先发现"自动恢复 claimed
+
+**镜像预热前置**：新版进入用户中心即自动拉起容器，上线瞬间会并发建容器——首次务必
+确认 `docker images` 里有 `dsh-multitenant:latest` 且 `data/dsh-image.json` 在场，
+否则第一波创建全卡在构建/拉取。
 
 ## 文件说明
 
-| 文件                                     | 在哪执行   | 作用                                                                                                                                                                                                                          |
-| ---------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `rsync-upload.sh`                        | 本地       | rsync 上传代码（排除项同时保护服务器现场不被 `--delete` 抹掉）                                                                                                                                                                |
-| `install.sh`                             | 服务器     | 首次安装：建目录 → 生成 config.json → 构建镜像 → 构建前端 → 装 systemd 服务。**不同步代码、不检查 keys**（代码靠 rsync/git，keys 靠上文第 3 步）                                                                              |
-| `update.sh`                              | 服务器     | 更新：`git pull --ff-only`（远端不可达自动跳过 → 离线全量重建）+ 按需重建前端（`frontend/` 或 `package*` 有 diff 才建）/镜像（Dockerfile 变更或镜像内 DSH_VERSION ≠ 目标才建）+ 重启。版本 tag `IMAGE:DSH_VERSION` 留回滚锚点 |
-| `backup.sh`                              | 服务器     | 备份入口状态（默认目录 `/backup/dsh-multitenant`，`BACKUP_DIR=` 可改）；`VOLUME_BACKUP=1` 连同租户数据卷                                                                                                                      |
-| `dsh-multitenant.service`                | 模板       | systemd 单元，install.sh 填充 `ADMIN_ADDRESS`/`PUBLIC_HOST` 占位符后写入 `/etc/systemd/system/`                                                                                                                               |
-| `check-storage.sh`                       | 服务器     | 磁盘配额环境自查（驱动/底层 FS/容器态判定；`--test` 附加写超配额实测）                                                                                                                                                        |
-| `verify-llm-providers.mjs`               | 服务器     | 挂租户卷进镜像跑一把，列出容器内实际注册的 LLM provider（排查模型配置用）                                                                                                                                                     |
-| `inject-shim.mjs` / `randomuuid-shim.js` | 构建期资产 | 局域网 HTTP 下 `crypto.randomUUID` shim（见 docs/crypto-randomuuid.md），Dockerfile 引用                                                                                                                                      |
-| `seccomp-bwrap-minimal.json`             | 运行时资产 | 租户容器 bwrap 所需最小 seccomp 白名单（docker.service 引用）                                                                                                                                                                 |
+| 文件                                     | 在哪执行   | 作用                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ---------------------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rsync-upload.sh`                        | 本地       | rsync 上传代码（排除项同时保护服务器现场不被 `--delete` 抹掉）                                                                                                                                                                                                                                                                                                                                                                          |
+| `install.sh`                             | 服务器     | 首次安装：建目录 → 生成 config.json → 构建镜像 → 构建前端 → 装 systemd 服务。**不同步代码、不检查 keys**（代码靠 rsync/git，keys 靠上文第 3 步；`BUNDLE=` 除外——自动导入）。`BUNDLE=<bundle.tgz>` 即【迁移部署】：库 --drop 还原+keys/入口件/工作区/卷/镜像自动导入，随后走常规安装（现场 config 为王，包内 config/state 不覆盖）。`PORT_BASE/PORT_MAX/PORT_INT_BASE/PORT_INT_MAX` 直传租户端口段（含双段配对），免装完手改 config.json |
+| `update.sh`                              | 服务器     | 更新：`git pull --ff-only`（远端不可达自动跳过 → 离线全量重建）+ 按需重建前端（`frontend/` 或 `package*` 有 diff 才建）/镜像（Dockerfile 变更或镜像内 DSH_VERSION ≠ 目标才建）+ 重启。版本 tag `IMAGE:DSH_VERSION` 留回滚锚点                                                                                                                                                                                                           |
+| `backup.sh`                              | 服务器     | **唯一备份入口**：一键 bundle = 库快照+入口状态+签发根+工作区归档槽+活容器工作区现值+租户卷+镜像清单，**解包即迁移**（内附 RESTORE.md）；子命令 `verify` 恢复演练（影子库对账，永不碰生产）/ `list`；`BACKUP_DIR` `SKIP_VOLUMES=1` `IMAGE_SAVE=1` `KEEP=7` 可选                                                                                                                                                                         |
+| `dsh-multitenant.service`                | 模板       | systemd 单元，install.sh 填充 `ADMIN_ADDRESS`/`PUBLIC_HOST` 占位符后写入 `/etc/systemd/system/`                                                                                                                                                                                                                                                                                                                                         |
+| `check-storage.sh`                       | 服务器     | 磁盘配额环境自查（驱动/底层 FS/容器态判定；`--test` 附加写超配额实测）                                                                                                                                                                                                                                                                                                                                                                  |
+| `verify-llm-providers.mjs`               | 服务器     | 挂租户卷进镜像跑一把，列出容器内实际注册的 LLM provider（排查模型配置用）                                                                                                                                                                                                                                                                                                                                                               |
+| `inject-shim.mjs` / `randomuuid-shim.js` | 构建期资产 | 局域网 HTTP 下 `crypto.randomUUID` shim（见 docs/crypto-randomuuid.md），Dockerfile 引用                                                                                                                                                                                                                                                                                                                                                |
+| `seccomp-bwrap-minimal.json`             | 运行时资产 | 租户容器 bwrap 所需最小 seccomp 白名单（docker.service 引用）                                                                                                                                                                                                                                                                                                                                                                           |
+
+## 单域名隧道形态（https://域名:外口 → 服务器 8090）
+
+平台是**多端口架构**：入口 8090 一个 + 每个租户一个网关端口（31000 起）。隧道只
+映射入口一个口时，平台首页可用，但"进入容器"跳 `域名:31xxx` 必被拒
+（ERR_CONNECTION_REFUSED）——**租户端口过隧道是物理前提，代码不能替它凭空开门**。
+
+完整可用的隧道形态 = 映射入口 + 租户端口段，再向平台声明对外协议/端口：
+
+**端口段三处必须一致**（平台发号段 = frpc 映射段 = 安全组开通段），平台段在
+config.json 的 `docker.basePort / docker.maxPort` 收口（默认 `31000..65535`
+形同虚设，走端口段映射部署**务必收段**，如只开 20 个就设 `maxPort: 31019`）。
+发号纪律由代码守死（test/port-range.test.js 六例钉桩）：回收池越界旧号就地
+丢弃、存量租户段外旧号重连时自动重发、段满明确报错——**绝不静默发出隧道
+没开通的端口**，"进入容器"链接必然落在已开通段内。
+**段内外部占用自动避让**（与既有业务混段共存，如复用 40xxx 转发池）：发号前
+bind 探针实勘占用，撞外部监听自动改派段内下一空号；网关 bind 失败一律弃号，
+下次连接探号重建（容器与卷数据不动）。排查面：`ss -tlnp | grep :<口>`。
+
+**双端口段配对模式**（config.json `docker` 节四键；对外段唯一真源是
+`basePort..maxPort`——原 `publicBasePort/publicMaxPort` 与它同义、已删除）：
+
+```json
+"basePort": 40010, "maxPort": 40060,                 // 给用户看的对外段（DNAT/安全组面）
+"internalBasePort": 47010, "internalMaxPort": 47060  // 容器宿主回环映射段（>0 即启用配对；勿碰 k3s NodePort 段）
+```
+
+- 运行期一一对应：`internal = internalBase + (public - publicBase)`，容器映射不再随机，排障可推算。
+- 发号**整对探测**：对外端 bind 0.0.0.0 探 + 回环端 bind 127.0.0.1 探，任一端被外部占用 → 整对跳过试下一对。
+- **非本服务产生的占用**记入账本 `state.externalOccupations`（port/scope/首末见/命中数），
+  经 `GET /api/admin/gateway-ports` 的 `occupied` + `ranges` 字段透出——混段里谁占了哪号，看接口不用 ss。
+- internal 两值缺一半或全 0/不写 = 内部口随机（旧行为，启动日志会警告半配置）（test/port-pairs.test.js 双模式均有桩）。
+
+```bash
+# install.sh 追加两参（或写进 config.json 的 server 段 publicScheme/publicPort）：
+PUBLIC_SCHEME=https PUBLIC_PORT=8550 ./deploy/install.sh
+```
+
+```ini
+# frpc 侧参考（证书不含端口，同域一张证书全段复用）：
+[name-platform] type = https
+custom_domain = dsh.wh.jccdex.cn
+[name-gw31016] type = https          # 租户端口逐个（或 range）映射
+custom_domain = dsh.wh.jccdex.cn
+```
+
+**免人肉补口**：租户端口是动态分配的，新增租户不用手改 frpc——平台提供同步面
+`GET /api/admin/gateway-ports`（返回全部已分配端口 + 对外形态；同机回环免口令，
+异机带 `Bearer TUNNEL_SYNC_TOKEN`），配 `deploy/tunnel-sync.example.sh` 进 cron，
+新端口自动经 frpc admin API 补映射。
+
+⚠️ **一致性红线**：`PUBLIC_SCHEME=https` = 承诺"入口与**全部**已映射租户端口都是
+https 终结"。cookie 按 host 共享不分端口——Secure 票发得出去收不回（明文口收不到），
+混形态会断网关会话（403 循环）。全 raw tcp 映射（http 直连租户口）则两参都不设，
+走自动判形。口径单点 `src/utils/public-endpoint.js`（env > config > 请求判形）。
 
 ## 常用运维
 
@@ -128,10 +197,14 @@ systemctl status dsh-multitenant          # 服务状态
 journalctl -u dsh-multitenant -f         # 实时日志
 systemctl restart dsh-multitenant         # 重启（session 在 data/ 下，重启不掉线）
 sudo ./deploy/update.sh                   # 更新（git pull + 按需重建 + 重启）
-sudo ./deploy/backup.sh                   # 备份入口状态
-sudo VOLUME_BACKUP=1 ./deploy/backup.sh   # 连同所有租户数据卷
-# 定时备份（cron）：
+sudo ./deploy/backup.sh                   # 全量 bundle（含租户卷；产物 0600）
+sudo SKIP_VOLUMES=1 ./deploy/backup.sh    # 库+入口轻件（日常 cron 省磁盘）
+sudo ./deploy/backup.sh verify            # 恢复演练：最新 bundle→影子库逐集合对账
+# 产物 bundle-<TS>.tgz 默认落【项目根】（BACKUP_DIR= 可指独立盘位；git 与
+# rsync-upload 均已排除 bundle-*.tgz，不会误提交/误删，但装完机的旧包记得清）
+# 定时备份+每周演练（cron）：
 # 0 3 * * * /srv/dsh-multitenant/deploy/backup.sh
+# 30 4 * * 0 /srv/dsh-multitenant/deploy/backup.sh verify
 ```
 
 **服务器连不上 GitHub 的更新路径**：本地 `SERVER_HOST=<IP> ./deploy/rsync-upload.sh`
@@ -179,18 +252,28 @@ systemctl restart dsh-multitenant
 （`FORCE=1 ./deploy/install.sh` 重生成 config 也行，但会丢自定义项，仅无自定义时用。
 同代新增可选项 `resource.*`/`usageLimit`/`cwt` 缺失有默认兜底，参考 `config.json.example`。）
 
-## 恢复
+## 恢复 / 迁移
+
+`backup.sh` 产出的 `bundle-<时间戳>.tgz` 解包后**内附 RESTORE.md**——库/keys/入口/
+卷/工作区/镜像八步恢复指引（同机灾备按它手工走）。**换机迁移一条命令**：
 
 ```bash
-# 入口状态：解包回项目目录（backup.sh 默认目录 /backup/dsh-multitenant，BACKUP_DIR 可改）
-tar xzf /backup/dsh-multitenant/entry-<时间戳>.tgz -C /srv/dsh-multitenant
-
-# 租户数据卷：先停容器再解包回卷
-docker stop dsh-swtc-<地址>
-docker run --rm -v dsh-data-swtc-<地址>:/dsh-home -v /backup/dsh-multitenant:/backup \
-  alpine tar xzf /backup/vol-<地址>-<时间戳>.tgz -C /dsh-home
-docker start dsh-swtc-<地址>
+# 新机（代码已 rsync/clone 到位后）：
+scp 源机:/srv/dsh-multitenant/bundle-<TS>.tgz /tmp/   # 默认产物=源机项目根
+ADMIN_ADDRESS=<同旧机> PUBLIC_HOST=<新机地址或域名> \
+PORT_BASE=40000 PORT_MAX=40099 PORT_INT_BASE=47010 PORT_INT_MAX=47109 \
+BUNDLE=/tmp/bundle-<TS>.tgz ./deploy/install.sh
 ```
+
+`PORT_*` 四个参数只写进【新装的】config.json（现场已有 config 时不生效，改段请直接
+编辑 config.json）；新机段规划见上文【双段配对】节——对外段对齐隧道放行范围，
+内部段避开 k3s NodePort 等本机监听面。
+
+install 会先整包导入（库 --drop、keys 收权入位、卷建同名灌回、工作区入槽、
+镜像 load），再照常走构建与服务注册——首启即带全部历史数据，登录态/凭证不断。
+迁移 bundle 建议源机用 `IMAGE_SAVE=1` 全量打一次（镜像也进包，缺 tag 的
+钉版本租户会起不来；install 屏幕会列清单提示）。旧形态 `entry-*.tgz`/`vol-*.tgz`
+袋件都在 bundle 内，恢复一律以包为准。
 
 ## 安全提示（务必阅读）
 

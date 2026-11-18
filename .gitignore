@@ -44,3 +44,6 @@ coverage/
 .env.local
 .env.*.local
 e2e-roles.mjs
+
+# 备份 bundle（deploy/backup.sh 默认产物落项目根，机密件绝不上 git 轨）
+bundle-*.tgz

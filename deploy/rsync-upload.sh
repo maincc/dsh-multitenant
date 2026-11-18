@@ -37,6 +37,9 @@ EXCLUDES=(
   # 签发私钥保护（did-vc-runbook §3.4，毁灭级红线）：**无条件排除**，
   # UPLOAD_DATA=1 也不上传本地 keys、--delete 也不碰服务器 keys——现场钥只进不出。
   --exclude='data/keys/'
+  # 备份 bundle 不落传输轨（2026-11-14：默认产物在项目根——防 --delete 误删
+  # 服务器上的备份，也防把本地 bundle 糊上服务器）
+  --exclude='bundle-*.tgz'
 )
 if [ "${UPLOAD_DATA:-0}" = "1" ]; then
   echo "!! UPLOAD_DATA=1：本次将【携带本地 data/】覆盖服务器同名文件——仅"注入外部数据"合法（老服务器升级不需要它，原料在服务器本地）！"
