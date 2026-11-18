@@ -194,7 +194,9 @@ describe('finalizeTenant：网关 bind 失败 → 保留容器但标记 stopped'
     const rec = userService.state.swtcUsers[ADDR]
     expect(rec.containerStatus).toBe('stopped')
     expect(rec.stoppedAt).toBeGreaterThan(0)
-    expect(rec.port).toBe(PORT)
+    // 2026-11 占用处理：绑败一律弃号（保号=重连永撞外部占用，死循环实锤过）。
+    // 下次连接走 ensureContainer exists 分支：探号领号→卷不动，重建容器映射。
+    expect(rec.port).toBeNull()
     expect(rec.internalPort).toBe(INTERNAL_PORT)
     expect(dataService.saveState).toHaveBeenCalled()
   })

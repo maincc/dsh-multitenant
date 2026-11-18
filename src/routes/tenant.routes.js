@@ -16,6 +16,7 @@ import { validateSwtcAddress } from '../middleware/validate.middleware.js'
 import { rateLimit } from '../middleware/rate-limit.middleware.js'
 import { userSessionStore } from '../middleware/user-auth.middleware.js'
 import { secureFlag } from '../utils/cookie-flags.js'
+import { publicScheme } from '../utils/public-endpoint.js'
 import { normalizeAddress, swtcVolumeName } from '../utils/address.js'
 import { handleError } from '../utils/errors.js'
 import { tenantGateway } from '../services/tenant-proxy.service.js'
@@ -172,8 +173,10 @@ export async function handleTenantRoutes(req, res, path, url) {
         }
       }
       const gwTicket = tenantGateway.issueTicket(address)
+      // 对外 scheme 走 publicScheme 单点（隧道/反代 https 形态，2026-11-12）
       const containerUrl =
-        `http://${targetHost}:${port}/` + (gwTicket ? `?gateway_ticket=${gwTicket}` : '')
+        `${publicScheme(req)}://${targetHost}:${port}/` +
+        (gwTicket ? `?gateway_ticket=${gwTicket}` : '')
       // 签名验证通过 → 签发普通用户会话（网关门禁凭据，2h；切钱包时前端会主动吊销）
       const sessionToken = userSessionStore.create(address)
       const cookieHeader = `user_session=${sessionToken}; path=/; httponly; samesite=strict${secureFlag(req)}`
@@ -545,7 +548,8 @@ export async function handleTenantRoutes(req, res, path, url) {
         }
         const gwTicket = tenantGateway.issueTicket(address)
         containerUrl =
-          `http://${targetHost}:${result.port}/` + (gwTicket ? `?gateway_ticket=${gwTicket}` : '')
+          `${publicScheme(req)}://${targetHost}:${result.port}/` +
+          (gwTicket ? `?gateway_ticket=${gwTicket}` : '')
       }
       if (!res.headersSent) {
         const headers = { 'content-type': 'application/json; charset=utf-8' }

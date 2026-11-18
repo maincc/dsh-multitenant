@@ -19,6 +19,13 @@ Environment=PUBLIC_TRUST=__PUBLIC_TRUST__
 # 老机器升级即使 config.json 没 storage 段也生效（fail-closed：连不上库平台拒启）
 Environment=DSH_STORAGE_PROVIDER=__STORAGE_PROVIDER__
 Environment=MONGODB_URI=__MONGODB_URI__
+# 对外形态（隧道/反代，2026-11-12）：PUBLIC_SCHEME=https + PUBLIC_PORT=外口 时，
+# 进入容器/返回平台/cookie secure 全按对外口径。留空=按请求自动判形（本机形态零变化）。
+# ⚠️ https 声明要求入口与全部租户网关端口都经隧道 https 终结（详见 utils/public-endpoint.js）
+Environment=PUBLIC_SCHEME=__PUBLIC_SCHEME__
+Environment=PUBLIC_PORT=__PUBLIC_PORT__
+# 隧道同步面口令（frpc 与平台不同机时启用；同机回环留空即可）
+Environment=TUNNEL_SYNC_TOKEN=__TUNNEL_SYNC_TOKEN__
 # 可选：把宿主机同名环境变量注入每个租户容器（逗号分隔，如 DEEPSEEK_API_KEY）
 #Environment=INJECT_ENV=
 ExecStart=__NODE_BIN__ __REMOTE_DIR__/src/server.js

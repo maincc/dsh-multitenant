@@ -12,7 +12,21 @@ const CONFIG_FILE = join(ROOT, 'config.json')
 const ADMIN_FILE = join(ROOT, 'data', 'config', 'admin.json')
 
 const DEFAULTS = {
-  server: { port: 8090, publicHost: '127.0.0.1' },
+  server: {
+    port: 8090,
+    publicHost: '127.0.0.1',
+    // 对外形态声明（隧道/反代部署，2026-11-12）：浏览器侧 scheme/端口 ≠ 进程侧时，
+    // 进入容器 URL、返回平台链接、cookie secure 三处按此口径说话。
+    // publicScheme: 'https'|'http'|''（空=按请求自动判形）；⚠️ 设 'https' 即承诺
+    // **入口与全部租户网关端口都是 https 终结**（cookie 按 host 跨端口共享，混形态
+    // 会断会话）。publicPort: 对外入口端口（如隧道 8550→进程 8090）；0=同 port。
+    // env PUBLIC_SCHEME/PUBLIC_PORT 可覆盖（systemd 注入位）。口径单点 utils/public-endpoint.js。
+    publicScheme: '',
+    publicPort: 0,
+    // 隧道同步面（GET /api/admin/gateway-ports）远程访问的 Bearer 共享口令：
+    // 隧道客户端与平台不同机时必填；同机走回环免口令。留空=仅回环。
+    tunnelSyncToken: '',
+  },
   cleanup: {
     stopTimeoutMs: 900000, // 15 分钟
     destroyTimeoutMs: 3600000, // 1 小时
@@ -84,6 +98,18 @@ const DEFAULTS = {
     image: 'dsh-multitenant:latest',
     basePort: 31000,
     maxPort: 65535,
+    // 双端口段配对模式（2026-11-14，同日去重：原 publicBasePort/publicMaxPort
+    // 与 basePort/maxPort 同义，已删除——六键收敛为四键，对外段只有一个真源）。
+    //   basePort..maxPort = 唯一对外段（用户 URL / 隧道 DNAT / 安全组开通面）。
+    //   internalBasePort/internalMaxPort 同时 >0 → 启用配对：容器宿主回环映射段
+    //   （docker -p 127.0.0.1 侧），运行期一一对应
+    //   internal = internalBase + (public - publicBase)；发号整对探测，任一端被
+    //   外部占用 → 跳下一对并记入占用账本（state.externalOccupations，
+    //   gateway-ports 接口 occupied/ranges 透出）。0=内部口随机（旧行为）。
+    //   混段部署示例：basePort 40010 / maxPort 40060 + internal 47010 / 47060
+    //   （回环段避开 k3s NodePort 默认 30000-32767）。
+    internalBasePort: 0,
+    internalMaxPort: 0,
     startupTimeoutMs: 120000,
     // 租户隔离网络（2026-10 审计 CRITICAL）：所有租户容器落这张
     // enable_icc=false 的自定义 bridge——容器间数据面丢弃、宿主回环映射
@@ -207,6 +233,21 @@ export function loadConfig() {
     if (uri) merged.storage.mongodbUri = uri
     if (prov === 'json' || prov === 'mongodb') merged.storage.provider = prov
   }
+  // 配对段配置体检（对外段=basePort..maxPort 唯一真源，无需体检）：
+  //   internal* 缺一半 → 静默回"内部口随机"，用户以为生效的配对实际没生效 → 警告
+  //   跨度不一致 → 尾部对外号配不上对、永远发不出 → 警告（发号会自动跳可配对区）
+  const d = merged.docker
+  const intHalf = d.internalBasePort > 0 !== d.internalMaxPort > 0
+  const intSet = d.internalBasePort > 0 && d.internalMaxPort > 0
+  if (intHalf) {
+    console.warn(
+      `[config] 配对回环段半配置：internal=[${d.internalBasePort},${d.internalMaxPort}]——internalBasePort/internalMaxPort 必须同时 >0 才启用配对模式，当前按未配置走（内部口随机分配）`,
+    )
+  } else if (intSet && d.maxPort - d.basePort !== d.internalMaxPort - d.internalBasePort) {
+    console.warn(
+      `[config] 双端口段长度不一致：对外跨度 ${d.maxPort - d.basePort} ≠ 回环跨度 ${d.internalMaxPort - d.internalBasePort}，超出的尾部对外号永远配不上对、发不出（发号会自动跳到段内可配对区）。`,
+    )
+  }
   return merged
 }
 
@@ -262,16 +303,35 @@ export function getTierLimits(tier) {
 
 export const CONFIG = loadConfig()
 
-// ★存储护栏（2026-10-16 生产事故根修）：测试进程读本地 config.json（provider=mongodb），
-// 凡未 mock storage 的测试就会拿 fixture 内存对生产库做 fanoutOps —— $unset 凭证账本、
-// deleteMany 多行；服务端再加载被污染快照并反向固化，对账器把真卡当无主摘架。
-// 6 处 provider 分叉拦不住漏网之鱼，在唯一出口整体降档：测试进程永不碰生产库。
-if (
-  (process.env.VITEST === 'true' || process.env.NODE_ENV === 'test') &&
-  CONFIG.storage?.provider === 'mongodb'
-) {
-  CONFIG.storage = { ...(CONFIG.storage || {}), provider: 'json' }
-  // eslint-disable-next-line no-console
-  console.warn('[config] 测试进程护栏：storage 已由 mongodb 降档为 json（生产库保护）')
+// ★测试进程护栏（唯一出口，同 2026-10-16 存储降档判例）：
+// ① storage 降档——未 mock storage 的测试拿 fixture 打生产库 = 事故（已发生过的实证）。
+// ② docker 端口段钉回默认（2026-11-14 同款根修）——宿主部署 config.json（本机改
+//    40000-40099 混段）泄进测试 worker：硬编码段断言误伤、双段配对探针**真 bind**
+//    撞上部署服务占用的 40000。段敏感的用例（port-range/port-pairs）自有
+//    beforeEach 收段，护栏只保证"开局即是默认段"，与部署形态彻底解耦。
+if (process.env.VITEST === 'true' || process.env.NODE_ENV === 'test') {
+  if (CONFIG.storage?.provider === 'mongodb') {
+    CONFIG.storage = { ...(CONFIG.storage || {}), provider: 'json' }
+    // eslint-disable-next-line no-console
+    console.warn('[config] 测试进程护栏：storage 已由 mongodb 降档为 json（生产库保护）')
+  }
+  const d = CONFIG.docker
+  if (
+    d.basePort !== DEFAULTS.docker.basePort ||
+    d.maxPort !== DEFAULTS.docker.maxPort ||
+    d.internalBasePort !== 0 ||
+    d.internalMaxPort !== 0
+  ) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[config] 测试进程护栏：docker 端口段已由部署值 [${d.basePort},${d.maxPort}]/[${d.internalBasePort},${d.internalMaxPort}] 钉回默认（宿主 config.json 不外泄进断言）`,
+    )
+    Object.assign(CONFIG.docker, {
+      basePort: DEFAULTS.docker.basePort,
+      maxPort: DEFAULTS.docker.maxPort,
+      internalBasePort: 0,
+      internalMaxPort: 0,
+    })
+  }
 }
-export { ROOT, CONFIG_FILE, deepMerge as _deepMergeForTest }
+export { ROOT, CONFIG_FILE, DEFAULTS as _defaultsForTest, deepMerge as _deepMergeForTest }

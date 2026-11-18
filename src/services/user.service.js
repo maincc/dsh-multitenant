@@ -19,6 +19,7 @@ import {
 import { fileURLToPath } from 'node:url'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { createServer as createNetServer } from 'node:net'
 import { CONFIG, getTierLimits } from '../config/config.js'
 import { credentialService } from './credential.service.js'
 import { dockerService } from './docker.service.js'
@@ -268,9 +269,9 @@ export class UserService {
 
     // 1. 检查端口（含可按需征用的 destroyed 闲置端口，避免僵尸占用导致误报耗尽）
     const availablePorts = this.state.availablePorts?.length ?? 0
-    const nextPort = this.state.nextPort ?? CONFIG.docker.basePort
-    checks.ports =
-      availablePorts > 0 || nextPort < CONFIG.docker.maxPort || this.hasReclaimablePorts()
+    const pubRange = this.tenantPortRanges().pub
+    const nextPort = this.state.nextPort ?? pubRange.base
+    checks.ports = availablePorts > 0 || nextPort < pubRange.max || this.hasReclaimablePorts()
 
     // 2. 主机内存：Linux 实测 MemAvailable 真检；非 Linux（macOS 开发机）保留旧逻辑
     if (process.platform === 'linux') {
@@ -848,6 +849,9 @@ export class UserService {
       if (addr === excludeAddress) continue
       if (user.containerStatus !== 'destroyed') continue
       if (this.state.availablePorts.includes(user.port)) continue
+      // 端口段纪律（方案 B 配套）：收段后越界旧号不进池——发出去就是
+      // 隧道没映射的死链接。该地址下次连接按"own 越界重发号"路径处理。
+      if (!this.portInRange(user.port)) continue
       this.state.availablePorts.push(user.port)
       reclaimed++
       console.log(
@@ -861,6 +865,136 @@ export class UserService {
       await this._saveState()
     }
     return reclaimed
+  }
+
+  /**
+   * 端口段形态解析（2026-11-14 双段配对；同日收敛重复键）：
+   *   basePort..maxPort = **唯一对外段**（用户可见/隧道 DNAT 面，单双段皆是）。
+   *   internalBasePort/internalMaxPort 同时 >0 → 配对模式：容器宿主回环映射段，
+   *     运行期一一对应 internal = internalBase + (public - publicBase)，
+   *     发号整对探测，外部占用跳对并记账。
+   *   未配置（0）→ 内部回环口随机分配（旧行为）。
+   *   （原 publicBasePort/publicMaxPort 与 basePort/maxPort 同义，已删除——
+   *   六键收敛为四键，无双真源。）
+   */
+  tenantPortRanges() {
+    const d = CONFIG.docker
+    const dual = d.internalBasePort > 0 && d.internalMaxPort > 0
+    return {
+      pub: { base: d.basePort, max: d.maxPort },
+      internal: dual ? { base: d.internalBasePort, max: d.internalMaxPort } : null,
+    }
+  }
+
+  /** 双段模式下由对外端口推导配对回环端口；旧模式返回 null（随机分配）。 */
+  internalForPublic(publicPort) {
+    const { pub, internal } = this.tenantPortRanges()
+    if (!internal) return null
+    const paired = internal.base + (publicPort - pub.base)
+    if (!Number.isInteger(paired) || paired < internal.base || paired > internal.max) return null
+    return paired
+  }
+
+  /**
+   * 占用账本：**非本服务产生的占用**逐条记录（用户要求，2026-11-14）。
+   * 探针发现某号 bind 不上、而网关路由表又不认账 → 外部监听器 → 记下
+   * port/scope/首末见时间/命中次数。gateway-ports 接口透出，运维排查
+   * "40xxx 混段里谁占了哪号"直接看这份账，不必再 ss 全表人肉对。
+   */
+  recordOccupation(port, scope) {
+    if (!this.state.externalOccupations) this.state.externalOccupations = {}
+    const now = Date.now()
+    const prev = this.state.externalOccupations[port]
+    this.state.externalOccupations[port] = {
+      port,
+      scope, // 'public'=对外段(0.0.0.0) | 'internal'=回环段(127.0.0.1)
+      firstSeen: prev?.firstSeen ?? now,
+      lastSeen: now,
+      hits: (prev?.hits ?? 0) + 1,
+    }
+  }
+
+  /**
+   * 对外端口是否落在配置段 [docker.basePort, docker.maxPort]（含两端）。
+   *
+   * 段的现实含义：隧道/端口段映射部署（deploy/README 方案 B）里，frpc 与
+   * 安全组按段预先开通，段外发号=给用户一个打不通的链接。三个来源
+   * （回收池 / own 续用 / nextPort 新号）都必须过这道滤。
+   * 值在**调用时**读取：测试收段验证即时生效。
+   */
+  portInRange(p) {
+    const { pub } = this.tenantPortRanges()
+    return Number.isInteger(p) && p >= pub.base && p <= pub.max
+  }
+
+  /**
+   * 端口可绑定性探针：在指定地址挂空监听器 bind 后即放。
+   * 用 bind 而非 connect：别人绑在 127.0.0.1 上的地址，connect 探测未必可见，
+   * 而 bind 冲突必报 EADDRINUSE——与网关 listen（0.0.0.0）/docker -p
+   * （127.0.0.1）的落点语义一致。探针到实际 bind 之间的竞态窗口由
+   * finalizeTenant "绑败弃号" 与 docker 报错重试路径兜底。
+   */
+  probeBindable(port, host = '0.0.0.0') {
+    return new Promise((resolve) => {
+      const srv = createNetServer()
+      srv.once('error', () => resolve(false))
+      srv.listen(port, host, () => {
+        srv.close(() => resolve(true))
+      })
+    })
+  }
+
+  /**
+   * 从 preferred 起扫描对外段 [preferred..max] → [base..preferred)，返回首个
+   * **整对可用**的对外端口（双段模式下两端都探）。占用判定：
+   *   自己网关在册 → 直接用（幂等复用，不探）
+   *   别的在册租户 → 避让
+   *   不在册但 bind 失败（外部监听：混段部署的常态）→ 记占用账，跳过
+   * selfInternal：调用现场已知的**自家容器**回环映射口（exists 重建路径旧容器
+   * 还没拆，探针必撞它）——跳过它但不记账，否则迁移当天每租户留一笔幽灵账。
+   * 找到可用号才推进 nextPort（先占后建纪律不变）；全段无空 → PORT_RANGE_FULL。
+   */
+  async findFreePublicPort(preferred, address, selfInternal = null) {
+    const { pub, internal } = this.tenantPortRanges()
+    const start = this.portInRange(preferred) ? preferred : pub.base
+    const order = []
+    for (let p = start; p <= pub.max; p++) order.push(p)
+    for (let p = pub.base; p < start; p++) order.push(p)
+    for (const candidate of order) {
+      const owner = tenantGateway.ownerOf?.(candidate) ?? null
+      if (owner === address) return candidate
+      if (owner) continue
+      if (!(await this.probeBindable(candidate, '0.0.0.0'))) {
+        this.recordOccupation(candidate, 'public')
+        continue
+      }
+      if (internal) {
+        const paired = this.internalForPublic(candidate)
+        if (paired === null) {
+          // 跨度不齐的尾部对外号：配不上对（启动已告警），不是"被占"，不记账
+          continue
+        }
+        if (!(await this.probeBindable(paired, '127.0.0.1'))) {
+          if (paired !== selfInternal) this.recordOccupation(paired, 'internal')
+          continue
+        }
+      }
+      if (preferred !== null && preferred !== undefined && candidate !== preferred) {
+        const paired = this.internalForPublic(candidate)
+        console.log(
+          `[port] ${String(address).slice(0, 8)}… 候选 ${preferred} 不可用（越段/外部占用），段内改派 ${candidate}${paired ? `（配对回环 ${paired}）` : ''}`,
+        )
+      }
+      if (candidate >= (this.state.nextPort ?? 0)) this.state.nextPort = candidate + 1
+      return candidate
+    }
+    const err = new Error(
+      internal
+        ? `端口段 对外 ${pub.base}..${pub.max} / 回环 ${internal.base}..${internal.max} 内已无整对可用（外部占用见占用账本 state.externalOccupations / gateway-ports 接口）`
+        : `端口段 ${pub.base}..${pub.max} 内已无可绑定端口（被外部程序占满或段太小；对照 ss -tlnp 排查）`,
+    )
+    err.code = 'PORT_RANGE_FULL'
+    throw err
   }
 
   /**
@@ -1440,8 +1574,22 @@ export class UserService {
       if (internalPort === null) {
         throw new Error(`SWTC container ${name} has no readable port mapping`)
       }
-      const port = this.state.swtcUsers?.[address]?.port ?? internalPort
-      return await this.finalizeTenant(address, name, port, internalPort)
+      // 对外端口以**记账**为准（旧兜底 `?? internalPort` 会把内部回环号当对外号
+      // 绑上 0.0.0.0——绕过段纪律，弃号场景重连必踩）。记账缺失/越界/被外人占
+      // → findFreePublicPort 换号 → 拆容器（卷保留）按新映射重建。
+      const recorded = this.state.swtcUsers?.[address]?.port ?? null
+      // 旧容器未拆，其 127.0.0.1 映射口探针必撞——豁免记账（见 findFreePublicPort）
+      const port = await this.findFreePublicPort(recorded, address, internalPort)
+      if (port === recorded) {
+        return await this.finalizeTenant(address, name, port, internalPort)
+      }
+      console.log(
+        `[port] ${address.slice(0, 8)}… 对外端口 ${recorded ?? '缺失'} → ${port}（弃号/越界/外部占用），重建容器换新映射，卷数据保留`,
+      )
+      await dockerService.removeContainer(name)
+      // 清记账：下方创建路径经"回收池→nextPort→探针改派"重新领号
+      if (this.state.swtcUsers?.[address]) this.state.swtcUsers[address].port = null
+      // fall through 到创建路径
     }
 
     // 2) 资源预检（队列处理时跳过）
@@ -1479,30 +1627,58 @@ export class UserService {
       if (pinned) image = pinned
     }
 
-    // 优先使用回收的对外端口，其次使用 nextPort；内部回环端口随机分配
-    let port
-    if (this.state.availablePorts && this.state.availablePorts.length > 0) {
-      port = this.state.availablePorts.shift() // 取出最小的可用端口
-      console.log(`[port] using recycled port ${port} for ${address}`)
-    } else {
-      const own = this.state.swtcUsers?.[address]?.port ?? null
-      port = own ?? this.state.nextPort ?? CONFIG.docker.basePort
+    // 优先使用回收的对外端口，其次使用 nextPort；内部回环端口双段配对/随机。
+    // 端口段纪律（2026-11，方案 B 配套）：对外端口一律以 [basePort, maxPort]
+    // 为界（唯一对外段；2026-11-14 去掉了与它同义的 public* 重复键）——回收池
+    // 越界旧号就地丢弃，own 越界视为无号重发，nextPort 越界走征用/耗尽既有路径。
+    // 段值由 config 收口，隧道映射段与发号段同源。
+    const { pub } = this.tenantPortRanges()
+    let port = null
+    while (this.state.availablePorts?.length > 0 && port === null) {
+      const candidate = this.state.availablePorts.shift()
+      if (this.portInRange(candidate)) {
+        port = candidate
+        console.log(`[port] using recycled port ${port} for ${address}`)
+      } else {
+        console.log(
+          `[port] discarding out-of-range recycled port ${candidate} (range ${pub.base}..${pub.max})`,
+        )
+      }
+    }
+    if (port === null) {
+      const ownRaw = this.state.swtcUsers?.[address]?.port ?? null
+      const own = ownRaw !== null && this.portInRange(ownRaw) ? ownRaw : null
+      if (ownRaw !== null && own === null) {
+        console.log(
+          `[port] ${address.slice(0, 8)}… stale port ${ownRaw} out of range (range ${pub.base}..${pub.max}), reassigning`,
+        )
+      }
+      port = own ?? this.state.nextPort ?? pub.base
       // 2026-10 审计：领号即推进 nextPort（同步原子，两个 await 之间不插队）。
       // 此前只在 createContainer 成功后才推进——并发开通的两个租户读到同一个
       // nextPort，各自建容器都成功，撞点在网关 listen（见 tenant-proxy 的
       // owner 门）：第二个会关掉第一个的监听=跨租户劫持。预推进让端口发放
       // 本身就是原子的；创建失败多跳的号作废不用回收（跳号无害，重排有洞）。
-      if (!own) this.state.nextPort = port + 1
+      if (own === null) this.state.nextPort = port + 1
       // 端口即将耗尽：把「容器已销毁（destroyed）、记录还占着端口」的闲置端口
-      // 一次性征用进回收池，供新用户使用（被征用者下次连接时重新分配新端口，内部透明）
-      if (port > CONFIG.docker.maxPort && (await this.reclaimDestroyedPorts(address)) > 0) {
-        port = this.state.availablePorts.shift()
-        console.log(`[port] reclaimed destroyed tenants' ports, using ${port} for ${address}`)
+      // 一次性征用进回收池，供新用户使用（征用时按端口段纪律滤掉越界号）
+      if (!this.portInRange(port) && (await this.reclaimDestroyedPorts(address)) > 0) {
+        const reclaimedPort = this.state.availablePorts.shift()
+        if (reclaimedPort !== undefined) {
+          port = reclaimedPort
+          console.log(`[port] reclaimed destroyed tenants' ports, using ${port} for ${address}`)
+        }
       }
     }
+    // 对外占用探号（40xxx 混段部署的常态）：候选号被外部程序监听 → 段内改派。
+    // 回收池号被占不回池（"洞"是别人的，回池下次照撞）；destroyed 记录的号已由
+    // 弃号清账，下次连接由本函数重新领号。
+    port = await this.findFreePublicPort(port, address)
     const tier = this.state.swtcUsers?.[address]?.tier ?? 1
     const limits = getTierLimits(tier)
-    let internalPort = this.allocateInternalPort()
+    // 双段配对模式：内部回环口由对外口推导（一一对应，findFreePublicPort
+    // 已两端探过）；旧模式维持随机分配。
+    let internalPort = this.internalForPublic(port) ?? this.allocateInternalPort()
     const excludedInternal = new Set() // 本次创建已尝试过的内部端口（冲突时换新）
 
     for (let attempt = 0; attempt < 64; attempt++) {
@@ -1510,8 +1686,11 @@ export class UserService {
         port = port + 1
         // 跳号重试同样先占后建（与领号处同一纪律，见上方注释）
         if (port >= (this.state.nextPort ?? 0)) this.state.nextPort = port + 1
+        // 双段模式：整对换号——对外口 +1，配对回环口跟着平移
+        const paired = this.internalForPublic(port)
+        if (paired !== null) internalPort = paired
       }
-      if (port > CONFIG.docker.maxPort) {
+      if (!this.portInRange(port)) {
         throw new Error(`exhausted host port range for SWTC tenant ${address}`)
       }
 
@@ -1529,7 +1708,7 @@ export class UserService {
         try {
           await this._saveState()
         } catch {}
-        this.state.nextPort = Math.max(this.state.nextPort ?? CONFIG.docker.basePort, port + 1)
+        this.state.nextPort = Math.max(this.state.nextPort ?? pub.base, port + 1)
         // 新容器 = 可还原画面：active 快照合回（不覆盖已有文件；判例 2026-10-29）
         await this._restoreWorkspace(address, name)
         return await this.finalizeTenant(address, name, port, internalPort)
@@ -1551,9 +1730,12 @@ export class UserService {
           continue
         }
         // 内部回环端口冲突（Bind for 127.0.0.1:xxxxx / port is already allocated）：
-        // 对外端口现在由网关监听、docker 不再发布，故 docker 层只会因内部端口冲突报错，
-        // 换一个新的内部端口重试（对外端口不动）。
+        // 对外端口现在由网关监听、docker 不再发布，故 docker 层只会因内部端口冲突报错。
+        // 旧模式：换一个新的内部端口重试（对外端口不动）。
+        // 双段模式：记占用账（探针后被人抢绑，TOCTOU 实锤），整对换号——
+        // 循环顶部 port+1 会重算配对回环口，一一对应不破坏。
         if (msg.includes('port is already allocated') || msg.includes('Bind for 127.0.0.1')) {
+          if (this.internalForPublic(port) !== null) this.recordOccupation(internalPort, 'internal')
           excludedInternal.add(internalPort)
           internalPort = this.allocateInternalPort(excludedInternal)
           continue
@@ -1748,15 +1930,15 @@ export class UserService {
         this.state.swtcUsers?.[address]?.rebuildEpoch ?? null,
       )
     } catch (err) {
-      // PORT_TAKEN（2026-10 审计）：端口正在为**另一租户**服务——把号留在记录里
-      // 会让重连永远撞同一个占位（restart 路径也照记录 port 重绑），必须弃号，
-      // 下次重连经 ensureContainer 领新号。其余失败（宿主程序占用等）保号重试。
-      const takenByOther = err?.code === 'PORT_TAKEN'
-      // 容器本身是好的，只是对外端口绑不上：保留容器与卷，标记 stopped，
-      // 端口留在记录里供下次重连复用（listen 是幂等的，会先 close 再重绑）。
+      // 绑败一律弃号（2026-11，配合 ensureContainer 的探号领号）：
+      // PORT_TAKEN=账内另一租户在册 / EADDRINUSE=宿主外部程序占用 / 其余 bind 错误。
+      // 保号=下次重连永撞同号（restart 路径照记录 port 重绑，实测死循环）；
+      // 弃号后 ensureContainer 会探号领号、重建容器映射（卷数据不动）。
+      // 探针到这里的竞态窗口（发号时空闲、listen 时被抢）由本分支同样兜住。
+      // 容器本身是好的，只是对外端口绑不上：保留容器与卷，标记 stopped。
       this.state.swtcUsers[address] = {
         ...prev,
-        port: takenByOther ? null : port,
+        port: null,
         internalPort,
         tier,
         createdAt: prev.createdAt ?? Date.now(),
@@ -1768,9 +1950,9 @@ export class UserService {
       }
       await this._saveState()
       throw new Error(
-        takenByOther
+        err?.code === 'PORT_TAKEN'
           ? `对外端口 ${port} 正被另一租户服务（状态竞态已自愈：稍后重连将自动分配新端口）`
-          : `网关端口 ${port} 绑定失败（该端口可能被宿主其他程序占用）：${err.message}`,
+          : `网关端口 ${port} 绑定失败（该端口可能被宿主其他程序占用，已弃号，重连将自动换号）：${err.message}`,
       )
     }
 
@@ -2671,8 +2853,14 @@ export class UserService {
         )
       } catch (err) {
         failed++
+        // 绑定失败=这号对本租户已不可用（外部程序占用/他租户在册）。保号则
+        // 每 60s 撞一次刷日志、永不自愈；弃号后下次"连接"走 ensureContainer
+        // exists 分支的探号领号路径重建映射（卷数据不动）。
+        const lostPort = user.port
+        user.port = null
+        await this._saveState() // 弃号落盘：否则进程重启后账又带上老号，每轮 heal 白撞一次
         console.error(
-          `[gateway-heal] ${address.slice(0, 10)}... 端口 ${user.port} 绑定失败：${err.message}`,
+          `[gateway-heal] ${address.slice(0, 10)}... 端口 ${lostPort} 绑定失败，已弃号（重连自动换号）：${err.message}`,
         )
       }
     }
@@ -2761,7 +2949,10 @@ export class UserService {
 
       // 对外端口回收基线只沿用"有对外端口记录"的容器（新恢复的 40000+ 内部端口不推高 nextPort）
       if (saved?.port) {
-        this.state.nextPort = Math.max(this.state.nextPort ?? CONFIG.docker.basePort, port + 1)
+        this.state.nextPort = Math.max(
+          this.state.nextPort ?? this.tenantPortRanges().pub.base,
+          port + 1,
+        )
       }
 
       // 重新开放网关监听（进程重启后外部端口需要接管）

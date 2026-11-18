@@ -3,6 +3,7 @@
  */
 
 import { CONFIG, getAdminAddresses } from '../config/config.js'
+import { timingSafeEqual } from 'node:crypto'
 import { userService } from '../services/user.service.js'
 import { dataService } from '../services/data.service.js'
 import { dockerService } from '../services/docker.service.js'
@@ -24,6 +25,7 @@ import { fileURLToPath } from 'node:url'
 import { requireAdmin, getAdminSession } from '../middleware/auth.middleware.js'
 import { userSessionStore } from '../middleware/user-auth.middleware.js'
 import { secureFlag } from '../utils/cookie-flags.js'
+import { publicScheme, publicEntryPort } from '../utils/public-endpoint.js'
 import {
   attachAdminSignature,
   issueAdminSignatureChallenge,
@@ -298,9 +300,62 @@ export async function handleAdminRoutes(req, res, path, url) {
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
     res.end(
       JSON.stringify({
-        url: `http://${PUBLIC_HOST}:${user.port}/?gateway_ticket=${ticket}`,
+        url: `${publicScheme(req)}://${PUBLIC_HOST}:${user.port}/?gateway_ticket=${ticket}`,
         address,
         port: user.port,
+      }),
+    )
+    return true
+  }
+
+  // GET /api/admin/gateway-ports - 隧道同步面（2026-11-12）：一次性给出全部已分配
+  // 租户网关端口 + 对外形态声明，供隧道侧脚本轮询并调 frpc admin API 自动补口——
+  // 新租户上线不再需要人肉改 frpc 配置。门禁走"现场信任"而非签名（脚本签不了名）：
+  //   ① 回环来源（隧道客户端与平台同机部署的常态）直接放行；
+  //   ② 远程来源须带 Bearer TUNNEL_SYNC_TOKEN（env 或 config.server.tunnelSyncToken）。
+  // 两者都不满足 → 404（与不存在同形，不向站外泄露"端口+地址"这张网络地图）。
+  if (path === '/api/admin/gateway-ports' && req.method === 'GET') {
+    const remote = String(req.socket?.remoteAddress || '')
+    const isLoopback = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remote)
+    let tokenOk = false
+    const token = String(process.env.TUNNEL_SYNC_TOKEN || CONFIG.server.tunnelSyncToken || '')
+    const bearer = String(req.headers.authorization || '')
+    if (token && bearer.startsWith('Bearer ')) {
+      const a = Buffer.from(bearer.slice(7))
+      const b = Buffer.from(token)
+      tokenOk = a.length === b.length && timingSafeEqual(a, b)
+    }
+    if (!isLoopback && !tokenOk) {
+      res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: 'not found', code: 'NOT_FOUND' }))
+      return true
+    }
+    const ports = []
+    for (const [address, u] of Object.entries(userService.state.swtcUsers || {})) {
+      if (Number.isInteger(u.port) && u.port > 0) {
+        ports.push({ address, port: u.port, status: u.containerStatus || 'unknown' })
+      }
+    }
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+    res.end(
+      JSON.stringify({
+        ok: true,
+        ports,
+        // 占用账本（2026-11-14）：发号探针发现的**非本服务**监听占用
+        // （混段部署里"谁占了哪号"直接看这里，不必 ss 全表对）
+        occupied: Object.values(userService.state.externalOccupations || {}),
+        ranges: (() => {
+          const { pub, internal } = userService.tenantPortRanges()
+          return {
+            public: [pub.base, pub.max],
+            internal: internal ? [internal.base, internal.max] : null,
+          }
+        })(),
+        entry: {
+          host: process.env.PUBLIC_HOST || CONFIG.server.publicHost,
+          port: publicEntryPort(),
+          scheme: publicScheme(req),
+        },
       }),
     )
     return true

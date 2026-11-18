@@ -40,6 +40,9 @@ const DEFAULT_STATE = () => ({
   swtcUsers: {},
   nextPort: 31000,
   availablePorts: [],
+  // 占用账本（双段配对探针产物，2026-11-14）：mongo 走 meta#occupations 单文档
+  // 整镜像（同 cleanup 先例），json 走整写天然包含
+  externalOccupations: {},
   cleanupPolicy: { stopTimeoutMs: 900000, destroyTimeoutMs: 3600000, checkIntervalMs: 300000 },
   usages: {},
 })
@@ -90,6 +93,15 @@ async function loadFromMongo(store) {
   const ports = await store.col('meta').findOne({ _id: 'ports' })
   if (ports && typeof ports.nextPort === 'number') state.nextPort = ports.nextPort
   if (ports && Array.isArray(ports.availablePorts)) state.availablePorts = ports.availablePorts
+  // 占用账本整镜像（键必须是字符串，回读归一：mongo BSON 会把数字键变字符串，
+  // 而 recordOccupation 按数字键写——不统一则重启后同口重复开账）
+  const occ = await store.col('meta').findOne({ _id: 'occupations' })
+  if (occ && occ.entries && typeof occ.entries === 'object') {
+    for (const [k, v] of Object.entries(occ.entries)) {
+      if (v && typeof v === 'object' && 'port' in v)
+        state.externalOccupations[String(k)] = { ...v, port: Number(v.port) }
+    }
+  }
   const cleanup = await store.col('meta').findOne({ _id: 'cleanup' })
   if (cleanup) {
     const { _id, ...policy } = cleanup
@@ -154,6 +166,15 @@ async function fanoutOps(store, state, session) {
   await meta.updateOne(
     { _id: 'cleanup' },
     { $set: { ...(state.cleanupPolicy || {}) } },
+    { upsert: true, session },
+  )
+  // 占用账本单文档整镜像；$unset old 防形态切换遗留（本行从不写 old 字段）
+  await meta.updateOne(
+    { _id: 'occupations' },
+    {
+      $set: { entries: state.externalOccupations || {} },
+      $unset: { old: '' },
+    },
     { upsert: true, session },
   )
 

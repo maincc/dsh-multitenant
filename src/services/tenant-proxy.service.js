@@ -19,6 +19,7 @@ import { request as httpRequest } from 'node:http'
 import { connect as netConnect } from 'node:net'
 import { randomBytes, createHash, createHmac } from 'node:crypto'
 import { secureFlag } from '../utils/cookie-flags.js'
+import { publicScheme, publicEntryPort } from '../utils/public-endpoint.js'
 import { getUserSession, userSessionStore } from '../middleware/user-auth.middleware.js'
 import { getAdminSession } from '../middleware/auth.middleware.js'
 import { CONFIG } from '../config/config.js'
@@ -390,17 +391,18 @@ const GATE_DENIED_TEMPLATE = `<!doctype html>
 </body>
 </html>`
 
-/** 平台入口 URL（跟随请求 Host 推导 310xx→:8090/user；Host 投毒防护集中于此） */
+/** 平台入口 URL（跟随请求 Host 推导 310xx→平台/user；Host 投毒防护集中于此） */
 function derivePlatformUrl(req) {
   // 2026-10 审计：Host 是攻击者可控头，此前原样拼进 HTML/跳转链接——恶意 Host
   // 可把"返回平台"投毒成任意域。只收 [A-Za-z0-9._-] 形态主机名（IPv4/域名足够），
   // 其余一律回退 publicHost；端口取配置，不再硬编码 8090 猜。
+  // 2026-11-12 隧道形态：端口改走 publicEntryPort（外口≠进程口时由 PUBLIC_PORT/
+  // server.publicPort 声明，如 8550→8090），scheme 走 publicScheme 单点。
   const raw = (req.headers.host || '').replace(/:\d+$/, '')
   const hostname = /^[A-Za-z0-9._-]{1,253}$/.test(raw)
     ? raw
     : String(CONFIG.server.publicHost || '127.0.0.1')
-  const port = Number.isFinite(CONFIG.server.port) ? CONFIG.server.port : 8090
-  return `http://${hostname}:${port}/user`
+  return `${publicScheme(req)}://${hostname}:${publicEntryPort()}/user`
 }
 
 /** 组装准入拒绝页 */
