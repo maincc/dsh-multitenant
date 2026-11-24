@@ -226,11 +226,29 @@ describe('B. ADMIN_ROUTES 真实注册面（首批：session+gateway）', () => 
     'GET /api/admin/tenant-url',
     'GET /api/admin/gateway-ports',
     '* /api/docker/status',
+    'POST /api/admin/promote/',
+    'POST /api/admin/demote/',
+    'GET /api/admin/admins',
+    '* /api/users',
+    '* /api/stats',
+    'POST /api/admin/force-stop/',
+    'GET /api/admin/orphan-volumes',
+    'POST /api/admin/cleanup-orphan-volumes',
+    'POST /api/admin/delete-volume/',
+    'POST /api/admin/disk-scan',
   ]
   const keyOf = (r) => `${r.method ?? '*'} ${r.path ?? r.prefix ?? String(r.pattern)}`
 
   it('已迁端点集合与快照一致', () => {
     expect(ADMIN_ROUTES.map(keyOf).sort()).toEqual([...SNAPSHOT].sort())
+  })
+
+  it('破坏性操作的 signOp 全部注册在册（拼错 op 在 defineRoute 就抛）', () => {
+    expect(
+      ADMIN_ROUTES.filter((r) => r.signOp)
+        .map((r) => r.signOp)
+        .sort(),
+    ).toEqual(['cleanup-orphan-volumes', 'delete-volume', 'demote', 'force-stop', 'promote'].sort())
   })
 
   it('每条都显式声明了 guard（免鉴权也必须写明 public）', () => {
