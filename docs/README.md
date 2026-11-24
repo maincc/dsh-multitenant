@@ -31,6 +31,7 @@
 | [api.md](./api.md)                                                   | API 参考（会话/管理/租户自助配置/技能市场 全量请求响应示例；从根 README 迁出）                        | ✅ 随实现滚动              | 签名用途绑定规则见 §安全               |
 | plugin-market-design.md                                              | 统一市场（技能 + 插件）扩展设计                                                                       | 📌 用户既有物              | 未按本索引修订                         |
 | [crypto-randomuuid.md](./crypto-randomuuid.md)                       | 局域网 HTTPS 兼容事件记录（crypto.randomUUID shim）                                                   | 🗄️ 历史归档                | 已修复，备查                           |
+| [refactor-giant-files.md](./refactor-giant-files.md)                 | 巨型文件拆分方案（路由守卫注册表 / 域模块 / 前端 tab 组件化；判例 58 的结构性清偿）                   | 📌 方案待排期              | 拆分窗口需冻结四座大山的 feature 改动  |
 
 ## 状态图例
 
