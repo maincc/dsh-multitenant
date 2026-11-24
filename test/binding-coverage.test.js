@@ -31,6 +31,8 @@ import {
   buildBinding,
 } from '../src/middleware/admin-signature.middleware.js'
 import { ADMIN_ROUTES } from '../src/routes/admin/index.js'
+import { USER_ROUTES } from '../src/routes/user/index.js'
+import { SKILL_ROUTES } from '../src/routes/skill/skills.routes.js'
 
 const ADDR = 'jndwretndumoqbt2uauclmfmx7xbqjykva'
 
@@ -90,8 +92,8 @@ describe('签名操作声明面一致性', () => {
     }
   })
 
-  it('③ 注册表全部 signOp 在册且守卫为 admin', () => {
-    for (const r of ADMIN_ROUTES) {
+  it('③ 注册表全部 signOp 在册且守卫为 admin（P1 完成后覆盖三域全表）', () => {
+    for (const r of [...ADMIN_ROUTES, ...USER_ROUTES, ...SKILL_ROUTES]) {
       if (!r.signOp) continue
       expect(ADMIN_SIGNED_OPERATIONS, `注册表 signOp "${r.signOp}" 未在白名单`).toContain(r.signOp)
       expect(r.guard, `signOp "${r.signOp}" 必须挂在 admin 守卫上`).toBe('admin')
