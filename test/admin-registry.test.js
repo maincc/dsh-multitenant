@@ -4,7 +4,7 @@
  * 两层覆盖：
  *   A. registry 纯机制——defineRoute 校验闸（guard 必填/匹配器唯一/signOp 白名单/
  *      重复注册）与 dispatchRoutes 匹配序（exact/prefix/pattern × method）。
- *   B. 真实 ADMIN_ROUTES 快照——首批迁入域（session+gateway 共 7 端点）的
+ *   B. 真实 ADMIN_ROUTES 快照——全部 41 端点（7 域）的
  *      守卫声明与匹配语义逐条钉死；未注册路径必须 fallthrough（返回 false），
  *      这是"新端点忘挂守卫在测试阶段就红"的起点防线。
  *
@@ -250,6 +250,16 @@ describe('B. ADMIN_ROUTES 真实注册面（首批：session+gateway）', () => 
     'POST /api/admin/env-browse',
     'POST /api/admin/env-scan',
     'POST /api/admin/env-reject',
+    'GET /api/admin/dsh/versions',
+    'GET /api/admin/dsh/status',
+    'GET /api/admin/dsh/images',
+    'POST /api/admin/dsh/images/prune',
+    'GET /api/admin/dsh/image',
+    'POST /api/admin/dsh/image',
+    'GET /api/admin/dsh/local-images',
+    'POST /api/admin/dsh/select',
+    'GET /api/admin/dsh/apply',
+    'POST /api/admin/dsh/apply',
   ]
   const keyOf = (r) => `${r.method ?? '*'} ${r.path ?? r.prefix ?? String(r.pattern)}`
 
@@ -277,6 +287,10 @@ describe('B. ADMIN_ROUTES 真实注册面（首批：session+gateway）', () => 
         'env-scan',
         'force-stop',
         'promote',
+        'dsh/apply',
+        'dsh/build-image',
+        'dsh/prune-images',
+        'dsh/select',
       ].sort(),
     )
   })

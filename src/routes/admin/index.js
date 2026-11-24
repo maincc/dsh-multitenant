@@ -15,6 +15,7 @@ import { USERS_ROUTES } from './users.routes.js'
 import { VOLUMES_ROUTES } from './volumes.routes.js'
 import { CREDENTIAL_ROUTES } from './credential.routes.js'
 import { ENV_ROUTES } from './env.routes.js'
+import { DSH_ROUTES } from './dsh.routes.js'
 
 export const ADMIN_ROUTES = validateRoutes([
   ...SESSION_ROUTES,
@@ -23,4 +24,5 @@ export const ADMIN_ROUTES = validateRoutes([
   ...VOLUMES_ROUTES,
   ...CREDENTIAL_ROUTES,
   ...ENV_ROUTES,
+  ...DSH_ROUTES,
 ])
