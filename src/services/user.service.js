@@ -27,6 +27,7 @@ import { portsMixin } from './user/ports.js'
 import { usageMixin } from './user/usage.js'
 import { queueMixin } from './user/queue.js'
 import { resourcesMixin } from './user/resources.js'
+import { queriesMixin } from './user/queries.js'
 // 代激活 cookie 缓存（check-rpc 的 /api 调用也要带上，否则新版会 401）
 import { authCookieCache } from './dsh-auth.service.js'
 import { swtcContainerName, swtcVolumeName, normalizeAddress } from '../utils/address.js'
@@ -669,65 +670,6 @@ export class UserService {
     return info.exists
   }
 
-  async getUserInfo(address) {
-    const user = this.state.swtcUsers?.[address]
-    if (!user) throw new NotFoundError('User not found')
-
-    const stats =
-      user.containerStatus === 'running'
-        ? await dockerService.getContainerStats(swtcContainerName(address))
-        : null
-
-    return {
-      address,
-      port: user.port,
-      tier: user.tier ?? 1,
-      tierLabel: getTierLimits(user.tier ?? 1)?.label ?? '基础',
-      tierLimits: getTierLimits(user.tier ?? 1),
-      status: user.containerStatus ?? 'running',
-      createdAt: user.createdAt,
-      lastSeenAt: user.lastSeenAt,
-      idle: Date.now() - user.lastSeenAt,
-      isAdmin: credentialService.isAdmSync(address),
-      stats: stats
-        ? {
-            cpu: stats.cpu,
-            memory: stats.mem,
-            memoryPercent: stats.memPercent,
-          }
-        : null,
-    }
-  }
-
-  /**
-   * 获取所有用户列表
-   */
-  /**
-   * 管理端列表（带短 TTL 缓存）。
-   *
-   * 为什么加缓存：管理端每轮刷新都要为每个 running 租户跑一次 docker 采样，
-   * 而多个管理员/多个标签页会**各自**触发一遍 → docker CLI 被打爆。
-   * 缓存只活几秒（默认 3s），且任何状态写入都会立即失效（见 _saveState），
-   * 所以「管理员点完按钮看到旧状态」不会发生。
-   *
-   * @param {{force?: boolean}} [opts] force=true 跳过缓存
-   */
-  async getAllUsers({ force = false } = {}) {
-    const ttl = Number(CONFIG.admin?.usersCacheTtlMs ?? 3000)
-    const cached = this._usersCache
-    if (!force && cached?.data && Date.now() - cached.at < ttl) {
-      return cached.data
-    }
-    const data = await this._computeAllUsers()
-    this._usersCache = { at: Date.now(), data }
-    return data
-  }
-
-  /** 让列表缓存立即失效 */
-  invalidateUsersCache() {
-    this._usersCache = { at: 0, data: null }
-  }
-
   /**
    * 状态落盘 + 列表缓存失效。所有 saveState 统一走这里 ——
    * 少挂一处就会让管理员点完按钮看到旧状态。
@@ -756,66 +698,6 @@ export class UserService {
       '[state] 已从 MongoDB 水合用户域状态：租户 ' +
         Object.keys(this.state.swtcUsers).length +
         ' 个',
-    )
-  }
-
-  async _computeAllUsers() {
-    const users = this.state.swtcUsers || {}
-
-    // 检查 Docker 是否可用
-    const dockerAvailable = await dockerService.isDockerAvailable()
-
-    // 只对 running 的租户批量取一次 stats（一次 docker 进程拿全部，替 N 次）
-    const runningNames = Object.entries(users)
-      .filter(([, u]) => dockerAvailable && u.containerStatus === 'running')
-      .map(([address]) => swtcContainerName(address))
-    const statsMap = await dockerService.getContainerStatsMany(runningNames)
-
-    return Promise.all(
-      Object.entries(users).map(async ([address, user]) => {
-        let stats = null
-        let actualStatus = user.containerStatus ?? 'unknown'
-
-        // 只有 Docker 可用时才查询实时状态
-        if (dockerAvailable && user.containerStatus === 'running') {
-          stats = statsMap.get(swtcContainerName(address)) ?? null
-          // 如果获取 stats 失败，可能容器实际已停止
-          if (!stats) {
-            actualStatus = 'unknown'
-          }
-        } else if (!dockerAvailable) {
-          // Docker 不可用，显示未知状态
-          actualStatus = 'unknown'
-        }
-
-        return {
-          address,
-          port: user.port,
-          tier: user.tier ?? 1,
-          tierLabel: getTierLimits(user.tier ?? 1)?.label ?? '基础',
-          status: actualStatus,
-          // 管理员要看到"这个租户到底在跑哪个 DSH 版本"。
-          // 优先问容器本身（真实值）；容器不在/exec 失败时退回创建时记录值。
-          // 走 dockerService 的镜像 ID 缓存，同一镜像只 exec 一次。
-          dshVersion:
-            (await dockerService.containerDshVersion(swtcContainerName(address))) ??
-            user.baseImageVersion ??
-            null,
-          createdAt: user.createdAt,
-          lastSeenAt: user.lastSeenAt,
-          lastAutoUpgradeAt: user.lastAutoUpgradeAt ?? null,
-          idle: Date.now() - user.lastSeenAt,
-          isAdmin: credentialService.isAdmSync(address),
-          stats: stats
-            ? {
-                cpu: stats.cpu,
-                memory: stats.mem,
-                memoryPercent: stats.memPercent,
-              }
-            : null,
-          dockerAvailable,
-        }
-      }),
     )
   }
 
@@ -2525,42 +2407,17 @@ export class UserService {
       await this._saveState()
     }
   }
-
-  /**
-   * 获取系统统计
-   */
-  getStats() {
-    const users = this.state.swtcUsers || {}
-    const totalUsers = Object.keys(users).length
-    const runningUsers = Object.values(users).filter((u) => u.containerStatus === 'running').length
-    const tierCounts = { 1: 0, 2: 0, 3: 0 }
-    Object.values(users).forEach((u) => {
-      const tier = u.tier ?? 1
-      tierCounts[tier] = (tierCounts[tier] || 0) + 1
-    })
-    // 资源监控相关（供管理面板展示）
-    const resource = CONFIG.resource || {}
-    const autoUpgradeCount = Object.values(users).filter((u) => u.lastAutoUpgradeAt).length
-    return {
-      totalUsers,
-      runningUsers,
-      tierCounts,
-      tiers: CONFIG.tiers,
-      resource: {
-        enabled: true,
-        monitorIntervalMs: resource.monitorIntervalMs ?? 30000,
-        autoUpgradeThreshold: resource.autoUpgradeThreshold ?? 80,
-        autoUpgradeCooldownMs: resource.autoUpgradeCooldownMs ?? 600000,
-        diskCheckIntervalMs: resource.diskCheckIntervalMs ?? 300000,
-        autoUpgradeCount,
-        disk: this.diskUsage ?? null,
-      },
-    }
-  }
 }
 
 // P2 域拆装配（refactor-giant-files §三）：域 mixin 逐字节搬运，this 语义不变——
 // state 仍在实例上；跨域互借（如端口回收调 this._saveState）为 §3.2 过渡允许丑线。
-Object.assign(UserService.prototype, portsMixin, usageMixin, queueMixin, resourcesMixin)
+Object.assign(
+  UserService.prototype,
+  portsMixin,
+  usageMixin,
+  queueMixin,
+  resourcesMixin,
+  queriesMixin,
+)
 
 export const userService = new UserService()
