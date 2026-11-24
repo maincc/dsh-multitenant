@@ -3,7 +3,6 @@
  */
 
 import { CONFIG, getAdminAddresses } from '../config/config.js'
-import { timingSafeEqual } from 'node:crypto'
 import { userService } from '../services/user.service.js'
 import { dataService } from '../services/data.service.js'
 import { dockerService } from '../services/docker.service.js'
@@ -11,31 +10,23 @@ import { envBundleService } from '../services/env-bundle.service.js'
 import { runEnvCommit, normEnvNames, normEnvWsExcludes } from '../services/env-commit.service.js'
 // 镜像归属与可清理性判定的唯一真源（2026-09 从本文件抽出，与 F3 维护定时器共用）
 import { collectPrunableImages, matchImageId } from '../services/image-inventory.service.js'
-import {
-  tenantConfigService,
-  SIGN_PURPOSE,
-  buildSignedMessage,
-} from '../services/tenant-config.service.js'
-import { tenantGateway } from '../services/tenant-proxy.service.js'
 import { dshVersionService } from '../services/dsh-version.service.js'
 import { credentialService } from '../services/credential.service.js'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { requireAdmin, getAdminSession } from '../middleware/auth.middleware.js'
-import { userSessionStore } from '../middleware/user-auth.middleware.js'
-import { secureFlag } from '../utils/cookie-flags.js'
-import { publicScheme, publicEntryPort } from '../utils/public-endpoint.js'
 import {
   attachAdminSignature,
-  issueAdminSignatureChallenge,
   requireAdminSignature,
 } from '../middleware/admin-signature.middleware.js'
 import { validateSwtcAddress } from '../middleware/validate.middleware.js'
-import { rateLimit } from '../middleware/rate-limit.middleware.js'
-import { normalizeAddress, swtcContainerName } from '../utils/address.js'
-import { BadRequestError, NotFoundError, handleError } from '../utils/errors.js'
+import { normalizeAddress } from '../utils/address.js'
+import { BadRequestError, handleError } from '../utils/errors.js'
 import { parseBody, parseJsonBody } from '../utils/parse-body.js'
+// ★ P1 注册表（refactor-giant-files）：已迁域走 dispatch（守卫声明必填），未迁域暂留本文件遗留 if 链
+import { dispatchRoutes } from './registry.js'
+import { ADMIN_ROUTES } from './admin/index.js'
 
 const PROJECT_ROOT = fileURLToPath(new URL('../..', import.meta.url))
 
@@ -102,280 +93,9 @@ export async function handleAdminRoutes(req, res, path, url) {
   // 没带就是没带，由 requireAdminSignature 统一报错。
   attachAdminSignature(req)
 
-  // POST /api/admin/challenge - 领取一次性签名挑战（security-hardening-plan P0-1）
-  //   不带 operation  → 登录挑战（对裸 nonce 签名，旧行为）
-  //   带 operation    → 破坏性操作挑战：服务端推导 binding，钱包签 `${nonce}|${binding}`
-  if (path === '/api/admin/challenge' && req.method === 'POST') {
-    try {
-      const body = await parseBody(req)
-      const { address, operation, payload } = JSON.parse(body || '{}')
-      if (!validateSwtcAddress(address, res)) return true
-
-      // 带 operation：只有**已登录管理员**能为本人的破坏性操作领挑战
-      if (operation) {
-        const session = getAdminSession(req)
-        if (!session) {
-          res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
-          res.end(JSON.stringify({ error: '需要管理员权限', code: 'FORBIDDEN' }))
-          return true
-        }
-        if (normalizeAddress(session) !== normalizeAddress(address)) {
-          // 挑战要绑在会话身份上，否则可以骗管理员为别的地址签一次。
-          // 文案必须把"本人"讲清楚：绑的是【登录会话 ↔ 签名钱包】同一性，
-          // 不是"只能操作自己的数据"——目标地址在 payload 里，本就可以是别人。
-          res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
-          res.end(
-            JSON.stringify({
-              error:
-                '签名钱包与登录会话不是同一账户（防会话劫持，与操作对象是谁无关）。' +
-                '请在 CCDAO 插件切回登录时的账户，或退出后重新签名登录再试。',
-              code: 'FORBIDDEN',
-            }),
-          )
-          return true
-        }
-        const issued = issueAdminSignatureChallenge(address, operation, payload)
-        if (!issued) {
-          res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
-          res.end(
-            JSON.stringify({
-              error: `不支持的签名操作或缺少目标：${operation}`,
-              code: 'SIGNATURE_NOT_APPLICABLE',
-            }),
-          )
-          return true
-        }
-        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-        // message 是钱包里要签的原文（含操作语义，管理员可在弹窗里核对）
-        res.end(JSON.stringify({ ok: true, ...issued }))
-        return true
-      }
-
-      // 登录挑战：nonce 按 LOGIN 用途分池，且下发 message（用途绑定后的被签内容）
-      const challenge = tenantConfigService.issueChallenge(
-        normalizeAddress(address),
-        SIGN_PURPOSE.LOGIN,
-      )
-      if (!challenge) {
-        res.writeHead(503, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ error: '挑战发放过载，请稍后重试', code: 'OVERLOAD' }))
-        return true
-      }
-      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ ok: true, nonce: challenge.nonce, message: challenge.message }))
-    } catch (err) {
-      if (!res.headersSent) handleError(err, res)
-    }
-    return true
-  }
-
-  // POST /api/admin/login - 管理员钱包签名登录（P0-1：nonce 挑战 + 验签 + 地址归属）
-  if (path === '/api/admin/login' && req.method === 'POST') {
-    try {
-      const body = await parseBody(req)
-      const { address, nonce, signature, publicKey } = JSON.parse(body || '{}')
-
-      if (!validateSwtcAddress(address, res)) return true
-
-      const addrLower = normalizeAddress(address)
-
-      // ① 验签：**用途绑定消息**的签名有效且公钥推导地址 === 声称地址。
-      //    签的是服务端构造的 `dsh-multitenant|login|<地址>|<nonce>`（hex），
-      //    因此为其它用途（connect / gateway-verify / skills …）取得的签名
-      //    在这里一律验不过 —— 这是本次安全加固要堵的那条链。
-      if (
-        !tenantConfigService.verifySignature(
-          addrLower,
-          buildSignedMessage(SIGN_PURPOSE.LOGIN, addrLower, nonce),
-          signature,
-          publicKey,
-        )
-      ) {
-        res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ error: '签名验证失败', code: 'FORBIDDEN' }))
-        return true
-      }
-      // ② 挑战一次性（不可重放）+ 必须是为 LOGIN 用途发放的
-      if (!tenantConfigService.consumeChallenge(addrLower, nonce, SIGN_PURPOSE.LOGIN)) {
-        res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ error: '挑战已失效，请重新获取', code: 'FORBIDDEN' }))
-        return true
-      }
-      // ③ 必须是管理员地址（v1.5：凭证结论快照，名册兜底见 isAdmSync）
-      if (!credentialService.isAdmSync(addrLower)) {
-        res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ error: '不是管理员地址', code: 'FORBIDDEN' }))
-        return true
-      }
-
-      // ④ 签发服务端随机会话（判例 2026-10-30：admin_session 已废止——管理票
-      // 与租户票合流为唯一 user_session；isAdmSync 的登录闸留在 ③，非管理员签不进）
-      const token = userSessionStore.create(addrLower)
-      res.writeHead(200, {
-        'content-type': 'application/json; charset=utf-8',
-        'set-cookie': `user_session=${token}; path=/; httponly; samesite=strict${secureFlag(req)}`,
-      })
-      res.end(JSON.stringify({ ok: true, address: addrLower, isAdmin: true }))
-
-      // 记录日志
-      dataService.logOperation('admin_login', { address: addrLower })
-    } catch (err) {
-      // 只有在 headers 还没发送时才处理错误
-      if (!res.headersSent) {
-        handleError(err, res)
-      }
-    }
-    return true
-  }
-
-  // POST /api/admin/logout - 吊销当前会话（单源 user_session；旧 admin_session
-  // cookie 一并下发清除指令，做浏览器卫生）
-  if (path === '/api/admin/logout' && req.method === 'POST') {
-    const cookie = req.headers.cookie || ''
-    const match = cookie.match(/user_session=([^;]+)/)
-    const who = getAdminSession(req) // 先取操作人：吊销之后就查不到了
-    if (match) {
-      try {
-        await userSessionStore.revoke(decodeURIComponent(match[1]))
-        // 会话吊销也是"改变世界的动作"——进录像
-        dataService.logOperation('admin_logout', { address: who })
-      } catch {
-        // 忽略损坏的 token
-      }
-    }
-    res.writeHead(200, {
-      'content-type': 'application/json; charset=utf-8',
-      'set-cookie': `user_session=; path=/; max-age=0; httponly; samesite=strict${secureFlag(req)}, admin_session=; path=/; max-age=0; httponly; samesite=strict${secureFlag(req)}`,
-    })
-    res.end(JSON.stringify({ ok: true }))
-    return true
-  }
-
-  // GET /api/admin/check - 检查管理员权限
-  if (path === '/api/admin/check') {
-    // 匿名可达有正当成因（登录前预检"当前钱包是不是管理员"），但必须限流——
-    // 2026-10 审计点名它是无界的管理员名单枚举面（2026-10 审计 #5）
-    if (!rateLimit(req, res, { max: 20, keyPrefix: 'admincheck' })) return true
-    const session = getAdminSession(req)
-    const queryAddress = url.searchParams.get('address')
-
-    // 如果传入了 address 参数，检查该地址是否是管理员
-    if (queryAddress) {
-      const addrLower = normalizeAddress(queryAddress)
-      const isAdm = credentialService.isAdmSync(addrLower)
-      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ isAdmin: isAdm, address: addrLower, checkedAddress: addrLower }))
-      return true
-    }
-
-    // 否则检查 cookie 中的 session
-    const isAdm = session && credentialService.isAdmSync(session)
-    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-    res.end(JSON.stringify({ isAdmin: isAdm, address: session || null }))
-    return true
-  }
-
-  // GET /api/admin/tenant-url?address= - 管理员代开租户容器（网关门禁凭证）
-  // 返回带一次性 gateway_ticket 的 URL：浏览器首次访问该 URL 即换取该租户会话并放行
-  if (path === '/api/admin/tenant-url' && req.method === 'GET') {
-    if (!requireAdmin(req, res)) return true
-    let address = url.searchParams.get('address')
-    if (!validateSwtcAddress(address, res)) return true
-    address = normalizeAddress(address)
-
-    const user = userService.state.swtcUsers?.[address]
-    if (!user || user.containerStatus !== 'running') {
-      res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ error: '租户容器未在运行', code: 'NOT_FOUND' }))
-      return true
-    }
-
-    const ticket = tenantGateway.issueTicket(address)
-    if (!ticket) {
-      res.writeHead(409, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ error: '网关未接管该租户端口，请稍后重试', code: 'CONFLICT' }))
-      return true
-    }
-    const PUBLIC_HOST = process.env.PUBLIC_HOST || CONFIG.server.publicHost
-    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-    res.end(
-      JSON.stringify({
-        url: `${publicScheme(req)}://${PUBLIC_HOST}:${user.port}/?gateway_ticket=${ticket}`,
-        address,
-        port: user.port,
-      }),
-    )
-    return true
-  }
-
-  // GET /api/admin/gateway-ports - 隧道同步面（2026-11-12）：一次性给出全部已分配
-  // 租户网关端口 + 对外形态声明，供隧道侧脚本轮询并调 frpc admin API 自动补口——
-  // 新租户上线不再需要人肉改 frpc 配置。门禁走"现场信任"而非签名（脚本签不了名）：
-  //   ① 回环来源（隧道客户端与平台同机部署的常态）直接放行；
-  //   ② 远程来源须带 Bearer TUNNEL_SYNC_TOKEN（env 或 config.server.tunnelSyncToken）。
-  // 两者都不满足 → 404（与不存在同形，不向站外泄露"端口+地址"这张网络地图）。
-  if (path === '/api/admin/gateway-ports' && req.method === 'GET') {
-    const remote = String(req.socket?.remoteAddress || '')
-    const isLoopback = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remote)
-    let tokenOk = false
-    const token = String(process.env.TUNNEL_SYNC_TOKEN || CONFIG.server.tunnelSyncToken || '')
-    const bearer = String(req.headers.authorization || '')
-    if (token && bearer.startsWith('Bearer ')) {
-      const a = Buffer.from(bearer.slice(7))
-      const b = Buffer.from(token)
-      tokenOk = a.length === b.length && timingSafeEqual(a, b)
-    }
-    if (!isLoopback && !tokenOk) {
-      res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ error: 'not found', code: 'NOT_FOUND' }))
-      return true
-    }
-    const ports = []
-    for (const [address, u] of Object.entries(userService.state.swtcUsers || {})) {
-      if (Number.isInteger(u.port) && u.port > 0) {
-        ports.push({ address, port: u.port, status: u.containerStatus || 'unknown' })
-      }
-    }
-    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-    res.end(
-      JSON.stringify({
-        ok: true,
-        ports,
-        // 占用账本（2026-11-14）：发号探针发现的**非本服务**监听占用
-        // （混段部署里"谁占了哪号"直接看这里，不必 ss 全表对）
-        occupied: Object.values(userService.state.externalOccupations || {}),
-        ranges: (() => {
-          const { pub, internal } = userService.tenantPortRanges()
-          return {
-            public: [pub.base, pub.max],
-            internal: internal ? [internal.base, internal.max] : null,
-          }
-        })(),
-        entry: {
-          host: process.env.PUBLIC_HOST || CONFIG.server.publicHost,
-          port: publicEntryPort(),
-          scheme: publicScheme(req),
-        },
-      }),
-    )
-    return true
-  }
-
-  // GET /api/docker/status - 检查 Docker 状态
-  if (path === '/api/docker/status') {
-    // 2026-10 审计：匿名探测 Docker 可用性（基础设施指纹）收紧为管理员专用。
-    // 前端 onMounted 首查在登录前——403 走 catch 显示"不可用"，不影响正确性。
-    if (!requireAdmin(req, res)) return true
-    try {
-      const available = await dockerService.isDockerAvailable()
-      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ available, timestamp: Date.now() }))
-    } catch (err) {
-      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ available: false, error: err.message, timestamp: Date.now() }))
-    }
-    return true
-  }
+  // ★ 已迁入注册表的域（refactor-giant-files §P1）：守卫声明必填、dispatch 统一收敛。
+  // 迁移期间先查注册表再落遗留 if 链（跨域无重叠匹配，顺序无关）。
+  if (await dispatchRoutes(ADMIN_ROUTES, req, res, path, url)) return true
 
   // ---- 孤儿数据卷管理（管理端"清理孤儿卷"） ----
 
