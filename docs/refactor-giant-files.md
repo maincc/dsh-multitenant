@@ -1,6 +1,6 @@
 # 巨型文件拆分方案（技术债清偿）
 
-> 状态：§P1 ✅（2026-11-24 落地，判例 59 入册）｜§P2 未启动｜§P3 未启动（建议等移动 tab 合回，见 §五）
+> 状态：§P1 §P2 ✅（2026-11-24 落地，判例 59/60 入册）｜§P3 未启动（建议等移动 tab 合回，见 §五）
 > 目标文件：`user.service.js`(3281) / `admin.routes.js`(2007) / `UserCenter.vue`(4106) / `AdminPanel.vue`(4084)
 > 上位纪律：五条判权不变量（README）不动；判例 58"半拉子不对称"是本方案要**结构性根除**的对象——
 > 用结构保证代替"修一条先 grep 孪生面"的人肉纪律。
@@ -99,21 +99,21 @@ export function dispatch(routes, req, res, path, url) {
 - 从 `docs/api.md` 端点表提取路径，断言全部已注册（文档即合同，防"建文件不注册"老坑）；
 - 断言不存在返回 `undefined` 的路由 handler 路径（消灭 §2.1 的混风格再犯）。
 
-## 三、P2 user.service.js → 域模块（物理拆分，语义零改动）
+## 三、P2 user.service.js → 域模块（物理拆分，语义零改动）✅ 已完成
 
 ### 3.1 现状与切分线
 
 单 class ~50 方法、一个大 `state`（swtcUsers 端口账本 + usages 限时账 + cleanupPolicy +
 等待队列）。按既有方法聚类，天然切五域（行号为现状锚点）：
 
-| 模块                      | 迁入方法                                                                                                                                                                | 约行数           |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
-| `user/ports.js`           | allocateInternalPort, findFreePublicPort, probeBindable, reclaimDestroyedPorts, hasReclaimablePorts, tenantPortRanges, internalForPublic, recordOccupation, portInRange | ~300             |
-| `user/usage.js`           | usageLimitConfig, settleUsage, getUsedMinutes, ensureUsageAllowed, checkUsageLimitAndStop, todayStr, dayStartMs, usageRecMs                                             | ~200             |
-| `user/queue.js`           | addToWaitQueue, pruneWaitQueue, removeFromWaitQueue, getQueuePosition, processWaitQueue, preflightCheck, preflightMode                                                  | ~250             |
-| `user/resources.js`       | monitorResources, collectDiskUsage, scanVolumeUsage                                                                                                                     | ~250             |
-| `user/queries.js`         | getUserInfo, getAllUsers, _computeAllUsers, invalidateUsersCache, getStats, getTenantDshVersion, resolveTenantCapability                                                | ~400             |
-| （留守）`user.service.js` | ensureContainer, finalizeTenant, restart/reset/stop/destroy 生命周期主干, rollback/heal, syncTenantPatches, workspace 快照, adopt/unpin, _saveState, init/restore       | ~1800 → 后续再拆 |
+| 模块                      | 迁入方法                                                                                                                                                                                                                                                                                                                                    | 约行数       |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| `user/ports.js`           | allocateInternalPort, findFreePublicPort, probeBindable, reclaimDestroyedPorts, hasReclaimablePorts, tenantPortRanges, internalForPublic, recordOccupation, portInRange                                                                                                                                                                     | ~300         |
+| `user/usage.js`           | usageLimitConfig, settleUsage, getUsedMinutes, ensureUsageAllowed, checkUsageLimitAndStop, todayStr, dayStartMs, usageRecMs                                                                                                                                                                                                                 | ~200         |
+| `user/queue.js`           | addToWaitQueue, pruneWaitQueue, removeFromWaitQueue, getQueuePosition, processWaitQueue, preflightCheck, preflightMode                                                                                                                                                                                                                      | ~250         |
+| `user/resources.js`       | monitorResources, collectDiskUsage, scanVolumeUsage                                                                                                                                                                                                                                                                                         | ~250         |
+| `user/queries.js`         | getUserInfo, getAllUsers, _computeAllUsers, invalidateUsersCache, getStats, getTenantDshVersion, resolveTenantCapability                                                                                                                                                                                                                    | ~400         |
+| （留守）`user.service.js` | ensureContainer, finalizeTenant, restart/reset/stop/destroy 生命周期主干, rollback/heal, syncTenantPatches, workspace 快照, adopt/unpin, _saveState, init/restore；**实施时钉正**：resolveTenantCapability/getTenantDshVersion 亦留守（网关热路径探针，非用户查询）；todayStr/dayStartMs/usageRecMs 入 usage.js（调用点 grep 证明域内独占） | 2423（实测） |
 
 ### 3.2 拆法：mixin 组装，不碰 this 语义
 
