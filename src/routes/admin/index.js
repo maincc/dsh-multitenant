@@ -13,10 +13,14 @@ import { SESSION_ROUTES } from './session.routes.js'
 import { GATEWAY_ROUTES } from './gateway.routes.js'
 import { USERS_ROUTES } from './users.routes.js'
 import { VOLUMES_ROUTES } from './volumes.routes.js'
+import { CREDENTIAL_ROUTES } from './credential.routes.js'
+import { ENV_ROUTES } from './env.routes.js'
 
 export const ADMIN_ROUTES = validateRoutes([
   ...SESSION_ROUTES,
   ...GATEWAY_ROUTES,
   ...USERS_ROUTES,
   ...VOLUMES_ROUTES,
+  ...CREDENTIAL_ROUTES,
+  ...ENV_ROUTES,
 ])

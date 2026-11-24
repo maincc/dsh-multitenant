@@ -236,6 +236,20 @@ describe('B. ADMIN_ROUTES 真实注册面（首批：session+gateway）', () => 
     'POST /api/admin/cleanup-orphan-volumes',
     'POST /api/admin/delete-volume/',
     'POST /api/admin/disk-scan',
+    'GET /api/admin/credentials',
+    'GET /api/admin/cwt-applications',
+    'POST /^\\/api\\/admin\\/cwt-applications\\/[^/]+\\/approve$/',
+    'POST /^\\/api\\/admin\\/cwt-applications\\/[^/]+\\/reject$/',
+    'POST /api/admin/env-commit',
+    'GET /api/admin/environments',
+    'GET /api/admin/environments/',
+    'POST /api/admin/env-publish',
+    'POST /api/admin/env-revoke',
+    'POST /api/admin/env-apply',
+    'POST /api/admin/env-inventory',
+    'POST /api/admin/env-browse',
+    'POST /api/admin/env-scan',
+    'POST /api/admin/env-reject',
   ]
   const keyOf = (r) => `${r.method ?? '*'} ${r.path ?? r.prefix ?? String(r.pattern)}`
 
@@ -248,7 +262,23 @@ describe('B. ADMIN_ROUTES 真实注册面（首批：session+gateway）', () => 
       ADMIN_ROUTES.filter((r) => r.signOp)
         .map((r) => r.signOp)
         .sort(),
-    ).toEqual(['cleanup-orphan-volumes', 'delete-volume', 'demote', 'force-stop', 'promote'].sort())
+    ).toEqual(
+      [
+        'cleanup-orphan-volumes',
+        'cwt/approve',
+        'cwt/reject',
+        'delete-volume',
+        'demote',
+        'env-apply',
+        'env-commit',
+        'env-publish',
+        'env-reject',
+        'env-revoke',
+        'env-scan',
+        'force-stop',
+        'promote',
+      ].sort(),
+    )
   })
 
   it('每条都显式声明了 guard（免鉴权也必须写明 public）', () => {
