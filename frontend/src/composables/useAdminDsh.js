@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue'
 import axios from 'axios'
+import { adminDshApi } from '../api/adminDsh.js'
 import i18n from '../i18n'
 import { toast, askConfirm } from './useDialog'
 
@@ -251,9 +252,9 @@ const startDshPolling = () => {
     pollTicks += 1
     try {
       if (dshBuild.value.running) {
-        const res = await axios.get('/api/admin/dsh/image')
-        dshBuild.value = res.data
-        if (!res.data.running) {
+        const d = await adminDshApi.imageStatus()
+        dshBuild.value = d
+        if (!d.running) {
           // 构建结束：刷新镜像状态（新版本要显示出来）。
           // 版本清单也要重拉：新构建的 "✓ 本地" 标记来自 /versions 的现算结果，
           // 不刷的话刚建好的版本要等用户手动点"更新"才亮勾（与清理面板同源同步）。
@@ -266,12 +267,12 @@ const startDshPolling = () => {
         }
       }
       if (dshApply.value.running) {
-        const res = await axios.get('/api/admin/dsh/apply')
-        dshApply.value = res.data
-        if (res.data.running) sawApplyRunning = true
-        if (!res.data.running && sawApplyRunning) {
+        const d = await adminDshApi.applyStatus()
+        dshApply.value = d
+        if (d.running) sawApplyRunning = true
+        if (!d.running && sawApplyRunning) {
           // 批量结束：把逐租户结果落到明细列表（含失败原因）
-          dshApplyResults.value = res.data.results || []
+          dshApplyResults.value = d.results || []
           // 全部待选目标作废：批量已把陈旧租户刷到最新，下拉框回到实际钉像
           dshTargetImage.value = {}
           await loadDshStatus()
@@ -310,8 +311,8 @@ const pruneImages = async () => {
   dshPrune.value = { running: true, message: '' }
   try {
     const headers = await host.sign('dsh/prune-images', { ids })
-    const res = await axios.post('/api/admin/dsh/images/prune', { ids }, { headers })
-    const { removed = [], skipped = [], freedBytes = 0 } = res.data || {}
+    const d = await adminDshApi.pruneImages(ids, headers)
+    const { removed = [], skipped = [], freedBytes = 0 } = d || {}
     // ⚠️ script setup 里没有 $t（那是模板专属）：必须用 useI18n() 的 t——
     // 此处曾写错，镜像删成功后组装回执时 ReferenceError，用户误以为没删掉
     const parts = [t('admin.dshPruned', { n: removed.length, size: formatBytes(freedBytes) })]
@@ -383,8 +384,8 @@ const applyOne = async (address) => {
   dshUpdate.value = { kind: 'single', address, phase: target }
   try {
     const headers = await host.sign('dsh/apply', { address, image })
-    const res = await axios.post('/api/admin/dsh/apply', { address, image }, { headers })
-    dshApplyResults.value = res.data.results || []
+    const d = await adminDshApi.applyOne(address, image, headers)
+    dshApplyResults.value = d.results || []
     // 应用成功 → 撤销本地待选目标：下拉框回到"实际钉住的镜像"（loadDshStatus
     // 刷新出的 pinnedImage）。留着陈旧 key 会在别处换钉后仍显示旧目标（2026-10 审计）
     const rest = { ...dshTargetImage.value }
@@ -407,10 +408,10 @@ const applyAllStale = async () => {
       dshApplyResults.value = []
       try {
         const headers = await host.sign('dsh/apply', { all: true })
-        const res = await axios.post('/api/admin/dsh/apply', { all: true }, { headers })
+        const d = await adminDshApi.applyAll(headers)
         dshApply.value = {
           running: true,
-          total: res.data.total || 0,
+          total: d.total || 0,
           completed: 0,
           results: [],
           finishedAt: null,
@@ -433,12 +434,8 @@ const previewApplyOne = async (address) => {
     // SIGNATURE_REQUIRED —— 这正是"预览按钮点了没反应"的原因。
     const image = targetImageFor(address)
     const headers = await host.sign('dsh/apply', { address, image })
-    const res = await axios.post(
-      '/api/admin/dsh/apply',
-      { address, image, dryRun: true },
-      { headers },
-    )
-    dshApplyResults.value = res.data.results || []
+    const d = await adminDshApi.applyPreview(address, image, headers)
+    dshApplyResults.value = d.results || []
   } catch (err) {
     dshApplyResults.value = [{ address, ok: false, error: friendlyPluginError(err) }]
   }
@@ -448,8 +445,8 @@ const previewApplyAll = async () => {
   dshApplyResults.value = []
   try {
     const headers = await host.sign('dsh/apply', { all: true })
-    const res = await axios.post('/api/admin/dsh/apply', { all: true, dryRun: true }, { headers })
-    dshApplyResults.value = res.data.results || []
+    const d = await adminDshApi.applyAllDryRun(headers)
+    dshApplyResults.value = d.results || []
   } catch (err) {
     toast(t('admin.applyFail', { err: friendlyPluginError(err) }))
   }
@@ -467,7 +464,7 @@ const startImageUpgrade = async () => {
     return
   try {
     const headers = await host.sign('dsh/build-image', { version })
-    await axios.post('/api/admin/dsh/image', { version }, { headers })
+    await adminDshApi.buildImage(version, headers)
     dshBuild.value = {
       running: true,
       version: dshSelectedVersion.value,

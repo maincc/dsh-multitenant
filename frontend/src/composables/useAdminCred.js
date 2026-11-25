@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import axios from 'axios'
+import { adminStatusApi } from '../api/adminStatus.js'
 import i18n from '../i18n'
 import { toast, askConfirm } from './useDialog'
 import { syncCredCount, refreshCred } from './useAdminBadges'
@@ -46,11 +47,13 @@ const rosterBusy = ref('')
 const loadCwtApps = async () => {
   cwtLoading.value = true
   try {
-    const res = await axios.get('/api/admin/cwt-applications', {
-      params: { status: cwtStatusFilter.value, limit: 10, offset: cwtOffset.value },
+    const d = await adminStatusApi.cwtApplications({
+      status: cwtStatusFilter.value,
+      limit: 10,
+      offset: cwtOffset.value,
     })
-    cwtApps.value = res.data.applications || []
-    cwtTotal.value = res.data.total || 0
+    cwtApps.value = d.applications || []
+    cwtTotal.value = d.total || 0
     // 红点实时化（用户裁定）：审批动作后本函数必被重拉——pending 视图直接搭车，
     // 切了别的过滤则轻取一次 total，判数始终来自写后重读的库账
     if (cwtStatusFilter.value === 'pending') syncCredCount(cwtTotal.value)

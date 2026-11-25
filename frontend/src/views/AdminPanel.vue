@@ -170,6 +170,7 @@ import { useAdminBadges, startAdminBadges, stopAdminBadges } from '../composable
 // 红点判数入口（模板侧 badgeFor 引用此解构——只 import 不解构=运行时 TypeError，上一版踩中自修）
 const { badgeFor, syncCredCount, refreshCred } = useAdminBadges()
 import axios from 'axios'
+import { adminStatusApi } from '../api/adminStatus.js'
 import { useI18n } from 'vue-i18n'
 import { buildAdminTabs } from '../admin-tabs'
 import AdminTabHead from '../components/admin/AdminTabHead.vue'
@@ -324,8 +325,7 @@ const handleAccountsChanged = async (accounts, source = 'unknown') => {
     // 先确认新地址在不在管理员名单里，避免对普通地址也弹签名窗
     let isAdminUser = false
     try {
-      const checkRes = await axios.get('/api/admin/check', { params: { address: newAddress } })
-      isAdminUser = checkRes.data.isAdmin
+      isAdminUser = (await adminStatusApi.check(newAddress)).isAdmin
     } catch {
       /* 预检失败走签名兜底 */
     }
@@ -394,8 +394,7 @@ const checkDockerStatus = async () => {
 
 const checkAdmin = async () => {
   try {
-    const res = await axios.get('/api/admin/check')
-    isAdmin.value = res.data.isAdmin
+    isAdmin.value = (await adminStatusApi.check()).isAdmin
   } catch (err) {
     isAdmin.value = false
   }
@@ -619,10 +618,8 @@ onMounted(async () => {
     // 检查当前地址是否是管理员
     if (currentAddress.value) {
       try {
-        const res = await axios.get('/api/admin/check', {
-          params: { address: currentAddress.value },
-        })
-        if (res.data.isAdmin) {
+        const ck = await adminStatusApi.check(currentAddress.value)
+        if (ck.isAdmin) {
           // 当前地址是管理员，检查 cookie session
           await checkAdmin()
           if (isAdmin.value) {

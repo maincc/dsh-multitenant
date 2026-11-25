@@ -1,5 +1,5 @@
 import { ref, computed } from 'vue'
-import axios from 'axios'
+import { userConfigApi } from '../api/userConfig.js'
 import i18n from '../i18n'
 import { toast, askConfirm } from './useDialog'
 import { friendlyPluginError } from '../api/wallet.js'
@@ -51,9 +51,9 @@ const fetchConfigStatus = async () => {
   if (!address) return
   configLoading.value = true
   try {
-    const res = await axios.get(`/api/user/tenant-config?address=${encodeURIComponent(address)}`)
+    const d = await userConfigApi.getConfig(address)
     // 官方 item：不再编辑 baseURL/models；检测旧覆盖残留（保存时自动清除）
-    const officialOverride = !!(res.data.baseURL || (res.data.models && res.data.models.length > 0))
+    const officialOverride = !!(d.baseURL || (d.models && d.models.length > 0))
     items.value = [
       {
         kind: 'official',
@@ -62,14 +62,14 @@ const fetchConfigStatus = async () => {
         baseURL: '',
         models: [],
         apiKey: '',
-        keyConfigured: !!res.data.apiKeyConfigured,
+        keyConfigured: !!d.apiKeyConfigured,
         removable: false,
         expanded: true,
         officialOverride,
-        officialBaseURL: res.data.baseURL || '',
+        officialBaseURL: d.baseURL || '',
       },
-      ...(Array.isArray(res.data.providers)
-        ? res.data.providers.map((p) => ({
+      ...(Array.isArray(d.providers)
+        ? d.providers.map((p) => ({
             kind: 'custom',
             route: p.route,
             displayName: p.displayName || '',
@@ -211,7 +211,7 @@ const saveConfig = async () => {
       payload.models = []
     }
 
-    await axios.post('/api/user/tenant-config', payload)
+    await userConfigApi.saveConfig(payload)
     await syncWalletAccount(address)
     toast(t('user.savedOk'))
   } catch (err) {
@@ -242,8 +242,8 @@ const discoverItem = async (idx) => {
     if (item.apiKey && item.apiKey.trim()) payload.apiKey = item.apiKey.trim()
     if (item.route) payload.credentialRef = credentialRefFor(item.route)
 
-    const res = await axios.post('/api/user/tenant-config/discover', payload)
-    const models = Array.isArray(res.data.models) ? res.data.models : []
+    const d = await userConfigApi.discover(payload)
+    const models = Array.isArray(d.models) ? d.models : []
     item.models = models.map((m) => ({
       id: m.id || '',
       name: m.name || '',
@@ -276,8 +276,12 @@ const clearOfficialKey = async () => {
       keySaving.value = true
       try {
         const { address, nonce, signature, publicKey } = await host.signChallenge()
-        await axios.delete('/api/user/tenant-config', {
-          data: { address, nonce, signature, publicKey, scope: 'official-key' },
+        await userConfigApi.deleteConfig({
+          address,
+          nonce,
+          signature,
+          publicKey,
+          scope: 'official-key',
         })
         await syncWalletAccount(address)
         toast(t('user.officialKeyCleared'))
@@ -302,9 +306,7 @@ const resetConfig = async () => {
       keySaving.value = true
       try {
         const { address, nonce, signature, publicKey } = await host.signChallenge()
-        await axios.delete('/api/user/tenant-config', {
-          data: { address, nonce, signature, publicKey },
-        })
+        await userConfigApi.deleteConfig({ address, nonce, signature, publicKey })
         await syncWalletAccount(address)
         toast(t('user.resetOk'))
       } catch (err) {

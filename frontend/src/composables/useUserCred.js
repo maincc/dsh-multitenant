@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue'
 import axios from 'axios'
+import { userConfigApi } from '../api/userConfig.js'
 import i18n from '../i18n'
 import { toast, askConfirm } from './useDialog'
 import { requestAccounts, signFileBytes, getIpfsPublicKey, getPublicKey } from '../api/wallet.js'
@@ -114,10 +115,7 @@ const resignSessionTo = (addr) => {
       const st = await host.loginOnly(addr)
       if (st !== 'ok') return null
       try {
-        const r = await axios.get('/api/user/credential-status', {
-          params: { address: addr, canonical: host.pluginCaseAddr.value || undefined },
-        })
-        const d = r.data || {}
+        const d = (await userConfigApi.credentialStatus(addr, host.pluginCaseAddr.value)) || {}
         return String(d.address || '').toLowerCase() === String(addr).toLowerCase() ? d : null
       } catch {
         return null
@@ -139,12 +137,8 @@ const loadCredentialStatus = async (address) => {
   // 异常只留 console 痕，绝不动 credInfo/credErr。
   let data
   try {
-    const res = await axios.get('/api/user/credential-status', {
-      // canonical=钱包原始大小写：给服务端"档案优先发现"当拼法线索（台账丢行也能
-      // 直达档案真卡）；服务端验归一同址才采信，缺省不影响既有链路
-      params: { address, canonical: host.pluginCaseAddr.value || undefined },
-    })
-    data = res.data || {}
+    // canonical=钱包原始大小写拼法线索（端点口径见 api/userConfig.js）
+    data = (await userConfigApi.credentialStatus(address, host.pluginCaseAddr.value)) || {}
   } catch (err) {
     credInfo.value = null
     credErr.value = {

@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import axios from 'axios'
+import { adminStatusApi } from '../api/adminStatus.js'
 
 /**
  * 管理页签待审红点（单例共享：AdminPanel 独立侧栏与 UserCenter 并入侧栏两处消费）。
@@ -34,10 +35,8 @@ async function refresh() {
     /* 查不了不夺上一读数 */
   }
   try {
-    const res = await axios.get('/api/admin/cwt-applications', {
-      params: { status: 'pending', limit: 1 },
-    })
-    syncCredCount(res.data.total)
+    const d = await adminStatusApi.cwtApplications({ status: 'pending', limit: 1 })
+    syncCredCount(d.total)
   } catch {
     /* 同上 */
   }
@@ -95,10 +94,8 @@ export function syncCredCount(n) {
 /** 非 pending 视图时的轻取：limit=1 只为拿 total */
 export async function refreshCred() {
   try {
-    const res = await axios.get('/api/admin/cwt-applications', {
-      params: { status: 'pending', limit: 1 },
-    })
-    syncCredCount(res.data.total)
+    const d = await adminStatusApi.cwtApplications({ status: 'pending', limit: 1 })
+    syncCredCount(d.total)
   } catch {
     /* fail-open：查不了保留上一读数 */
   }
