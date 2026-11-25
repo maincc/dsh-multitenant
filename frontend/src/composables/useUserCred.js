@@ -22,6 +22,7 @@ const t = (key, params) => i18n.global.t(key, params)
 
 // 深链/角色定盘三裸态：正身随域入本模块（壳 watch 经导出 getter/setter 同账消费——
 // 切刀曾把状态双表：壳留一份、composable 悬空引用，真机 ReferenceError）
+let badgesStarted = false
 let roleSettled = false
 let mobileDeepLinkPending = null
 let initialTabApplied = false

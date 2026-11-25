@@ -281,7 +281,6 @@ import { ref, onMounted, onUnmounted, computed, watch, defineAsyncComponent } fr
 import { useAdminBadges, startAdminBadges, stopAdminBadges } from '../composables/useAdminBadges'
 const { badgeFor } = useAdminBadges()
 // 红点节拍起停的组件侧凭证：防角色状态反复刷新叠加引用计数（起一次=守一次）
-let badgesStarted = false
 import axios from 'axios'
 import { userSessionApi } from '../api/userSession.js'
 import { useI18n } from 'vue-i18n'
