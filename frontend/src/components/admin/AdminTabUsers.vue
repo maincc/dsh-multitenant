@@ -10,6 +10,7 @@ import { toast, askConfirm } from '../../composables/useDialog'
 import { shortAddress } from '../../utils/format.js'
 import { tierBadge, statusBadge, makeStatusText } from './shared.js'
 import AdminTabHead from './AdminTabHead.vue'
+import { useAdminCred } from '../../composables/useAdminCred.js'
 
 const props = defineProps({
   users: { type: Array, default: () => [] },
@@ -23,7 +24,7 @@ defineEmits(['refresh'])
 const { t } = useI18n()
 const signAdminOperation = inject('adminSign')
 const fetchData = inject('adminRefresh')
-const demoteAdmin = inject('adminDemote')
+const { demoteAdmin } = useAdminCred()
 
 const statusText = makeStatusText(t)
 
@@ -314,22 +315,4 @@ const promoteUser = async (address) => {
   </div>
 </template>
 
-<style scoped>
-.ops-cell {
-  display: flex;
-  gap: 0.375rem;
-  flex-wrap: wrap;
-  align-items: center;
-}
-
-.ops-cell .btn {
-  margin-right: 0;
-  padding: 0.25rem 0.625rem;
-  font-size: 0.8rem;
-}
-
-.dsh-ver-unknown {
-  font-size: 0.78rem;
-  color: var(--text-faint);
-}
-</style>
+<style scoped></style>

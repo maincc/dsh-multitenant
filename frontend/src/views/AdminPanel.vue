@@ -637,247 +637,7 @@
 
         <!-- ════ v1.4 CWT 解除限制申请审批 ════ -->
         <div v-else-if="activeTab === 'cred'" class="tab-content">
-          <div class="tab-head">
-            <div class="tab-head-text">
-              <h4>{{ $t('admin.credTabTitle') }}</h4>
-              <p class="tab-hint">{{ $t('admin.credTabHint') }}</p>
-            </div>
-          </div>
-          <div class="filter-row">
-            <button
-              v-for="s in ['pending', 'approved', 'rejected']"
-              :key="s"
-              class="btn btn-small"
-              :class="cwtStatusFilter === s ? 'btn-primary' : 'btn-secondary'"
-              @click="setCwtStatus(s)"
-            >
-              {{ $t('admin.credStatus_' + s) }}
-            </button>
-            <span class="badge badge-info">{{ $t('admin.credTotal', { n: cwtTotal }) }}</span>
-            <button class="btn btn-small" :disabled="cwtLoading" @click="loadCwtApps">
-              {{ $t('admin.refresh') }}
-            </button>
-          </div>
-          <div v-if="cwtLoading" class="loading">{{ $t('admin.loading') }}</div>
-          <div v-else class="table-scroll">
-            <table class="cred-table">
-              <thead>
-                <tr>
-                  <th>{{ $t('admin.colAddress') }}</th>
-                  <th>{{ $t('admin.credColSubmitted') }}</th>
-                  <th>{{ $t('admin.credColStatus') }}</th>
-                  <th>{{ $t('admin.colOps') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-if="!cwtApps.length">
-                  <td colspan="4">{{ $t('admin.credEmpty') }}</td>
-                </tr>
-                <tr v-for="app in cwtApps" :key="app._id">
-                  <td>
-                    <span class="address addr-tip" :data-full="app.addressDisplay || app.address"
-                      >{{ (app.addressDisplay || app.address).slice(0, 10) }}...</span
-                    >
-                  </td>
-                  <td>{{ fmtTime(app.submittedAt) }}</td>
-                  <td>
-                    <span
-                      class="badge"
-                      :class="
-                        app.status === 'pending'
-                          ? 'badge-warning'
-                          : app.status === 'approved'
-                            ? 'badge-success'
-                            : 'badge-info'
-                      "
-                      >{{ $t('admin.credStatus_' + app.status) }}</span
-                    >
-                    <span v-if="app.decidedAt" class="dsh-ver-unknown">{{
-                      fmtTime(app.decidedAt)
-                    }}</span>
-                  </td>
-                  <td>
-                    <div v-if="app.status === 'pending'" class="ops-cell">
-                      <button
-                        class="btn btn-success"
-                        :disabled="!!cwtBusy"
-                        @click="approveCwt(app)"
-                      >
-                        {{ $t('admin.credApprove') }}
-                      </button>
-                      <button class="btn" :disabled="!!cwtBusy" @click="rejectCwt(app)">
-                        {{ $t('admin.credReject') }}
-                      </button>
-                    </div>
-                    <span v-else>-</span>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="ops-cell" style="margin-top: 0.75rem">
-            <button class="btn btn-small" :disabled="cwtOffset === 0" @click="cwtPage(-1)">
-              {{ $t('admin.credPrev') }}
-            </button>
-            <button
-              class="btn btn-small"
-              :disabled="cwtOffset + 10 >= cwtTotal"
-              @click="cwtPage(1)"
-            >
-              {{ $t('admin.credNext') }}
-            </button>
-          </div>
-
-          <div class="tab-head" style="margin-top: 1.75rem">
-            <div class="tab-head-text">
-              <h4>{{ $t('admin.ledgerTitle') }}</h4>
-              <p class="tab-hint">{{ $t('admin.ledgerHint') }}</p>
-            </div>
-          </div>
-          <div class="filter-row">
-            <button
-              v-for="k in ['all', 'did', 'cwt', 'admin']"
-              :key="k"
-              class="btn btn-small"
-              :class="credKind === k ? 'btn-primary' : 'btn-secondary'"
-              @click="setCredKind(k)"
-            >
-              {{ $t('admin.ledgerKind_' + k) }}
-            </button>
-            <input
-              v-model="credQ"
-              class="search-input"
-              :placeholder="$t('admin.ledgerSearchPh')"
-              @keyup.enter="setCredKind(credKind)"
-            />
-            <span class="badge badge-info">{{ $t('admin.credTotal', { n: credTotal }) }}</span>
-            <button class="btn btn-small" :disabled="credLoading" @click="loadCredRows">
-              {{ $t('admin.refresh') }}
-            </button>
-          </div>
-          <div v-if="credLoading" class="loading">{{ $t('admin.loading') }}</div>
-          <div v-else class="table-scroll">
-            <table class="cred-table">
-              <thead>
-                <tr>
-                  <th>{{ $t('admin.colAddress') }}</th>
-                  <th>{{ $t('admin.ledgerColKind') }}</th>
-                  <th>{{ $t('admin.ledgerColState') }}</th>
-                  <th>{{ $t('admin.ledgerColSource') }}</th>
-                  <th>{{ $t('admin.ledgerColIssued') }}</th>
-                  <th>{{ $t('admin.ledgerColVc') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-if="!credRows.length">
-                  <td colspan="6">{{ $t('admin.ledgerEmpty') }}</td>
-                </tr>
-                <tr v-for="c in credRows" :key="c.address">
-                  <td>
-                    <span class="address addr-tip" :data-full="c.addressDisplay || c.address"
-                      >{{ (c.addressDisplay || c.address).slice(0, 10) }}...</span
-                    >
-                  </td>
-                  <td>
-                    <!-- 三类卡制式：管理凭证是独立第三类（isAdmin=台账 roles 事实），
-                         不并入解限 CWT——两者权限语义完全不同 -->
-                    <span
-                      class="badge"
-                      :class="
-                        c.isAdmin
-                          ? 'badge-danger'
-                          : c.kind === 'cwt'
-                            ? 'badge-success'
-                            : 'badge-info'
-                      "
-                      >{{ $t('admin.ledgerCard_' + (c.isAdmin ? 'admin' : c.kind)) }}</span
-                    >
-                  </td>
-                  <td>
-                    <span
-                      class="badge"
-                      :class="c.state === 'claimed' ? 'badge-success' : 'badge-warning'"
-                      >{{ $t('admin.ledgerState_' + c.state) }}</span
-                    >
-                  </td>
-                  <td>{{ $t('admin.ledgerSrc_' + c.source) }}</td>
-                  <td>
-                    {{ fmtTime(c.issuedAt) }}
-                    <span v-if="c.claimedAt" class="dsh-ver-unknown"
-                      >{{ $t('admin.ledgerClaimedAt') }} {{ fmtTime(c.claimedAt) }}</span
-                    >
-                    <span v-if="c.expiresAt" class="dsh-ver-unknown"
-                      >{{ $t('admin.ledgerExpiresAt') }} {{ fmtTime(c.expiresAt) }}</span
-                    >
-                  </td>
-                  <td>
-                    <span v-if="c.vcId" class="addr-tip" :data-full="c.vcId">{{
-                      '#' + (c.vcId.split('#')[1] || c.vcId)
-                    }}</span>
-                    <span v-else>-</span>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="ops-cell" style="margin-top: 0.75rem">
-            <button class="btn btn-small" :disabled="credOffset === 0" @click="credPage(-1)">
-              {{ $t('admin.credPrev') }}
-            </button>
-            <button
-              class="btn btn-small"
-              :disabled="credOffset + 10 >= credTotal"
-              @click="credPage(1)"
-            >
-              {{ $t('admin.credNext') }}
-            </button>
-          </div>
-
-          <div class="tab-head" style="margin-top: 1.75rem">
-            <div class="tab-head-text">
-              <h4>{{ $t('admin.rosterTitle') }}</h4>
-              <p class="tab-hint">{{ $t('admin.rosterHint') }}</p>
-            </div>
-          </div>
-          <div class="filter-row">
-            <!-- 任命/撤销操作已统一收敛到「用户管理」行内按钮（2026-10-23 用户拍板
-                 去双入口）；本块转为现任名册只读审计视图 -->
-            <button class="btn btn-small" :disabled="rosterLoading" @click="loadRoster">
-              {{ $t('admin.refresh') }}
-            </button>
-          </div>
-          <div v-if="rosterLoading" class="loading">{{ $t('admin.loading') }}</div>
-          <div v-else class="table-scroll">
-            <table class="cred-table">
-              <thead>
-                <tr>
-                  <th>{{ $t('admin.colAddress') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-if="!rosterAddrs.length">
-                  <td>{{ $t('admin.rosterEmpty') }}</td>
-                </tr>
-                <tr v-for="a in rosterAddrs" :key="a">
-                  <td>
-                    <span class="address addr-tip" :data-full="a"
-                      >{{ a.slice(0, 12) }}…{{ a.slice(-4) }}</span
-                    >
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <div v-if="rosterHistory.length" style="margin-top: 0.75rem">
-            <p class="hint">{{ $t('admin.rosterHistoryTitle') }}</p>
-            <div v-for="(h, i) in rosterHistory.slice(0, 8)" :key="i" class="hint">
-              {{ fmtTime(h.timestamp) }} · {{ $t('admin.rosterAct_' + h.action) }}
-              <span v-if="h.address" class="addr-tip" :data-full="h.address"
-                >{{ h.address.slice(0, 12) }}…</span
-              >
-              <span v-if="h.operator">（by {{ h.operator.slice(0, 10) }}…）</span>
-            </div>
-          </div>
+          <AdminTabCred />
         </div>
       </section>
     </div>
@@ -924,9 +684,11 @@ import { useI18n } from 'vue-i18n'
 import { buildAdminTabs } from '../admin-tabs'
 import AdminTabHead from '../components/admin/AdminTabHead.vue'
 import AdminTabQuota from '../components/admin/AdminTabQuota.vue'
+import { bindAdminCredHost } from '../composables/useAdminCred.js'
 import AdminTabUsers from '../components/admin/AdminTabUsers.vue'
 import AdminTabMonitor from '../components/admin/AdminTabMonitor.vue'
 import AdminTabOverview from '../components/admin/AdminTabOverview.vue'
+import AdminTabCred from '../components/admin/AdminTabCred.vue'
 import {
   tierBadge as sharedTierBadge,
   statusBadge,
@@ -1399,192 +1161,12 @@ const signAdminOperation = async (operation, payload) => {
 }
 
 // ---- v1.4 CWT 解除限制申请审批 ----
-const cwtApps = ref([])
-const cwtTotal = ref(0)
-const cwtOffset = ref(0)
-const cwtStatusFilter = ref('pending')
-const cwtLoading = ref(false)
-const cwtBusy = ref('')
-
-const loadCwtApps = async () => {
-  cwtLoading.value = true
-  try {
-    const res = await axios.get('/api/admin/cwt-applications', {
-      params: { status: cwtStatusFilter.value, limit: 10, offset: cwtOffset.value },
-    })
-    cwtApps.value = res.data.applications || []
-    cwtTotal.value = res.data.total || 0
-    // 红点实时化（用户裁定）：审批动作后本函数必被重拉——pending 视图直接搭车，
-    // 切了别的过滤则轻取一次 total，判数始终来自写后重读的库账
-    if (cwtStatusFilter.value === 'pending') syncCredCount(cwtTotal.value)
-    else refreshCred()
-  } catch (err) {
-    toast(t('admin.credOpFail', { err: err?.response?.data?.error || err.message }))
-  } finally {
-    cwtLoading.value = false
-  }
-}
-
-const setCwtStatus = (s) => {
-  cwtStatusFilter.value = s
-  cwtOffset.value = 0
-  loadCwtApps()
-}
-
-const cwtPage = (delta) => {
-  cwtOffset.value = Math.max(0, cwtOffset.value + delta * 10)
-  loadCwtApps()
-}
-
-/* ── 凭证台账：谁持有什么卡（浏览，只读） ── */
-const credRows = ref([])
-const credTotal = ref(0)
-const credOffset = ref(0)
-const credKind = ref('all')
-const credQ = ref('')
-const credLoading = ref(false)
-
-const loadCredRows = async () => {
-  credLoading.value = true
-  try {
-    const res = await axios.get('/api/admin/credentials', {
-      params: {
-        kind: credKind.value,
-        // 台账主键/档案 DID 一律小写形态存储：把用户粘贴的规范大小写地址
-        // 原样传 q 会精确匹配空手而归（2026-10 审计）。查询前先归一。
-        q: credQ.value.trim().toLowerCase(),
-        limit: 10,
-        offset: credOffset.value,
-      },
-    })
-    credRows.value = res.data.credentials || []
-    credTotal.value = res.data.total || 0
-  } catch (err) {
-    toast(t('admin.credOpFail', { err: err?.response?.data?.error || err.message }))
-  } finally {
-    credLoading.value = false
-  }
-}
-
-const setCredKind = (k) => {
-  credKind.value = k
-  credOffset.value = 0
-  loadCredRows()
-}
-
-const credPage = (delta) => {
-  credOffset.value = Math.max(0, credOffset.value + delta * 10)
-  loadCredRows()
-}
 
 /* ── v1.5 管理员任免（名册=配发政策面；判权骑 admin 凭证，5A 后端编排） ── */
-const rosterAddrs = ref([])
-const rosterHistory = ref([])
-const rosterLoading = ref(false)
-const rosterBusy = ref('')
-
-const loadRoster = async () => {
-  rosterLoading.value = true
-  try {
-    const res = await axios.get('/api/admin/admins')
-    rosterAddrs.value = res.data.addresses || []
-    rosterHistory.value = res.data.history || []
-  } catch (err) {
-    toast(t('admin.credOpFail', { err: err?.response?.data?.error || err.message }))
-  } finally {
-    rosterLoading.value = false
-  }
-}
 
 // promoteAdmin（任免名册的任命输入口）已退役（2026-10-23 用户拍板去双入口）：
 // 任命=「用户管理」行内 promoteUser；名册块转只读审计视图。
 // 从未开过容器的地址不在用户列表=系统里尚不存在该用户，本就不该提前任命。
-
-const demoteAdmin = async (addr) => {
-  if (rosterBusy.value) return
-  if (
-    !(await askConfirm({
-      message: t('admin.rosterDemoteConfirm', { addr: addr.slice(0, 10) + '…' }),
-      danger: true,
-    }))
-  )
-    return
-  try {
-    rosterBusy.value = 'demote'
-    const headers = await signAdminOperation('demote', { address: addr })
-    const res = await axios.post(`/api/admin/demote/${addr}`, {}, { headers })
-    toast(
-      t('admin.rosterDemoted', { addr: addr.slice(0, 10) + '…', to: res.data.demotedTo || '?' }),
-    )
-    await loadRoster()
-    // 从用户管理撤销时：行徽章与提权/撤销按钮态必须即时翻转（force 绕 3s 缓存）
-    fetchData(true)
-  } catch (err) {
-    // LAST_ADMIN 等人话错误直出（后端已把防锁死语义写在 error 里）
-    toast(t('admin.credOpFail', { err: err?.response?.data?.error || err.message }))
-  } finally {
-    rosterBusy.value = ''
-  }
-}
-
-const approveCwt = async (app) => {
-  await askConfirm({
-    message: t('admin.credConfirmApprove', { addr: app.addressDisplay || app.address }),
-    confirmLabel: t('admin.credApprove'),
-    run: async () => {
-      cwtBusy.value = app._id
-      try {
-        const headers = await signAdminOperation('cwt/approve', {
-          id: app._id,
-          address: app.address,
-        })
-        await axios.post(
-          `/api/admin/cwt-applications/${encodeURIComponent(app._id)}/approve`,
-          {},
-          { headers },
-        )
-        toast(t('admin.credApproved'))
-        await loadCwtApps()
-        loadCredRows().catch(() => {})
-      } catch (err) {
-        toast(t('admin.credOpFail', { err: err?.response?.data?.error || err.message }))
-        throw err
-      } finally {
-        cwtBusy.value = ''
-      }
-    },
-  })
-}
-
-const rejectCwt = async (app) => {
-  await askConfirm({
-    message: t('admin.credConfirmReject', { addr: app.addressDisplay || app.address }),
-    confirmLabel: t('admin.credReject'),
-    danger: true,
-    run: async () => {
-      cwtBusy.value = app._id
-      try {
-        const headers = await signAdminOperation('cwt/reject', {
-          id: app._id,
-          address: app.address,
-        })
-        await axios.post(
-          `/api/admin/cwt-applications/${encodeURIComponent(app._id)}/reject`,
-          {},
-          { headers },
-        )
-        toast(t('admin.credRejected'))
-        await loadCwtApps()
-        loadCredRows().catch(() => {})
-      } catch (err) {
-        toast(t('admin.credOpFail', { err: err?.response?.data?.error || err.message }))
-        throw err
-      } finally {
-        cwtBusy.value = ''
-      }
-    },
-  })
-}
 
 const adminLogin = async () => {
   if (!hasCCDAO.value) return
@@ -2032,6 +1614,11 @@ const applyAllStale = async () => {
 }
 
 /** 精确扫描结果回壳合并（AdminTabMonitor 的 disk-scan 事件） */
+bindAdminCredHost({
+  sign: (op, payload) => signAdminOperation(op, payload),
+  refresh: (force) => fetchData(force),
+})
+
 const mergeDiskScan = ({ scanned, volumes, preciseScannedAt }) => {
   if (scanned && stats.value.resource?.disk) {
     stats.value.resource.disk.volumes = volumes
@@ -2042,7 +1629,6 @@ const mergeDiskScan = ({ scanned, volumes, preciseScannedAt }) => {
 // 子 tab 组件的壳层单例注入口（签名包装/数据刷新/撤销管理员——判例 58：全域唯此一支）
 provide('adminSign', signAdminOperation)
 provide('adminRefresh', (force) => fetchData(force))
-provide('adminDemote', demoteAdmin)
 provide('adminLogout', logout)
 onMounted(async () => {
   checkCCDAO()
@@ -2099,11 +1685,6 @@ watch(activeTab, () => {
   if (activeTab.value === 'dsh') {
     loadDshStatus().catch(() => {})
     loadDshImages().catch(() => {})
-  }
-  if (activeTab.value === 'cred') {
-    loadCwtApps().catch(() => {})
-    loadCredRows().catch(() => {})
-    loadRoster().catch(() => {})
   }
 })
 
@@ -2253,91 +1834,8 @@ table {
 }
 
 /* ─── CWT 授权管理 ─── */
-.cwt-mono {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
-  font-size: 0.82rem;
-}
-
-.cwt-empty {
-  color: var(--text-faint);
-  padding: 0.6rem 0;
-  font-size: 0.875rem;
-}
 
 /* ─── CWT 申请列表：筛选头 + 分页 ─── */
-.cwt-list-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-}
-
-.cwt-list-head h4 {
-  margin: 0;
-}
-
-.cwt-filter {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.82rem;
-  color: var(--text-muted);
-}
-
-.cwt-filter select {
-  -webkit-appearance: none;
-  appearance: none;
-  padding: 0.25rem 1.5rem 0.25rem 0.45rem; /* 文字左右等距：左侧=0.45rem，右侧=箭头让位后的0.45rem */
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
-  background: var(--surface-white)
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='7' viewBox='0 0 10 7'><path d='M1 1l4 4 4-4' fill='none' stroke='%2364748b' stroke-width='1.6' stroke-linecap='round'/></svg>")
-    no-repeat right 0.5rem center;
-  font-size: 0.82rem;
-  color: var(--text-body);
-}
-
-.cwt-filter select:focus {
-  outline: none;
-  border-color: var(--brand);
-  box-shadow: 0 0 0 2px rgba(64, 126, 255, 0.15);
-}
-
-.cwt-pager {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  margin-top: 0.6rem;
-  flex-wrap: wrap;
-}
-
-.cwt-page-info {
-  font-size: 0.82rem;
-  color: var(--text-muted);
-}
-
-.cwt-more-hint {
-  color: var(--text-faint);
-}
-
-.cwt-page-btns {
-  display: flex;
-  gap: 0.4rem;
-}
-
-.cwt-token-preview {
-  margin-top: 0.4rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.72rem;
-  background: var(--bg-page);
-  border-radius: 8px;
-  padding: 0.4rem;
-  word-break: break-all;
-  max-width: 420px;
-  border: 1px solid var(--surface-soft);
-}
 
 /* ─── 孤儿数据卷 ─── */
 /* ==========================================================================
@@ -2888,25 +2386,10 @@ table {
 /* 提示 ::after 是子节点：任何 overflow:hidden 祖先（含自身省略号）都会裁掉它 */
 
 /* v1.4 CWT 审批 tab */
-.filter-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  margin-bottom: 0.75rem;
-}
 
 /* 凭证审批三表（审批/签发台账/任免名册）数据行恒单行（2026-10-23 用户反馈
    "表格里数据换行"）：列内容不被压缩折行，放不下时容器横向滚动——宽度换给
    内嵌态的窄内容区也不破版 */
-.table-scroll {
-  overflow-x: auto;
-}
-.cred-table th,
-.cred-table td {
-  white-space: nowrap;
-}
-
 /* 台账搜索：大号胶囊 + 放大镜 + 聚焦光晕 */
 /* cred-search/addr-input 制式已废（2026-10-23 三框统一）：台账与名册搜索框
    改用全局 .search-input（参照=技能市场原版），单一来源防漂移 */

@@ -8,15 +8,39 @@
 }
 
 /* monitor/overview 共用的子区块标题（跨 tab 件上收） */
-.sub-section {
+.admin-panel .sub-section {
   margin-top: 1.5rem;
   padding-top: 1.5rem;
   border-top: 1px solid var(--bg-page);
 }
 
-.sub-section h4 {
+.admin-panel .sub-section h4 {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-body);
   margin-bottom: 0.25rem;
+}
+
+/* cred 刀跨 tab 件上收（users/monitor/cred/dsh 区复用） */
+.admin-panel .cwt-mono {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 0.82rem;
+}
+
+.admin-panel .ops-cell {
+  display: flex;
+  gap: 0.375rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.admin-panel .ops-cell .btn {
+  margin-right: 0;
+  padding: 0.25rem 0.625rem;
+  font-size: 0.8rem;
+}
+
+.admin-panel .dsh-ver-unknown {
+  font-size: 0.78rem;
+  color: var(--text-faint);
 }
