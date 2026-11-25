@@ -54,8 +54,8 @@ const formatIdle = (ms) => {
 const openTenant = async (address) => {
   try {
     const res = await adminOpsApi.tenantUrl(address)
-    if (res.url) {
-      window.open(res.url, '_blank', 'noopener')
+    if (res.data.url) {
+      window.open(res.data.url, '_blank', 'noopener')
       return
     }
     toast(t('admin.openFail', { err: res.data.error || res.status }))

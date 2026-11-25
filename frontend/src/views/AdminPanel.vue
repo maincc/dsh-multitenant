@@ -531,14 +531,14 @@ const fetchData = async (force = false) => {
       adminOpsApi.stats(),
     ])
     // 间隔由后端下发：改 config.json 后重启服务即生效，无需重新构建前端
-    const iv = Number(statsRes.data?.uiConfig?.refreshIntervalMs)
+    const iv = Number(statsRes?.uiConfig?.refreshIntervalMs)
     if (Number.isFinite(iv) && iv >= 3000 && iv !== refreshIntervalMs.value) {
       refreshIntervalMs.value = iv
       if (dataRefreshInterval) startPolling() // 间隔变了 → 用新间隔重建定时器
     }
-    users.value = usersRes.data.users
-    tiers.value = usersRes.data.tiers
-    stats.value = statsRes.data
+    users.value = usersRes.users
+    tiers.value = usersRes.tiers
+    stats.value = statsRes
     error.value = null
   } catch (err) {
     error.value = t('admin.loadFail', { err: err.message })
