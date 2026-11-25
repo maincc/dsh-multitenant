@@ -298,7 +298,7 @@ onMounted(async () => {
 
 /* 当前环境 */
 .current-env {
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 12px;
   padding: 16px;
   margin-bottom: 16px;
@@ -348,7 +348,7 @@ onMounted(async () => {
 }
 
 .env-card {
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 12px;
   padding: 16px;
   box-shadow: 0 2px 8px rgba(60, 70, 120, 0.06);
@@ -406,7 +406,7 @@ onMounted(async () => {
 }
 
 .modal-panel {
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 16px;
   max-width: 500px;
   width: 100%;
@@ -439,7 +439,7 @@ onMounted(async () => {
   border-radius: 8px;
   font-size: 18px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: var(--transition-fast);
 }
 
 .close-btn:hover {

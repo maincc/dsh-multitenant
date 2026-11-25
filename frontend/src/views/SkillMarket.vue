@@ -404,17 +404,6 @@ onUnmounted(() => {
   animation: fadeIn 0.3s;
 }
 
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 /* ─── 左侧栏 ─── */
 .gate-sidebar {
   width: 176px;
@@ -422,10 +411,10 @@ onUnmounted(() => {
 }
 
 .sidebar-card {
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 16px;
-  border: 1px solid rgba(226, 232, 240, 0.8);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--card-shadow);
   padding: 0.5rem;
 }
 
@@ -447,20 +436,20 @@ onUnmounted(() => {
   border-radius: 12px;
   font-size: 14px;
   font-weight: 500;
-  color: #64748b;
+  color: var(--text-muted);
   cursor: pointer;
   text-align: left;
-  transition: all 0.2s;
+  transition: var(--transition-fast);
 }
 
 .sidebar-item:hover {
-  background: #f8fafc;
-  color: #475569;
+  background: var(--bg-page);
+  color: var(--text-secondary);
 }
 
 .sidebar-item.active {
   background: #eef0f8;
-  color: #6b7bdb;
+  color: var(--brand-text);
 }
 
 .sidebar-icon {
@@ -480,10 +469,10 @@ onUnmounted(() => {
 .gate-content {
   flex: 1;
   min-width: 0;
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 16px;
-  border: 1px solid rgba(226, 232, 240, 0.8);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--card-shadow);
   padding: 1.5rem;
   overflow-y: auto;
 }
@@ -497,13 +486,13 @@ onUnmounted(() => {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #94a3b8;
+  color: var(--text-faint);
   margin-bottom: 0.125rem;
 }
 
 .tab-hint {
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--text-faint);
   line-height: 1.6;
   margin-bottom: 1rem;
 }
@@ -520,10 +509,10 @@ onUnmounted(() => {
 
 .notice {
   padding: 0.75rem 1rem;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-light);
   border-radius: 10px;
-  background: #f8fafc;
-  color: #475569;
+  background: var(--bg-page);
+  color: var(--text-secondary);
   font-size: 0.9rem;
   margin-bottom: 1rem;
 }
@@ -541,13 +530,13 @@ onUnmounted(() => {
 }
 
 .skill-card {
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-light);
   border-radius: 12px;
   padding: 1rem;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  background: #fff;
+  background: var(--surface-white);
 }
 
 .skill-card-head {
@@ -559,13 +548,13 @@ onUnmounted(() => {
 
 .skill-card-head strong {
   font-size: 1.05rem;
-  color: #1e293b;
+  color: var(--text-main);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .skill-description {
   margin: 0;
-  color: #475569;
+  color: var(--text-secondary);
   font-size: 0.9rem;
   line-height: 1.5;
   flex: 1;
@@ -576,7 +565,7 @@ onUnmounted(() => {
   gap: 0.75rem;
   align-items: center;
   font-size: 0.78rem;
-  color: #94a3b8;
+  color: var(--text-faint);
   flex-wrap: wrap;
 }
 
@@ -593,7 +582,7 @@ onUnmounted(() => {
 
 .skill-subsection h4 {
   font-size: 0.95rem;
-  color: #334155;
+  color: var(--text-body);
   margin: 0 0 0.5rem;
 }
 
@@ -602,10 +591,10 @@ onUnmounted(() => {
   align-items: center;
   gap: 0.75rem;
   padding: 0.5rem 0.75rem;
-  border: 1px solid #f1f5f9;
+  border: 1px solid var(--surface-soft);
   border-radius: 10px;
   margin-bottom: 0.5rem;
-  background: #f8fafc;
+  background: var(--bg-page);
 }
 
 .skill-row-main {
@@ -623,7 +612,7 @@ onUnmounted(() => {
 
 .skill-desc {
   font-size: 0.8rem;
-  color: #64748b;
+  color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -641,7 +630,7 @@ onUnmounted(() => {
 }
 
 .mine-empty p {
-  color: #94a3b8;
+  color: var(--text-faint);
   font-size: 0.9rem;
   margin-bottom: 1rem;
 }
@@ -658,7 +647,7 @@ onUnmounted(() => {
 }
 
 .modal-panel {
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 16px;
   padding: 1.5rem;
   max-width: 720px;
@@ -684,18 +673,18 @@ onUnmounted(() => {
 .hash {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.8rem;
-  background: #f8fafc;
+  background: var(--bg-page);
   padding: 0.1rem 0.35rem;
   border-radius: 4px;
-  border: 1px solid #f1f5f9;
+  border: 1px solid var(--surface-soft);
 }
 
 .detail-body {
   flex: 1;
   overflow: auto;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-light);
   border-radius: 10px;
-  background: #f8fafc;
+  background: var(--bg-page);
 }
 
 .detail-body pre {
@@ -706,7 +695,7 @@ onUnmounted(() => {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.85rem;
   line-height: 1.6;
-  color: #1e293b;
+  color: var(--text-main);
 }
 
 .detail-actions {
@@ -720,7 +709,7 @@ onUnmounted(() => {
 
 .hint {
   font-size: 0.875rem;
-  color: #64748b;
+  color: var(--text-muted);
   line-height: 1.6;
 }
 
@@ -740,8 +729,8 @@ onUnmounted(() => {
   padding: 6px 10px;
   width: max-content;
   max-width: 460px;
-  background: #1e293b;
-  color: #f8fafc;
+  background: var(--text-main);
+  color: var(--bg-page);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   font-weight: 400;

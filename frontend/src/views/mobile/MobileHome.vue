@@ -329,12 +329,6 @@ onUnmounted(() => {
   animation: spin 0.8s linear infinite;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .loading-text {
   font-size: 14px;
   color: var(--m-muted);
@@ -344,7 +338,7 @@ onUnmounted(() => {
 .ghead {
   background: linear-gradient(135deg, var(--m-primary) 0%, var(--m-primary-2) 100%);
   padding: 20px 16px 24px;
-  color: #fff;
+  color: var(--surface-white);
 }
 
 .row1 {
@@ -424,7 +418,7 @@ onUnmounted(() => {
   background: linear-gradient(135deg, var(--m-green) 0%, #2bb56a 100%);
   border-radius: 14px;
   padding: 14px 16px;
-  color: #fff;
+  color: var(--surface-white);
   margin-bottom: 16px;
   box-shadow: 0 4px 16px rgba(60, 70, 120, 0.08);
 }
@@ -433,7 +427,7 @@ onUnmounted(() => {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--surface-white);
   animation: pulse 2s infinite;
 }
 
@@ -474,7 +468,7 @@ onUnmounted(() => {
 }
 
 .stat {
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 14px;
   padding: 14px;
   box-shadow: 0 4px 16px rgba(60, 70, 120, 0.08);
@@ -507,7 +501,7 @@ onUnmounted(() => {
 
 /* 卡片 */
 .card {
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 14px;
   padding: 16px;
   box-shadow: 0 4px 16px rgba(60, 70, 120, 0.08);
@@ -572,12 +566,12 @@ onUnmounted(() => {
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: var(--transition-fast);
 }
 
 .btn-p {
   background: linear-gradient(135deg, #f0a132, var(--m-amber));
-  color: #fff;
+  color: var(--surface-white);
   box-shadow: 0 4px 12px rgba(240, 161, 50, 0.3);
 }
 
@@ -587,7 +581,7 @@ onUnmounted(() => {
 
 .btn-danger {
   background: linear-gradient(135deg, var(--m-danger), #c53030);
-  color: #fff;
+  color: var(--surface-white);
   box-shadow: 0 4px 12px rgba(214, 69, 69, 0.3);
 }
 

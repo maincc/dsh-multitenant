@@ -1282,12 +1282,6 @@ async function unpublishSkill(skillName) {
   animation: spin 0.8s linear infinite;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .loading-text {
   font-size: 14px;
   color: var(--m-muted);
@@ -1297,7 +1291,7 @@ async function unpublishSkill(skillName) {
 .ghead {
   background: linear-gradient(135deg, var(--m-primary) 0%, var(--m-primary-2) 100%);
   padding: 20px 16px 24px;
-  color: #fff;
+  color: var(--surface-white);
 }
 
 .row1 {
@@ -1337,7 +1331,7 @@ async function unpublishSkill(skillName) {
 
 /* 卡片 */
 .card {
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 14px;
   padding: 16px;
   box-shadow: 0 4px 16px rgba(60, 70, 120, 0.08);
@@ -1441,7 +1435,7 @@ async function unpublishSkill(skillName) {
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: var(--transition-fast);
   width: 100%;
 }
 
@@ -1452,7 +1446,7 @@ async function unpublishSkill(skillName) {
 
 .btn-p {
   background: linear-gradient(135deg, var(--m-primary) 0%, var(--m-primary-2) 100%);
-  color: #fff;
+  color: var(--surface-white);
   box-shadow: 0 4px 12px rgba(106, 114, 232, 0.3);
 }
 
@@ -1490,7 +1484,7 @@ async function unpublishSkill(skillName) {
   display: flex;
   gap: 6px;
   margin-bottom: 16px;
-  background: #fff;
+  background: var(--surface-white);
   padding: 6px;
   border-radius: 12px;
   box-shadow: 0 2px 8px rgba(60, 70, 120, 0.06);
@@ -1508,12 +1502,12 @@ async function unpublishSkill(skillName) {
   font-weight: 600;
   color: var(--m-muted);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: var(--transition-fast);
 }
 
 .sub-tab.active {
   background: linear-gradient(135deg, var(--m-primary) 0%, var(--m-primary-2) 100%);
-  color: #fff;
+  color: var(--surface-white);
   box-shadow: 0 2px 8px rgba(106, 114, 232, 0.3);
 }
 
@@ -1628,7 +1622,7 @@ async function unpublishSkill(skillName) {
 }
 
 .modal-panel {
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 16px;
   max-width: 500px;
   width: 100%;
@@ -1695,7 +1689,7 @@ async function unpublishSkill(skillName) {
 .pick-mark.on {
   border-color: var(--m-primary);
   background: var(--m-primary);
-  box-shadow: inset 0 0 0 3px #fff;
+  box-shadow: inset 0 0 0 3px var(--surface-white);
 }
 
 .ms-input {

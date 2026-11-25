@@ -466,12 +466,6 @@ onUnmounted(() => {
   animation: spin 0.8s linear infinite;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .loading-text {
   font-size: 14px;
   color: var(--m-muted);
@@ -481,7 +475,7 @@ onUnmounted(() => {
 .ghead {
   background: linear-gradient(135deg, var(--m-primary) 0%, var(--m-primary-2) 100%);
   padding: 20px 16px 24px;
-  color: #fff;
+  color: var(--surface-white);
 }
 
 .row1 {
@@ -524,7 +518,7 @@ onUnmounted(() => {
   display: flex;
   gap: 0;
   margin-bottom: 16px;
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 12px;
   box-shadow: 0 2px 8px rgba(60, 70, 120, 0.06);
   position: relative;
@@ -539,7 +533,7 @@ onUnmounted(() => {
   font-weight: 600;
   color: var(--m-muted);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: var(--transition-fast);
   position: relative;
 }
 
@@ -579,11 +573,11 @@ onUnmounted(() => {
   font-weight: 600;
   color: var(--m-muted);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: var(--transition-fast);
 }
 
 .sub-tab-btn.active {
-  background: #fff;
+  background: var(--surface-white);
   color: var(--m-primary);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
@@ -591,17 +585,6 @@ onUnmounted(() => {
 /* Tab 内容 */
 .tab-content {
   animation: fadeIn 0.3s;
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
 /* 搜索框 */
@@ -620,8 +603,8 @@ onUnmounted(() => {
   border: 1px solid #e0e3eb;
   border-radius: 10px;
   font-size: 14px;
-  background: #fff;
-  transition: all 0.2s;
+  background: var(--surface-white);
+  transition: var(--transition-fast);
 }
 
 .search-input:focus {
@@ -634,7 +617,7 @@ onUnmounted(() => {
 .empty-state {
   text-align: center;
   padding: 60px 20px;
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 14px;
   box-shadow: 0 4px 16px rgba(60, 70, 120, 0.08);
 }
@@ -667,7 +650,7 @@ onUnmounted(() => {
 }
 
 .skill-card {
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 12px;
   padding: 16px;
   box-shadow: 0 2px 8px rgba(60, 70, 120, 0.06);
@@ -757,7 +740,7 @@ onUnmounted(() => {
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: var(--transition-fast);
 }
 
 .btn:disabled {
@@ -767,12 +750,12 @@ onUnmounted(() => {
 
 .btn-p {
   background: linear-gradient(135deg, var(--m-primary) 0%, var(--m-primary-2) 100%);
-  color: #fff;
+  color: var(--surface-white);
   box-shadow: 0 4px 12px rgba(106, 114, 232, 0.3);
 }
 
 .btn-outline {
-  background: #fff;
+  background: var(--surface-white);
   color: var(--m-primary);
   border: 1px solid var(--m-primary);
 }
@@ -814,7 +797,7 @@ onUnmounted(() => {
 }
 
 .modal-panel {
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 16px;
   max-width: 500px;
   width: 100%;
@@ -847,7 +830,7 @@ onUnmounted(() => {
   border-radius: 8px;
   font-size: 18px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: var(--transition-fast);
 }
 
 .close-btn:hover {

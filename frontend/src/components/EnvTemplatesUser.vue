@@ -990,13 +990,13 @@ const totalBundleBytes = computed(() => {
   gap: 1rem;
 }
 .env-card {
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-light);
   border-radius: 12px;
   padding: 1rem;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  background: #fff;
+  background: var(--surface-white);
 }
 .env-card-head {
   display: flex;
@@ -1006,7 +1006,7 @@ const totalBundleBytes = computed(() => {
 }
 .env-card-name {
   font-size: 1.05rem;
-  color: #1e293b;
+  color: var(--text-main);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .env-card-meta {
@@ -1015,7 +1015,7 @@ const totalBundleBytes = computed(() => {
   align-items: center;
   flex-wrap: wrap;
   font-size: 0.78rem;
-  color: #94a3b8;
+  color: var(--text-faint);
 }
 .env-card-actions {
   display: flex;
@@ -1024,7 +1024,7 @@ const totalBundleBytes = computed(() => {
 }
 .env-card-intro {
   margin: 0;
-  color: #475569;
+  color: var(--text-secondary);
   font-size: 0.9rem;
   line-height: 1.5;
   flex: 1;
@@ -1120,7 +1120,7 @@ const totalBundleBytes = computed(() => {
   z-index: 100;
 }
 .modal-panel {
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 16px;
   padding: 1.5rem;
   max-width: 720px;
@@ -1131,7 +1131,7 @@ const totalBundleBytes = computed(() => {
   flex-direction: column;
   gap: 0.75rem;
   box-shadow: 0 20px 50px rgba(0, 0, 42, 0.25);
-  color: #1e293b;
+  color: var(--text-main);
 }
 .detail-head {
   display: flex;
@@ -1140,15 +1140,15 @@ const totalBundleBytes = computed(() => {
 }
 .detail-head h3 {
   margin: 0;
-  color: #1e293b;
+  color: var(--text-main);
 }
 .detail-cols {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 0.75rem;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-light);
   border-radius: 10px;
-  background: #f8fafc;
+  background: var(--bg-page);
   padding: 0.9rem 1rem;
   font-size: 0.9rem;
 }
@@ -1168,27 +1168,22 @@ const totalBundleBytes = computed(() => {
   margin-right: 6px;
   vertical-align: -1px;
   border: 2px solid rgba(255, 255, 255, 0.45);
-  border-top-color: #fff;
+  border-top-color: var(--surface-white);
   border-radius: 50%;
-  animation: env-spin 0.8s linear infinite;
+  animation: spin 0.8s linear infinite;
 }
 .env-card-actions .btn-secondary .btn-spin,
 .env-current .btn-spin,
 .btn-secondary .btn-spin {
   border-color: rgba(100, 116, 139, 0.35);
-  border-top-color: #475569;
-}
-@keyframes env-spin {
-  to {
-    transform: rotate(360deg);
-  }
+  border-top-color: var(--text-secondary);
 }
 .env-clean-opt {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
   font-size: 0.8rem;
-  color: #64748b;
+  color: var(--text-muted);
   cursor: pointer;
   user-select: none;
 }
@@ -1309,7 +1304,7 @@ const totalBundleBytes = computed(() => {
   }
 }
 .badge-danger {
-  color: #fff;
+  color: var(--surface-white);
   background: rgba(217, 107, 107, 0.25);
   border: 1px solid rgba(217, 107, 107, 0.5);
 }

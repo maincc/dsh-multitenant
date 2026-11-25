@@ -321,7 +321,7 @@ watch(
 
 .hero h1 {
   font-size: 2.5rem;
-  background: linear-gradient(135deg, #6b7bdb 0%, #6c69c2 100%);
+  background: linear-gradient(135deg, var(--brand-text) 0%, #6c69c2 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   margin-bottom: 0.75rem;
@@ -394,7 +394,7 @@ watch(
 .guide h2 {
   text-align: center;
   margin-bottom: 2rem;
-  color: #6b7bdb;
+  color: var(--brand-text);
 }
 
 .guide-steps {
@@ -423,7 +423,7 @@ watch(
   width: 2rem;
   height: 2rem;
   border-radius: 50%;
-  background: linear-gradient(135deg, #6b7bdb 0%, #6c69c2 100%);
+  background: linear-gradient(135deg, var(--brand-text) 0%, #6c69c2 100%);
   color: white;
   font-weight: 700;
   display: flex;
@@ -445,7 +445,7 @@ watch(
 }
 
 .step-body a {
-  color: #6b7bdb;
+  color: var(--brand-text);
 }
 
 .guide-notes {
@@ -482,7 +482,7 @@ watch(
 .tiers h2 {
   text-align: center;
   margin-bottom: 2rem;
-  color: #6b7bdb;
+  color: var(--brand-text);
 }
 
 .tier-grid {
@@ -643,7 +643,7 @@ watch(
 }
 
 .tier-card.featured {
-  border-color: #6b7bdb;
+  border-color: var(--brand-text);
   background: linear-gradient(135deg, #f0f4ff 0%, #faf5ff 100%);
 }
 

@@ -572,9 +572,9 @@ async function cdGo() {
 }
 /* 主行动钮与确认弹窗的红钮同款配方：实红底白字，暗底浅底都读得清 */
 .enva-confirm-danger {
-  background: #dc2626;
-  border-color: #dc2626;
-  color: #fff;
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--surface-white);
 }
 .enva-confirm-danger:hover:not(:disabled) {
   background: #b91c1c;
@@ -608,9 +608,9 @@ async function cdGo() {
 }
 .enva-modal-box {
   width: min(460px, 92vw);
-  /* 用户裁定 2026-11-06：代格弹窗与全站弹窗同浅色壳（modal-panel 配方背景 #fff）
+  /* 用户裁定 2026-11-06：代格弹窗与全站弹窗同浅色壳（modal-panel 配方背景 var(--surface-white)）
      ——原 var(--bg-elevated) 全仓零定义，暗色兜底值一直在裸奔 */
-  background: #fff;
+  background: var(--surface-white);
   color: #1d2129;
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 16px;
@@ -652,7 +652,7 @@ async function cdGo() {
   margin-top: 8px;
 }
 .badge-danger {
-  color: #fff;
+  color: var(--surface-white);
   background: rgba(217, 107, 107, 0.25);
   border: 1px solid rgba(217, 107, 107, 0.5);
 }

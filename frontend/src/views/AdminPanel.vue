@@ -2894,25 +2894,14 @@ onUnmounted(() => {
 
 /* ─── 磁盘扫描（租户卷区块） ─── */
 
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 /* ════ 状态卡片（noAccess / login） ════ */
 .state-card {
   margin: auto;
   width: min(540px, calc(100% - 2rem));
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 16px;
-  border: 1px solid rgba(226, 232, 240, 0.8);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--card-shadow);
   text-align: center;
   padding: 3rem 2rem;
 }
@@ -2920,28 +2909,28 @@ onUnmounted(() => {
 .state-card h2 {
   font-size: 1.4rem;
   margin-bottom: 1rem;
-  color: #1e293b;
+  color: var(--text-main);
 }
 
 .state-card p {
-  color: #64748b;
+  color: var(--text-muted);
   margin-bottom: 2rem;
 }
 
 .error-card h2 {
-  color: #dc2626;
+  color: var(--danger);
 }
 
 .address-display {
   font-family: 'JetBrains Mono', ui-monospace, monospace;
-  background: #f8fafc;
+  background: var(--bg-page);
   padding: 0.5rem 0.75rem;
   border-radius: 10px;
   word-break: break-all;
   margin-bottom: 2rem;
   display: block;
   font-size: 0.85rem;
-  color: #334155;
+  color: var(--text-body);
 }
 
 .btn-large {
@@ -2960,7 +2949,7 @@ onUnmounted(() => {
 }
 
 .current-address p {
-  color: #64748b;
+  color: var(--text-muted);
   margin-bottom: 0.5rem;
   font-size: 0.9rem;
 }
@@ -2981,10 +2970,10 @@ onUnmounted(() => {
 }
 
 .sidebar-card {
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 16px;
-  border: 1px solid rgba(226, 232, 240, 0.8);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--card-shadow);
   padding: 0.5rem;
 }
 
@@ -3007,20 +2996,20 @@ onUnmounted(() => {
   border-radius: 12px;
   font-size: 14px;
   font-weight: 500;
-  color: #64748b;
+  color: var(--text-muted);
   cursor: pointer;
   text-align: left;
-  transition: all 0.2s;
+  transition: var(--transition-fast);
 }
 
 .sidebar-item:hover {
-  background: #f8fafc;
-  color: #475569;
+  background: var(--bg-page);
+  color: var(--text-secondary);
 }
 
 .sidebar-item.active {
   background: #eef0f8;
-  color: #6b7bdb;
+  color: var(--brand-text);
 }
 
 .sidebar-icon {
@@ -3040,10 +3029,10 @@ onUnmounted(() => {
 .gate-content {
   flex: 1;
   min-width: 0;
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 16px;
-  border: 1px solid rgba(226, 232, 240, 0.8);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--card-shadow);
   padding: 1.5rem;
   overflow-y: auto;
 }
@@ -3057,13 +3046,13 @@ onUnmounted(() => {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #94a3b8;
+  color: var(--text-faint);
   margin-bottom: 0.125rem;
 }
 
 .tab-hint {
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--text-faint);
   line-height: 1.6;
   margin-bottom: 1rem;
 }
@@ -3071,13 +3060,13 @@ onUnmounted(() => {
 .sub-section {
   margin-top: 1.5rem;
   padding-top: 1.5rem;
-  border-top: 1px solid #f8fafc;
+  border-top: 1px solid var(--bg-page);
 }
 
 .sub-section h4 {
   font-size: 13px;
   font-weight: 600;
-  color: #334155;
+  color: var(--text-body);
   margin-bottom: 0.25rem;
 }
 
@@ -3088,8 +3077,8 @@ onUnmounted(() => {
   gap: 0.75rem;
   margin: 0.75rem 0 1.25rem;
   padding: 1rem 1.25rem;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  background: var(--bg-page);
+  border: 1px solid var(--border-light);
   border-radius: 12px;
 }
 
@@ -3101,23 +3090,23 @@ onUnmounted(() => {
 
 .monitor-label {
   font-size: 0.75rem;
-  color: #94a3b8;
+  color: var(--text-faint);
 }
 
 .monitor-value {
   font-size: 1.1rem;
   font-weight: 700;
-  color: #1e293b;
+  color: var(--text-main);
 }
 
 .monitor-upgraded {
-  color: #10b981;
+  color: var(--success);
 }
 
 .monitor-subtitle {
   font-size: 0.9rem;
   font-weight: 600;
-  color: #334155;
+  color: var(--text-body);
   margin: 1rem 0 0.25rem;
 }
 
@@ -3126,7 +3115,7 @@ onUnmounted(() => {
 }
 
 .mem-pct-ok {
-  color: #10b981;
+  color: var(--success);
 }
 
 .mem-pct-warn {
@@ -3138,17 +3127,17 @@ onUnmounted(() => {
 }
 
 .monitor-never {
-  color: #94a3b8;
+  color: var(--text-faint);
   font-size: 0.8rem;
 }
 
 .monitor-empty {
   padding: 1.25rem;
   text-align: center;
-  color: #94a3b8;
+  color: var(--text-faint);
   font-size: 0.85rem;
-  background: #f8fafc;
-  border: 1px dashed #e2e8f0;
+  background: var(--bg-page);
+  border: 1px dashed var(--border-light);
   border-radius: 12px;
 }
 
@@ -3177,7 +3166,7 @@ onUnmounted(() => {
 
 /* ─── 管理员信息卡 ─── */
 .admin-info-card {
-  background: linear-gradient(135deg, #6b7bdb 0%, #6c69c2 100%);
+  background: linear-gradient(135deg, var(--brand-text) 0%, #6c69c2 100%);
   color: white;
   border-radius: 12px;
   padding: 0.875rem 1.25rem;
@@ -3227,11 +3216,11 @@ onUnmounted(() => {
 }
 
 .docker-status-card.docker-ok {
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  background: linear-gradient(135deg, var(--success) 0%, #059669 100%);
 }
 
 .docker-status-card.docker-error {
-  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  background: linear-gradient(135deg, #ef4444 0%, var(--danger) 100%);
 }
 
 .docker-status {
@@ -3304,7 +3293,7 @@ table {
 }
 
 .badge-secondary {
-  background: #64748b;
+  background: var(--text-muted);
   color: white;
 }
 
@@ -3315,7 +3304,7 @@ table {
 }
 
 .cwt-empty {
-  color: #94a3b8;
+  color: var(--text-faint);
   padding: 0.6rem 0;
   font-size: 0.875rem;
 }
@@ -3338,7 +3327,7 @@ table {
   align-items: center;
   gap: 0.4rem;
   font-size: 0.82rem;
-  color: #64748b;
+  color: var(--text-muted);
 }
 
 .cwt-filter select {
@@ -3347,11 +3336,11 @@ table {
   padding: 0.25rem 1.5rem 0.25rem 0.45rem; /* 文字左右等距：左侧=0.45rem，右侧=箭头让位后的0.45rem */
   border: 1px solid #cbd5e1;
   border-radius: 6px;
-  background: #fff
+  background: var(--surface-white)
     url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='7' viewBox='0 0 10 7'><path d='M1 1l4 4 4-4' fill='none' stroke='%2364748b' stroke-width='1.6' stroke-linecap='round'/></svg>")
     no-repeat right 0.5rem center;
   font-size: 0.82rem;
-  color: #334155;
+  color: var(--text-body);
 }
 
 .cwt-filter select:focus {
@@ -3371,11 +3360,11 @@ table {
 
 .cwt-page-info {
   font-size: 0.82rem;
-  color: #64748b;
+  color: var(--text-muted);
 }
 
 .cwt-more-hint {
-  color: #94a3b8;
+  color: var(--text-faint);
 }
 
 .cwt-page-btns {
@@ -3387,12 +3376,12 @@ table {
   margin-top: 0.4rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.72rem;
-  background: #f8fafc;
+  background: var(--bg-page);
   border-radius: 8px;
   padding: 0.4rem;
   word-break: break-all;
   max-width: 420px;
-  border: 1px solid #f1f5f9;
+  border: 1px solid var(--surface-soft);
 }
 
 /* ─── 孤儿数据卷 ─── */
@@ -3400,7 +3389,7 @@ table {
   margin-top: 0.6rem;
   font-size: 0.85rem;
   text-align: center;
-  color: #475569;
+  color: var(--text-secondary);
 }
 
 .orphan-list {
@@ -3413,7 +3402,7 @@ table {
 
 .orphan-item {
   padding: 0.25rem 0.4rem;
-  border-bottom: 1px dashed #f1f5f9;
+  border-bottom: 1px dashed var(--surface-soft);
 }
 
 .orphan-name {
@@ -3439,8 +3428,8 @@ table {
   gap: 0.6rem;
   align-items: flex-start;
   padding: 0.75rem 0.9rem;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  background: var(--bg-page);
+  border: 1px solid var(--border-light);
   border-radius: 8px;
 }
 
@@ -3449,7 +3438,7 @@ table {
   height: 22px;
   border-radius: 50%;
   background: var(--brand);
-  color: #fff;
+  color: var(--surface-white);
   font-size: 0.75rem;
   font-weight: 600;
   display: flex;
@@ -3460,19 +3449,19 @@ table {
 .dsh-model-step strong {
   display: block;
   font-size: 0.86rem;
-  color: #1e293b;
+  color: var(--text-main);
 }
 
 .dsh-model-step p {
   margin: 0.15rem 0 0;
   font-size: 0.78rem;
   line-height: 1.5;
-  color: #64748b;
+  color: var(--text-muted);
 }
 
 .dsh-card {
-  background: #fff;
-  border: 1px solid #e2e8f0;
+  background: var(--surface-white);
+  border: 1px solid var(--border-light);
   border-radius: 10px;
   padding: 1rem;
   margin-bottom: 1rem;
@@ -3490,7 +3479,7 @@ table {
 .dsh-card-head h5 {
   margin: 0;
   font-size: 0.92rem;
-  color: #1e293b;
+  color: var(--text-main);
 }
 
 .dsh-kv-grid {
@@ -3507,13 +3496,13 @@ table {
 
 .dsh-kv-label {
   font-size: 0.75rem;
-  color: #94a3b8;
+  color: var(--text-faint);
 }
 
 .dsh-kv code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.82rem;
-  color: #334155;
+  color: var(--text-body);
   word-break: break-all;
 }
 
@@ -3547,11 +3536,11 @@ table {
   padding: 0.35rem 1.7rem 0.35rem 0.55rem; /* 文字左右等距，右侧为箭头让位 */
   border: 1px solid #cbd5e1;
   border-radius: 6px;
-  background: #fff
+  background: var(--surface-white)
     url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='7' viewBox='0 0 10 7'><path d='M1 1l4 4 4-4' fill='none' stroke='%2364748b' stroke-width='1.6' stroke-linecap='round'/></svg>")
     no-repeat right 0.6rem center;
   font-size: 0.82rem;
-  color: #334155;
+  color: var(--text-body);
 }
 
 .dsh-select:focus {
@@ -3565,7 +3554,7 @@ table {
   align-items: center;
   gap: 0.35rem;
   font-size: 0.8rem;
-  color: #475569;
+  color: var(--text-secondary);
   cursor: pointer;
 }
 
@@ -3573,7 +3562,7 @@ table {
   margin: 0.6rem 0 0;
   font-size: 0.76rem;
   line-height: 1.5;
-  color: #94a3b8;
+  color: var(--text-faint);
 }
 
 .dsh-error {
@@ -3628,13 +3617,7 @@ table {
   border: 2px solid #bfdbfe;
   border-top-color: #1d4ed8;
   border-radius: 50%;
-  animation: dsh-spin 0.8s linear infinite;
-}
-
-@keyframes dsh-spin {
-  to {
-    transform: rotate(360deg);
-  }
+  animation: spin 0.8s linear infinite;
 }
 
 /* 「更新」执行中的居中遮罩。
@@ -3660,7 +3643,7 @@ table {
   max-width: 420px;
   padding: 1.5rem 1.75rem;
   border-radius: 12px;
-  background: #fff;
+  background: var(--surface-white);
   box-shadow: 0 12px 40px rgba(15, 23, 42, 0.28);
   text-align: center;
 }
@@ -3680,7 +3663,7 @@ table {
 .dsh-overlay-addr {
   margin: 0;
   font-size: 0.82rem;
-  color: #475569;
+  color: var(--text-secondary);
 }
 
 .dsh-overlay-phase {
@@ -3701,7 +3684,7 @@ table {
   margin: 0.15rem 0 0;
   font-size: 0.76rem;
   line-height: 1.5;
-  color: #94a3b8;
+  color: var(--text-faint);
 }
 
 .dsh-select-sm {
@@ -3730,7 +3713,7 @@ table {
   margin-right: 0.35rem;
   border-radius: 50%;
   background: #1d4ed8;
-  color: #fff;
+  color: var(--surface-white);
   font-size: 0.7rem;
   font-weight: 700;
   vertical-align: middle;
@@ -3739,7 +3722,7 @@ table {
 .dsh-subhead {
   margin: 0.85rem 0 0.35rem;
   font-size: 0.82rem;
-  color: #334155;
+  color: var(--text-body);
 }
 
 /* "可清理"标记：与"在用/当前"形成对比，一眼能看出哪些是垃圾 */
@@ -3776,16 +3759,16 @@ table {
 .dsh-table th {
   text-align: left;
   padding: 0.45rem 0.5rem;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--border-light);
   font-size: 0.75rem;
   font-weight: 600;
-  color: #94a3b8;
+  color: var(--text-faint);
   white-space: nowrap;
 }
 
 .dsh-table td {
   padding: 0.5rem;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--surface-soft);
   vertical-align: middle;
 }
 
@@ -3793,7 +3776,7 @@ table {
 .dsh-img {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.78rem;
-  color: #475569;
+  color: var(--text-secondary);
 }
 
 /* 租户实际在跑的 DSH 版本（主列表 + 镜像升级表共用） */
@@ -3814,7 +3797,7 @@ table {
 
 .dsh-ver-unknown {
   font-size: 0.78rem;
-  color: #94a3b8;
+  color: var(--text-faint);
 }
 
 .dsh-badge {
@@ -3832,8 +3815,8 @@ table {
 }
 
 .dsh-badge-stopped {
-  background: #f1f5f9;
-  color: #64748b;
+  background: var(--surface-soft);
+  color: var(--text-muted);
 }
 
 .dsh-badge-stale {
@@ -3849,7 +3832,7 @@ table {
 .dsh-empty {
   margin: 0.5rem 0 0;
   font-size: 0.82rem;
-  color: #94a3b8;
+  color: var(--text-faint);
 }
 
 .dsh-result-list,
@@ -3890,7 +3873,7 @@ table {
 }
 
 .dsh-plan-ok {
-  color: #64748b;
+  color: var(--text-muted);
 }
 
 /* 版本历史：镜像是否仍在本地 + 可清理项 */
@@ -3898,7 +3881,7 @@ table {
   margin: 0 0 0.5rem;
   font-size: 0.75rem;
   line-height: 1.5;
-  color: #94a3b8;
+  color: var(--text-faint);
 }
 
 .dsh-hist-check,
@@ -3923,7 +3906,7 @@ table {
   gap: 0.75rem;
   margin-top: 0.6rem;
   padding-top: 0.6rem;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid var(--border-light);
 }
 
 .dsh-prune-bar label {
@@ -3941,7 +3924,7 @@ table {
 .dsh-prune-msg {
   margin: 0.5rem 0 0;
   font-size: 0.76rem;
-  color: #475569;
+  color: var(--text-secondary);
 }
 
 .dsh-history li {
@@ -3949,12 +3932,12 @@ table {
   gap: 0.75rem;
   flex-wrap: wrap;
   padding: 0.35rem 0;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--surface-soft);
   font-size: 0.8rem;
 }
 
 .dsh-muted {
-  color: #94a3b8;
+  color: var(--text-faint);
 }
 
 .dsh-alert {
@@ -3999,7 +3982,7 @@ table {
 }
 .refresh-hint {
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--text-faint);
 }
 
 /* 缩写地址/镜像 ID：悬停立即弹出完整值。
@@ -4023,8 +4006,8 @@ table {
   padding: 6px 10px;
   width: max-content;
   max-width: 460px;
-  background: #1e293b;
-  color: #f8fafc;
+  background: var(--text-main);
+  color: var(--bg-page);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   font-weight: 400;

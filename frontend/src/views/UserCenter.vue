@@ -178,7 +178,7 @@
                 <!-- 后台自动拉起指示：容器 tab 右侧小转圈（完成/失败即消失，弹窗收尾） -->
                 <span
                   v-if="tab.key === 'container' && containerBooting"
-                  class="tab-boot-spin"
+                  class="spin"
                   :title="$t('user.tabBooting')"
                 ></span>
               </button>
@@ -3073,7 +3073,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   padding: 60px 20px;
-  background: #fff;
+  background: var(--surface-white);
   margin: 16px;
   border-radius: 16px;
 }
@@ -3097,7 +3097,7 @@ onUnmounted(() => {
 
 .mobile-tabbar {
   display: flex;
-  background: #fff;
+  background: var(--surface-white);
   border-top: 1px solid #eceef4;
   padding: 8px 0 calc(8px + env(safe-area-inset-bottom));
   box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.05);
@@ -3134,7 +3134,7 @@ onUnmounted(() => {
   height: 10px;
   background: #ff4757;
   border-radius: 50%;
-  border: 2px solid #fff;
+  border: 2px solid var(--surface-white);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
@@ -3149,25 +3149,14 @@ onUnmounted(() => {
   animation: fadeIn 0.3s;
 }
 
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 /* ════ 状态卡片（loading / connect / waiting，居中显示） ════ */
 .state-card {
   margin: auto;
   width: min(540px, calc(100% - 2rem));
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 16px;
-  border: 1px solid rgba(226, 232, 240, 0.8);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--card-shadow);
   text-align: center;
   padding: 3rem 2rem;
 }
@@ -3177,7 +3166,7 @@ onUnmounted(() => {
 .waiting-card h2 {
   font-size: 1.4rem;
   margin-bottom: 1rem;
-  color: #1e293b;
+  color: var(--text-main);
 }
 
 .loading-spinner {
@@ -3188,7 +3177,7 @@ onUnmounted(() => {
   width: 48px;
   height: 48px;
   border: 4px solid #eef0f8;
-  border-top: 4px solid #6b7bdb;
+  border-top: 4px solid var(--brand-text);
   border-radius: 50%;
   animation: spin 1s linear infinite;
   margin: 0 auto;
@@ -3204,7 +3193,7 @@ onUnmounted(() => {
 }
 
 .loading-message {
-  color: #64748b;
+  color: var(--text-muted);
   margin-bottom: 2rem;
 }
 
@@ -3215,11 +3204,11 @@ onUnmounted(() => {
 
 .progress-text {
   font-size: 0.9rem;
-  color: #64748b;
+  color: var(--text-muted);
 }
 
 .connect-card p {
-  color: #64748b;
+  color: var(--text-muted);
   margin-bottom: 2rem;
 }
 
@@ -3326,17 +3315,17 @@ onUnmounted(() => {
 }
 
 .sidebar-card {
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 16px;
-  border: 1px solid rgba(226, 232, 240, 0.8);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--card-shadow);
   padding: 0.5rem;
 }
 
 .wallet-summary {
   padding: 0.75rem;
   margin-bottom: 0.25rem;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--surface-soft);
   display: flex;
   align-items: center;
   gap: 0.375rem;
@@ -3347,14 +3336,14 @@ onUnmounted(() => {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #10b981;
+  background: var(--success);
   animation: pulse 2s ease-in-out infinite;
 }
 
 .wallet-label {
   font-size: 11px;
   font-weight: 500;
-  color: #10b981;
+  color: var(--success);
 }
 
 .wallet-short {
@@ -3362,7 +3351,7 @@ onUnmounted(() => {
   width: 100%;
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--text-faint);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3387,20 +3376,20 @@ onUnmounted(() => {
   border-radius: 12px;
   font-size: 14px;
   font-weight: 500;
-  color: #64748b;
+  color: var(--text-muted);
   cursor: pointer;
   text-align: left;
-  transition: all 0.2s;
+  transition: var(--transition-fast);
 }
 
 .sidebar-item:hover {
-  background: #f8fafc;
-  color: #475569;
+  background: var(--bg-page);
+  color: var(--text-secondary);
 }
 
 .sidebar-item.active {
   background: #eef0f8;
-  color: #6b7bdb;
+  color: var(--brand-text);
 }
 
 .sidebar-icon {
@@ -3424,7 +3413,7 @@ onUnmounted(() => {
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
-  color: #94a3b8;
+  color: var(--text-faint);
   user-select: none;
 }
 
@@ -3439,10 +3428,10 @@ onUnmounted(() => {
 .gate-content {
   flex: 1;
   min-width: 0;
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 16px;
-  border: 1px solid rgba(226, 232, 240, 0.8);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--card-shadow);
   padding: 1.5rem;
   overflow-y: auto;
 }
@@ -3456,19 +3445,19 @@ onUnmounted(() => {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #94a3b8;
+  color: var(--text-faint);
   margin-bottom: 0.125rem;
 }
 
 .tab-hint {
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--text-faint);
   line-height: 1.6;
   margin-bottom: 1rem;
 }
 
 .tab-divider {
-  border-top: 1px solid #f1f5f9;
+  border-top: 1px solid var(--surface-soft);
   margin: 1.25rem 0;
 }
 
@@ -3483,7 +3472,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 0.75rem;
   padding: 0.625rem 0;
-  border-bottom: 1px solid #f8fafc;
+  border-bottom: 1px solid var(--bg-page);
 }
 
 .stat-row:last-child {
@@ -3492,14 +3481,14 @@ onUnmounted(() => {
 
 .stat-label {
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--text-faint);
   width: 88px;
   flex-shrink: 0;
 }
 
 .stat-value {
   font-size: 13px;
-  color: #334155;
+  color: var(--text-body);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3534,9 +3523,9 @@ onUnmounted(() => {
 
 .resource-item {
   padding: 0.75rem 1rem;
-  background: #f8fafc;
+  background: var(--bg-page);
   border-radius: 12px;
-  border: 1px solid #f1f5f9;
+  border: 1px solid var(--surface-soft);
 }
 
 .resource-header {
@@ -3545,7 +3534,7 @@ onUnmounted(() => {
   margin-bottom: 0.375rem;
   font-weight: 500;
   font-size: 13px;
-  color: #475569;
+  color: var(--text-secondary);
 }
 
 .btn-enter {
@@ -3572,13 +3561,13 @@ onUnmounted(() => {
 .enter-title {
   font-size: 1.05rem;
   font-weight: 600;
-  color: #1e293b;
+  color: var(--text-main);
   margin-bottom: 0.25rem;
 }
 
 .enter-hint {
   font-size: 0.8rem;
-  color: #64748b;
+  color: var(--text-muted);
   line-height: 1.5;
 }
 
@@ -3605,20 +3594,20 @@ onUnmounted(() => {
 .action-hints {
   margin-top: 1rem;
   padding: 1rem;
-  background: #f8fafc;
+  background: var(--bg-page);
   border-radius: 12px;
-  border: 1px solid #f1f5f9;
+  border: 1px solid var(--surface-soft);
 }
 
 .hint {
   margin-bottom: 0.75rem;
   font-size: 0.875rem;
-  color: #64748b;
+  color: var(--text-muted);
   line-height: 1.6;
 }
 
 .hint strong {
-  color: #334155;
+  color: var(--text-body);
 }
 
 .hint:last-child {
@@ -3637,30 +3626,30 @@ onUnmounted(() => {
 .key-config input {
   width: 100%;
   padding: 0.625rem 0.85rem;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-light);
   border-radius: 10px;
   font-size: 0.9rem;
   margin-bottom: 0.75rem;
   box-sizing: border-box;
-  background: #fff;
-  color: #1e293b;
+  background: var(--surface-white);
+  color: var(--text-main);
 }
 
 .key-config input:focus {
   outline: none;
-  border-color: #6b7bdb;
+  border-color: var(--brand-text);
   box-shadow: 0 0 0 3px rgba(107, 123, 219, 0.15);
 }
 
 .provider-row {
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-light);
   border-radius: 12px;
   padding: 10px 14px;
   display: flex;
   flex-direction: column;
   gap: 10px;
   margin-bottom: 8px;
-  background: #fff;
+  background: var(--surface-white);
 }
 
 .row-head {
@@ -3680,17 +3669,17 @@ onUnmounted(() => {
   font-size: 14px;
   line-height: 22px;
   font-weight: 500;
-  color: #1e293b;
+  color: var(--text-main);
 }
 
 .row-tag {
   flex: none;
   padding: 1px 6px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-light);
   border-radius: 4px;
   font-size: 11px;
   line-height: 16px;
-  color: #64748b;
+  color: var(--text-muted);
 }
 
 .cred-dot {
@@ -3703,7 +3692,7 @@ onUnmounted(() => {
 }
 
 .cred-dot.ok {
-  background: #10b981;
+  background: var(--success);
 }
 
 .cred-dot.missing {
@@ -3717,7 +3706,7 @@ onUnmounted(() => {
 }
 
 .key-state.ok {
-  color: #10b981;
+  color: var(--success);
 }
 
 .key-state.missing {
@@ -3725,7 +3714,7 @@ onUnmounted(() => {
 }
 
 .row-name-missing {
-  color: #dc2626;
+  color: var(--danger);
 }
 
 .official-key-actions {
@@ -3773,7 +3762,7 @@ onUnmounted(() => {
   padding: 0.75rem;
   border: 1px dashed #cbd5e1;
   border-radius: 10px;
-  background: #f8fafc;
+  background: var(--bg-page);
 }
 
 .models-header {
@@ -3782,7 +3771,7 @@ onUnmounted(() => {
   align-items: center;
   margin-bottom: 0.5rem;
   font-weight: 600;
-  color: #334155;
+  color: var(--text-body);
   font-size: 0.9rem;
 }
 
@@ -3795,10 +3784,10 @@ onUnmounted(() => {
 .models-table th {
   text-align: left;
   font-size: 0.75rem;
-  color: #94a3b8;
+  color: var(--text-faint);
   font-weight: 600;
   padding: 0.3rem 0.4rem;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--surface-soft);
   background: transparent;
 }
 
@@ -3809,7 +3798,7 @@ onUnmounted(() => {
 .models-table input {
   width: 100%;
   padding: 0.4rem 0.5rem;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-light);
   border-radius: 8px;
   font-size: 0.85rem;
   box-sizing: border-box;
@@ -3828,7 +3817,7 @@ onUnmounted(() => {
 
 .skill-subsection h3 {
   font-size: 0.95rem;
-  color: #334155;
+  color: var(--text-body);
   margin: 0 0 0.5rem;
 }
 
@@ -3837,10 +3826,10 @@ onUnmounted(() => {
   align-items: center;
   gap: 0.75rem;
   padding: 0.5rem 0.75rem;
-  border: 1px solid #f1f5f9;
+  border: 1px solid var(--surface-soft);
   border-radius: 10px;
   margin-bottom: 0.5rem;
-  background: #f8fafc;
+  background: var(--bg-page);
 }
 
 .skill-row-main {
@@ -3858,7 +3847,7 @@ onUnmounted(() => {
 
 .skill-desc {
   font-size: 0.8rem;
-  color: #64748b;
+  color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3866,7 +3855,7 @@ onUnmounted(() => {
 
 /* ─── CWT 验证 ─── */
 .cwt-meta {
-  color: #64748b;
+  color: var(--text-muted);
   font-size: 0.9rem;
   margin: 0.35rem 0;
 }
@@ -3887,7 +3876,7 @@ onUnmounted(() => {
 }
 
 .import-panel {
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 16px;
   padding: 1.5rem;
   max-width: 560px;
@@ -3909,7 +3898,7 @@ onUnmounted(() => {
 .import-field label {
   display: block;
   font-size: 0.8rem;
-  color: #64748b;
+  color: var(--text-muted);
   margin-bottom: 0.25rem;
   font-weight: 600;
 }
@@ -3920,13 +3909,13 @@ onUnmounted(() => {
 .import-field input:not([type='file']) {
   width: 100%;
   padding: 0.5rem 0.6rem;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-light);
   border-radius: 8px;
   font-size: 0.9rem;
   box-sizing: border-box;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  background: #fff;
-  color: #1e293b;
+  background: var(--surface-white);
+  color: var(--text-main);
 }
 
 /* 下拉框自绘箭头：文字左右等距（原生箭头挤右侧会失衡） */
@@ -3934,7 +3923,7 @@ onUnmounted(() => {
   -webkit-appearance: none;
   appearance: none;
   padding: 0.5rem 1.85rem 0.5rem 0.6rem;
-  background: #fff
+  background: var(--surface-white)
     url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='11' height='7' viewBox='0 0 11 7'><path d='M1 1l4.5 4.5L10 1' fill='none' stroke='%2364748b' stroke-width='1.6' stroke-linecap='round'/></svg>")
     no-repeat right 0.7rem center;
 }
@@ -3943,7 +3932,7 @@ onUnmounted(() => {
   padding: 0.5rem 0.6rem;
   border: 1px dashed #cbd5e1;
   border-radius: 8px;
-  background: #f8fafc;
+  background: var(--bg-page);
 }
 
 .import-field textarea {
@@ -3979,8 +3968,8 @@ onUnmounted(() => {
   padding: 6px 10px;
   width: max-content;
   max-width: 460px;
-  background: #1e293b;
-  color: #f8fafc;
+  background: var(--text-main);
+  color: var(--bg-page);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   font-weight: 400;
@@ -4008,20 +3997,15 @@ onUnmounted(() => {
   gap: 0.5rem;
   flex-wrap: wrap;
 }
-.tab-boot-spin {
+.spin {
   flex-shrink: 0;
   width: 10px;
   height: 10px;
   margin-left: auto;
   border: 2px solid rgba(107, 123, 219, 0.25);
-  border-top-color: #6b7bdb;
+  border-top-color: var(--brand-text);
   border-radius: 50%;
-  animation: tab-boot-spin 0.8s linear infinite;
-}
-@keyframes tab-boot-spin {
-  to {
-    transform: rotate(360deg);
-  }
+  animation: spin 0.8s linear infinite;
 }
 .cred-detail {
   margin: 0.5rem 0 0.75rem;
@@ -4092,7 +4076,7 @@ onUnmounted(() => {
 }
 .cred-warn {
   margin-top: 0.25rem;
-  color: var(--danger, #dc2626);
+  color: var(--danger, var(--danger));
   font-weight: 500;
 }
 .cred-warn code {
