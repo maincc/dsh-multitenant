@@ -66,20 +66,13 @@
       <section class="gate-content">
         <!-- ════════ 系统概览 ════════ -->
         <div v-if="activeTab === 'overview'" class="tab-content">
-          <div class="tab-head">
-            <div class="tab-head-text">
-              <h4>{{ $t('admin.tabOverview') }}</h4>
-              <p class="tab-hint">{{ $t('admin.overviewHint') }}</p>
-            </div>
-            <div class="tab-head-actions">
-              <span class="refresh-hint">{{
-                $t('admin.refreshAuto', { n: Math.round(refreshIntervalMs / 1000) })
-              }}</span>
-              <button class="btn btn-small" :disabled="loading" @click="refreshNow(true)">
-                {{ loading ? $t('admin.loading') : $t('admin.refresh') }}
-              </button>
-            </div>
-          </div>
+          <AdminTabHead
+            :title="$t('admin.tabOverview')"
+            :hint="$t('admin.overviewHint')"
+            :loading="loading"
+            :interval-ms="refreshIntervalMs"
+            @refresh="refreshNow(true)"
+          />
 
           <!-- 当前管理员信息 -->
           <div class="admin-info-card">
@@ -153,20 +146,13 @@
 
         <!-- ════════ 用户管理 ════════ -->
         <div v-else-if="activeTab === 'users'" class="tab-content">
-          <div class="tab-head">
-            <div class="tab-head-text">
-              <h4>{{ $t('admin.tabUsers') }}</h4>
-              <p class="tab-hint">{{ $t('admin.userListHint') }}</p>
-            </div>
-            <div class="tab-head-actions">
-              <span class="refresh-hint">{{
-                $t('admin.refreshAuto', { n: Math.round(refreshIntervalMs / 1000) })
-              }}</span>
-              <button class="btn btn-small" :disabled="loading" @click="refreshNow(true)">
-                {{ loading ? $t('admin.loading') : $t('admin.refresh') }}
-              </button>
-            </div>
-          </div>
+          <AdminTabHead
+            :title="$t('admin.tabUsers')"
+            :hint="$t('admin.userListHint')"
+            :loading="loading"
+            :interval-ms="refreshIntervalMs"
+            @refresh="refreshNow(true)"
+          />
           <div v-if="loading" class="loading">{{ $t('admin.loading') }}</div>
           <div v-else-if="error" class="error">{{ error }}</div>
           <table v-else>
@@ -293,21 +279,14 @@
 
         <!-- ════════ 配额配置（只读） ════════ -->
         <div v-else-if="activeTab === 'quota'" class="tab-content">
-          <div class="tab-head">
-            <div class="tab-head-text">
-              <h4>{{ $t('admin.tabQuota') }}</h4>
-              <p class="tab-hint">{{ $t('admin.tierConfigHint') }}</p>
-              <p class="tab-hint tab-hint-warn">{{ $t('admin.diskQuotaHint') }}</p>
-            </div>
-            <div class="tab-head-actions">
-              <span class="refresh-hint">{{
-                $t('admin.refreshAuto', { n: Math.round(refreshIntervalMs / 1000) })
-              }}</span>
-              <button class="btn btn-small" :disabled="loading" @click="refreshNow(true)">
-                {{ loading ? $t('admin.loading') : $t('admin.refresh') }}
-              </button>
-            </div>
-          </div>
+          <AdminTabHead
+            :title="$t('admin.tabQuota')"
+            :hint="$t('admin.tierConfigHint')"
+            :hint-warn="$t('admin.diskQuotaHint')"
+            :loading="loading"
+            :interval-ms="refreshIntervalMs"
+            @refresh="refreshNow(true)"
+          />
           <table>
             <thead>
               <tr>
@@ -336,20 +315,13 @@
 
         <!-- ════════ 资源监控 ════════ -->
         <div v-else-if="activeTab === 'monitor'" class="tab-content">
-          <div class="tab-head">
-            <div class="tab-head-text">
-              <h4>{{ $t('admin.tabMonitor') }}</h4>
-              <p class="tab-hint">{{ $t('admin.monitorHint') }}</p>
-            </div>
-            <div class="tab-head-actions">
-              <span class="refresh-hint">{{
-                $t('admin.refreshAuto', { n: Math.round(refreshIntervalMs / 1000) })
-              }}</span>
-              <button class="btn btn-small" :disabled="loading" @click="refreshNow(true)">
-                {{ loading ? $t('admin.loading') : $t('admin.refresh') }}
-              </button>
-            </div>
-          </div>
+          <AdminTabHead
+            :title="$t('admin.tabMonitor')"
+            :hint="$t('admin.monitorHint')"
+            :loading="loading"
+            :interval-ms="refreshIntervalMs"
+            @refresh="refreshNow(true)"
+          />
 
           <!-- 资源监控（M2：自动升级） -->
           <div class="sub-section">
@@ -550,27 +522,17 @@
 
         <!-- ════════ DSH 版本管理 ════════ -->
         <div v-else-if="activeTab === 'envtpl'" class="tab-content">
-          <div class="tab-head">
-            <h4>{{ $t('admin.tabEnv') }}</h4>
-            <p class="tab-hint">{{ $t('env.admin.hint') }}</p>
-          </div>
+          <AdminTabHead
+            :title="$t('admin.tabDsh')"
+            :hint="$t('admin.dshHint')"
+            :loading="loading"
+            :interval-ms="refreshIntervalMs"
+            @refresh="refreshNow(true)"
+          />
           <EnvTemplatesAdmin />
         </div>
         <div v-else-if="activeTab === 'dsh'" class="tab-content">
-          <div class="tab-head">
-            <div class="tab-head-text">
-              <h4>{{ $t('admin.tabDsh') }}</h4>
-              <p class="tab-hint">{{ $t('admin.dshHint') }}</p>
-            </div>
-            <div class="tab-head-actions">
-              <span class="refresh-hint">{{
-                $t('admin.refreshAuto', { n: Math.round(refreshIntervalMs / 1000) })
-              }}</span>
-              <button class="btn btn-small" :disabled="loading" @click="refreshNow(true)">
-                {{ loading ? $t('admin.loading') : $t('admin.refresh') }}
-              </button>
-            </div>
-          </div>
+          <AdminTabHead :title="$t('admin.credTabTitle')" :hint="$t('admin.credTabHint')" />
 
           <!-- 2026-10 审计：读失败必须在本 tab 内可见。此前写进全局 error，
                而横幅只挂在 users tab——dsh 表读挂了既看不见，还会串到别的
@@ -1370,6 +1332,7 @@ const { badgeFor, syncCredCount, refreshCred } = useAdminBadges()
 import axios from 'axios'
 import { useI18n } from 'vue-i18n'
 import { buildAdminTabs } from '../admin-tabs'
+import AdminTabHead from '../components/admin/AdminTabHead.vue'
 import EnvTemplatesAdmin from '../components/EnvTemplatesAdmin.vue'
 import {
   requestAccounts,
@@ -3872,26 +3835,6 @@ table {
 }
 
 /* 概括页头：左标题/提示，右自动刷新提示+刷新按钮（按钮跟随每个 tab 的概括区） */
-.tab-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-}
-.tab-head-text {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.tab-head-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-shrink: 0;
-}
-.refresh-hint {
-  font-size: 11px;
-  color: var(--text-faint);
-}
 
 /* 缩写地址/镜像 ID：悬停立即弹出完整值。
    用自绘 tooltip 而不是原生 title —— 原生有约 1 秒延迟、样式不可控、不能选中。 */

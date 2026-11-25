@@ -169,3 +169,28 @@
   overflow: visible;
   text-overflow: clip;
 }
+
+/* 管理端页头基建（AdminTabHead 组件与壳内保留块共用；仅 AP 使用） */
+.admin-panel .tab-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.admin-panel .tab-head-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.admin-panel .tab-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.admin-panel .refresh-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+}
