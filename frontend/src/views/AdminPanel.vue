@@ -113,8 +113,8 @@
         <!-- ════════ DSH 版本管理 ════════ -->
         <div v-else-if="activeTab === 'envtpl'" class="tab-content">
           <AdminTabHead
-            :title="$t('admin.tabDsh')"
-            :hint="$t('admin.dshHint')"
+            :title="$t('admin.tabEnv')"
+            :hint="$t('env.admin.hint')"
             :loading="loading"
             :interval-ms="refreshIntervalMs"
             @refresh="refreshNow(true)"

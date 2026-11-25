@@ -67,7 +67,7 @@ onMounted(() => {
 
 <template>
   <div>
-    <AdminTabHead :title="$t('admin.credTabTitle')" :hint="$t('admin.credTabHint')" />
+    <AdminTabHead :title="$t('admin.tabDsh')" :hint="$t('admin.dshHint')" />
 
     <!-- 2026-10 审计：读失败必须在本 tab 内可见。此前写进全局 error，
                而横幅只挂在 users tab——dsh 表读挂了既看不见，还会串到别的
