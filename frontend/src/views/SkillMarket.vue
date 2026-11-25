@@ -405,25 +405,6 @@ onUnmounted(() => {
 }
 
 /* ─── 左侧栏 ─── */
-.gate-sidebar {
-  width: 176px;
-  flex-shrink: 0;
-}
-
-.sidebar-card {
-  background: var(--surface-white);
-  border-radius: 16px;
-  border: 1px solid var(--card-border);
-  box-shadow: var(--card-shadow);
-  padding: 0.5rem;
-}
-
-.sidebar-nav {
-  display: flex;
-  flex-direction: column;
-  gap: 0.125rem;
-  padding-top: 0.25rem;
-}
 
 .sidebar-item {
   width: 100%;
@@ -442,59 +423,10 @@ onUnmounted(() => {
   transition: var(--transition-fast);
 }
 
-.sidebar-item:hover {
-  background: var(--bg-page);
-  color: var(--text-secondary);
-}
-
-.sidebar-item.active {
-  background: #eef0f8;
-  color: var(--brand-text);
-}
-
-.sidebar-icon {
-  width: 14px;
-  height: 14px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.sidebar-icon :deep(svg) {
-  display: block;
-}
-
 /* ─── 右侧内容卡 ─── */
-.gate-content {
-  flex: 1;
-  min-width: 0;
-  background: var(--surface-white);
-  border-radius: 16px;
-  border: 1px solid var(--card-border);
-  box-shadow: var(--card-shadow);
-  padding: 1.5rem;
-  overflow-y: auto;
-}
 
 .tab-content {
   animation: fadeIn 0.25s;
-}
-
-.tab-head h4 {
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-faint);
-  margin-bottom: 0.125rem;
-}
-
-.tab-hint {
-  font-size: 11px;
-  color: var(--text-faint);
-  line-height: 1.6;
-  margin-bottom: 1rem;
 }
 
 .market-tools {
@@ -715,32 +647,4 @@ onUnmounted(() => {
 
 /* 缩写地址/镜像 ID：悬停立即弹出完整值。
    用自绘 tooltip 而不是原生 title —— 原生有约 1 秒延迟、样式不可控、不能选中。 */
-.addr-tip {
-  position: relative;
-  cursor: help;
-}
-.addr-tip[data-full]:hover::after {
-  content: attr(data-full);
-  position: absolute;
-  left: 0;
-  top: 100%;
-  z-index: 40;
-  margin-top: 4px;
-  padding: 6px 10px;
-  width: max-content;
-  max-width: 460px;
-  background: var(--text-main);
-  color: var(--bg-page);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 1.5;
-  letter-spacing: normal;
-  border-radius: 6px;
-  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.28);
-  white-space: normal;
-  word-break: break-all;
-  text-align: left;
-  pointer-events: none;
-}
 </style>

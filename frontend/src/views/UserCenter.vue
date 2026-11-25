@@ -3150,16 +3150,6 @@ onUnmounted(() => {
 }
 
 /* ════ 状态卡片（loading / connect / waiting，居中显示） ════ */
-.state-card {
-  margin: auto;
-  width: min(540px, calc(100% - 2rem));
-  background: var(--surface-white);
-  border-radius: 16px;
-  border: 1px solid var(--card-border);
-  box-shadow: var(--card-shadow);
-  text-align: center;
-  padding: 3rem 2rem;
-}
 
 .loading-card h2,
 .connect-card h2,
@@ -3210,11 +3200,6 @@ onUnmounted(() => {
 .connect-card p {
   color: var(--text-muted);
   margin-bottom: 2rem;
-}
-
-.btn-large {
-  padding: 0.75rem 2rem;
-  font-size: 1.05rem;
 }
 
 .btn-small {
@@ -3300,27 +3285,6 @@ onUnmounted(() => {
 }
 
 /* ════ 主界面：左侧栏 + 右侧内容（与 React 原型稿一致） ════ */
-.gate-shell {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  gap: 1rem;
-  padding: 1.25rem;
-  align-items: stretch;
-}
-
-.gate-sidebar {
-  width: 176px;
-  flex-shrink: 0;
-}
-
-.sidebar-card {
-  background: var(--surface-white);
-  border-radius: 16px;
-  border: 1px solid var(--card-border);
-  box-shadow: var(--card-shadow);
-  padding: 0.5rem;
-}
 
 .wallet-summary {
   padding: 0.75rem;
@@ -3357,13 +3321,6 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 
-.sidebar-nav {
-  display: flex;
-  flex-direction: column;
-  gap: 0.125rem;
-  padding-top: 0.25rem;
-}
-
 .sidebar-item {
   position: relative;
   width: 100%;
@@ -3380,29 +3337,6 @@ onUnmounted(() => {
   cursor: pointer;
   text-align: left;
   transition: var(--transition-fast);
-}
-
-.sidebar-item:hover {
-  background: var(--bg-page);
-  color: var(--text-secondary);
-}
-
-.sidebar-item.active {
-  background: #eef0f8;
-  color: var(--brand-text);
-}
-
-.sidebar-icon {
-  width: 14px;
-  height: 14px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.sidebar-icon :deep(svg) {
-  display: block;
 }
 
 /* v1.5 验收①：用户页签与管理页签同侧栏并列，中间一条"管理"分组细线 */
@@ -3425,35 +3359,9 @@ onUnmounted(() => {
 }
 
 /* ─── 右侧内容卡 ─── */
-.gate-content {
-  flex: 1;
-  min-width: 0;
-  background: var(--surface-white);
-  border-radius: 16px;
-  border: 1px solid var(--card-border);
-  box-shadow: var(--card-shadow);
-  padding: 1.5rem;
-  overflow-y: auto;
-}
 
 .tab-content {
   animation: fadeIn 0.25s;
-}
-
-.tab-head h4 {
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-faint);
-  margin-bottom: 0.125rem;
-}
-
-.tab-hint {
-  font-size: 11px;
-  color: var(--text-faint);
-  line-height: 1.6;
-  margin-bottom: 1rem;
 }
 
 .tab-divider {
@@ -3948,40 +3856,8 @@ onUnmounted(() => {
 
 /* 缩写地址/镜像 ID：悬停立即弹出完整值。
    用自绘 tooltip 而不是原生 title —— 原生有约 1 秒延迟、样式不可控、不能选中。 */
-.addr-tip {
-  position: relative;
-  cursor: help;
-}
 /* 悬停提示是元素的 ::after 子节点：带 overflow:hidden 的省略号会把提示裁掉。
    凡承载 data-full 提示的元素一律不裁剪，短展示由 JS 头尾截取负责 */
-.addr-tip[data-full] {
-  overflow: visible;
-  text-overflow: clip;
-}
-.addr-tip[data-full]:hover::after {
-  content: attr(data-full);
-  position: absolute;
-  left: 0;
-  top: 100%;
-  z-index: 40;
-  margin-top: 4px;
-  padding: 6px 10px;
-  width: max-content;
-  max-width: 460px;
-  background: var(--text-main);
-  color: var(--bg-page);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 1.5;
-  letter-spacing: normal;
-  border-radius: 6px;
-  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.28);
-  white-space: normal;
-  word-break: break-all;
-  text-align: left;
-  pointer-events: none;
-}
 
 /* ─── v1.4 凭证体系 ─── */
 .cred-card {

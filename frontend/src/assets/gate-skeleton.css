@@ -1,0 +1,171 @@
+/* ── 门户外壳骨架（P3 Tier B①：AP/UC/SM 三份逐字副本收敛单源） ──────────────
+ * 来源：docs/css-dedup-report.md §三 Tier B-1。三 view 的侧栏+内容壳+地址提示
+ * 样式原为 3 份逐字节复制（判例 63），此处留一份，用**根类祖先限定**挂载：
+ *   .admin-panel（AdminPanel 根）/ .user-center（UserCenter 根）/ .skill-market（SkillMarket 根）
+ * 限定即防线：移动端六组件虽在 UserCenter 内异步挂载，但骨架类名在其模板中零使用；
+ * 真被使用的 .tab-content/.btn-small **刻意不入库**——
+ *   .tab-content：MobileMarket 异体（0.3s vs 0.25s）与 UC 祖先链重叠，避免同特异度比加载顺序的隐性契约；
+ *   .btn-small：EnvTemplates 双子组件 ×22 使用但从未定义样式，全局化=替作者意图放行（语义变更，非搬运）；
+ *   .sidebar-item 基体：三文件互异（SM 缺 position:relative），各自留守。
+ * scoped 删除后原 :deep(svg) 于全局直通，无需穿透语法。 specificity 与元素原 scoped 版等衡（0,2,0），行为不变。
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/* 三 view 共有 */
+.admin-panel .gate-sidebar,
+.user-center .gate-sidebar,
+.skill-market .gate-sidebar {
+  width: 176px;
+  flex-shrink: 0;
+}
+
+.admin-panel .sidebar-card,
+.user-center .sidebar-card,
+.skill-market .sidebar-card {
+  background: var(--surface-white);
+  border-radius: 16px;
+  border: 1px solid var(--card-border);
+  box-shadow: var(--card-shadow);
+  padding: 0.5rem;
+}
+
+.admin-panel .sidebar-nav,
+.user-center .sidebar-nav,
+.skill-market .sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  padding-top: 0.25rem;
+}
+
+.admin-panel .sidebar-item:hover,
+.user-center .sidebar-item:hover,
+.skill-market .sidebar-item:hover {
+  background: var(--bg-page);
+  color: var(--text-secondary);
+}
+
+.admin-panel .sidebar-item.active,
+.user-center .sidebar-item.active,
+.skill-market .sidebar-item.active {
+  background: #eef0f8;
+  color: var(--brand-text);
+}
+
+.admin-panel .sidebar-icon,
+.user-center .sidebar-icon,
+.skill-market .sidebar-icon {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.admin-panel .sidebar-icon svg,
+.user-center .sidebar-icon svg,
+.skill-market .sidebar-icon svg {
+  display: block;
+}
+
+.admin-panel .gate-content,
+.user-center .gate-content,
+.skill-market .gate-content {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface-white);
+  border-radius: 16px;
+  border: 1px solid var(--card-border);
+  box-shadow: var(--card-shadow);
+  padding: 1.5rem;
+  overflow-y: auto;
+}
+
+.admin-panel .tab-head h4,
+.user-center .tab-head h4,
+.skill-market .tab-head h4 {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  margin-bottom: 0.125rem;
+}
+
+.admin-panel .tab-hint,
+.user-center .tab-hint,
+.skill-market .tab-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+  line-height: 1.6;
+  margin-bottom: 1rem;
+}
+
+.admin-panel .addr-tip,
+.user-center .addr-tip,
+.skill-market .addr-tip {
+  position: relative;
+  cursor: help;
+}
+
+.admin-panel .addr-tip[data-full]:hover::after,
+.user-center .addr-tip[data-full]:hover::after,
+.skill-market .addr-tip[data-full]:hover::after {
+  content: attr(data-full);
+  position: absolute;
+  left: 0;
+  top: 100%;
+  z-index: 40;
+  margin-top: 4px;
+  padding: 6px 10px;
+  width: max-content;
+  max-width: 460px;
+  background: var(--text-main);
+  color: var(--bg-page);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: normal;
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.28);
+  white-space: normal;
+  word-break: break-all;
+  text-align: left;
+  pointer-events: none;
+}
+
+/* 仅 AP/UC（SM 无此规则，不随迁——防"顺手加戏"） */
+.admin-panel .gate-shell,
+.user-center .gate-shell {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 1rem;
+  padding: 1.25rem;
+  align-items: stretch;
+}
+
+.admin-panel .btn-large,
+.user-center .btn-large {
+  padding: 0.75rem 2rem;
+  font-size: 1.05rem;
+}
+
+.admin-panel .state-card,
+.user-center .state-card {
+  margin: auto;
+  width: min(540px, calc(100% - 2rem));
+  background: var(--surface-white);
+  border-radius: 16px;
+  border: 1px solid var(--card-border);
+  box-shadow: var(--card-shadow);
+  text-align: center;
+  padding: 3rem 2rem;
+}
+
+.admin-panel .addr-tip[data-full],
+.user-center .addr-tip[data-full] {
+  overflow: visible;
+  text-overflow: clip;
+}
