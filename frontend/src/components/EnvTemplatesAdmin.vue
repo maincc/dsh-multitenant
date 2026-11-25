@@ -29,7 +29,7 @@
         >
         <span class="badge" :class="badgeCls(t2.status)">{{ $t('env.status.' + t2.status) }}</span>
         <span class="enva-meta"
-          >{{ shortAddr(t2.sourceAddr) }} · {{ fmtBytes(t2.sizeBytes) }} ·
+          >{{ shortAddress(t2.sourceAddr) }} · {{ formatBytes(t2.sizeBytes) }} ·
           {{ $t('env.usedBy', { n: (t2.pinnedBy || []).length }) }} ·
           {{ (t2.createdAt || '').slice(0, 10) }}</span
         >
@@ -136,7 +136,7 @@
                 {{
                   $t('env.admin.bundleCol', {
                     n: (detail.bundle?.files || []).length,
-                    size: fmtBytes(detail.bundle?.bytes || 0),
+                    size: formatBytes(detail.bundle?.bytes || 0),
                   })
                 }}
               </div>
@@ -164,7 +164,7 @@
                   >
                     {{ f.p }}
                     <span class="enva-muted"
-                      >{{ fmtBytes(f.size) }} · {{ (f.sha256 || '').slice(0, 8) }}</span
+                      >{{ formatBytes(f.size) }} · {{ (f.sha256 || '').slice(0, 8) }}</span
                     >
                   </div>
                 </div>
@@ -244,6 +244,7 @@ import axios from 'axios'
 import { toast, askConfirm } from '../composables/useDialog'
 import { useAdminBadges } from '../composables/useAdminBadges'
 import { signAdminOperation } from '../api/adminSign.js'
+import { formatBytes, shortAddress } from '../utils/format.js'
 
 const { t } = useI18n()
 const { syncEnvRows } = useAdminBadges()
@@ -290,15 +291,6 @@ async function load() {
 }
 onMounted(() => load().catch((e) => toast(errMsg(e))))
 const errMsg = (e) => e?.response?.data?.error || e?.message || 'error'
-const shortAddr = (a) => (a ? `${a.slice(0, 8)}…${a.slice(-4)}` : '—')
-const fmtBytes = (n) =>
-  !n
-    ? '0 B'
-    : n >= 1073741824
-      ? `${(n / 1073741824).toFixed(1)} GB`
-      : n >= 1048576
-        ? `${(n / 1048576).toFixed(0)} MB`
-        : `${(n / 1024).toFixed(0)} KB`
 const badgeCls = (st) =>
   ({
     draft: 'badge-info',

@@ -907,7 +907,7 @@
                           kind:
                             pl.kind === 'file' ? $t('user.pluginFileTag') : $t('user.pluginDirTag'),
                           files: pl.fileCount,
-                          size: fmtBytes(pl.bytes),
+                          size: formatBytes(pl.bytes),
                         })
                       }}
                     </span>
@@ -1083,6 +1083,7 @@ import {
   watchAccountsChanged,
 } from '../api/wallet.js'
 import { signConnectPlugin, buildConnectUrl } from '../api/connect.js'
+import { formatBytes, shortAddress } from '../utils/format.js'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -2824,12 +2825,6 @@ const fetchMine = async () => {
 let mineInFlight = null
 
 /** 我的技能列表整体刷新（控制下方列表区的 loading） */
-function fmtBytes(n) {
-  if (typeof n !== 'number' || Number.isNaN(n)) return '—'
-  if (n < 1024) return `${n} B`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
-  return `${(n / 1024 / 1024).toFixed(1)} MB`
-}
 const loadMine = async () => {
   if (mineInFlight) return mineInFlight // 并发去重：watch 与切换流程可能重叠触发
   if (!connected.value) return

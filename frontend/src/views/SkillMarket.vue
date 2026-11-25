@@ -220,6 +220,7 @@ import {
   signChallenge,
   watchAccountsChanged,
 } from '../api/wallet.js'
+import { formatBytes, shortAddress } from '../utils/format.js'
 
 const { t } = useI18n()
 
@@ -300,7 +301,6 @@ const filtered = computed(() => {
   )
 })
 
-const shortAddress = (addr) => (addr ? `${addr.slice(0, 8)}…${addr.slice(-4)}` : '')
 const shortHash = (h) => (h ? h.slice(0, 12) : '')
 
 const loadList = async () => {

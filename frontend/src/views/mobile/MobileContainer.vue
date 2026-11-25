@@ -439,6 +439,7 @@ import { signChallenge, friendlyPluginError } from '../../api/wallet.js'
 import { signConnectPlugin, buildConnectUrl } from '../../api/connect.js'
 import { skillsApi } from '../../api/skills.js'
 import { toast, askConfirm } from '../../composables/useDialog'
+import { formatBytes, shortAddress } from '../../utils/format.js'
 
 // 移动深链穿透（2026-11-11 幻影键 adm:model 正链）：壳 applyMobileTabLink('model')
 // 落本 tab 时经 initial-sub 指定子页签；一次性消费——应用后立即 emit 请壳清空，
@@ -1254,13 +1255,6 @@ async function unpublishSkill(skillName) {
 }
 
 // 格式化字节数
-function formatBytes(bytes) {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i]
-}
 </script>
 
 <style scoped>

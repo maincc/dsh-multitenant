@@ -37,7 +37,7 @@
         <span class="badge badge-info">{{
           $t('env.fromTemplate', {
             name: current.fromTemplate.name,
-            author: shortAddr(current.fromTemplate.author),
+            author: shortAddress(current.fromTemplate.author),
           })
         }}</span>
         <button class="btn btn-small btn-secondary" :disabled="busy" @click="revertNow">
@@ -77,8 +77,8 @@
             >
           </div>
           <div class="env-card-meta">
-            {{ $t('env.author') }} {{ shortAddr(tpl.author) }} · DSH {{ tpl.dshVersion }} ·
-            {{ fmtBytes(tpl.sizeBytes) }}
+            {{ $t('env.author') }} {{ shortAddress(tpl.author) }} · DSH {{ tpl.dshVersion }} ·
+            {{ formatBytes(tpl.sizeBytes) }}
           </div>
           <div class="env-card-intro">{{ tpl.intro || $t('env.noIntro') }}</div>
           <div class="env-card-actions">
@@ -123,7 +123,7 @@
                 >
                   {{ $t('env.conflicts', { n: preview.conflicts.length }) }}
                   <div v-for="c in preview.conflicts" :key="c.p" class="env-conflict-item">
-                    {{ c.p }}（{{ fmtBytes(c.size) }}）
+                    {{ c.p }}（{{ formatBytes(c.size) }}）
                   </div>
                 </li>
                 <li v-if="preview.skillsPlanned?.length">
@@ -244,8 +244,8 @@
           <button class="btn btn-small" @click="detailFor = null">✕</button>
         </div>
         <div class="env-card-meta">
-          {{ $t('env.author') }} {{ shortAddr(detailFor.author) }} · DSH
-          {{ detailFor.dshVersion }} · {{ fmtBytes(detailFor.sizeBytes) }} ·
+          {{ $t('env.author') }} {{ shortAddress(detailFor.author) }} · DSH
+          {{ detailFor.dshVersion }} · {{ formatBytes(detailFor.sizeBytes) }} ·
           {{ new Date(detailFor.createdAt).toLocaleString() }} ·
           {{ $t('env.detailUsers', { n: detailFor.pinnedByCount }) }}
           <span v-if="!detailFor.scrubbed" class="badge badge-warning">{{
@@ -285,7 +285,7 @@
               {{
                 $t('env.dBundle', {
                   files: detailFor.bundleFiles,
-                  size: fmtBytes(detailFor.bundleBytes),
+                  size: formatBytes(detailFor.bundleBytes),
                 })
               }}
             </div>
@@ -370,7 +370,7 @@
             </div>
             <label v-for="sk in wz.inv.skills" :key="sk.name" class="env-check">
               <input type="checkbox" v-model="wz.skills" :value="sk.name" /> {{ sk.name }}
-              <span class="env-muted">{{ fmtBytes(sk.size) }}</span>
+              <span class="env-muted">{{ formatBytes(sk.size) }}</span>
             </label>
             <div class="env-muted">{{ $t('env.skillsFollowNote') }}</div>
           </div>
@@ -380,7 +380,7 @@
             </div>
             <label v-for="pl in wz.inv.plugins" :key="pl.name" class="env-check">
               <input type="checkbox" v-model="wz.plugins" :value="pl.name" /> {{ pl.name }}
-              <span class="env-muted">{{ fmtBytes(pl.size) }} · {{ pl.sha8 }}</span>
+              <span class="env-muted">{{ formatBytes(pl.size) }} · {{ pl.sha8 }}</span>
             </label>
             <div class="env-danger env-small">{{ $t('env.pluginsWarn') }}</div>
             <div v-if="wz.plugins.length" class="env-prov">
@@ -424,7 +424,7 @@
                 <span v-else class="env-ws-caret env-ws-caret-void">·</span>
                 {{ w.dir ? '📁' : '📄' }} {{ w.name }}{{ w.dir ? '/' : '' }}
                 <span class="env-muted">
-                  {{ fmtBytes(w.sizeBytes)
+                  {{ formatBytes(w.sizeBytes)
                   }}{{ w.dir ? $t('env.wsDirNote', { n: (w.children || []).length }) : '' }}
                 </span>
               </label>
@@ -442,7 +442,7 @@
                   />
                   {{ c.dir ? '📁' : '📄' }} {{ c.name }}
                   <span class="env-muted">
-                    {{ fmtBytes(c.sizeBytes)
+                    {{ formatBytes(c.sizeBytes)
                     }}{{
                       wz.wsExcludes.includes(w.name + '/' + c.name)
                         ? ' · ' + $t('env.wsExcludedTag')
@@ -461,7 +461,7 @@
           <div class="env-pick-total">
             {{
               $t('env.bundleTotal', {
-                size: fmtBytes(totalBundleBytes),
+                size: formatBytes(totalBundleBytes),
                 n: wz.plugins.length,
                 cap: '200 MB',
               })
@@ -561,6 +561,7 @@ import { useI18n } from 'vue-i18n'
 import axios from 'axios'
 import { toast, askConfirm } from '../composables/useDialog'
 import { refreshIfWatching } from '../composables/useAdminBadges'
+import { formatBytes, shortAddress } from '../utils/format.js'
 
 const { t } = useI18n()
 // 出身自述（判例 55 B 面）：闭包引用后定义的 wz——调用期取值，无 TDZ 问题
@@ -683,18 +684,6 @@ onMounted(() => {
 })
 
 const errMsg = (e) => e?.response?.data?.error || e?.message || 'error'
-const shortAddr = (a) => (a ? `${a.slice(0, 8)}…${a.slice(-4)}` : '—')
-const fmtBytes = (n) => {
-  if (!n) return '0 B'
-  const u = ['B', 'KB', 'MB', 'GB']
-  let i = 0
-  let v = n
-  while (v >= 1024 && i < 3) {
-    v /= 1024
-    i++
-  }
-  return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)} ${u[i]}`
-}
 
 const detailFor = ref(null)
 function detailToApply() {

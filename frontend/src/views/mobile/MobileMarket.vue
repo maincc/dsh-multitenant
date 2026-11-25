@@ -261,6 +261,7 @@ import {
 } from '../../api/wallet.js'
 import { toast, askConfirm } from '../../composables/useDialog'
 import MobileEnvMarket from './MobileEnvMarket.vue'
+import { formatBytes, shortAddress } from '../../utils/format.js'
 
 const loading = ref(true)
 const role = ref('user')
@@ -292,10 +293,6 @@ const filteredSkills = computed(() => {
     (s) => s.name.toLowerCase().includes(k) || (s.description || '').toLowerCase().includes(k),
   )
 })
-
-function shortAddress(addr) {
-  return addr ? `${addr.slice(0, 8)}…${addr.slice(-4)}` : ''
-}
 
 function shortHash(hash) {
   return hash ? `${hash.slice(0, 12)}...` : ''

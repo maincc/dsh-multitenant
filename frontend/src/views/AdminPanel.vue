@@ -404,7 +404,7 @@
               <tbody>
                 <tr v-for="u in users" :key="u.address">
                   <td class="cwt-mono addr-tip" :data-full="u.address">
-                    {{ shortAddr(u.address) }}
+                    {{ shortAddress(u.address) }}
                   </td>
                   <td>
                     <span class="badge" :class="tierBadge(u.tier)">
@@ -536,7 +536,7 @@
                     <td class="mem-pct-ok">{{ v.size }}</td>
                     <td>
                       <span v-if="v.sizeActual" :class="actualSizeClass(v.size, v.sizeActual)">
-                        {{ fmtBytes(v.sizeActual) }}
+                        {{ formatBytes(v.sizeActual) }}
                       </span>
                       <span v-else class="monitor-never">-</span>
                     </td>
@@ -1379,6 +1379,7 @@ import {
   friendlyPluginError,
 } from '../api/wallet.js'
 import { signAdminOperation as signAdminCore } from '../api/adminSign.js'
+import { formatBytes, shortAddress } from '../utils/format.js'
 
 const { t } = useI18n()
 
@@ -1564,13 +1565,6 @@ const toggleSelectAllImages = (e) => {
 }
 
 /** 把字节数格式化成人类可读（后端只给字节，避免在两端各写一套单位逻辑） */
-const formatBytes = (n) => {
-  const b = Number(n) || 0
-  if (b <= 0) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.min(units.length - 1, Math.floor(Math.log(b) / Math.log(1024)))
-  return `${(b / 1024 ** i).toFixed(i === 0 ? 0 : 2)} ${units[i]}`
-}
 
 /**
  * 清理选中的悬空镜像（破坏性操作 → 走管理端签名）。
@@ -1612,10 +1606,6 @@ const pruneImages = async () => {
 }
 
 /** 短地址显示（前 6 + … + 后 4），表格里避免撑爆 */
-function shortAddress(addr) {
-  if (!addr) return '—'
-  return addr.length > 12 ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : addr
-}
 
 /** 镜像 ID 只留前 12 位（sha256: 前缀太长） */
 function shortImageId(id) {
@@ -2219,7 +2209,6 @@ const runDiskScan = async () => {
   }
 }
 
-const shortAddr = (a) => (a ? `${a.slice(0, 8)}…${a.slice(-4)}` : '-')
 const fmtTime = (t) => (t ? new Date(t).toLocaleString() : '-')
 // 2026-10 审计：调配额会当场 stop→update→start 该租户容器（别人正在用的会话被断）。
 // 此前既无确认也无签名——后端已收进签名白名单（binding=address:tier），
@@ -2422,15 +2411,6 @@ const parseSize = (s) => {
 }
 
 /** 字节数 → 人类可读（如 "2.4 MB"） */
-const fmtBytes = (b) => {
-  const n = Number(b)
-  if (!Number.isFinite(n) || n < 0) return '-'
-  if (n >= 1024 ** 4) return `${(n / 1024 ** 4).toFixed(2)} TB`
-  if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(2)} GB`
-  if (n >= 1024 ** 2) return `${(n / 1024 ** 2).toFixed(2)} MB`
-  if (n >= 1024) return `${(n / 1024).toFixed(1)} kB`
-  return `${n} B`
-}
 
 /** 实测值与引擎口径差异高亮：偏差 ≥2 倍标黄，≥10 倍标红（提示引擎口径失真） */
 const actualSizeClass = (engineSize, actualBytes) => {
@@ -2450,7 +2430,7 @@ const volumeSize = (address) => {
   const hit = volumes.find((v) => v.volume === `dsh-data-swtc-${address}`)
   if (!hit) return '-'
   // 有 du 实测值优先展示（真实占用），否则回退引擎口径
-  return hit.sizeActual ? fmtBytes(hit.sizeActual) : hit.size
+  return hit.sizeActual ? formatBytes(hit.sizeActual) : hit.size
 }
 
 /** 磁盘占用进度条宽度：该卷占所有租户卷最大者的百分比（最小 4% 保证可见） */

@@ -211,6 +211,7 @@ import axios from 'axios'
 import { signAdminOperation } from '../../api/adminSign.js'
 import { useAdminBadges, refreshIfWatching } from '../../composables/useAdminBadges.js'
 import { toast, askConfirm } from '../../composables/useDialog'
+import { formatBytes, shortAddress } from '../../utils/format.js'
 
 const { badgeFor } = useAdminBadges()
 
@@ -251,10 +252,6 @@ const envStatuses = [
 
 const currentEnvStatusLabel = ref('待审核')
 
-function shortAddress(addr) {
-  return addr ? `${addr.slice(0, 10)}…${addr.slice(-4)}` : ''
-}
-
 function formatDate(dateStr) {
   if (!dateStr) return ''
   return new Date(dateStr).toLocaleString()
@@ -276,14 +273,6 @@ function statusClass(status) {
     rejected: 'b-red',
   }
   return classes[status] || ''
-}
-
-function formatBytes(bytes) {
-  if (!bytes) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i]
 }
 
 function envStatusLabel(status) {

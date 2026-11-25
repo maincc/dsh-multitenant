@@ -129,6 +129,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import axios from 'axios'
 import { askConfirm, toast } from '../../composables/useDialog'
 import { signAdminOperation } from '../../api/adminSign.js'
+import { shortAddress } from '../../utils/format.js'
 
 const loading = ref(true)
 const address = ref('')
@@ -155,10 +156,7 @@ const orphanScanning = ref(false)
 const orphanCleaning = ref(false)
 const orphanNotice = ref('')
 
-const shortAddr = computed(() => {
-  const a = address.value
-  return a ? `${a.slice(0, 12)}…${a.slice(-4)}` : ''
-})
+const shortAddr = computed(() => shortAddress(address.value, { head: 12, empty: '' }))
 
 function copyAddress() {
   if (address.value) {
