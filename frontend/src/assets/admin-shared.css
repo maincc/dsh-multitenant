@@ -6,3 +6,17 @@
   font-size: 0.78rem;
   color: #0f172a;
 }
+
+/* monitor/overview 共用的子区块标题（跨 tab 件上收） */
+.sub-section {
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--bg-page);
+}
+
+.sub-section h4 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-body);
+  margin-bottom: 0.25rem;
+}
