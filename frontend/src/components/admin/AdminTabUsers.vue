@@ -312,5 +312,3 @@ const promoteUser = async (address) => {
     </table>
   </div>
 </template>
-
-<style scoped></style>

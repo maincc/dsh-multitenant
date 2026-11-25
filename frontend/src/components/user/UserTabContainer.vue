@@ -37,12 +37,11 @@ const props = defineProps({
 const {
   enterDsh,
   containerBooting,
-  bootNotice,
-  autoBootContainer,
   restartContainer,
   restartDSH,
   resetContainer,
   stopContainer,
+  cSub,
 } = useUserContainer()
 const {
   mineData,
@@ -51,7 +50,6 @@ const {
   importName,
   importText,
   importBusy,
-  fetchMine,
   loadMine,
   loadContainerSkills,
   openImportDialog,
@@ -71,12 +69,14 @@ const {
   doShare,
 } = useUserSkills()
 
-const cSub = ref(props.initialSub || 'info')
 watch(
   () => props.initialSub,
   (v) => {
-    if (v) cSub.value = v
+    // 值域兜底（审查 E4 附带）：桌面段只有 info/skills/env，'model' 等移动态
+    // 一律忽略——否则 cSub 落空值全段空白（基线桌面根本不读越界值）
+    if (v && ['info', 'skills', 'env'].includes(v)) cSub.value = v
   },
+  { immediate: true },
 )
 </script>
 
@@ -309,90 +309,106 @@ watch(
     </div>
 
     <!-- 导入技能对话框 -->
-    <div v-if="importDialogOpen" class="import-mask" @click.self="closeImportDialog">
-      <div class="import-panel">
-        <h3>{{ $t('user.importDialogTitle') }}</h3>
-        <p class="hint">
-          {{ $t('user.importDialogHint') }}
-        </p>
-        <div class="import-field">
-          <label>{{ $t('user.importFileLabel') }}</label>
-          <input type="file" accept=".md,.txt,text/markdown" @change="onImportFile" />
-        </div>
-        <div class="import-field">
-          <label>{{ $t('user.importNameLabel') }}</label>
-          <input v-model="importName" placeholder="my-skill" />
-        </div>
-        <div class="import-field">
-          <label>{{ $t('user.importTextLabel') }}</label>
-          <textarea
-            v-model="importText"
-            rows="8"
-            placeholder="---&#10;name: my-skill&#10;description: 一句话说明&#10;---&#10;正文…"
-          ></textarea>
-        </div>
-        <div v-if="importBusy" class="loading">{{ $t('user.submitting') }}</div>
-        <div class="action-buttons">
-          <button class="btn btn-primary" :disabled="importBusy" @click="doImport">
-            {{ $t('user.importSubmit') }}
-          </button>
-          <button class="btn btn-secondary" :disabled="importBusy" @click="closeImportDialog">
-            {{ $t('user.cancel') }}
-          </button>
+    <Teleport to="body">
+      <div v-if="importDialogOpen" class="import-mask" @click.self="closeImportDialog">
+        <div class="import-panel">
+          <h3>{{ $t('user.importDialogTitle') }}</h3>
+          <p class="hint">
+            {{ $t('user.importDialogHint') }}
+          </p>
+          <div class="import-field">
+            <label>{{ $t('user.importFileLabel') }}</label>
+            <input type="file" accept=".md,.txt,text/markdown" @change="onImportFile" />
+          </div>
+          <div class="import-field">
+            <label>{{ $t('user.importNameLabel') }}</label>
+            <input v-model="importName" placeholder="my-skill" />
+          </div>
+          <div class="import-field">
+            <label>{{ $t('user.importTextLabel') }}</label>
+            <textarea
+              v-model="importText"
+              rows="8"
+              placeholder="---&#10;name: my-skill&#10;description: 一句话说明&#10;---&#10;正文…"
+            ></textarea>
+          </div>
+          <div v-if="importBusy" class="loading">{{ $t('user.submitting') }}</div>
+          <div class="action-buttons">
+            <button class="btn btn-primary" :disabled="importBusy" @click="doImport">
+              {{ $t('user.importSubmit') }}
+            </button>
+            <button class="btn btn-secondary" :disabled="importBusy" @click="closeImportDialog">
+              {{ $t('user.cancel') }}
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- 共享容器内技能对话框 -->
-    <div v-if="shareDialogOpen" class="import-mask" @click.self="closeShareDialog">
-      <div class="import-panel">
-        <h3>{{ $t('user.shareDialogTitle') }}</h3>
-        <p class="hint">
-          {{ $t('user.shareDialogHint1') }}
-          <br />
-          {{ $t('user.shareDialogHint2') }}
-        </p>
-        <div class="import-field">
-          <label>{{ $t('user.shareSelectLabel') }}</label>
-          <select v-model="shareSourceName" :disabled="shareLoading || shareConflict || shareBusy">
-            <option value="" disabled>
-              {{ shareLoading ? $t('user.shareLoadingList') : $t('user.shareSelectPlaceholder') }}
-            </option>
-            <option v-for="n in mineData.inContainer" :key="n" :value="n">{{ n }}</option>
-          </select>
-        </div>
-        <div v-if="shareLoading" class="config-loading">
-          <div class="mini-spinner"></div>
-          <span>{{ $t('user.shareLoading') }}</span>
-        </div>
-        <div v-else-if="mineData.inContainer.length === 0" class="hint share-empty-hint">
-          {{ $t('user.shareEmptyHintA') }}
-          <code>/dsh-home/skills/</code>{{ $t('user.shareEmptyHintB') }}
-        </div>
-        <div v-if="shareConflict" class="import-field share-conflict">
-          <label>{{ $t('user.shareConflictLabel') }}</label>
-          <input v-model="shareRenameTo" placeholder="my-skill-v2" />
-          <span class="hint">{{ $t('user.shareConflictHint') }}</span>
-        </div>
-        <div v-if="shareBusy" class="loading">{{ $t('user.submitting') }}</div>
-        <div class="action-buttons">
-          <button
-            class="btn btn-primary"
-            :disabled="shareBusy || !shareSourceName"
-            @click="doShare"
-          >
-            {{ shareConflict ? $t('user.shareWithRename') : $t('user.shareSubmit') }}
-          </button>
-          <button class="btn btn-secondary" :disabled="shareBusy" @click="closeShareDialog">
-            {{ $t('user.cancel') }}
-          </button>
+    <Teleport to="body">
+      <div v-if="shareDialogOpen" class="import-mask" @click.self="closeShareDialog">
+        <div class="import-panel">
+          <h3>{{ $t('user.shareDialogTitle') }}</h3>
+          <p class="hint">
+            {{ $t('user.shareDialogHint1') }}
+            <br />
+            {{ $t('user.shareDialogHint2') }}
+          </p>
+          <div class="import-field">
+            <label>{{ $t('user.shareSelectLabel') }}</label>
+            <select
+              v-model="shareSourceName"
+              :disabled="shareLoading || shareConflict || shareBusy"
+            >
+              <option value="" disabled>
+                {{ shareLoading ? $t('user.shareLoadingList') : $t('user.shareSelectPlaceholder') }}
+              </option>
+              <option v-for="n in mineData.inContainer" :key="n" :value="n">{{ n }}</option>
+            </select>
+          </div>
+          <div v-if="shareLoading" class="config-loading">
+            <div class="mini-spinner"></div>
+            <span>{{ $t('user.shareLoading') }}</span>
+          </div>
+          <div v-else-if="mineData.inContainer.length === 0" class="hint share-empty-hint">
+            {{ $t('user.shareEmptyHintA') }}
+            <code>/dsh-home/skills/</code>{{ $t('user.shareEmptyHintB') }}
+          </div>
+          <div v-if="shareConflict" class="import-field share-conflict">
+            <label>{{ $t('user.shareConflictLabel') }}</label>
+            <input v-model="shareRenameTo" placeholder="my-skill-v2" />
+            <span class="hint">{{ $t('user.shareConflictHint') }}</span>
+          </div>
+          <div v-if="shareBusy" class="loading">{{ $t('user.submitting') }}</div>
+          <div class="action-buttons">
+            <button
+              class="btn btn-primary"
+              :disabled="shareBusy || !shareSourceName"
+              @click="doShare"
+            >
+              {{ shareConflict ? $t('user.shareWithRename') : $t('user.shareSubmit') }}
+            </button>
+            <button class="btn btn-secondary" :disabled="shareBusy" @click="closeShareDialog">
+              {{ $t('user.cancel') }}
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </Teleport>
   </div>
 </template>
 
 <style scoped>
+/* 审查 E5：基线壳 scoped 3610-3616 的说明盒规则，随容器段拆分无人接手 */
+.action-hints {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+}
+
 .tab-content.admin-embed {
   padding: 0;
   display: block;

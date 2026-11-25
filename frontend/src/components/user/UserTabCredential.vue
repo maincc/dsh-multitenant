@@ -13,7 +13,6 @@ const {
   credRetrying,
   credVerifiedBy,
   credNoDid,
-  credPopupShown,
   credVcOpen,
   credVc,
   credVcConsistent,
@@ -22,10 +21,7 @@ const {
   credExpDays,
   copyText,
   toggleCredVc,
-  resignSessionTo,
-  loadCredentialStatus,
   retryCredential,
-  sha256Hex,
   claimCredential,
   applyCwt,
   connected,
@@ -277,14 +273,6 @@ const {
 </template>
 
 <style scoped>
-.cred-dot.ok {
-  background: var(--success);
-}
-
-.cred-dot.missing {
-  background: #ef4444;
-}
-
 .cwt-meta {
   color: var(--text-muted);
   font-size: 0.9rem;

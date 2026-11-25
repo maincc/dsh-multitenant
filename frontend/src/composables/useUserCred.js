@@ -29,6 +29,7 @@ let initialTabApplied = false
 // 挂载期一次性语义复位闸（审查批 2 critical：模块单例化后 remount 不复位=
 // 深链「每进一次消费一次」的基线语义被升级成全局闩）——壳 onMounted 首行调用
 export function resetUserCredGates() {
+  credPopupShown.value = ''
   badgesStarted = false
   roleSettled = false
   mobileDeepLinkPending = null

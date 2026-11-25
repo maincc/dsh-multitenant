@@ -14,6 +14,9 @@ const t = (key, params) => i18n.global.t(key, params)
 
 // 每地址一次性自动开机闸门（随域迁入；壳旧 let 已删）
 let autoBootFor = ''
+// 容器 tab 三段子页签位置（基线=壳级 ref，tab 往返不重置；拆分曾误降组件局部）
+const cSub = ref('info')
+
 // 挂载期一次性语义复位闸（同上判例）：重进用户中心应重新"进入即检"
 export function resetUserContainerGates() {
   autoBootFor = ''
@@ -177,6 +180,7 @@ const stopContainer = async () => {
 
 export function useUserContainer() {
   return {
+    cSub,
     containerBooting,
     bootNotice,
     autoBootContainer,
