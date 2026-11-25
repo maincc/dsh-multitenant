@@ -9,6 +9,11 @@ const BASE = '/api/admin/dsh'
 
 export const adminDshApi = {
   imageStatus: () => axios.get(`${BASE}/image`).then((r) => r.data),
+  status: () => axios.get(`${BASE}/status`).then((r) => r.data),
+  localImages: () => axios.get(`${BASE}/local-images`).then((r) => r.data),
+  versions: (params) => axios.get(`${BASE}/versions`, { params }).then((r) => r.data),
+  selectImage: (ref, headers) =>
+    axios.post(`${BASE}/select`, { ref }, { headers }).then((r) => r.data),
   buildImage: (version, headers) =>
     axios.post(`${BASE}/image`, { version }, { headers }).then((r) => r.data),
   pruneImages: (ids, headers) =>

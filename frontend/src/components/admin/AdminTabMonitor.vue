@@ -2,7 +2,6 @@
      精确扫描结果经 disk-scan 事件回壳合并（props 单向流，判例 58 防线）。 -->
 <script setup>
 import { ref } from 'vue'
-import axios from 'axios'
 import { useI18n } from 'vue-i18n'
 import { toast } from '../../composables/useDialog'
 import { shortAddress, formatBytes } from '../../utils/format.js'
@@ -26,11 +25,11 @@ const runDiskScan = async () => {
   if (diskScanning.value) return
   diskScanning.value = true
   try {
-    const res = await axios.post('/api/admin/disk-scan')
+    const res = await adminOpsApi.diskScan()
     // 扫描结果直接合并进本地 stats，避免等待下一次轮询
-    const { scanned, volumes } = res.data
+    const { scanned, volumes } = res
     // props 不可变：合并动作回壳（mergeDiskScan），组件只报告扫描结果
-    if (scanned) emit('disk-scan', res.data)
+    if (scanned) emit('disk-scan', res)
     toast(t('admin.diskScanDone', { n: volumes?.length ?? 0 }))
   } catch (err) {
     toast(t('admin.diskScanFail', { err: err.response?.data?.error || err.message }))

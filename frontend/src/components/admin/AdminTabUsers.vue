@@ -4,7 +4,8 @@
 <script setup>
 import { computed } from 'vue'
 import { inject } from 'vue'
-import axios from 'axios'
+import { adminOpsApi } from '../../api/adminOps.js'
+import { userSessionApi } from '../../api/userSession.js'
 import { useI18n } from 'vue-i18n'
 import { toast, askConfirm } from '../../composables/useDialog'
 import { shortAddress } from '../../utils/format.js'
@@ -52,9 +53,9 @@ const formatIdle = (ms) => {
  */
 const openTenant = async (address) => {
   try {
-    const res = await axios.get(`/api/admin/tenant-url?address=${encodeURIComponent(address)}`)
-    if (res.data.url) {
-      window.open(res.data.url, '_blank', 'noopener')
+    const res = await adminOpsApi.tenantUrl(address)
+    if (res.url) {
+      window.open(res.url, '_blank', 'noopener')
       return
     }
     toast(t('admin.openFail', { err: res.data.error || res.status }))
@@ -75,7 +76,7 @@ const upgradeUser = async (address, tier) => {
     run: async () => {
       try {
         const headers = await signAdminOperation('user-upgrade', { address, tier })
-        await axios.post(`/api/upgrade/${address}`, { tier }, { headers })
+        await userSessionApi.upgrade(address, tier, headers)
         await fetchData()
         toast(t('admin.upgradeOk'))
       } catch (err) {
@@ -97,7 +98,7 @@ const downgradeUser = async (address, tier) => {
     run: async () => {
       try {
         const headers = await signAdminOperation('user-upgrade', { address, tier })
-        await axios.post(`/api/upgrade/${address}`, { tier }, { headers })
+        await userSessionApi.upgrade(address, tier, headers)
         await fetchData()
         toast(t('admin.downgradeOk'))
       } catch (err) {
@@ -124,10 +125,7 @@ const removeUser = async (address) => {
 
   try {
     const headers = await signAdminOperation('remove', { address, keepVolume })
-    await axios.post(`/api/user/${address}/remove`, null, {
-      params: keepVolume ? { keepVolume: 1 } : {},
-      headers,
-    })
+    await userSessionApi.remove(address, keepVolume, headers)
     await fetchData()
     toast(keepVolume ? t('admin.removedOkKeepVolume') : t('admin.removedOk'))
   } catch (err) {
@@ -142,7 +140,7 @@ const forceStopUser = async (address) => {
     run: async () => {
       try {
         const headers = await signAdminOperation('force-stop', { address })
-        await axios.post(`/api/admin/force-stop/${address}`, null, { headers })
+        await adminOpsApi.forceStop(address, headers)
         await fetchData()
         toast(t('admin.forceStoppedOk'))
       } catch (err) {
@@ -162,7 +160,7 @@ const deleteVolume = async (address) => {
     run: async () => {
       try {
         const headers = await signAdminOperation('delete-volume', { address })
-        await axios.post(`/api/admin/delete-volume/${address}`, null, { headers })
+        await adminOpsApi.deleteVolume(address, headers)
         await fetchData()
         toast(t('admin.volumeDeletedOk'))
       } catch (err) {
@@ -178,7 +176,7 @@ const promoteUser = async (address) => {
     run: async () => {
       try {
         const headers = await signAdminOperation('promote', { address })
-        await axios.post(`/api/admin/promote/${address}`, null, { headers })
+        await adminOpsApi.promote(address, headers)
         await fetchData()
         toast(t('admin.promoteOk'))
       } catch (err) {

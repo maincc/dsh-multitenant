@@ -1,5 +1,4 @@
 import { ref, computed } from 'vue'
-import axios from 'axios'
 import { adminDshApi } from '../api/adminDsh.js'
 import i18n from '../i18n'
 import { toast, askConfirm } from './useDialog'
@@ -166,8 +165,7 @@ const loadDshStatus = async () => {
     if (!dshVersions.value.latest) {
       await loadDshVersions()
     }
-    const res = await axios.get('/api/admin/dsh/status')
-    dshStatus.value = res.data
+    dshStatus.value = await adminDshApi.status()
     dshError.value = ''
   } catch (err) {
     console.error('[AdminPanel] 读取 DSH 镜像状态失败:', err)
@@ -184,14 +182,14 @@ const loadDshImages = async () => {
   dshImagesLoading.value = true
   dshImagesError.value = ''
   try {
-    const res = await axios.get('/api/admin/dsh/local-images')
+    const d = await adminDshApi.localImages()
     // 形状归一：任何字段缺失都塌成安全默认值，绝不让模板对 undefined 取值
     // （曾经清单形状一变整张表就人间蒸发，"想设也没得设"）
     dshImages.value = {
-      images: Array.isArray(res.data.images) ? res.data.images : [],
-      defaultId: res.data.defaultId || '',
-      defaultRef: res.data.defaultRef || '',
-      defaultVersion: res.data.defaultVersion || null,
+      images: Array.isArray(d.images) ? d.images : [],
+      defaultId: d.defaultId || '',
+      defaultRef: d.defaultRef || '',
+      defaultVersion: d.defaultVersion || null,
     }
   } catch (err) {
     // 错误必须上屏：静默 console 会让空表看起来像"本机真没镜像"（误导决策）
@@ -206,13 +204,11 @@ const loadDshVersions = async (force = false) => {
   dshVersionsLoading.value = true
   dshVersionsError.value = null
   try {
-    const res = await axios.get('/api/admin/dsh/versions', {
-      params: {
-        includePrerelease: dshIncludePrerelease.value ? 1 : 0,
-        ...(force ? { refresh: 1 } : {}),
-      },
+    const d = await adminDshApi.versions({
+      includePrerelease: dshIncludePrerelease.value ? 1 : 0,
+      ...(force ? { refresh: 1 } : {}),
     })
-    dshVersions.value = res.data
+    dshVersions.value = d
   } catch (err) {
     const data = err.response?.data
     // registry 不可达（503）要明确说明，而不是静默空列表
@@ -342,7 +338,7 @@ const selectPlatformImage = async (img) => {
       dshSelecting.value = img.ref
       try {
         const headers = await host.sign('dsh/select', { ref: img.ref })
-        await axios.post('/api/admin/dsh/select', { ref: img.ref }, { headers })
+        await adminDshApi.selectImage(img.ref, headers)
         toast(t('admin.dshSelectDone', { ref: img.ref }))
       } catch (err) {
         toast(t('admin.dshSelectFail', { err: err.response?.data?.error || err.message }))

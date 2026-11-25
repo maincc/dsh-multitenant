@@ -278,6 +278,7 @@ const { badgeFor } = useAdminBadges()
 // 红点节拍起停的组件侧凭证：防角色状态反复刷新叠加引用计数（起一次=守一次）
 let badgesStarted = false
 import axios from 'axios'
+import { userSessionApi } from '../api/userSession.js'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { skillsApi } from '../api/skills.js'
@@ -486,10 +487,10 @@ const walletLogin = async (address) => {
 
 const fetchUsage = async (address) => {
   try {
-    const res = await axios.get(`/connect-status?address=${encodeURIComponent(address)}`)
-    usageInfo.value = res.data.usage || null
+    const cs = await userSessionApi.connectStatus(address)
+    usageInfo.value = cs.usage || null
     // 隐私门分支（无 tier 字段）且还没试过 → 静默签名登录一次再刷新
-    if (res?.data?.exists === true && !('tier' in res.data) && !loginAttempted.value && address) {
+    if (cs?.exists === true && !('tier' in cs) && !loginAttempted.value && address) {
       loginAttempted.value = true
       try {
         await walletLogin(address)
@@ -612,7 +613,7 @@ const handleAccountsChanged = async (accounts) => {
   // 防止旧 URL 凭旧 cookie 仍能进入（会话 2h/30min 也是兜底）
   console.log('[UserCenter] 钱包地址切换，吊销旧会话钥匙...')
   try {
-    await axios.post('/api/user/logout')
+    await userSessionApi.logout()
   } catch (err) {
     console.warn('[UserCenter] 吊销旧会话失败（非关键）:', err.message)
   }
@@ -657,9 +658,8 @@ const establishConnected = async (address) => {
 // 会话有效且地址一致 → 免签名弹窗秒进；否则一次性签名登录。绝不调 ensureContainer。
 const loginOnly = async (address) => {
   try {
-    const s = await axios.get('/api/user/session-info')
-    if (s.data?.address && String(s.data.address).toLowerCase() === String(address).toLowerCase())
-      return 'ok'
+    const s = await userSessionApi.sessionInfo()
+    if (s?.address && String(s.address).toLowerCase() === String(address).toLowerCase()) return 'ok'
   } catch {
     /* 会话查询失败按"无会话"处理，走签名登录 */
   }
@@ -890,21 +890,21 @@ let lastConnect202Message = ''
 const ensureContainer = async (address, opts = {}) => {
   // 先检查容器状态
   try {
-    const statusRes = await axios.get(`/connect-status?address=${encodeURIComponent(address)}`)
+    const statusRes = await userSessionApi.connectStatus(address)
 
     // 如果在等待队列中
-    if (statusRes.data.status === 'waiting') {
+    if (statusRes.status === 'waiting') {
       waiting.value = true
-      queuePosition.value = statusRes.data.queuePosition
-      queueTotal.value = statusRes.data.queueTotal
-      waitingSince.value = statusRes.data.waitingSince
+      queuePosition.value = statusRes.queuePosition
+      queueTotal.value = statusRes.queueTotal
+      waitingSince.value = statusRes.waitingSince
       // 开始轮询队列状态
       startQueuePolling(address)
       return 'waiting'
     }
 
     // 如果容器不存在或已销毁，创建新容器
-    if (!statusRes.data.exists || statusRes.data.status === 'destroyed') {
+    if (!statusRes.exists || statusRes.status === 'destroyed') {
       console.log('[UserCenter] 容器不存在，正在创建...')
       const connectRes = await connectWithOwnership(address, {
         title: t('user.loadingCreateContainer'),
@@ -934,7 +934,7 @@ const ensureContainer = async (address, opts = {}) => {
       return 'created'
     }
     // 如果容器已停止，启动它
-    else if (statusRes.data.status === 'stopped') {
+    else if (statusRes.status === 'stopped') {
       console.log('[UserCenter] 容器已停止，正在启动...')
       await connectWithOwnership(address, {
         title: t('user.loadingStartExisting'),
@@ -989,10 +989,10 @@ const startQueuePolling = (address) => {
   // 每 5 秒检查一次队列状态
   queuePollingTimer = setInterval(async () => {
     try {
-      const statusRes = await axios.get(`/connect-status?address=${encodeURIComponent(address)}`)
+      const statusRes = await userSessionApi.connectStatus(address)
 
       // 如果容器已创建成功
-      if (statusRes.data.exists) {
+      if (statusRes.exists) {
         waiting.value = false
         if (queuePollingTimer) {
           clearInterval(queuePollingTimer)
@@ -1005,9 +1005,9 @@ const startQueuePolling = (address) => {
       }
 
       // 更新队列信息
-      if (statusRes.data.status === 'waiting') {
-        queuePosition.value = statusRes.data.queuePosition
-        queueTotal.value = statusRes.data.queueTotal
+      if (statusRes.status === 'waiting') {
+        queuePosition.value = statusRes.queuePosition
+        queueTotal.value = statusRes.queueTotal
       }
     } catch (err) {
       console.error('[UserCenter] 轮询队列状态失败:', err)
@@ -1036,22 +1036,22 @@ const fetchUserInfo = async (address) => {
   const opened = !loading.value
   if (opened) showLoading(t('user.loadingFetchInfo'), t('user.loadingAccountData'), 80)
   try {
-    const res = await axios.get(`/api/user/${address}`)
+    const res = await userSessionApi.profile(address)
     // 未建档新用户空态：后端以 200+USER_NOT_FOUND 表达（根治浏览器网络层红字
     // 404；catch 里的 404 分支保留兼容旧服务端）。空态不发 usage/config 请求；
     // 装配必须先于 userInfo 落位——领取弹窗由装配触发，若后于容器管理块的
     // 档案加载完成，会被其"无档案→弹连接引导"时序顶掉（新用户首见弹窗不能丢）。
-    if (res.data && res.data.code === 'USER_NOT_FOUND') {
+    if (res && res.code === 'USER_NOT_FOUND') {
       await loadCredentialStatus(address)
       userInfo.value = { address, status: 'none', exists: false }
       return
     }
-    userInfo.value = res.data
+    userInfo.value = res
     fetchUsage(address)
     fetchConfigStatus()
     loadCredentialStatus(address)
     // 进入即检容器态并后台拉起（每地址一次性；不 await——凭证装配不受牵制）
-    void autoBootContainer(res.data)
+    void autoBootContainer(res)
   } catch (err) {
     // 403/404 是已知良性态（未连接/未建档空态），不再 error 级刷屏——
     // 真异常仍走 error（下面分支处理不到的情况）
@@ -1098,8 +1098,7 @@ const fetchUserInfo = async (address) => {
     // 如果获取失败，可能是容器刚创建，重试一次
     await new Promise((resolve) => setTimeout(resolve, 2000))
     try {
-      const res = await axios.get(`/api/user/${address}`)
-      userInfo.value = res.data
+      userInfo.value = await userSessionApi.profile(address)
     } catch (err2) {
       console.error('重试获取用户信息失败:', err2)
     }
@@ -1170,13 +1169,12 @@ onMounted(async () => {
         // 比对 cookie 会话地址与插件当前地址：不一致说明钱包已切换
         // （旧 user_session 可能还有效）→ 吊销旧钥匙，防止旧容器 URL 仍可进
         try {
-          const sessionRes = await axios.get('/api/user/session-info')
-          const cookieAddr = sessionRes.data.address
+          const cookieAddr = (await userSessionApi.sessionInfo()).address
           if (cookieAddr && cookieAddr.toLowerCase() !== currentAddress) {
             console.log(
               `[UserCenter] 会话地址(${cookieAddr}) ≠ 插件地址(${currentAddress})，吊销旧钥匙`,
             )
-            await axios.post('/api/user/logout')
+            await userSessionApi.logout()
             toast(t('user.sessionMismatchRevoked'))
           }
         } catch (sessionErr) {

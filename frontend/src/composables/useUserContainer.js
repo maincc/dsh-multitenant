@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import axios from 'axios'
+import { userSessionApi } from '../api/userSession.js'
 import i18n from '../i18n'
 import { toast, askConfirm } from './useDialog'
 
@@ -48,7 +48,7 @@ const autoBootContainer = async (data) => {
   containerBooting.value = true
   try {
     if (st === 'stopped') {
-      await axios.post(`/api/user/${address}/restart`)
+      await userSessionApi.restart(address)
       await new Promise((resolve) => setTimeout(resolve, 3000))
     } else {
       const r = await host.ensureContainer(address, { quiet: true })
@@ -103,7 +103,7 @@ const restartDSH = async () => {
         const address = host.userInfo.value.address
         host.showLoading(t('user.loadingRestarting'), t('user.loadingPleaseWait'), 50)
 
-        const res = await axios.post(`/api/user/${address}/restart`)
+        const res = await userSessionApi.restart(address)
 
         // 等待容器完全就绪
         await new Promise((resolve) => setTimeout(resolve, 5000))
@@ -131,10 +131,10 @@ const resetContainer = async () => {
       try {
         // 后端在同一个请求里完成「清空旧容器/数据 → 重建全新容器 → 签发会话」，
         // 返回新容器 url，前端直接打开即可（无需手动重新连接）
-        const res = await axios.post(`/api/user/${address}/reset`)
+        const res = await userSessionApi.reset(address)
 
         host.hideLoading()
-        const { url } = res.data
+        const { url } = res
         if (url) window.open(url, '_blank', 'noopener')
         toast(t('user.resetContainerOk'))
       } catch (err) {
@@ -153,7 +153,7 @@ const stopContainer = async () => {
         const address = host.userInfo.value.address
         host.showLoading(t('user.loadingStopping'), t('user.loadingSettleStop'), 50)
 
-        await axios.post(`/api/user/${address}/stop`)
+        await userSessionApi.stop(address)
 
         await host.fetchUserInfo(address)
         host.hideLoading()

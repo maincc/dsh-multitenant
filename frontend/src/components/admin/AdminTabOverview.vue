@@ -2,7 +2,6 @@
      孤儿卷域全自包含随组件走。 -->
 <script setup>
 import { ref, inject } from 'vue'
-import axios from 'axios'
 import { useI18n } from 'vue-i18n'
 import { toast, askConfirm } from '../../composables/useDialog'
 
@@ -27,8 +26,8 @@ const scanOrphanVolumes = async () => {
   orphanScanning.value = true
   orphanNotice.value = ''
   try {
-    const res = await axios.get('/api/admin/orphan-volumes')
-    orphanVolumes.value = res.data.orphanVolumes || []
+    const res = await adminOpsApi.orphanVolumes()
+    orphanVolumes.value = res.orphanVolumes || []
     orphanNotice.value = orphanVolumes.value.length
       ? t('admin.orphanFound', { n: orphanVolumes.value.length })
       : t('admin.orphanNone')
@@ -52,12 +51,8 @@ const cleanupOrphanVolumes = async () => {
         const headers = await signAdminOperation('cleanup-orphan-volumes', {
           volumes: [...orphanVolumes.value],
         })
-        const res = await axios.post(
-          '/api/admin/cleanup-orphan-volumes',
-          { volumes: [...orphanVolumes.value] },
-          { headers },
-        )
-        const { removed = [], failed = [], skipped = [] } = res.data || {}
+        const res = await adminOpsApi.cleanupOrphan(orphanVolumes.value, headers)
+        const { removed = [], failed = [], skipped = [] } = res || {}
         const parts = [t('admin.orphanCleaned', { ok: removed.length, fail: failed.length })]
         if (skipped.length) parts.push(t('admin.orphanSkipped', { n: skipped.length }))
         orphanNotice.value = parts.join('，')

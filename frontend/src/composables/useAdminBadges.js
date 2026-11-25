@@ -1,5 +1,6 @@
 import { ref } from 'vue'
-import axios from 'axios'
+import { adminOpsApi } from '../api/adminOps.js'
+import { envApi } from '../api/env.js'
 import { adminStatusApi } from '../api/adminStatus.js'
 
 /**
@@ -29,8 +30,8 @@ let visBound = false
 async function refresh() {
   // 返回 promise：出生日志要等两轮查询落定
   try {
-    const res = await axios.get('/api/admin/environments')
-    syncEnvRows(res.data.environments)
+    const res = await envApi.adminList()
+    syncEnvRows(res.environments)
   } catch {
     /* 查不了不夺上一读数 */
   }
@@ -45,8 +46,8 @@ async function refresh() {
 /** 频率读取：搭 /api/stats 的 uiConfig 顺风车（requireAdmin——非管理员 403 静默落默认） */
 async function initTick() {
   try {
-    const res = await axios.get('/api/stats')
-    const v = Number(res.data?.uiConfig?.refreshIntervalMs)
+    const d = await adminOpsApi.stats()
+    const v = Number(d?.uiConfig?.refreshIntervalMs)
     if (v >= 1000) tickMs = v
   } catch {
     /* 读不到就用默认 15s，不因此罢工也不因此报错 */

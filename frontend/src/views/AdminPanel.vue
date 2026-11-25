@@ -171,6 +171,7 @@ import { useAdminBadges, startAdminBadges, stopAdminBadges } from '../composable
 const { badgeFor, syncCredCount, refreshCred } = useAdminBadges()
 import axios from 'axios'
 import { adminStatusApi } from '../api/adminStatus.js'
+import { adminOpsApi } from '../api/adminOps.js'
 import { useI18n } from 'vue-i18n'
 import { buildAdminTabs } from '../admin-tabs'
 import AdminTabHead from '../components/admin/AdminTabHead.vue'
@@ -385,8 +386,7 @@ const setupAccountChangeListener = () => {
 
 const checkDockerStatus = async () => {
   try {
-    const res = await axios.get('/api/docker/status')
-    dockerAvailable.value = res.data.available
+    dockerAvailable.value = (await adminOpsApi.dockerStatus()).available
   } catch (err) {
     dockerAvailable.value = false
   }
@@ -527,8 +527,8 @@ const fetchData = async (force = false) => {
     loading.value = true
     const [usersRes, statsRes] = await Promise.all([
       // force=1：绕过服务端短缓存（手动刷新/写操作后拿到的必须是最新）
-      axios.get(force ? '/api/users?force=1' : '/api/users'),
-      axios.get('/api/stats'),
+      adminOpsApi.users(force),
+      adminOpsApi.stats(),
     ])
     // 间隔由后端下发：改 config.json 后重启服务即生效，无需重新构建前端
     const iv = Number(statsRes.data?.uiConfig?.refreshIntervalMs)

@@ -240,7 +240,7 @@
  */
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import axios from 'axios'
+import { envApi } from '../api/env.js'
 import { toast, askConfirm } from '../composables/useDialog'
 import { useAdminBadges } from '../composables/useAdminBadges'
 import { signAdminOperation } from '../api/adminSign.js'
@@ -284,8 +284,8 @@ const hitFiles = computed(() => new Set((detail.value?.scan?.hits || []).map((h)
 const cdValid = computed(() => cd.value.address && /^[a-z0-9][a-z0-9-]{1,40}$/.test(cd.value.slug))
 
 async function load() {
-  const res = await axios.get('/api/admin/environments')
-  all.value = res.data.environments || []
+  const res = await envApi.adminList()
+  all.value = res.environments || []
   // 审批动作后 list 必重拉——红点判数从同一份行就地同步，不等轮询（用户裁定：实时）
   syncEnvRows(all.value)
 }
@@ -328,8 +328,8 @@ async function toggle(row) {
   openedId.value = row._id
   detail.value = null
   try {
-    const res = await axios.get(`/api/admin/environments/${encodeURIComponent(row._id)}`)
-    detail.value = res.data.template || res.data
+    const res = await envApi.adminDetail(row._id)
+    detail.value = res.template || res
   } catch (e) {
     toast(errMsg(e))
   }
@@ -347,7 +347,7 @@ async function publish(doc) {
   busy.value = true
   try {
     const headers = await signOp('env-publish', { id: doc._id })
-    await axios.post('/api/admin/env-publish', { id: doc._id }, { headers })
+    await envApi.adminPublish(doc._id, headers)
     toast(t('env.admin.published'))
     await load()
     if (detail.value?._id === doc._id) detail.value = { ...detail.value, status: 'published' }
@@ -363,7 +363,7 @@ async function rejectFlow(doc, reason) {
   busy.value = true
   try {
     const headers = await signOp('env-reject', { id: doc._id })
-    await axios.post('/api/admin/env-reject', { id: doc._id, reason }, { headers })
+    await envApi.adminReject(doc._id, reason, headers)
     toast(t('env.admin.rejected'))
     rejecting.value = null
     await load()
@@ -391,8 +391,8 @@ async function revoke(doc) {
   busy.value = true
   try {
     const headers = await signOp('env-revoke', { id: doc._id })
-    const res = await axios.post('/api/admin/env-revoke', { id: doc._id }, { headers })
-    toast(res.data.notice || t('env.admin.revoked'))
+    const res = await envApi.adminRevoke(doc._id, headers)
+    toast(res.notice || t('env.admin.revoked'))
     await load()
   } catch (e) {
     toast(errMsg(e))
@@ -404,12 +404,12 @@ async function rescan(doc) {
   busy.value = true
   try {
     const headers = await signOp('env-scan', { id: doc._id })
-    const res = await axios.post('/api/admin/env-scan', { id: doc._id }, { headers })
-    detail.value = { ...detail.value, scan: res.data.scan }
+    const res = await envApi.adminScan(doc._id, headers)
+    detail.value = { ...detail.value, scan: res.scan }
     toast(
       t('env.admin.rescanDone', {
-        sec: res.data.scan?.secrets?.length || 0,
-        hits: res.data.scan?.hits?.length || 0,
+        sec: res.scan?.secrets?.length || 0,
+        hits: res.scan?.hits?.length || 0,
       }),
     )
     await load()
@@ -447,8 +447,8 @@ async function cdGo() {
       include: { skills: [], plugins: [], folders: [] }, // 代格保守默认：不替作者决定公开内容
     }
     if (!cd.value.dryDone) {
-      const res = await axios.post('/api/admin/env-commit', { ...payload, dryRun: true })
-      cd.value.preview = res.data
+      const res = await envApi.adminCommit({ ...payload, dryRun: true })
+      cd.value.preview = res
       cd.value.dryDone = true
       return
     }
@@ -459,8 +459,8 @@ async function cdGo() {
       slug: payload.slug,
       include: payload.include,
     })
-    const res = await axios.post('/api/admin/env-commit', payload, { headers })
-    toast(t('env.admin.committed', { tag: res.data.template?.slug || payload.slug }))
+    const res = await envApi.adminCommit(payload, headers)
+    toast(t('env.admin.committed', { tag: res.template?.slug || payload.slug }))
     cd.value.open = false
     await load()
   } catch (e) {

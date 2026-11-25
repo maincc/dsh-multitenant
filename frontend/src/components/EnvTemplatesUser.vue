@@ -558,7 +558,7 @@ const emit = defineEmits(['mine-changed'])
 const props = defineProps({ mode: { type: String, default: 'both' } })
 const mode = props.mode
 import { useI18n } from 'vue-i18n'
-import axios from 'axios'
+import { envApi } from '../api/env.js'
 import { toast, askConfirm } from '../composables/useDialog'
 import { refreshIfWatching } from '../composables/useAdminBadges'
 import { formatBytes, shortAddress } from '../utils/format.js'
@@ -648,23 +648,23 @@ async function loadAll() {
   // 用户侧动作全走本函数收口重拉——管理员在同一浏览器时顺手补问红点判数
   // （refreshIfWatching 只在节拍器在场才发请求：普通用户零流量约束不破）
   refreshIfWatching()
-  const res = await axios.get('/api/user/environments')
-  list.value = res.data.environments || []
-  drafts.value = res.data.myWorks || []
-  current.value = res.data.yourCurrent || null
+  const res = await envApi.list()
+  list.value = res.environments || []
+  drafts.value = res.myWorks || []
+  current.value = res.yourCurrent || null
 }
 
 async function loadFreezeEligibility() {
   loadingInv.value = true
   try {
-    const res = await axios.post('/api/user/environment-inventory', {})
-    canFreeze.value = !!res.data.canFreeze
+    const res = await envApi.inventory()
+    canFreeze.value = !!res.canFreeze
     // 状态分道：ok 才信 canFreeze/运行态；denied 走拒绝卡；error 走故障卡+重试
     // ——错误归错原因=让用户去修没坏的东西（本地测试亲历的坑）
     elig.value = {
       status: 'ok',
-      containerRunning: res.data.containerRunning !== false,
-      onTemplate: res.data.onTemplate || null,
+      containerRunning: res.containerRunning !== false,
+      onTemplate: res.onTemplate || null,
     }
   } catch (e) {
     const code = e?.response?.status
@@ -703,8 +703,8 @@ async function togglePreview(tpl) {
   busy.value = true
   pending.value = 'preview'
   try {
-    const res = await axios.post('/api/user/environment/apply', { id: tpl.id, dryRun: true })
-    preview.value = res.data
+    const res = await envApi.apply({ id: tpl.id, dryRun: true })
+    preview.value = res
   } catch (e) {
     preview.value = { __fail: true }
     toast(errMsg(e))
@@ -719,18 +719,16 @@ async function applyForReal(tpl) {
   busy.value = true
   pending.value = 'apply'
   try {
-    const res = await axios.post('/api/user/environment/apply', { id: tpl.id })
+    const res = await envApi.apply({ id: tpl.id })
     expanded.value = ''
     preview.value = null
     const warns = []
-    if (res.data.conflicts?.length)
-      warns.push(t('env.appliedWithConflicts', { n: res.data.conflicts.length }))
-    if (res.data.skillsFailed?.length)
-      warns.push(
-        t('env.skillsFailed', { list: res.data.skillsFailed.map((x) => x.name).join('、') }),
-      )
-    if (res.data.bundleError) warns.push(res.data.bundleError)
-    ;(res.data.notices || []).forEach((n) => warns.push(n))
+    if (res.conflicts?.length)
+      warns.push(t('env.appliedWithConflicts', { n: res.conflicts.length }))
+    if (res.skillsFailed?.length)
+      warns.push(t('env.skillsFailed', { list: res.skillsFailed.map((x) => x.name).join('、') }))
+    if (res.bundleError) warns.push(res.bundleError)
+    ;(res.notices || []).forEach((n) => warns.push(n))
     toast(warns.length ? warns.join('；') : t('env.appliedOk'))
     await loadAll()
     emit('mine-changed') // apply 按清单装了技能——同页的「我的技能」账本视图跟着重载
@@ -745,7 +743,7 @@ async function applyForReal(tpl) {
 async function resubmit(d) {
   busy.value = true
   try {
-    await axios.post('/api/user/environment/submit', { id: d.id })
+    await envApi.submit(d.id)
     toast(t('env.resubmitted'))
     await loadAll()
   } catch (e) {
@@ -765,15 +763,15 @@ async function unpublishNow(tpl) {
   if (!go) return
   busy.value = true
   try {
-    const r = await axios.post('/api/user/environment/unpublish', { id: tpl.id })
-    const n = r.data?.usingCount || 0
+    const r = await envApi.unpublish(tpl.id)
+    const n = r?.usingCount || 0
     toast(
       (n ? t('env.unpublishedUsing', { n }) : t('env.unpublished')) +
-        (r.data?.selfUnpinned ? t('env.unpublishSelfDefault') : ''),
+        (r?.selfUnpinned ? t('env.unpublishSelfDefault') : ''),
     )
     detailFor.value = null
     await loadAll()
-    if (r.data?.selfUnpinned) emit('mine-changed') // 来源条立刻改口认默认（定格完结账的镜像面）
+    if (r?.selfUnpinned) emit('mine-changed') // 来源条立刻改口认默认（定格完结账的镜像面）
   } catch (e) {
     toast(errMsg(e))
   } finally {
@@ -799,14 +797,12 @@ async function revertNow() {
   busy.value = true
   pending.value = 'revert'
   try {
-    const r = await axios.post('/api/user/environment/revert', { alsoClean: revertClean.value })
+    const r = await envApi.revert(revertClean.value)
     // 后端如实说明随行物处置（保留或按清单清除）——有则转告，无则原话
-    toast(
-      (r.data?.revertNote || t('env.reverted')) + (r.data?.cleanNote ? ' ' + r.data.cleanNote : ''),
-    )
+    toast((r?.revertNote || t('env.reverted')) + (r?.cleanNote ? ' ' + r.cleanNote : ''))
     revertClean.value = true // 复位到默认（回退=干净默认的家规），不是复位到 false
     await loadAll()
-    if (r.data?.cleanNote) emit('mine-changed') // 销了账的行不能再挂在「我的技能」里当证据
+    if (r?.cleanNote) emit('mine-changed') // 销了账的行不能再挂在「我的技能」里当证据
   } catch (e) {
     toast(errMsg(e))
   } finally {
@@ -860,10 +856,10 @@ async function loadInventory() {
   wzStep.value = 'pick'
   wz.value.invLoading = true
   try {
-    const res = await axios.post('/api/user/environment-inventory', {})
-    wz.value.inv = res.data.inventory
-    wz.value.workspace = res.data.workspace || []
-    wz.value.containerUp = res.data.containerRunning !== false
+    const res = await envApi.inventory()
+    wz.value.inv = res.inventory
+    wz.value.workspace = res.workspace || []
+    wz.value.containerUp = res.containerRunning !== false
   } catch (e) {
     toast(errMsg(e))
     wzStep.value = 'name'
@@ -876,8 +872,8 @@ async function runPreview() {
   wz.value.previewLoading = true
   wz.value.preview = null
   try {
-    const res = await axios.post('/api/user/environment-commit', { ...commitBody(), dryRun: true })
-    wz.value.preview = res.data
+    const res = await envApi.commit({ ...commitBody(), dryRun: true })
+    wz.value.preview = res
   } catch (e) {
     toast(errMsg(e))
     wzStep.value = 'pick'
@@ -905,8 +901,8 @@ async function doFreeze() {
   wz.value.result = null
   wz.value.error = ''
   try {
-    const res = await axios.post('/api/user/environment-commit', commitBody())
-    wz.value.result = res.data
+    const res = await envApi.commit(commitBody())
+    wz.value.result = res
     await loadAll() // 我的作品即刻见新名字
     emit('mine-changed') // 来源条立刻改口认这套定格物（定格完结账——不该等刷新才见真相）
   } catch (e) {
