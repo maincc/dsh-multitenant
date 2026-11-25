@@ -265,7 +265,12 @@
 <script setup>
 import { askConfirm, toast } from '../composables/useDialog'
 import { useIsMobile } from '../composables/useIsMobile.js'
-import { bindUserCredHost, useUserCred } from '../composables/useUserCred.js'
+import {
+  bindUserCredHost,
+  useUserCred,
+  isRoleSettled,
+  setMobileDeepLinkPending,
+} from '../composables/useUserCred.js'
 import { bindUserModelHost, useUserModel } from '../composables/useUserModel.js'
 import { bindUserContainerHost, useUserContainer } from '../composables/useUserContainer.js'
 import { bindUserSkillsHost, useUserSkills } from '../composables/useUserSkills.js'
@@ -327,8 +332,8 @@ const containerInitialSub = ref('')
 // 落定即清 query（同一条目重复点击可重放）。角色未定时先寄存、credential-status 回落后
 // 消费——防把"还在查角色"误判成"不是管理员"。注意 roleSettled / mobileDeepLinkPending
 // 与 initialTabApplied 同款刻意用裸非响应值（2026-10-23"裸布尔按 ref 用"判例在前）。
-let roleSettled = false
-let mobileDeepLinkPending = null
+// 深链裸态正身已入 useUserCred 模块（切刀双表事故修复）；壳经导出 API 消费
+// mobileDeepLinkPending 正身在 useUserCred 模块
 
 function applyMobileTabLink(s) {
   const str = String(s)
@@ -353,8 +358,8 @@ watch(
   () => route.query.tab,
   (q) => {
     if (!isMobile.value || !q) return
-    if (!roleSettled) {
-      mobileDeepLinkPending = String(q)
+    if (!isRoleSettled()) {
+      setMobileDeepLinkPending(String(q))
       return
     }
     applyMobileTabLink(String(q))
@@ -410,7 +415,6 @@ const sidebarTabs = computed(() => {
 })
 const isSystemTab = computed(() => activeTab.value.startsWith('adm:'))
 const systemSubTab = computed(() => (isSystemTab.value ? activeTab.value.slice(4) : 'overview'))
-let initialTabApplied = false
 
 const shortAddrText = computed(() => {
   const a = displayAddr.value
@@ -1108,7 +1112,6 @@ const fetchUserInfo = async (address) => {
 // 本来就在跑 → 直接弹窗告知。与 v1.5"进入不顺手建容器"的关系：当年痛点是
 // **全屏 loading 阻断浏览**，这里改为后台化+图标化，签名仅 destroyed 重建
 // 时按归属闸照常请求一次（闸口语义不放松）。每地址一次性，轮询/手动刷新不重复弹。
-let autoBootFor = ''
 
 const tierBadge = (tier) => {
   const map = { 1: 'badge-info', 2: 'badge-warning', 3: 'badge-success' }
@@ -1135,15 +1138,25 @@ const statusText = (status) => {
 
 bindUserCredHost({
   loginOnly,
+  role,
+  activeTab,
+  isSystemTab,
+  isMobile,
+  displayAddr,
+  route,
+  applyMobileTabLink,
+  mobileTab,
   currentAddress,
   pluginCaseAddr,
   rememberPluginCase,
   connected,
 })
-bindUserModelHost({ signChallenge, currentAddress })
+bindUserModelHost({ signChallenge, currentAddress, syncWalletAccount })
 bindUserSkillsHost({ signChallenge, currentAddress, connected })
 bindUserContainerHost({
   ensureContainer,
+  activeTab,
+  lastConnect202: () => lastConnect202Message,
   showLoading,
   hideLoading,
   currentAddress,
@@ -1225,8 +1238,6 @@ onMounted(async () => {
   if (!connected.value && isMobile.value) mobileTab.value = 'me'
   await loadMine()
 })
-
-let mineInFlight = null
 
 watch(connected, (v) => {
   if (v) {

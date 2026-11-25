@@ -6,6 +6,7 @@ import { useI18n } from 'vue-i18n'
 import { toast } from '../../composables/useDialog'
 import { shortAddress, formatBytes } from '../../utils/format.js'
 import { tierBadge, statusBadge, fmtTime, makeStatusText } from './shared.js'
+import { adminOpsApi } from '../../api/adminOps.js'
 import AdminTabHead from './AdminTabHead.vue'
 
 const props = defineProps({

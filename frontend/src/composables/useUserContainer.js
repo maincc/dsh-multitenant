@@ -12,6 +12,9 @@ import { toast, askConfirm } from './useDialog'
  */
 const t = (key, params) => i18n.global.t(key, params)
 
+// 每地址一次性自动开机闸门（随域迁入；壳旧 let 已删）
+let autoBootFor = ''
+
 let host = {
   ensureContainer: async () => {},
   showLoading: () => {},
@@ -20,6 +23,8 @@ let host = {
   userInfo: { value: {} },
   fetchUserInfo: async () => {},
   enterDsh: async () => {},
+  activeTab: { value: 'account' },
+  lastConnect202: () => '',
 }
 export function bindUserContainerHost(h) {
   host = { ...host, ...h }
@@ -29,7 +34,7 @@ const containerBooting = ref(false)
 
 const bootNotice = (msg) => {
   askConfirm({ message: msg }).then((ok) => {
-    if (ok) activeTab.value = 'container'
+    if (ok) host.activeTab.value = 'container'
   })
 }
 
@@ -54,7 +59,7 @@ const autoBootContainer = async (data) => {
       const r = await host.ensureContainer(address, { quiet: true })
       if (r === 'waiting') return // 排队页由状态机挂出——页面本身即告知
       if (r === 'usage-limit') {
-        bootNotice(lastConnect202Message || t('user.bootUsageLimit'))
+        bootNotice(host.lastConnect202() || t('user.bootUsageLimit'))
         return
       }
     }
@@ -84,7 +89,7 @@ const restartContainer = async () => {
     host.hideLoading()
     if (st === 'waiting') return // 排队页已由状态机挂出（waiting.value）
     if (st === 'usage-limit') {
-      toast(lastConnect202Message || t('user.usageLimitReached'))
+      toast(host.lastConnect202() || t('user.usageLimitReached'))
       return
     }
     await host.fetchUserInfo(address)

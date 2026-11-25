@@ -3,6 +3,8 @@ import axios from 'axios'
 import i18n from '../i18n'
 import { toast, askConfirm } from './useDialog'
 import { shortAddress } from '../utils/format.js'
+import { friendlyPluginError } from '../api/wallet.js'
+import { skillsApi } from '../api/skills.js'
 
 /**
  * 我的技能域单例（P3 UC 第三刀副册）：已发布/已安装/容器内三表 + 导入/分享
@@ -10,6 +12,9 @@ import { shortAddress } from '../utils/format.js'
  * 发布走 signChallenge 钱包验证（connect 域基座，经 host 注入）。
  */
 const t = (key, params) => i18n.global.t(key, params)
+
+// 地址切换并发互斥（随域迁入；壳旧 let 已删）
+let mineInFlight = null
 
 let host = {
   signChallenge: async () => {

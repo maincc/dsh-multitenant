@@ -18,6 +18,7 @@ let host = {
     throw new Error('userModel host not bound')
   },
   currentAddress: () => '',
+  syncWalletAccount: async () => {},
 }
 export function bindUserModelHost(h) {
   host = { ...host, ...h }
@@ -212,7 +213,7 @@ const saveConfig = async () => {
     }
 
     await userConfigApi.saveConfig(payload)
-    await syncWalletAccount(address)
+    await host.syncWalletAccount(address)
     toast(t('user.savedOk'))
   } catch (err) {
     toast(t('user.saveFail', { err: friendlyPluginError(err) }))
@@ -283,7 +284,7 @@ const clearOfficialKey = async () => {
           publicKey,
           scope: 'official-key',
         })
-        await syncWalletAccount(address)
+        await host.syncWalletAccount(address)
         toast(t('user.officialKeyCleared'))
       } catch (err) {
         toast(t('user.delFail', { err: friendlyPluginError(err) }))
@@ -307,7 +308,7 @@ const resetConfig = async () => {
       try {
         const { address, nonce, signature, publicKey } = await host.signChallenge()
         await userConfigApi.deleteConfig({ address, nonce, signature, publicKey })
-        await syncWalletAccount(address)
+        await host.syncWalletAccount(address)
         toast(t('user.resetOk'))
       } catch (err) {
         toast(t('user.resetFail', { err: friendlyPluginError(err) }))

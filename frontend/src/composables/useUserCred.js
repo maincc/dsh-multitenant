@@ -3,6 +3,8 @@ import axios from 'axios'
 import { userConfigApi } from '../api/userConfig.js'
 import i18n from '../i18n'
 import { toast, askConfirm } from './useDialog'
+import { startAdminBadges, stopAdminBadges } from './useAdminBadges'
+import { sha256Hex as sha256HexFallback } from '../utils/sha256.js'
 import { requestAccounts, signFileBytes, getIpfsPublicKey, getPublicKey } from '../api/wallet.js'
 import { formatBytes } from '../utils/format.js'
 
@@ -18,12 +20,30 @@ import { formatBytes } from '../utils/format.js'
  */
 const t = (key, params) => i18n.global.t(key, params)
 
+// 深链/角色定盘三裸态：正身随域入本模块（壳 watch 经导出 getter/setter 同账消费——
+// 切刀曾把状态双表：壳留一份、composable 悬空引用，真机 ReferenceError）
+let roleSettled = false
+let mobileDeepLinkPending = null
+let initialTabApplied = false
+export const isRoleSettled = () => roleSettled
+export const setMobileDeepLinkPending = (v) => {
+  mobileDeepLinkPending = v
+}
+
 let host = {
   loginOnly: async () => 'error',
   currentAddress: () => '',
   pluginCaseAddr: { value: '' },
   rememberPluginCase: () => {},
   connected: { value: false },
+  role: { value: 'user' },
+  activeTab: { value: 'account' },
+  isSystemTab: { value: false },
+  isMobile: { value: false },
+  displayAddr: { value: '' },
+  route: { query: {} },
+  applyMobileTabLink: () => {},
+  mobileTab: { value: 'home' },
 }
 export function bindUserCredHost(h) {
   host = { ...host, ...h }
@@ -90,7 +110,7 @@ const toggleCredVc = async () => {
     const holder = String(cred?.id || cred?.credentialSubject?.id || '')
       .replace(/^did:swtc:/i, '')
       .split('#')[0]
-    const mine = String(displayAddr.value || '').toLowerCase()
+    const mine = String(host.displayAddr.value || '').toLowerCase()
     if (holder && mine && holder.toLowerCase() !== mine) {
       toast(t('user.sessionMismatch'))
       credVcOpen.value = false
@@ -173,8 +193,8 @@ const loadCredentialStatus = async (address) => {
     credVc.value = null
     credApp.value = null
     credErr.value = { status: null, code: 'SESSION_MISMATCH' }
-    role.value = 'user'
-    if (isSystemTab.value) activeTab.value = 'account'
+    host.role.value = 'user'
+    if (host.isSystemTab.value) host.activeTab.value = 'account'
     // 不动 connected：插件确实连着，只是会话 cookie 属旧账户——若置 false 会把
     // retryCredential（解药，:disabled="!connected"）锁死，用户困进无出口空态
     toast(t('user.sessionMismatch'))
@@ -186,10 +206,10 @@ const loadCredentialStatus = async (address) => {
     credVerifiedBy.value = data.verifiedBy || 'ledger' // 判权顺序溯源（档案活验/台账兜底）
     credInfo.value = data.credential || null
     // v1.5 判权面：role='admin' 才装配「系统管理」tab（服务端活验证凭证属实）
-    role.value = data.role === 'admin' ? 'admin' : 'user'
+    host.role.value = data.role === 'admin' ? 'admin' : 'user'
     // 红点节拍只在管理员在场：首起一次（badgesStarted 守，凭证状态刷新反复走此
     // 函数不叠加计数）；角色跌落=普通用户/登出，立即停表并复位
-    if (role.value === 'admin') {
+    if (host.role.value === 'admin') {
       if (!badgesStarted) {
         badgesStarted = true
         startAdminBadges()
@@ -201,32 +221,33 @@ const loadCredentialStatus = async (address) => {
     roleSettled = true
     // 移动深链首落（B1 修复 2026-11-10）：角色定盘后才消费寄存/首见 query，
     // 后续 query 变化由 watch 走同一 applyMobileTabLink；桌面分支原样不动
-    if (isMobile.value && !initialTabApplied) {
+    if (host.isMobile.value && !initialTabApplied) {
       initialTabApplied = true
-      const mq = mobileDeepLinkPending ?? String(route.query.tab || '')
+      const mq = mobileDeepLinkPending ?? String(host.route.query.tab || '')
       mobileDeepLinkPending = null
-      if (mq) applyMobileTabLink(mq)
-    } else if (role.value === 'admin' && !initialTabApplied) {
+      if (mq) host.applyMobileTabLink(mq)
+    } else if (host.role.value === 'admin' && !initialTabApplied) {
       // （2026-10-23 修重大 bug：initialTabApplied 声明是裸布尔（:918），这里曾按
       // ref 用 .value——赋值即 TypeError，管理员每次装配都在此 throw，深链页签/
       // 续发提示/申请单态全被 catch 吞掉。恢复纯布尔用法，语义不变=仅首次生效）
       initialTabApplied = true
       // 深链落地：?tab=adm:cred 直达子页；旧入口 ?tab=system（/admin 重定向）落管理总览
-      const q = String(route.query.tab || '')
-      if (q.startsWith('adm:')) activeTab.value = q
-      else if (q === 'system') activeTab.value = 'adm:overview'
+      const q = String(host.route.query.tab || '')
+      if (q.startsWith('adm:')) host.activeTab.value = q
+      else if (q === 'system') host.activeTab.value = 'adm:overview'
     } else if (!initialTabApplied) {
       // 治动作歧义（用户裁定 2026-11-02）：首页「系统管理」按钮与普通入口同去用户
       // 中心——非管理员由管理深链进来时，管理页签根本不装配，旧版静默弹回账户页，
       // 用户无从知道是点错了、坏了、还是权限不够。现在给明话：落点在此、缘由在此。
       initialTabApplied = true
-      const q0 = String(route.query.tab || '')
+      const q0 = String(host.route.query.tab || '')
       if (q0.startsWith('adm:') || q0 === 'system') toast(t('user.adminEntryLocked'))
     }
     // 撤销即时收面：角色掉出 admin 且正停在管理页 → 弹回账户信息（移动壳同闸：
     // 审批 tab 是管理面，角色跌落/登出重入非 admin 时从审批页弹回首页）
-    if (role.value !== 'admin' && isSystemTab.value) activeTab.value = 'account'
-    if (role.value !== 'admin' && mobileTab.value === 'approvals') mobileTab.value = 'home'
+    if (host.role.value !== 'admin' && isSystemTab.value) host.activeTab.value = 'account'
+    if (host.role.value !== 'admin' && mobileTab.value === 'approvals')
+      host.mobileTab.value = 'home'
     if (data.renewed) {
       // 平台按台账 cwt/did 记录自动续发了新凭证（链上登记册同步换卡）
       credVc.value = null

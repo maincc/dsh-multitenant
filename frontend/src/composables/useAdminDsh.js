@@ -2,6 +2,8 @@ import { ref, computed } from 'vue'
 import { adminDshApi } from '../api/adminDsh.js'
 import i18n from '../i18n'
 import { toast, askConfirm } from './useDialog'
+import { formatBytes } from '../utils/format.js'
+import { friendlyPluginError } from '../api/wallet.js'
 
 /**
  * DSH 版本管理域单例（P3 dsh 刀）：镜像状态/版本目录/构建/清理/升级编排全在此。
