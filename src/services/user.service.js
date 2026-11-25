@@ -30,7 +30,7 @@ import { queriesMixin } from './user/queries.js'
 // 代激活 cookie 缓存（check-rpc 的 /api 调用也要带上，否则新版会 401）
 import { authCookieCache } from './dsh-auth.service.js'
 import { swtcContainerName, swtcVolumeName, normalizeAddress } from '../utils/address.js'
-import { NotFoundError, BadRequestError, ConflictError } from '../utils/errors.js'
+import { NotFoundError, BadRequestError } from '../utils/errors.js'
 
 const ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)))
 const PATCHES_DIR = join(ROOT, 'patches')

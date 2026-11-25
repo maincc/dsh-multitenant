@@ -17,7 +17,7 @@
 import { createServer } from 'node:http'
 import { request as httpRequest } from 'node:http'
 import { connect as netConnect } from 'node:net'
-import { randomBytes, createHash, createHmac } from 'node:crypto'
+import { randomBytes, createHmac } from 'node:crypto'
 import { secureFlag } from '../utils/cookie-flags.js'
 import { publicScheme, publicEntryPort } from '../utils/public-endpoint.js'
 import { getUserSession, userSessionStore } from '../middleware/user-auth.middleware.js'

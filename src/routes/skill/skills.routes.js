@@ -23,7 +23,7 @@ import { validateSwtcAddress } from '../../middleware/validate.middleware.js'
 import { normalizeAddress } from '../../utils/address.js'
 import { credentialService } from '../../services/credential.service.js'
 import { handleError } from '../../utils/errors.js'
-import { parseBody, parseJsonBody } from '../../utils/parse-body.js'
+import { parseJsonBody } from '../../utils/parse-body.js'
 import { defineRoute } from '../registry.js'
 
 const PREFIX = '/api/skills'
