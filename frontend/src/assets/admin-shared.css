@@ -1,0 +1,8 @@
+/* 管理端跨 tab 视觉件（P3 tab 拆分伴生物）：
+   组件化后壳 scoped 不再命中子组件 DOM，跨 tab 共用的类上收全局。
+   .admin-panel 祖先限定——只在管理面板（独立页或 UC 内嵌）生效。 */
+.admin-panel .dsh-ver {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  color: #0f172a;
+}
