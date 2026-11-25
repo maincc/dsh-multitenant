@@ -225,239 +225,7 @@
 
         <!-- ════════ 容器管理 ════════ -->
         <div v-else-if="activeTab === 'container'" class="tab-content">
-          <div class="tab-head">
-            <h4>{{ $t('user.containerManage') }}</h4>
-            <p class="tab-hint">{{ $t('user.containerManageHint') }}</p>
-          </div>
-          <!-- 容器管理页顶三段页签（用户裁定 2026-11-02：与市场品类 pill 同款）：
-               原一页竖堆 容器信息/我的技能/环境现场 三段，翻到底上传之苦——现在点一段看一段。
-               v-show 互斥非卸载：向导在途草稿、技能列表状态翻页不丢。 -->
-          <div class="action-buttons container-subtabs">
-            <button
-              class="btn btn-small"
-              :class="cSub === 'info' ? 'btn-primary' : 'btn-secondary'"
-              @click="cSub = 'info'"
-            >
-              {{ $t('user.subTabInfo') }}
-            </button>
-            <button
-              class="btn btn-small"
-              :class="cSub === 'skills' ? 'btn-primary' : 'btn-secondary'"
-              @click="cSub = 'skills'"
-            >
-              {{ $t('user.tabSkillsPlugins') }}
-            </button>
-            <button
-              class="btn btn-small"
-              :class="cSub === 'env' ? 'btn-primary' : 'btn-secondary'"
-              @click="cSub = 'env'"
-            >
-              {{ $t('user.subTabEnv') }}
-            </button>
-          </div>
-          <div v-show="cSub === 'info'">
-            <!-- 容器信息（原在账户信息）：端口/配额/状态/资源使用都归容器 -->
-            <div class="stat-rows">
-              <div class="stat-row">
-                <span class="stat-label">{{ $t('user.port') }}</span>
-                <code class="stat-value mono">{{ userInfo.port }}</code>
-              </div>
-              <div class="stat-row">
-                <span class="stat-label">{{ $t('user.tier') }}</span>
-                <span class="badge" :class="tierBadge(userInfo.tier)">{{
-                  userInfo.tierLabel
-                }}</span>
-              </div>
-              <div class="stat-row">
-                <span class="stat-label">{{ $t('user.containerStatus') }}</span>
-                <span class="badge" :class="statusBadge(userInfo.status)">{{
-                  statusText(userInfo.status)
-                }}</span>
-                <button
-                  v-if="userInfo.status !== 'running'"
-                  class="btn btn-small btn-success"
-                  :disabled="containerBooting"
-                  :title="containerBooting ? $t('user.tabBooting') : ''"
-                  @click="restartContainer"
-                >
-                  {{ $t('user.startContainer') }}
-                </button>
-              </div>
-            </div>
-
-            <div v-if="userInfo.stats" class="resource-usage">
-              <div class="resource-item">
-                <div class="resource-header">
-                  <span>{{ $t('user.cpuUsage') }}</span>
-                  <span class="mono">{{ userInfo.stats.cpu }}</span>
-                </div>
-              </div>
-              <div class="resource-item">
-                <div class="resource-header">
-                  <span>{{ $t('user.memUsage') }}</span>
-                  <span class="mono"
-                    >{{ userInfo.stats.memory }} ({{ userInfo.stats.memoryPercent }})</span
-                  >
-                </div>
-                <div class="progress-bar">
-                  <div class="progress-fill" :style="{ width: userInfo.stats.memoryPercent }"></div>
-                </div>
-              </div>
-            </div>
-            <div v-else class="loading">{{ $t('user.noData') }}</div>
-
-            <div class="tab-divider" />
-
-            <!-- 进入容器入口（连同容器状态/端口/配额/资源使用一起，均已从账户信息迁来） -->
-            <div class="enter-box">
-              <div class="enter-info">
-                <div class="enter-title">{{ $t('user.enterDsh') }}</div>
-                <div class="enter-hint">{{ $t('user.enterDshHint') }}</div>
-              </div>
-              <button class="btn btn-primary btn-enter" @click="enterDsh">
-                {{ $t('user.openDsh') }}
-              </button>
-            </div>
-
-            <div class="tab-divider" />
-
-            <div class="action-buttons">
-              <button class="btn btn-primary" @click="restartDSH">
-                {{ $t('user.restartDsh') }}
-              </button>
-              <button
-                class="btn btn-secondary"
-                :disabled="!connected || userInfo.status !== 'running'"
-                @click="stopContainer"
-              >
-                {{ $t('user.stopContainer') }}
-              </button>
-              <button class="btn btn-danger" @click="resetContainer">
-                {{ $t('user.resetContainer') }}
-              </button>
-            </div>
-            <div class="action-hints">
-              <div class="hint">
-                <strong>{{ $t('user.restartDshFlowTitle') }}</strong>
-                {{ $t('user.restartDshFlow') }}
-              </div>
-              <div class="hint">
-                <strong>{{ $t('user.stopFlowTitle') }}</strong>
-                {{ $t('user.stopFlow') }}
-                {{ usageInfoLabel ? $t('user.todayUsagePrefix') + usageInfoLabel : '' }}
-              </div>
-              <div class="hint">
-                <strong>{{ $t('user.resetFlowTitle') }}</strong>
-                {{ $t('user.resetContainerFlow') }}
-              </div>
-            </div>
-          </div>
-
-          <div v-show="cSub === 'skills'">
-            <div class="tab-head">
-              <h4>{{ $t('user.mySkills') }}</h4>
-              <p class="tab-hint">{{ $t('user.mySkillsHint') }}</p>
-            </div>
-            <!-- 按钮行只放按钮（用户反馈 2026-11-02 挤一行别扭）：解释文案归上方
-                 tab-hint 唯一一处——原先行尾重复挂了一遍，删 -->
-            <div class="action-buttons skill-actions">
-              <button class="btn btn-primary" @click="openImportDialog">
-                {{ $t('user.importSkill') }}
-              </button>
-              <button class="btn btn-secondary" @click="openShareDialog">
-                {{ $t('user.shareSkill') }}
-              </button>
-            </div>
-
-            <div v-if="mySkillsLoading" class="config-loading">
-              <div class="mini-spinner"></div>
-              <span>{{ $t('user.mySkillsLoading') }}</span>
-            </div>
-            <template v-else>
-              <div v-if="mineData.published.length > 0" class="skill-subsection">
-                <h3>{{ $t('user.myPublished') }}</h3>
-                <div v-for="s in mineData.published" :key="'p-' + s.name" class="skill-row">
-                  <div class="skill-row-main">
-                    <strong>{{ s.name }}</strong>
-                    <span class="skill-desc">{{ s.description }}</span>
-                  </div>
-                  <button class="btn btn-small btn-danger" @click="unpublishSkill(s.name)">
-                    {{ $t('user.unpublish') }}
-                  </button>
-                </div>
-              </div>
-              <div v-if="mineData.installed.length > 0" class="skill-subsection">
-                <h3>{{ $t('user.myInstalled') }}</h3>
-                <p v-if="mineData.unverified" class="skill-desc">{{ $t('user.unverifiedNote') }}</p>
-                <div v-for="s in mineData.installed" :key="'i-' + s.name" class="skill-row">
-                  <div class="skill-row-main">
-                    <strong>{{ s.name }}</strong>
-                    <span class="skill-desc">
-                      {{
-                        s.description ||
-                        (s.installedAt
-                          ? $t('user.installedSource', {
-                              source: s.source,
-                              date: new Date(s.installedAt).toLocaleString(),
-                            })
-                          : $t('user.installedFromVolume'))
-                      }}
-                    </span>
-                    <span v-if="s.hasUpdate" class="badge badge-warning">{{
-                      $t('user.hasUpdate')
-                    }}</span>
-                  </div>
-                  <button class="btn btn-small btn-danger" @click="uninstallSkill(s.name)">
-                    {{ $t('user.uninstall') }}
-                  </button>
-                </div>
-              </div>
-              <p
-                v-if="mineData.published.length === 0 && mineData.installed.length === 0"
-                class="hint"
-              >
-                {{ $t('user.noSkillsHint') }}
-              </p>
-              <!-- 插件实物小节（判例 55：无账、以卷为断）：探针取法与技能同船；
-                   null=查不了（≠没了，话术分明）；只陈列不配删钮——插件退场语义
-                   归「回退/环境」侧，此处不开第二把刀 -->
-              <div class="skill-subsection">
-                <h3>{{ $t('user.pluginsTitle') }}</h3>
-                <p v-if="mineData.plugins === null" class="skill-desc">
-                  {{ $t('user.pluginsUnprobed') }}
-                </p>
-                <p v-else-if="mineData.plugins.length === 0" class="skill-desc">
-                  {{ $t('user.pluginsEmpty') }}
-                </p>
-                <div v-for="pl in mineData.plugins || []" :key="'pl-' + pl.name" class="skill-row">
-                  <div class="skill-row-main">
-                    <strong>{{ pl.name }}</strong>
-                    <span v-if="pl.version" class="badge badge-info">v{{ pl.version }}</span>
-                    <span class="skill-desc">{{ pl.description || $t('user.pluginNoDesc') }}</span>
-                    <span class="skill-desc">
-                      {{
-                        $t('user.pluginMeta', {
-                          kind:
-                            pl.kind === 'file' ? $t('user.pluginFileTag') : $t('user.pluginDirTag'),
-                          files: pl.fileCount,
-                          size: formatBytes(pl.bytes),
-                        })
-                      }}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </template>
-          </div>
-
-          <div v-show="cSub === 'env'">
-            <!-- ════════ 环境·我的现场（货架/选用在「市场」的环境品类）════════ -->
-            <div class="tab-head">
-              <h4>{{ $t('env.mineSectionTitle') }}</h4>
-              <p class="tab-hint">{{ $t('env.mineSectionHint') }}</p>
-            </div>
-            <EnvTemplatesUser mode="mine" @mine-changed="loadMine" />
-          </div>
+          <UserTabContainer :initial-sub="containerInitialSub" :market-cat="marketCat" />
         </div>
 
         <!-- ════════ 我的技能 ════════ -->
@@ -490,91 +258,6 @@
           <EnvTemplatesUser v-if="marketCat === 'env'" mode="market" />
         </div>
       </section>
-
-      <!-- 导入技能对话框 -->
-      <div v-if="importDialogOpen" class="import-mask" @click.self="closeImportDialog">
-        <div class="import-panel">
-          <h3>{{ $t('user.importDialogTitle') }}</h3>
-          <p class="hint">
-            {{ $t('user.importDialogHint') }}
-          </p>
-          <div class="import-field">
-            <label>{{ $t('user.importFileLabel') }}</label>
-            <input type="file" accept=".md,.txt,text/markdown" @change="onImportFile" />
-          </div>
-          <div class="import-field">
-            <label>{{ $t('user.importNameLabel') }}</label>
-            <input v-model="importName" placeholder="my-skill" />
-          </div>
-          <div class="import-field">
-            <label>{{ $t('user.importTextLabel') }}</label>
-            <textarea
-              v-model="importText"
-              rows="8"
-              placeholder="---&#10;name: my-skill&#10;description: 一句话说明&#10;---&#10;正文…"
-            ></textarea>
-          </div>
-          <div v-if="importBusy" class="loading">{{ $t('user.submitting') }}</div>
-          <div class="action-buttons">
-            <button class="btn btn-primary" :disabled="importBusy" @click="doImport">
-              {{ $t('user.importSubmit') }}
-            </button>
-            <button class="btn btn-secondary" :disabled="importBusy" @click="closeImportDialog">
-              {{ $t('user.cancel') }}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- 共享容器内技能对话框 -->
-      <div v-if="shareDialogOpen" class="import-mask" @click.self="closeShareDialog">
-        <div class="import-panel">
-          <h3>{{ $t('user.shareDialogTitle') }}</h3>
-          <p class="hint">
-            {{ $t('user.shareDialogHint1') }}
-            <br />
-            {{ $t('user.shareDialogHint2') }}
-          </p>
-          <div class="import-field">
-            <label>{{ $t('user.shareSelectLabel') }}</label>
-            <select
-              v-model="shareSourceName"
-              :disabled="shareLoading || shareConflict || shareBusy"
-            >
-              <option value="" disabled>
-                {{ shareLoading ? $t('user.shareLoadingList') : $t('user.shareSelectPlaceholder') }}
-              </option>
-              <option v-for="n in mineData.inContainer" :key="n" :value="n">{{ n }}</option>
-            </select>
-          </div>
-          <div v-if="shareLoading" class="config-loading">
-            <div class="mini-spinner"></div>
-            <span>{{ $t('user.shareLoading') }}</span>
-          </div>
-          <div v-else-if="mineData.inContainer.length === 0" class="hint share-empty-hint">
-            {{ $t('user.shareEmptyHintA') }}
-            <code>/dsh-home/skills/</code>{{ $t('user.shareEmptyHintB') }}
-          </div>
-          <div v-if="shareConflict" class="import-field share-conflict">
-            <label>{{ $t('user.shareConflictLabel') }}</label>
-            <input v-model="shareRenameTo" placeholder="my-skill-v2" />
-            <span class="hint">{{ $t('user.shareConflictHint') }}</span>
-          </div>
-          <div v-if="shareBusy" class="loading">{{ $t('user.submitting') }}</div>
-          <div class="action-buttons">
-            <button
-              class="btn btn-primary"
-              :disabled="shareBusy || !shareSourceName"
-              @click="doShare"
-            >
-              {{ shareConflict ? $t('user.shareWithRename') : $t('user.shareSubmit') }}
-            </button>
-            <button class="btn btn-secondary" :disabled="shareBusy" @click="closeShareDialog">
-              {{ $t('user.cancel') }}
-            </button>
-          </div>
-        </div>
-      </div>
     </div>
   </div>
 </template>
@@ -584,8 +267,11 @@ import { askConfirm, toast } from '../composables/useDialog'
 import { useIsMobile } from '../composables/useIsMobile.js'
 import { bindUserCredHost, useUserCred } from '../composables/useUserCred.js'
 import { bindUserModelHost, useUserModel } from '../composables/useUserModel.js'
+import { bindUserContainerHost, useUserContainer } from '../composables/useUserContainer.js'
+import { bindUserSkillsHost, useUserSkills } from '../composables/useUserSkills.js'
 import UserTabCredential from '../components/user/UserTabCredential.vue'
 import UserTabModel from '../components/user/UserTabModel.vue'
+import UserTabContainer from '../components/user/UserTabContainer.vue'
 import { ref, onMounted, onUnmounted, computed, watch, defineAsyncComponent } from 'vue'
 import { useAdminBadges, startAdminBadges, stopAdminBadges } from '../composables/useAdminBadges'
 const { badgeFor } = useAdminBadges()
@@ -755,6 +441,8 @@ function rememberPluginCase(a) {
 
 const { loadCredentialStatus, credInfo, credVc, credApp, credNoDid } = useUserCred()
 const { items, fetchConfigStatus } = useUserModel()
+const { autoBootContainer, containerBooting } = useUserContainer()
+const { mineData, loadMine, loadContainerSkills } = useUserSkills()
 bindUserCredHost({
   loginOnly,
   currentAddress,
@@ -849,7 +537,6 @@ const signChallenge = async (challengeUrl = '/api/user/config-challenge') => {
   const publicKey = await getPublicKey(pluginAddress)
   return { address: pluginAddress, nonce, signature, publicKey }
 }
-bindUserModelHost({ signChallenge, currentAddress })
 
 /** 保存/清除成功后，把插件当前账户同步到页面与 localStorage */
 const syncWalletAccount = async (address) => {
@@ -1427,150 +1114,6 @@ const fetchUserInfo = async (address) => {
 // **全屏 loading 阻断浏览**，这里改为后台化+图标化，签名仅 destroyed 重建
 // 时按归属闸照常请求一次（闸口语义不放松）。每地址一次性，轮询/手动刷新不重复弹。
 let autoBootFor = ''
-const containerBooting = ref(false)
-// 弹窗收尾约定（2026-10-23 用户拍板）：确定=跳「容器管理」页看结果/手动重试，
-// 取消=仅关闭。后台启动期间 restartContainer 入口同样置灰+防御性直返
-const bootNotice = (msg) => {
-  askConfirm({ message: msg }).then((ok) => {
-    if (ok) activeTab.value = 'container'
-  })
-}
-const autoBootContainer = async (data) => {
-  const address = data?.address || currentAddress()
-  if (!address || autoBootFor === address) return
-  autoBootFor = address
-  const st = data?.status
-  if (st === 'running') {
-    bootNotice(t('user.bootAlreadyRunning'))
-    return
-  }
-  // 只拉"登过账的停机户"：stopped（纯 session 静默启动）与 destroyed（需一次
-  // 归属签名重建）；none 未建档/waiting 已在排队页/未知态都不自动造轮子
-  if (st !== 'stopped' && st !== 'destroyed') return
-  containerBooting.value = true
-  try {
-    if (st === 'stopped') {
-      await axios.post(`/api/user/${address}/restart`)
-      await new Promise((resolve) => setTimeout(resolve, 3000))
-    } else {
-      const r = await ensureContainer(address, { quiet: true })
-      if (r === 'waiting') return // 排队页由状态机挂出——页面本身即告知
-      if (r === 'usage-limit') {
-        bootNotice(lastConnect202Message || t('user.bootUsageLimit'))
-        return
-      }
-    }
-    await fetchUserInfo(address)
-    bootNotice(t('user.bootDoneNotice'))
-  } catch (err) {
-    bootNotice(t('user.bootFailNotice', { err: err?.message || String(err) }))
-  } finally {
-    containerBooting.value = false
-  }
-}
-
-const restartContainer = async () => {
-  // 后台自动拉起进行中：按钮已置灰，这里再挡一层（快捷键/其他路径直触）
-  if (containerBooting.value) return
-  const address = userInfo.value.address || currentAddress()
-  if (!address) {
-    toast(t('user.errConnectFirst'))
-    return
-  }
-  try {
-    showLoading(t('user.loadingStarting'), t('user.loadingPleaseWait'), 40)
-    // ★v1.5 反馈②：进页面不再建容器，此按钮成为建/启容器的唯一自动入口——
-    // 走 ensureContainer 全状态机（不存在→创建、停止→启动、排队→排队页、额度尽→提示），
-    // 旧实现直连 /connect 不看 202 的坑也一并消掉（202 在状态机内转成排队/usage-limit）。
-    const st = await ensureContainer(address)
-    hideLoading()
-    if (st === 'waiting') return // 排队页已由状态机挂出（waiting.value）
-    if (st === 'usage-limit') {
-      toast(lastConnect202Message || t('user.usageLimitReached'))
-      return
-    }
-    await fetchUserInfo(address)
-    toast(t('user.startedOk'))
-  } catch (err) {
-    hideLoading()
-    toast(t('user.startFail', { err: err.message }))
-  }
-}
-
-const restartDSH = async () => {
-  await askConfirm({
-    message: t('user.confirmRestartDsh'),
-    run: async () => {
-      try {
-        const address = userInfo.value.address
-        showLoading(t('user.loadingRestarting'), t('user.loadingPleaseWait'), 50)
-
-        const res = await axios.post(`/api/user/${address}/restart`)
-
-        // 等待容器完全就绪
-        await new Promise((resolve) => setTimeout(resolve, 5000))
-
-        await fetchUserInfo(address)
-        hideLoading()
-        toast(t('user.restartedOk'))
-      } catch (err) {
-        hideLoading()
-        toast(t('user.restartFail', { err: err.response?.data?.error || err.message }))
-      }
-    },
-  })
-}
-
-const resetContainer = async () => {
-  if (!(await askConfirm(t('user.confirmResetContainer')))) return
-
-  await askConfirm({
-    message: t('user.confirmResetContainer2'),
-    danger: true,
-    run: async () => {
-      const address = userInfo.value.address
-      showLoading(t('user.loadingResetting'), t('user.loadingDeleteRebuild'), 50)
-      try {
-        // 后端在同一个请求里完成「清空旧容器/数据 → 重建全新容器 → 签发会话」，
-        // 返回新容器 url，前端直接打开即可（无需手动重新连接）
-        const res = await axios.post(`/api/user/${address}/reset`)
-
-        hideLoading()
-        const { url } = res.data
-        if (url) window.open(url, '_blank', 'noopener')
-        toast(t('user.resetContainerOk'))
-      } catch (err) {
-        hideLoading()
-        toast(t('user.resetContainerFail', { err: err.response?.data?.error || err.message }))
-      }
-    },
-  })
-}
-
-/**
- * 主动停止自己的容器：立即结算今日使用时长并保全剩余额度
- * （停止期间不计时，挂机不再消耗每日限额；数据保留，随时可重新启动）
- */
-const stopContainer = async () => {
-  await askConfirm({
-    message: t('user.confirmStopContainer'),
-    run: async () => {
-      try {
-        const address = userInfo.value.address
-        showLoading(t('user.loadingStopping'), t('user.loadingSettleStop'), 50)
-
-        await axios.post(`/api/user/${address}/stop`)
-
-        await fetchUserInfo(address)
-        hideLoading()
-        toast(t('user.stoppedOk'))
-      } catch (err) {
-        hideLoading()
-        toast(t('user.stopFail', { err: err.response?.data?.error || err.message }))
-      }
-    },
-  })
-}
 
 const tierBadge = (tier) => {
   const map = { 1: 'badge-info', 2: 'badge-warning', 3: 'badge-success' }
@@ -1594,6 +1137,18 @@ const statusText = (status) => {
   if (!status) return map.none
   return map[status] || status
 }
+
+bindUserModelHost({ signChallenge, currentAddress })
+bindUserSkillsHost({ signChallenge, currentAddress, connected })
+bindUserContainerHost({
+  ensureContainer,
+  showLoading,
+  hideLoading,
+  currentAddress,
+  userInfo,
+  fetchUserInfo,
+  enterDsh,
+})
 
 onMounted(async () => {
   checkCCDAO()
@@ -1670,81 +1225,7 @@ onMounted(async () => {
   await loadMine()
 })
 
-// ===================== 🧩 我的技能（技能市场集成） =====================
-const mineData = ref({ published: [], installed: [], inContainer: [], unverified: false })
-const mySkillsLoading = ref(true) // 初始即 loading：面板首帧显示 spinner，避免空态闪现后突然出数据
-const importDialogOpen = ref(false)
-const importName = ref('')
-const importText = ref('')
-const importBusy = ref(false)
-
-/** 拉取 mine 数据（含签名） */
-const fetchMine = async () => {
-  const sig = await signChallenge('/api/skills/challenge')
-  const res = await skillsApi.mine(sig)
-  return {
-    published: res.published || [],
-    installed: res.installed || [],
-    inContainer: res.inContainer || [],
-  }
-}
-
 let mineInFlight = null
-
-/** 我的技能列表整体刷新（控制下方列表区的 loading） */
-const loadMine = async () => {
-  if (mineInFlight) return mineInFlight // 并发去重：watch 与切换流程可能重叠触发
-  if (!connected.value) return
-  mySkillsLoading.value = true
-  const startedAt = Date.now()
-  mineInFlight = (async () => {
-    try {
-      // 个人视图接口：无需钱包签名，任何环境都能加载出"我的共享/已安装"
-      // （inContainer 由共享弹窗单独用签名接口刷新，这里保留原有值）
-      const res = await skillsApi.mineView(currentAddress())
-      mineData.value = {
-        ...mineData.value,
-        published: res.published || [],
-        installed: res.installed || [],
-        unverified: Boolean(res.unverified),
-        plugins: Array.isArray(res.plugins) ? res.plugins : null,
-      }
-      if (res.reconciled) toast(t('skills.reconciledGone', { n: res.reconciled }))
-    } catch (err) {
-      // 我的技能加载失败不阻塞其他功能
-      console.warn('[skills] 加载我的技能失败（忽略）:', err)
-    } finally {
-      // 保证 loading 至少可见一小段时间：请求太快时若立即关闭，
-      // spinner 来不及渲染一帧就被替换，用户会以为"没有 loading"
-      const MIN_LOADING_MS = 400
-      const elapsed = Date.now() - startedAt
-      if (elapsed < MIN_LOADING_MS) {
-        await new Promise((r) => setTimeout(r, MIN_LOADING_MS - elapsed))
-      }
-      mySkillsLoading.value = false
-    }
-  })()
-  try {
-    return await mineInFlight
-  } finally {
-    mineInFlight = null
-  }
-}
-
-/**
- * 共享对话框专用：只刷新 inContainer，不触发下方列表区的 loading。
- * 弹窗与外层"我的共享/已安装"列表的加载态互相独立。
- */
-const loadContainerSkills = async () => {
-  if (!connected.value) return
-  try {
-    const data = await fetchMine()
-    mineData.value = { ...mineData.value, inContainer: data.inContainer }
-  } catch (err) {
-    mineData.value = { ...mineData.value, inContainer: [] }
-    console.warn('[skills] 获取容器内技能失败（忽略）:', err)
-  }
-}
 
 watch(connected, (v) => {
   if (v) {
@@ -1752,146 +1233,6 @@ watch(connected, (v) => {
     loadCredentialStatus(userInfo.value.address)
   }
 })
-
-const openImportDialog = () => {
-  importDialogOpen.value = true
-  importName.value = ''
-  importText.value = ''
-}
-
-const closeImportDialog = () => {
-  importDialogOpen.value = false
-}
-
-const onImportFile = (e) => {
-  const file = e.target.files?.[0]
-  if (!file) return
-  const reader = new FileReader()
-  reader.onload = () => {
-    importText.value = String(reader.result || '')
-    // 从文件名推断技能名（去 .md 后缀、转小写）
-    const base = String(file.name).replace(/\.md$/i, '').trim().toLowerCase()
-    if (/^[a-z0-9]+(-[a-z0-9]+)*$/.test(base)) importName.value = base
-  }
-  reader.readAsText(file)
-}
-
-const doImport = async () => {
-  const name = importName.value.trim()
-  if (!name) {
-    toast(t('user.errNeedSkillName'))
-    return
-  }
-  if (!importText.value.trim()) {
-    toast(t('user.errNeedSkillText'))
-    return
-  }
-  importBusy.value = true
-  try {
-    const sig = await signChallenge('/api/skills/challenge')
-    await skillsApi.importSkill(sig, name, importText.value)
-    toast(t('user.importedOk', { name }))
-    closeImportDialog()
-    await loadMine()
-  } catch (err) {
-    toast(t('user.importFail', { err: friendlyPluginError(err) }))
-  } finally {
-    importBusy.value = false
-  }
-}
-
-const unpublishSkill = async (name) => {
-  await askConfirm({
-    message: t('user.confirmUnpublish', { name }),
-    run: async () => {
-      try {
-        const sig = await signChallenge('/api/skills/challenge')
-        await skillsApi.unpublish(sig, name)
-        await loadMine()
-      } catch (err) {
-        toast(t('user.opFail', { err: friendlyPluginError(err) }))
-      }
-    },
-  })
-}
-
-const uninstallSkill = async (name) => {
-  await askConfirm({
-    message: t('user.confirmUninstall', { name }),
-    run: async () => {
-      try {
-        const sig = await signChallenge('/api/skills/challenge')
-        await skillsApi.uninstall(sig, name)
-        await loadMine()
-      } catch (err) {
-        toast(t('user.uninstallFail', { err: friendlyPluginError(err) }))
-      }
-    },
-  })
-}
-
-// ===================== 📤 共享容器内的技能（含撞名重命名） =====================
-const shareDialogOpen = ref(false)
-const shareSourceName = ref('')
-const shareRenameTo = ref('')
-const shareBusy = ref(false)
-const shareConflict = ref(false)
-const shareLoading = ref(false) // 获取容器内技能列表的 loading
-
-const openShareDialog = async () => {
-  shareDialogOpen.value = true
-  shareSourceName.value = ''
-  shareRenameTo.value = ''
-  shareConflict.value = false
-  // 打开时只刷新弹窗用的容器内技能列表（不触碰下方列表区的 loading）
-  if (connected.value) {
-    shareLoading.value = true
-    try {
-      await loadContainerSkills()
-    } finally {
-      shareLoading.value = false
-    }
-  }
-}
-
-const closeShareDialog = () => {
-  shareDialogOpen.value = false
-}
-
-const doShare = async () => {
-  const source = shareSourceName.value
-  if (!source) {
-    toast(t('user.errNeedShareSource'))
-    return
-  }
-  const renameTo = shareConflict.value ? shareRenameTo.value.trim() : ''
-  if (shareConflict.value && !renameTo) {
-    toast(t('user.errNeedShareRename'))
-    return
-  }
-  shareBusy.value = true
-  try {
-    const sig = await signChallenge('/api/skills/challenge')
-    await skillsApi.publish(sig, source, renameTo || undefined)
-    toast(
-      renameTo
-        ? t('user.sharedWithRename', { name: renameTo })
-        : t('user.sharedOk', { name: source }),
-    )
-    closeShareDialog()
-    await loadMine()
-  } catch (err) {
-    if (err.response?.status === 409) {
-      // 共享名已被占用：进入重命名模式，源名保持不变
-      shareConflict.value = true
-      shareRenameTo.value = ''
-      return
-    }
-    toast(t('user.shareFail', { err: friendlyPluginError(err) }))
-  } finally {
-    shareBusy.value = false
-  }
-}
 
 onUnmounted(() => {
   stopAdminBadges()
@@ -1909,9 +1250,6 @@ onUnmounted(() => {
 
 <style scoped>
 /* 技能动作行：紧凑贴标题，别再让全局 action-buttons 的 1.25rem 上下大空档 */
-.skill-actions {
-  margin: 0.5rem 0 1rem;
-}
 
 /* 移动端布局 */
 .mobile-shell {
@@ -2220,21 +1558,8 @@ onUnmounted(() => {
 
 /* v1.5 验收①：管理页签内嵌 AdminPanel——外层 tab-content 不再叠 padding，
    避免双层留白；AdminPanel(embedded) 自身不渲染侧栏，内容即全宽 */
-.tab-content.admin-embed {
-  padding: 0;
-  display: block;
-}
 
 /* ─── 右侧内容卡 ─── */
-
-.tab-content {
-  animation: fadeIn 0.25s;
-}
-
-.tab-divider {
-  border-top: 1px solid var(--surface-soft);
-  margin: 1.25rem 0;
-}
 
 /* ─── 账户信息 ─── */
 
@@ -2253,205 +1578,25 @@ onUnmounted(() => {
   min-width: 0;
 }
 
-.resource-usage {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.resource-item {
-  padding: 0.75rem 1rem;
-  background: var(--bg-page);
-  border-radius: 12px;
-  border: 1px solid var(--surface-soft);
-}
-
-.resource-header {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 0.375rem;
-  font-weight: 500;
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-
-.btn-enter {
-  padding: 0.75rem 2rem;
-  font-size: 1rem;
-}
-
 /* ─── 进入容器入口卡（容器管理顶部） ─── */
-.enter-box {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1.25rem 1.5rem;
-  border-radius: 12px;
-  background: linear-gradient(135deg, rgba(107, 123, 219, 0.08) 0%, rgba(108, 105, 194, 0.08) 100%);
-  border: 1px solid rgba(107, 123, 219, 0.25);
-}
-
-.enter-info {
-  min-width: 0;
-}
-
-.enter-title {
-  font-size: 1.05rem;
-  font-weight: 600;
-  color: var(--text-main);
-  margin-bottom: 0.25rem;
-}
-
-.enter-hint {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  line-height: 1.5;
-}
-
-.enter-box .btn-enter {
-  flex-shrink: 0;
-  margin: 0;
-}
 
 /* ════ 通用小组件 ════ */
-
-.info-row {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-  padding: 0.5rem 0;
-}
 
 /* ─── 模型配置 ─── */
 
 /* ─── 我的技能 ─── */
-.skill-subsection {
-  margin-top: 1rem;
-}
-
-.skill-subsection h3 {
-  font-size: 0.95rem;
-  color: var(--text-body);
-  margin: 0 0 0.5rem;
-}
-
-.skill-row {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--surface-soft);
-  border-radius: 10px;
-  margin-bottom: 0.5rem;
-  background: var(--bg-page);
-}
-
-.skill-row-main {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-  min-width: 0;
-}
-
-.skill-row-main strong {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.9rem;
-}
-
-.skill-desc {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 /* ─── CWT 验证 ─── */
 
 /* ─── 对话框 ─── */
-.import-mask {
-  position: fixed;
-  inset: 0;
-  background: rgba(15, 23, 42, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-}
-
-.import-panel {
-  background: var(--surface-white);
-  border-radius: 16px;
-  padding: 1.5rem;
-  max-width: 560px;
-  width: calc(100% - 2rem);
-  max-height: 86vh;
-  overflow: auto;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
-}
-
-.import-panel h3 {
-  margin: 0 0 0.5rem;
-  font-size: 1.05rem;
-}
-
-.import-field {
-  margin: 0.75rem 0;
-}
-
-.import-field label {
-  display: block;
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  margin-bottom: 0.25rem;
-  font-weight: 600;
-}
 
 .import-field input[type='text'],
 .import-field select,
-.import-field textarea,
-.import-field input:not([type='file']) {
-  width: 100%;
-  padding: 0.5rem 0.6rem;
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
-  font-size: 0.9rem;
-  box-sizing: border-box;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  background: var(--surface-white);
-  color: var(--text-main);
-}
 
 /* 下拉框自绘箭头：文字左右等距（原生箭头挤右侧会失衡） */
-.import-field select {
-  -webkit-appearance: none;
-  appearance: none;
-  padding: 0.5rem 1.85rem 0.5rem 0.6rem;
-  background: var(--surface-white)
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='11' height='7' viewBox='0 0 11 7'><path d='M1 1l4.5 4.5L10 1' fill='none' stroke='%2364748b' stroke-width='1.6' stroke-linecap='round'/></svg>")
-    no-repeat right 0.7rem center;
-}
 
-.share-empty-hint {
-  padding: 0.5rem 0.6rem;
-  border: 1px dashed #cbd5e1;
-  border-radius: 8px;
-  background: var(--bg-page);
-}
 
-.import-field textarea {
-  resize: vertical;
-}
 
-.share-conflict {
-  padding: 0.65rem 0.75rem;
-  border: 1px solid #fcd34d;
-  border-radius: 10px;
-  background: #fffbeb;
-}
 
 /* 缩写地址/镜像 ID：悬停立即弹出完整值。
    用自绘 tooltip 而不是原生 title —— 原生有约 1 秒延迟、样式不可控、不能选中。 */
