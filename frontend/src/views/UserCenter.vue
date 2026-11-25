@@ -220,225 +220,7 @@
 
         <!-- ════════ 模型配置 ════════ -->
         <div v-else-if="activeTab === 'model'" class="tab-content">
-          <div class="tab-head">
-            <h4>{{ $t('user.modelConfig') }}</h4>
-            <p class="tab-hint">{{ $t('user.modelConfigHint') }}</p>
-          </div>
-          <div class="key-config">
-            <!-- 获取提供方配置的 loading -->
-            <div v-if="configLoading" class="config-loading">
-              <div class="mini-spinner"></div>
-              <span>{{ $t('user.configLoading') }}</span>
-            </div>
-
-            <!-- 提供方列表：DeepSeek 官方也是其中一个 item -->
-            <template v-else>
-              <div
-                v-for="(item, idx) in items"
-                :key="item.route || `new-${idx}`"
-                class="provider-row"
-              >
-                <div class="row-head">
-                  <span class="row-identity">
-                    <span class="row-name" :class="{ 'row-name-missing': !item.keyConfigured }">
-                      {{ item.displayName }}
-                    </span>
-                    <span v-if="item.kind === 'custom'" class="row-tag">{{
-                      $t('user.customTag')
-                    }}</span>
-                    <span
-                      class="cred-dot"
-                      :class="item.keyConfigured ? 'ok' : 'missing'"
-                      :title="
-                        item.keyConfigured ? $t('user.keyConfigured') : $t('user.keyNotConfigured')
-                      "
-                    ></span>
-                    <span
-                      v-if="item.kind === 'official'"
-                      class="key-state"
-                      :class="item.keyConfigured ? 'ok' : 'missing'"
-                    >
-                      {{ item.keyConfigured ? $t('user.configured') : $t('user.notConfigured') }}
-                    </span>
-                  </span>
-                  <span class="row-actions">
-                    <button class="btn btn-small" @click="toggleExpand(idx)">
-                      {{ item.expanded ? $t('user.collapse') : $t('user.edit') }}
-                    </button>
-                    <button
-                      v-if="item.removable"
-                      class="btn btn-small btn-danger"
-                      :disabled="!connected || keySaving"
-                      @click="removeItem(idx)"
-                    >
-                      {{ $t('user.delete') }}
-                    </button>
-                  </span>
-                </div>
-
-                <div v-if="item.expanded" class="row-body">
-                  <input
-                    v-if="item.kind === 'custom'"
-                    v-model="item.displayName"
-                    :placeholder="$t('user.placeholderDisplayName')"
-                    :disabled="!connected || keySaving"
-                  />
-                  <input
-                    v-if="item.kind === 'custom'"
-                    v-model="item.baseURL"
-                    type="text"
-                    :placeholder="$t('user.placeholderBaseUrl')"
-                    :disabled="!connected || keySaving"
-                  />
-                  <input
-                    v-model="item.apiKey"
-                    type="password"
-                    :placeholder="
-                      item.keyConfigured ? $t('user.placeholderKeyKeep') : $t('user.placeholderKey')
-                    "
-                    :disabled="!connected || keySaving"
-                  />
-                  <!-- 官方：可单独删除 key（不影响自定义端点） -->
-                  <div
-                    v-if="item.kind === 'official' && item.keyConfigured"
-                    class="official-key-actions"
-                  >
-                    <button
-                      class="btn btn-small btn-danger"
-                      :disabled="!connected || keySaving"
-                      @click="clearOfficialKey"
-                    >
-                      {{ $t('user.deleteOfficialKey') }}
-                    </button>
-                    <span class="hint">{{ $t('user.deleteOfficialKeyHint') }}</span>
-                  </div>
-                  <!-- 官方：固定端点 + 默认模型；检测到旧覆盖残留时警告并在保存时清除 -->
-                  <div
-                    v-if="item.kind === 'official'"
-                    class="override-warning"
-                    v-show="item.officialOverride"
-                  >
-                    {{ $t('user.officialOverrideWarn') }}
-                    <span v-if="item.officialBaseURL" class="override-url">{{
-                      item.officialBaseURL
-                    }}</span>
-                    {{ $t('user.officialOverrideTail') }}
-                    <code>https://api.deepseek.com</code>
-                  </div>
-                  <div v-if="item.kind === 'official'" class="hint">
-                    {{ $t('user.officialEndpointHint') }}
-                  </div>
-                  <div v-if="item.kind === 'custom'" class="models-editor">
-                    <div class="models-header">
-                      <span>{{ $t('user.modelsTitle') }}</span>
-                      <button
-                        class="btn btn-small"
-                        :disabled="!connected || keySaving || discovering === idx || !item.baseURL"
-                        @click="discoverItem(idx)"
-                      >
-                        {{ discovering === idx ? $t('user.discovering') : $t('user.discoverBtn') }}
-                      </button>
-                    </div>
-                    <div v-if="!item.baseURL" class="hint">
-                      {{ $t('user.discoverHint') }}
-                    </div>
-                    <table v-if="item.baseURL" class="models-table">
-                      <thead>
-                        <tr>
-                          <th>{{ $t('user.colModelId') }}</th>
-                          <th>{{ $t('user.colName') }}</th>
-                          <th>{{ $t('user.colContext') }}</th>
-                          <th>{{ $t('user.colMaxTokens') }}</th>
-                          <th></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr v-for="(m, mi) in item.models" :key="mi">
-                          <td><input v-model="m.id" placeholder="model-id" /></td>
-                          <td>
-                            <input
-                              v-model="m.name"
-                              :placeholder="$t('user.placeholderModelName')"
-                            />
-                          </td>
-                          <td>
-                            <input
-                              v-model.number="m.contextWindow"
-                              type="number"
-                              min="1"
-                              placeholder="128000"
-                            />
-                          </td>
-                          <td>
-                            <input
-                              v-model.number="m.maxTokens"
-                              type="number"
-                              min="1"
-                              placeholder="8192"
-                            />
-                          </td>
-                          <td>
-                            <button class="btn btn-small btn-danger" @click="removeModel(idx, mi)">
-                              ✕
-                            </button>
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                    <button
-                      class="btn btn-small"
-                      :disabled="!connected || keySaving"
-                      @click="addModel(idx)"
-                    >
-                      {{ $t('user.addModel') }}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <!-- 添加提供方 -->
-              <div class="add-actions">
-                <button
-                  class="btn btn-small"
-                  :disabled="!connected || keySaving || customCount >= 20"
-                  @click="addItem"
-                >
-                  {{ $t('user.addEndpoint') }}
-                </button>
-              </div>
-            </template>
-
-            <div class="action-buttons">
-              <button
-                class="btn btn-primary"
-                :disabled="!connected || keySaving"
-                @click="saveConfig"
-              >
-                {{ keySaving ? $t('user.saving') : $t('user.saveConfig') }}
-              </button>
-              <button
-                class="btn btn-danger"
-                :disabled="!connected || keySaving || !hasAnyConfig"
-                @click="resetConfig"
-              >
-                {{ $t('user.resetConfig') }}
-              </button>
-            </div>
-            <div class="action-hints">
-              <div class="hint">
-                <strong>{{ $t('user.saveFlowTitle') }}</strong>
-                {{ $t('user.saveFlow') }}
-              </div>
-              <div class="hint">
-                <strong>{{ $t('user.discoverFlowTitle') }}</strong>
-                {{ $t('user.discoverFlow') }}
-              </div>
-              <div class="hint">
-                <strong>{{ $t('user.resetFlowTitle') }}</strong>
-                {{ $t('user.resetFlow') }}
-              </div>
-            </div>
-          </div>
+          <UserTabModel />
         </div>
 
         <!-- ════════ 容器管理 ════════ -->
@@ -801,7 +583,9 @@
 import { askConfirm, toast } from '../composables/useDialog'
 import { useIsMobile } from '../composables/useIsMobile.js'
 import { bindUserCredHost, useUserCred } from '../composables/useUserCred.js'
+import { bindUserModelHost, useUserModel } from '../composables/useUserModel.js'
 import UserTabCredential from '../components/user/UserTabCredential.vue'
+import UserTabModel from '../components/user/UserTabModel.vue'
 import { ref, onMounted, onUnmounted, computed, watch, defineAsyncComponent } from 'vue'
 import { useAdminBadges, startAdminBadges, stopAdminBadges } from '../composables/useAdminBadges'
 const { badgeFor } = useAdminBadges()
@@ -970,6 +754,7 @@ function rememberPluginCase(a) {
 }
 
 const { loadCredentialStatus, credInfo, credVc, credApp, credNoDid } = useUserCred()
+const { items, fetchConfigStatus } = useUserModel()
 bindUserCredHost({
   loginOnly,
   currentAddress,
@@ -1032,112 +817,6 @@ const fetchUsage = async (address) => {
   }
 }
 
-// ---- 模型配置（钱包签名验证身份后写入自己的租户卷）----
-// items：每个提供方一个 item；DeepSeek 官方也是其中一个（不可删除）
-// { kind: 'official'|'custom', route?, displayName, baseURL, models, apiKey, keyConfigured, removable, expanded }
-const items = ref([])
-const keySaving = ref(false)
-const discovering = ref(null) // 正在探测的 item 下标
-const configLoading = ref(false) // 获取提供方配置的 loading
-
-const currentAddress = () => userInfo.value.address || localStorage.getItem('swtc_address')
-
-const customCount = computed(() => items.value.filter((i) => i.kind === 'custom').length)
-const hasAnyConfig = computed(
-  () => items.value.some((i) => i.keyConfigured) || items.value.some((i) => i.kind === 'custom'),
-)
-
-/** 自定义 provider route -> 凭据引用名（与服务端一致） */
-const credentialRefFor = (route) =>
-  `${String(route)
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, '_')}_API_KEY`
-
-const fetchConfigStatus = async () => {
-  const address = currentAddress()
-  if (!address) return
-  configLoading.value = true
-  try {
-    const res = await axios.get(`/api/user/tenant-config?address=${encodeURIComponent(address)}`)
-    // 官方 item：不再编辑 baseURL/models；检测旧覆盖残留（保存时自动清除）
-    const officialOverride = !!(res.data.baseURL || (res.data.models && res.data.models.length > 0))
-    items.value = [
-      {
-        kind: 'official',
-        route: 'deepseek-official',
-        displayName: 'DeepSeek 官方',
-        baseURL: '',
-        models: [],
-        apiKey: '',
-        keyConfigured: !!res.data.apiKeyConfigured,
-        removable: false,
-        expanded: true,
-        officialOverride,
-        officialBaseURL: res.data.baseURL || '',
-      },
-      ...(Array.isArray(res.data.providers)
-        ? res.data.providers.map((p) => ({
-            kind: 'custom',
-            route: p.route,
-            displayName: p.displayName || '',
-            baseURL: p.baseURL || '',
-            models: Array.isArray(p.models)
-              ? p.models.map((m) => ({
-                  id: m.id || '',
-                  name: m.name || '',
-                  contextWindow: m.contextWindow,
-                  maxTokens: m.maxTokens,
-                }))
-              : [],
-            apiKey: '',
-            keyConfigured: !!p.keyConfigured,
-            removable: true,
-            expanded: false,
-          }))
-        : []),
-    ]
-  } catch {
-    items.value = []
-  } finally {
-    configLoading.value = false
-  }
-}
-
-const toggleExpand = (idx) => {
-  items.value[idx].expanded = !items.value[idx].expanded
-}
-
-const addItem = () => {
-  if (customCount.value >= 20) return toast(t('user.limitEndpoints'))
-  items.value.push({
-    kind: 'custom',
-    route: undefined,
-    displayName: '',
-    baseURL: '',
-    models: [],
-    apiKey: '',
-    keyConfigured: false,
-    removable: true,
-    expanded: true,
-  })
-}
-
-const removeItem = async (idx) => {
-  const item = items.value[idx]
-  await askConfirm({
-    message: t('user.confirmRemoveEndpoint', { name: item.displayName || t('user.unnamed') }),
-    run: () => items.value.splice(idx, 1),
-  })
-}
-
-const addModel = (idx) => {
-  items.value[idx].models.push({ id: '', name: '', contextWindow: undefined, maxTokens: undefined })
-}
-
-const removeModel = (idx, mi) => {
-  items.value[idx].models.splice(mi, 1)
-}
-
 /**
  * 钱包签名挑战-响应：先取插件当前账户 → 领 nonce → 插件签名 + 取公钥。
  *
@@ -1170,6 +849,7 @@ const signChallenge = async (challengeUrl = '/api/user/config-challenge') => {
   const publicKey = await getPublicKey(pluginAddress)
   return { address: pluginAddress, nonce, signature, publicKey }
 }
+bindUserModelHost({ signChallenge, currentAddress })
 
 /** 保存/清除成功后，把插件当前账户同步到页面与 localStorage */
 const syncWalletAccount = async (address) => {
@@ -1187,191 +867,6 @@ const syncWalletAccount = async (address) => {
  * 插件对每个网站（origin）单独授权，且 swtc_signMessage 不会自动触发授权
  * （源码确认：signMessage 直接验签，无授权/解锁流程）。
  */
-
-/** 模型行校验：id 非空且唯一 */
-const validateModelRows = (models) => {
-  const rows = (models || []).filter((m) => m.id && String(m.id).trim())
-  const ids = new Set(rows.map((m) => String(m.id).trim()))
-  if (ids.size !== rows.length) return { ok: false, msg: t('user.errModelIdDup') }
-  for (const m of rows) {
-    if (m.contextWindow && (typeof m.contextWindow !== 'number' || m.contextWindow < 1)) {
-      return { ok: false, msg: t('user.errCwInvalid', { id: m.id }) }
-    }
-    if (m.maxTokens && (typeof m.maxTokens !== 'number' || m.maxTokens < 1)) {
-      return { ok: false, msg: t('user.errMtInvalid', { id: m.id }) }
-    }
-  }
-  return { ok: true }
-}
-
-/** 整体校验：每个 item（官方 key 长度、自定义显示名/baseURL/模型） */
-const validateAll = () => {
-  const seenNames = new Set()
-  for (const item of items.value) {
-    if (item.apiKey && item.apiKey.length > 4096) {
-      return { ok: false, msg: t('user.errKeyTooLong') }
-    }
-    if (item.kind === 'custom') {
-      const name = (item.displayName || '').trim()
-      if (!name) return { ok: false, msg: t('user.errNeedName') }
-      if (name.length > 64) return { ok: false, msg: t('user.errNameTooLong') }
-      if (seenNames.has(name)) return { ok: false, msg: t('user.errNameDup', { name }) }
-      seenNames.add(name)
-      if (!/^https?:\/\//.test(item.baseURL || '')) {
-        return { ok: false, msg: t('user.errBadBaseUrl', { name }) }
-      }
-    } else if (item.baseURL && !/^https?:\/\//.test(item.baseURL)) {
-      return { ok: false, msg: t('user.errOfficialBaseUrl') }
-    }
-    const check = validateModelRows(item.models)
-    if (!check.ok) return { ok: false, msg: `${item.displayName}：${check.msg}` }
-  }
-  return { ok: true }
-}
-
-const saveConfig = async () => {
-  if (!currentAddress()) return toast(t('user.errConnectFirst'))
-  const check = validateAll()
-  if (!check.ok) return toast(check.msg)
-
-  keySaving.value = true
-  try {
-    const { address, nonce, signature, publicKey } = await signChallenge()
-    const official = items.value.find((i) => i.kind === 'official')
-    const payload = {
-      address,
-      nonce,
-      signature,
-      publicKey,
-      providers: items.value
-        .filter((i) => i.kind === 'custom')
-        .map((p) => ({
-          // 已有 route 回传（更新）；新建的由服务端分配
-          ...(p.route ? { route: p.route } : {}),
-          displayName: p.displayName.trim(),
-          baseURL: p.baseURL.trim(),
-          models: (p.models || [])
-            .filter((m) => m.id && String(m.id).trim())
-            .map((m) => ({
-              id: String(m.id).trim(),
-              name: (m.name || '').trim() || undefined,
-              contextWindow: m.contextWindow || undefined,
-              maxTokens: m.maxTokens || undefined,
-            })),
-          ...(p.apiKey && p.apiKey.trim() ? { apiKey: p.apiKey.trim() } : {}),
-        })),
-    }
-    if (official?.apiKey?.trim()) payload.apiKey = official.apiKey.trim()
-    // 官方 item 不再编辑端点/模型；但若检测到旧覆盖残留，保存时显式清除（回官方）
-    if (official?.officialOverride) {
-      payload.baseURL = ''
-      payload.models = []
-    }
-
-    await axios.post('/api/user/tenant-config', payload)
-    await syncWalletAccount(address)
-    toast(t('user.savedOk'))
-  } catch (err) {
-    toast(t('user.saveFail', { err: friendlyPluginError(err) }))
-  } finally {
-    keySaving.value = false
-  }
-}
-
-/** 探测某个自定义端点的模型列表（优先用输入框 key，否则用该端点已存 key） */
-const discoverItem = async (idx) => {
-  if (!currentAddress()) return toast(t('user.errConnectFirst'))
-  // 串行互斥（2026-10 审计）：discovering 只记一个下标，点了 A 再点 B 会让
-  // A 的"探测中"态被顶掉且两笔并发——签名挑战/限流都会交叠。一次只探一个。
-  if (discovering.value !== null) return
-  const item = items.value[idx]
-  if (!item?.baseURL?.trim()) return toast(t('user.errNeedBaseUrl'))
-  discovering.value = idx
-  try {
-    const { address, nonce, signature, publicKey } = await signChallenge()
-    const payload = {
-      address,
-      nonce,
-      signature,
-      publicKey,
-      baseURL: item.baseURL.trim(),
-    }
-    if (item.apiKey && item.apiKey.trim()) payload.apiKey = item.apiKey.trim()
-    if (item.route) payload.credentialRef = credentialRefFor(item.route)
-
-    const res = await axios.post('/api/user/tenant-config/discover', payload)
-    const models = Array.isArray(res.data.models) ? res.data.models : []
-    item.models = models.map((m) => ({
-      id: m.id || '',
-      name: m.name || '',
-      contextWindow: undefined,
-      maxTokens: undefined,
-    }))
-    if (models.length === 0) {
-      toast(t('user.discoverEmpty'))
-    } else {
-      toast(
-        t('user.discoveredOk', {
-          count: models.length,
-          name: item.displayName || t('user.unnamed'),
-        }),
-      )
-    }
-  } catch (err) {
-    toast(t('user.discoverFail', { err: friendlyPluginError(err) }))
-  } finally {
-    discovering.value = null
-  }
-}
-
-/** 只删除官方 DeepSeek API Key（不影响端点覆盖与自定义端点，需签名） */
-const clearOfficialKey = async () => {
-  if (!currentAddress()) return toast(t('user.errConnectFirst'))
-  await askConfirm({
-    message: t('user.confirmClearOfficialKey'),
-    run: async () => {
-      keySaving.value = true
-      try {
-        const { address, nonce, signature, publicKey } = await signChallenge()
-        await axios.delete('/api/user/tenant-config', {
-          data: { address, nonce, signature, publicKey, scope: 'official-key' },
-        })
-        await syncWalletAccount(address)
-        toast(t('user.officialKeyCleared'))
-      } catch (err) {
-        toast(t('user.delFail', { err: friendlyPluginError(err) }))
-      } finally {
-        keySaving.value = false
-      }
-    },
-  })
-}
-
-/** 恢复默认：清除官方 key + 官方端点覆盖 + 所有自定义端点（需签名） */
-const resetConfig = async () => {
-  if (!currentAddress()) return toast(t('user.errConnectFirst'))
-  const customLine =
-    customCount.value > 0 ? t('user.confirmResetCustomLine', { n: customCount.value }) : ''
-  await askConfirm({
-    message: t('user.confirmResetBase1') + customLine + t('user.confirmResetBase2'),
-    danger: true,
-    run: async () => {
-      keySaving.value = true
-      try {
-        const { address, nonce, signature, publicKey } = await signChallenge()
-        await axios.delete('/api/user/tenant-config', {
-          data: { address, nonce, signature, publicKey },
-        })
-        await syncWalletAccount(address)
-        toast(t('user.resetOk'))
-      } catch (err) {
-        toast(t('user.resetFail', { err: friendlyPluginError(err) }))
-      } finally {
-        keySaving.value = false
-      }
-    },
-  })
-}
 
 // 加载状态
 const loading = ref(false)
@@ -2742,38 +2237,11 @@ onUnmounted(() => {
 }
 
 /* ─── 账户信息 ─── */
-.stat-rows {
-  display: flex;
-  flex-direction: column;
-}
-
-.stat-row {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.625rem 0;
-  border-bottom: 1px solid var(--bg-page);
-}
 
 .stat-row:last-child {
   border-bottom: none;
 }
 
-.stat-label {
-  font-size: 12px;
-  color: var(--text-faint);
-  width: 88px;
-  flex-shrink: 0;
-}
-
-.stat-value {
-  font-size: 13px;
-  color: var(--text-body);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 /* 长值行（vcId/profileDid+复制按钮）：2026-10-23 实锤——.addr-tip[data-full] 全局
    overflow:visible（hover 提示不能被裁）把上面的省略号推翻，nowrap 长串+不可压缩的
    emoji 按钮一起撑破卡片边界。解法=职责拆分：外层宿主自然收窄成 flex 行，
@@ -2783,16 +2251,6 @@ onUnmounted(() => {
   align-items: center;
   gap: 0.35rem;
   min-width: 0;
-}
-.stat-clip {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mono {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
 }
 
 .resource-usage {
@@ -2857,42 +2315,6 @@ onUnmounted(() => {
 }
 
 /* ════ 通用小组件 ════ */
-.action-buttons {
-  display: flex;
-  gap: 0.75rem;
-  margin: 1.25rem 0;
-  flex-wrap: wrap;
-}
-
-.action-buttons .btn {
-  flex: 1;
-  min-width: 150px;
-  padding: 0.625rem 1.25rem;
-  font-size: 0.95rem;
-}
-
-.action-hints {
-  margin-top: 1rem;
-  padding: 1rem;
-  background: var(--bg-page);
-  border-radius: 12px;
-  border: 1px solid var(--surface-soft);
-}
-
-.hint {
-  margin-bottom: 0.75rem;
-  font-size: 0.875rem;
-  color: var(--text-muted);
-  line-height: 1.6;
-}
-
-.hint strong {
-  color: var(--text-body);
-}
-
-.hint:last-child {
-  margin-bottom: 0;
-}
 
 .info-row {
   display: flex;
@@ -2903,175 +2325,6 @@ onUnmounted(() => {
 }
 
 /* ─── 模型配置 ─── */
-.key-config input {
-  width: 100%;
-  padding: 0.625rem 0.85rem;
-  border: 1px solid var(--border-light);
-  border-radius: 10px;
-  font-size: 0.9rem;
-  margin-bottom: 0.75rem;
-  box-sizing: border-box;
-  background: var(--surface-white);
-  color: var(--text-main);
-}
-
-.key-config input:focus {
-  outline: none;
-  border-color: var(--brand-text);
-  box-shadow: 0 0 0 3px rgba(107, 123, 219, 0.15);
-}
-
-.provider-row {
-  border: 1px solid var(--border-light);
-  border-radius: 12px;
-  padding: 10px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-bottom: 8px;
-  background: var(--surface-white);
-}
-
-.row-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.row-identity {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.row-name {
-  font-size: 14px;
-  line-height: 22px;
-  font-weight: 500;
-  color: var(--text-main);
-}
-
-.row-tag {
-  flex: none;
-  padding: 1px 6px;
-  border: 1px solid var(--border-light);
-  border-radius: 4px;
-  font-size: 11px;
-  line-height: 16px;
-  color: var(--text-muted);
-}
-
-.key-state {
-  font-size: 11px;
-  line-height: 16px;
-  font-weight: 500;
-}
-
-.key-state.ok {
-  color: var(--success);
-}
-
-.key-state.missing {
-  color: #ef4444;
-}
-
-.row-name-missing {
-  color: var(--danger);
-}
-
-.official-key-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 0.75rem;
-}
-
-.official-key-actions .hint {
-  margin: 0;
-}
-
-.row-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-}
-
-.override-warning {
-  margin-bottom: 0.75rem;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid #fcd34d;
-  border-radius: 8px;
-  background: #fffbeb;
-  color: #92400e;
-  font-size: 0.85rem;
-  line-height: 1.5;
-}
-
-.override-url {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  word-break: break-all;
-}
-
-.add-actions {
-  display: flex;
-  gap: 8px;
-  margin: 4px 0 12px;
-}
-
-.models-editor {
-  margin: 0.25rem 0 0.75rem;
-  padding: 0.75rem;
-  border: 1px dashed #cbd5e1;
-  border-radius: 10px;
-  background: var(--bg-page);
-}
-
-.models-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 0.5rem;
-  font-weight: 600;
-  color: var(--text-body);
-  font-size: 0.9rem;
-}
-
-.models-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-bottom: 0.5rem;
-}
-
-.models-table th {
-  text-align: left;
-  font-size: 0.75rem;
-  color: var(--text-faint);
-  font-weight: 600;
-  padding: 0.3rem 0.4rem;
-  border-bottom: 1px solid var(--surface-soft);
-  background: transparent;
-}
-
-.models-table td {
-  padding: 0.25rem 0.4rem;
-}
-
-.models-table input {
-  width: 100%;
-  padding: 0.4rem 0.5rem;
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
-  font-size: 0.85rem;
-  box-sizing: border-box;
-  margin: 0;
-}
-
-.models-table td:last-child {
-  width: 2.5rem;
-  text-align: center;
-}
 
 /* ─── 我的技能 ─── */
 .skill-subsection {
@@ -3216,16 +2469,7 @@ onUnmounted(() => {
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
-.copy-mini {
-  border: none;
-  background: none;
-  cursor: pointer;
-  font-size: 0.8em;
-  padding: 0 0.2rem;
-  opacity: 0.6;
-  vertical-align: baseline;
-  flex-shrink: 0;
-}
+
 .copy-mini:hover {
   opacity: 1;
 }

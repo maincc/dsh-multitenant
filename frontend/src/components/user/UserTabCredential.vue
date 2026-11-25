@@ -277,15 +277,6 @@ const {
 </template>
 
 <style scoped>
-.cred-dot {
-  box-sizing: border-box;
-  display: inline-block;
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-
 .cred-dot.ok {
   background: var(--success);
 }
