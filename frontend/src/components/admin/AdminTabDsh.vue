@@ -56,7 +56,12 @@ const {
   shortImageId,
 } = useAdminDsh()
 
-defineEmits(['refresh'])
+const props = defineProps({
+  loading: { type: Boolean, default: false },
+  refreshIntervalMs: { type: Number, default: 15000 },
+})
+
+const emit = defineEmits(['refresh'])
 
 onMounted(() => {
   loadDshStatus().catch(() => {})
@@ -67,7 +72,13 @@ onMounted(() => {
 
 <template>
   <div>
-    <AdminTabHead :title="$t('admin.tabDsh')" :hint="$t('admin.dshHint')" />
+    <AdminTabHead
+      :title="$t('admin.tabDsh')"
+      :hint="$t('admin.dshHint')"
+      :loading="props.loading"
+      :interval-ms="props.refreshIntervalMs"
+      @refresh="emit('refresh')"
+    />
 
     <!-- 2026-10 审计：读失败必须在本 tab 内可见。此前写进全局 error，
                而横幅只挂在 users tab——dsh 表读挂了既看不见，还会串到别的

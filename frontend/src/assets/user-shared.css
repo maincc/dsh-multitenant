@@ -99,3 +99,11 @@
   height: 8px;
   border-radius: 50%;
 }
+
+/* 切刀回归修复（审查 B 刀）：基线这些元素在壳模板内、壳 scoped 罩可达；拆分后
+   组件够不着——按原规则本体以祖先限定入库恢复原状（非全局化，不动 ET 旧例） */
+.user-center .btn-small {
+  padding: 0.25rem 0.75rem;
+  font-size: 0.85rem;
+  margin-left: 0.5rem;
+}

@@ -67,6 +67,7 @@
         <!-- ════════ 系统概览 ════════ -->
         <div v-if="activeTab === 'overview'" class="tab-content">
           <AdminTabOverview
+            :loading="loading"
             :stats="stats"
             :current-address="currentAddress"
             :current-admin-address="currentAdminAddress"
@@ -122,7 +123,11 @@
           <EnvTemplatesAdmin />
         </div>
         <div v-else-if="activeTab === 'dsh'" class="tab-content">
-          <AdminTabDsh @refresh="refreshNow(true)" />
+          <AdminTabDsh
+            :loading="loading"
+            :refresh-interval-ms="refreshIntervalMs"
+            @refresh="refreshNow(true)"
+          />
         </div>
 
         <!-- ════ v1.4 CWT 解除限制申请审批 ════ -->

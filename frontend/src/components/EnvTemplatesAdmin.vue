@@ -144,7 +144,7 @@
                 v-if="detail.provenance && Object.keys(detail.provenance).length"
                 class="enva-prov"
               >
-                <div class="env-muted env-small">{{ $t('env.provDeclared') }}</div>
+                <div class="enva-muted enva-small">{{ $t('env.provDeclared') }}</div>
                 <span
                   v-for="(v, k) in detail.provenance"
                   :key="k"

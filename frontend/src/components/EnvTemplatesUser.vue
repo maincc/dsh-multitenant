@@ -596,11 +596,11 @@ function dupOf(t) {
 const drafts = ref([])
 const current = ref(null)
 const canFreeze = ref(false)
+const elig = ref({ status: 'loading', containerRunning: true, msg: '', onTemplate: null })
 // 顶部快捷钮在场判据：eligibility 已定、可格、非套来态（与底部主按钮同一把闸）
 const topUploadReady = computed(
   () => elig.value.status === 'ok' && canFreeze.value && !elig.value.onTemplate,
 )
-const elig = ref({ status: 'loading', containerRunning: true, msg: '', onTemplate: null })
 const loadingInv = ref(true)
 const busy = ref(false)
 // 中间态（用户验收：按了钮要有动静）：哪个动作在跑，对应按钮就转圈+说人话

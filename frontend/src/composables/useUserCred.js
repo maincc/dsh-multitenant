@@ -246,8 +246,8 @@ const loadCredentialStatus = async (address) => {
     }
     // 撤销即时收面：角色掉出 admin 且正停在管理页 → 弹回账户信息（移动壳同闸：
     // 审批 tab 是管理面，角色跌落/登出重入非 admin 时从审批页弹回首页）
-    if (host.role.value !== 'admin' && isSystemTab.value) host.activeTab.value = 'account'
-    if (host.role.value !== 'admin' && mobileTab.value === 'approvals')
+    if (host.role.value !== 'admin' && host.isSystemTab.value) host.activeTab.value = 'account'
+    if (host.role.value !== 'admin' && host.mobileTab.value === 'approvals')
       host.mobileTab.value = 'home'
     if (data.renewed) {
       // 平台按台账 cwt/did 记录自动续发了新凭证（链上登记册同步换卡）

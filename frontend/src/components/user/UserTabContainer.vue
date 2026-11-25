@@ -29,6 +29,7 @@ const props = defineProps({
   // connect 域两态壳下传（切刀曾把它们塞进 useUserContainer 解构=悬空 undefined）
   userInfo: { type: Object, default: () => ({}) },
   connected: { type: Boolean, default: false },
+  usageInfoLabel: { type: String, default: '' },
   initialSub: { type: String, default: 'info' },
   marketCat: { type: String, default: 'skills' },
 })
@@ -447,6 +448,8 @@ watch(
   font-weight: 600;
 }
 
+.import-field input[type='text'],
+.import-field select,
 .import-field textarea,
 .import-field input:not([type='file']) {
   width: 100%;

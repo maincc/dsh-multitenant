@@ -230,6 +230,7 @@
             :market-cat="marketCat"
             :user-info="userInfo"
             :connected="connected"
+            :usage-info-label="usageInfoLabel"
           />
         </div>
 
@@ -291,7 +292,6 @@ import { userSessionApi } from '../api/userSession.js'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { skillsApi } from '../api/skills.js'
-import { sha256Hex as sha256HexFallback } from '../utils/sha256.js'
 import AdminPanel from './AdminPanel.vue'
 import EnvTemplatesUser from '../components/EnvTemplatesUser.vue'
 // T5 移动 chunk 拆分（2026-11-10）：五个移动组件按 isMobile 条件渲染，改 defineAsyncComponent
@@ -451,7 +451,7 @@ function rememberPluginCase(a) {
 const { loadCredentialStatus, credInfo, credVc, credApp, credNoDid } = useUserCred()
 const { items, fetchConfigStatus } = useUserModel()
 const { autoBootContainer, containerBooting } = useUserContainer()
-const { mineData, loadMine, loadContainerSkills } = useUserSkills()
+const { mineData, mySkillsLoading, loadMine, loadContainerSkills } = useUserSkills()
 // 当前生效地址（档案优先，localStorage 兜底）——connect 域 getter，cred/model/skills/container 四 composable 经 host 注入共用
 const currentAddress = () => userInfo.value.address || localStorage.getItem('swtc_address')
 

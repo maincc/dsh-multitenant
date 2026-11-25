@@ -5,6 +5,7 @@ import { ref, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast, askConfirm } from '../../composables/useDialog'
 import { adminOpsApi } from '../../api/adminOps.js'
+import AdminTabHead from './AdminTabHead.vue'
 
 defineProps({
   stats: { type: Object, default: () => ({}) },
