@@ -82,6 +82,19 @@ export function dispatch(routes, req, res, path, url) {
 - `/api/admin/*` 前缀下**未注册**的 method+path 组合 → 统一 405/404 JSON，不再可能
   漏进 SPA fallback（dispatch 返回 false 后 server.js 的 `/api/` 兜底 404 保留，双保险）。
 
+> **实施勘误（P1 审查 L3 钉正，落地态以此为准）**：蓝图与实物有四处差异——
+> ① dispatch 次序实为 **rateLimit 先于 guard**（旧 /api/admin/check 首句限流，行为对齐优先；
+> 上文代码块的 runGuard 在前是设计期笔误，registry.js:27 红线注释早已声明）；
+> ② admin-sign 未做 guard 数组形态，落地为**独立 `signOp` 字段**（注册即校验白名单）+
+> handler 内原位 `requireAdminSignature` 调用（attach/verify 的 binding 形状各异，收进
+> 通用 guard 反而丢真）；
+> ③ §2.4 承诺的 `test/route-registry.test.js` 实拆为 **admin-registry.test.js +
+> user-skill-registry.test.js** 两文件；
+> ④ 未注册组合的收口实际只有 server.js 兜底 **404**（无 405——与旧 if 链行为逐字一致，
+> 加 405 属语义变更，未夹带进搬运 commit）。
+> 另：匹配器形态比蓝图多两类——`prefix`/`pattern`/`match(fn)`（catch-all 专用，
+> 必须殿后，first-match-wins=注册序）。
+
 ### 2.3 实施步骤（每步一个 commit，全绿）
 
 1. 建 `registry.js` + 单测（match/runcGuard/dispatch 纯逻辑，mock req/res）；

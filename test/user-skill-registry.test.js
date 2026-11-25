@@ -236,7 +236,7 @@ describe('USER_ROUTES 声明面快照（P1 迁移钉）', () => {
 })
 
 describe('SKILL_ROUTES 声明面快照（P1 迁移钉）', () => {
-  it('14 条目：8 具体 + 5 个 :name 族 pattern + 前缀兜底（注册最后）', () => {
+  it('14 条目：7 exact + 6 个 :name 族 pattern + match 兜底（注册最后；P1 审查 L2 订正构成计数）', () => {
     expect(SKILL_ROUTES.map(keyOf)).toEqual([
       'POST path /api/skills/challenge',
       'POST path /api/skills/publish',

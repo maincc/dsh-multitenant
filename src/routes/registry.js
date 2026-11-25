@@ -10,8 +10,8 @@
  *   - 每条路由必须显式声明 guard：'public'（免鉴权，必须写出，review 一眼可见）
  *     | 'user'（user_session 会话门，判例 2026-10-30 单源身份）
  *     | 'admin'（requireAdmin）| 'custom'（自带 customGuard 函数，须写理由注释）
- *     ——'user'/'admin' 的拒绝响应文案在此单点定义（原 user.routes 里逐字重复 13
- *     次的 401 块是判例 58 型孪生，收敛掉）
+ *     ——'user'/'admin' 的拒绝响应文案在此单点定义（原 user.routes 里逐字重复 14
+ *     次的 401 块是判例 58 型孪生，收敛掉——P1 审查 L1 订正计数）
  *   - 需要当场签名的操作声明 signOp，注册时即校验它在 ADMIN_SIGNED_OPERATIONS
  *     白名单内（运行时才知 → 注册时即知）
  *   - dispatch 统一"处理过必返 true"，消灭 return / return true 混风格
@@ -38,10 +38,11 @@ const GUARD_KINDS = new Set(['public', 'user', 'admin', 'custom'])
  * 定义一条路由（纯函数式：不做全局副作用，域文件各自导出数组、index 汇总）。
  *
  * @param {object} def
- * @param {('GET'|'POST'|null)=} def.method   省略/null = 任意方法（原链部分分支不查 method，行为对齐）
+ * @param {('GET'|'POST'|null)=} def.method   省略/null = 任意方法（原链部分分支不查 method，行为对齐）；
+ *        对 path/prefix/pattern/match **四类匹配器一致生效**（P1 审查 M1 修复语义）
  * @param {string=} def.path                   精确路径
  * @param {string=} def.prefix                 前缀匹配（原 path.startsWith 分支）
- * @param {RegExp=} def.pattern                正则匹配（原 regex 分支）
+ * @param {RegExp=} def.pattern                正则匹配（原 regex 分支；禁 /g|/y，须 ^…$ 锚定）
  * @param {(path:string, req)=>boolean=} def.match 函数匹配（兜底 catch-all 专用，如
  *        原 GET /api/user/:address 的 startsWith+排除后缀语义；必须注册在域表末尾）
  * @param {('public'|'admin'|'custom')} def.guard  守卫种类，必填
@@ -62,8 +63,14 @@ export function defineRoute(def) {
   if (def.match != null && typeof def.match !== 'function') {
     throw new Error(`[registry] ${tag}: match 必须是 (path, req) => boolean 函数`)
   }
-  if (def.pattern && !def.pattern.global) {
-    // 注册正则一律锚定成 ^…$ 全串匹配由定义方负责；这里只挡明显忘锚的
+  if (def.pattern != null) {
+    // P1 审查 M3：旧写法 `!def.pattern.global` 时才查锚定——/g 恰好绕过整道闸。
+    // 且 .test() 对 /g|/y 正则推进 lastIndex（有状态），本身就破坏 first-match-wins，
+    // 一律禁。（现网 8 支 pattern 全无 /g|/y，零影响。）
+    if (def.pattern.global || def.pattern.sticky) {
+      throw new Error(`[registry] ${tag}: pattern 禁 /g|/y 有状态标志（test 会推进 lastIndex）`)
+    }
+    // 注册正则锚定成 ^…$ 全串匹配由定义方负责；这里挡明显忘锚的
     if (!def.pattern.source.startsWith('^') || !def.pattern.source.endsWith('$')) {
       throw new Error(`[registry] ${tag}: pattern 必须是 ^…$ 锚定的全串匹配`)
     }
@@ -100,13 +107,37 @@ export function validateRoutes(routes) {
             `${b.method || '*'} ${b.path || b.prefix || b.pattern}`,
         )
       }
+      // P1 审查 M2：把注释里"静默遮蔽必须显式报错"兑现到**静态可判**的范围——
+      // 顺序敏感的"前吞后"（a 先注册且必然吃掉 b 的全部流量 → b 是死代码）：
+      //   prefix ⊇ later exact / prefix ⊇ later narrower prefix / anchored pattern ⊇ later exact
+      // 不可静态判的留给人工红线：match 函数（catch-all 必须殿后，由
+      // user-skill-registry.test 计数钉）、pattern 对 prefix 的无限集交叠。
+      if (sameOrOverlapMethod && !sameMatcher) {
+        let shadowed = false
+        if (a.prefix != null) {
+          shadowed =
+            (b.path != null && b.path.startsWith(a.prefix)) ||
+            (b.prefix != null && b.prefix.startsWith(a.prefix))
+        } else if (a.pattern != null && b.path != null) {
+          shadowed = a.pattern.test(b.path) // 注册时已禁 /g|/y，test 无状态残留
+        }
+        if (shadowed) {
+          throw new Error(
+            `[registry] 遮蔽注册（死代码）：${a.method || '*'} ${a.path || a.prefix || a.pattern}（先）` +
+              ` 吞掉 ${b.method || '*'} ${b.path || b.prefix || b.pattern}（后）`,
+          )
+        }
+      }
     }
   }
   return routes
 }
 
 function matches(def, method, path, req) {
-  if (def.match != null) return !!def.match(path, req)
+  // P1 审查 M1：旧写法 match 路由 `return !!def.match(...)` 早退，静默绕过末尾的
+  // method 判定——match+method:'POST' 会得到"任意方法命中"。改为平铺短路，
+  // method 过滤对所有匹配器一致生效（现网两支 match 路由均 method:null，行为不变）。
+  if (def.match != null && !def.match(path, req)) return false
   if (def.path != null && path !== def.path) return false
   if (def.prefix != null && !path.startsWith(def.prefix)) return false
   if (def.pattern != null) {

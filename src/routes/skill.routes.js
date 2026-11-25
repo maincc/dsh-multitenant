@@ -17,6 +17,7 @@ import { dispatchRoutes } from './registry.js'
 import { SKILL_ROUTES } from './skill/skills.routes.js'
 
 export async function handleSkillRoutes(req, res, path) {
-  const url = new URL(req.url, `http://${req.headers.host || 'local'}`)
-  return dispatchRoutes(SKILL_ROUTES, req, res, path, url)
+  // P1 审查 L4：14 个 handler 均不消费第 4 参 url（各自内建，与旧版基底逐字相同）——
+  // 移除每请求一次死计算。
+  return dispatchRoutes(SKILL_ROUTES, req, res, path)
 }

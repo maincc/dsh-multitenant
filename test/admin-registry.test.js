@@ -159,6 +159,65 @@ describe('A. registry 机制', () => {
     expect(() => validateRoutes([c, d])).not.toThrow()
   })
 
+  it('P1 审查 M3：pattern 的 /g|/y 有状态标志直接拒——锚定闸不可被 flag 绕过', () => {
+    expect(() => defineRoute({ pattern: /\/foo/g, guard: 'public', handler: () => {} })).toThrow(
+      /\/g\|\/y/,
+    )
+    // 已锚定但带 /g：一样拒（旧写法 `!global` 才查锚定 → /g 恰好整道闸绕开）
+    expect(() => defineRoute({ pattern: /^\/foo$/g, guard: 'public', handler: () => {} })).toThrow(
+      /\/g\|\/y/,
+    )
+    expect(() => defineRoute({ pattern: /^\/foo$/y, guard: 'public', handler: () => {} })).toThrow(
+      /\/g\|\/y/,
+    )
+    expect(() =>
+      defineRoute({ pattern: /^\/foo$/, guard: 'public', handler: () => {} }),
+    ).not.toThrow()
+  })
+
+  it('P1 审查 M2：静态可判的"前吞后"遮蔽显式抛；合法次序不误伤', () => {
+    const px = defineRoute({ prefix: '/api/x/', guard: 'public', handler: () => {} })
+    const deep = defineRoute({ path: '/api/x/deep', guard: 'public', handler: () => {} })
+    expect(() => validateRoutes([px, deep])).toThrow(/遮蔽注册/) // prefix⊃later exact
+    const narrow = defineRoute({ prefix: '/api/x/y/', guard: 'public', handler: () => {} })
+    expect(() => validateRoutes([px, narrow])).toThrow(/遮蔽注册/) // prefix⊃later narrower prefix
+    const re = defineRoute({ pattern: /^\/api\/y\/[^/]+$/, guard: 'public', handler: () => {} })
+    const hit = defineRoute({ path: '/api/y/z', guard: 'public', handler: () => {} })
+    expect(() => validateRoutes([re, hit])).toThrow(/遮蔽注册/) // anchored pattern⊃later exact
+    // exact 先、prefix 后 = 精确优先的正当设计（environments 族即此形），不得误伤
+    expect(() => validateRoutes([deep, px])).not.toThrow()
+    // 具体方法互斥不算吞
+    const pGet = defineRoute({
+      method: 'GET',
+      prefix: '/api/z/',
+      guard: 'public',
+      handler: () => {},
+    })
+    const ePost = defineRoute({
+      method: 'POST',
+      path: '/api/z/a',
+      guard: 'public',
+      handler: () => {},
+    })
+    expect(() => validateRoutes([pGet, ePost])).not.toThrow()
+  })
+
+  it('P1 审查 M1：method 过滤对 match 路由一致生效（match+POST 不吃 GET）', async () => {
+    const routes = validateRoutes([
+      defineRoute({
+        method: 'POST',
+        match: (p) => p.startsWith('/m/'),
+        guard: 'public',
+        handler: (_r, res) => res.end('m'),
+      }),
+    ])
+    const r1 = fakeRes()
+    expect(await dispatch(routes, fakeReq('GET', '/m/x'), r1, '/m/x')).toBe(false) // 旧早退会误命中
+    const r2 = fakeRes()
+    expect(await dispatch(routes, fakeReq('POST', '/m/x'), r2, '/m/x')).toBe(true)
+    expect(r2.body).toBe('m')
+  })
+
   it('dispatch：exact+method 全匹配才命中；方法不符 fallthrough', async () => {
     const hit = defineRoute({
       method: 'POST',
