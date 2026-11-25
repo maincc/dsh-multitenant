@@ -1542,6 +1542,12 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 
+/* P3 切刀误删回迁（2026-11-13 目检案连带清查）：v-html 注入的 svg 不受 scoped 罩，
+   必须 :deep 定性 display:block——否则基线留缝、侧栏图标错位 */
+.sidebar-icon :deep(svg) {
+  display: block;
+}
+
 .sidebar-item {
   position: relative;
   width: 100%;
@@ -1576,6 +1582,23 @@ onUnmounted(() => {
    避免双层留白；AdminPanel(embedded) 自身不渲染侧栏，内容即全宽 */
 
 /* ─── 右侧内容卡 ─── */
+/* P3 切刀事故回迁（2026-11-13 目检"模型配置没样式"追出）：.gate-content 白卡
+   本体与 .tab-content 淡入曾被当"域规则"错删——但宿主元素（section/tab-content
+   包裹 div）在壳模板自己手里，scoped 罩内规则就是唯一正确归宿，不可迁走 */
+.gate-content {
+  flex: 1;
+  min-width: 0;
+  background: #fff;
+  border-radius: 16px;
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  padding: 1.5rem;
+  overflow-y: auto;
+}
+
+.tab-content {
+  animation: fadeIn 0.25s;
+}
 
 /* ─── 账户信息 ─── */
 

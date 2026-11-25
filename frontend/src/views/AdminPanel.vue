@@ -733,6 +733,12 @@ onUnmounted(() => {
 
 /* ════ 主界面：左侧栏 + 右侧内容（与 React 原型稿一致） ════ */
 
+/* P3 切刀误删回迁（2026-11-13 目检案连带清查）：v-html 注入的 svg 不受 scoped 罩，
+   必须 :deep 定性 display:block——否则基线留缝、侧栏图标错位 */
+.sidebar-icon :deep(svg) {
+  display: block;
+}
+
 .sidebar-item {
   position: relative;
   width: 100%;
