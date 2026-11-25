@@ -279,38 +279,12 @@
 
         <!-- ════════ 配额配置（只读） ════════ -->
         <div v-else-if="activeTab === 'quota'" class="tab-content">
-          <AdminTabHead
-            :title="$t('admin.tabQuota')"
-            :hint="$t('admin.tierConfigHint')"
-            :hint-warn="$t('admin.diskQuotaHint')"
+          <AdminTabQuota
+            :tiers="tiers"
             :loading="loading"
-            :interval-ms="refreshIntervalMs"
+            :refresh-interval-ms="refreshIntervalMs"
             @refresh="refreshNow(true)"
           />
-          <table>
-            <thead>
-              <tr>
-                <th>{{ $t('admin.colTierLevel') }}</th>
-                <th>{{ $t('admin.colTierLabel') }}</th>
-                <th>{{ $t('admin.colMemory') }}</th>
-                <th>{{ $t('admin.colCpu') }}</th>
-                <th>{{ $t('admin.colPids') }}</th>
-                <th>{{ $t('admin.colDiskLimit') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in tierRows" :key="row.tier">
-                <td>
-                  <span class="badge" :class="tierBadge(row.tier)">T{{ row.tier }}</span>
-                </td>
-                <td>{{ row.limits.label }}</td>
-                <td>{{ row.limits.memory }}</td>
-                <td>{{ row.limits.cpus }} {{ $t('admin.cpuUnit') }}</td>
-                <td>{{ row.limits.pids }}</td>
-                <td>{{ row.limits.disk || '-' }}</td>
-              </tr>
-            </tbody>
-          </table>
         </div>
 
         <!-- ════════ 资源监控 ════════ -->
@@ -1333,6 +1307,8 @@ import axios from 'axios'
 import { useI18n } from 'vue-i18n'
 import { buildAdminTabs } from '../admin-tabs'
 import AdminTabHead from '../components/admin/AdminTabHead.vue'
+import AdminTabQuota from '../components/admin/AdminTabQuota.vue'
+import { tierBadge as sharedTierBadge } from '../components/admin/shared.js'
 import EnvTemplatesAdmin from '../components/EnvTemplatesAdmin.vue'
 import {
   requestAccounts,
@@ -1590,16 +1566,6 @@ const maxTier = computed(() => {
   return keys.length ? Math.max(...keys) : 3
 })
 
-/**
- * 配额档位行（升序）。过滤非数字键：运维可能在 tiers 里加 comment 等说明键
- * （其他配置块都带 comment），这些不该被渲染成一档配额。
- */
-const tierRows = computed(() =>
-  Object.entries(tiers.value || {})
-    .filter(([key]) => Number.isFinite(Number(key)))
-    .map(([tier, limits]) => ({ tier: Number(tier), limits }))
-    .sort((a, b) => a.tier - b.tier),
-)
 let dataRefreshInterval = null
 /** 上次拉取时间：切 tab 时做 1 秒节流，避免狂点 tab 打爆后端 */
 let lastFetchAt = 0
@@ -2297,10 +2263,7 @@ const promoteUser = async (address) => {
   })
 }
 
-const tierBadge = (tier) => {
-  const map = { 1: 'badge-info', 2: 'badge-warning', 3: 'badge-success' }
-  return map[tier] || 'badge-info'
-}
+const tierBadge = sharedTierBadge
 
 const statusBadge = (status) => {
   const map = {

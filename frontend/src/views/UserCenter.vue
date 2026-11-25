@@ -1081,6 +1081,7 @@ import {
   signFileBytes,
   getIpfsPublicKey,
   watchAccountsChanged,
+  friendlyPluginError,
 } from '../api/wallet.js'
 import { signConnectPlugin, buildConnectUrl } from '../api/connect.js'
 import { formatBytes, shortAddress } from '../utils/format.js'
@@ -1808,13 +1809,6 @@ const syncWalletAccount = async (address) => {
  * 插件对每个网站（origin）单独授权，且 swtc_signMessage 不会自动触发授权
  * （源码确认：signMessage 直接验签，无授权/解锁流程）。
  */
-const friendlyPluginError = (err) => {
-  const msg = err.response?.data?.error || err.message || t('user.unknownError')
-  if (/not been authorized|unauthorized/i.test(String(msg))) {
-    return t('user.pluginNotAuthorized')
-  }
-  return msg
-}
 
 /** 模型行校验：id 非空且唯一 */
 const validateModelRows = (models) => {
