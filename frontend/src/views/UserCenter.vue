@@ -220,7 +220,7 @@
 
         <!-- ════════ 模型配置 ════════ -->
         <div v-else-if="activeTab === 'model'" class="tab-content">
-          <UserTabModel />
+          <UserTabModel :connected="connected" />
         </div>
 
         <!-- ════════ 容器管理 ════════ -->

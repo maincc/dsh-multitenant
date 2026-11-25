@@ -5,6 +5,11 @@ import { toast } from '../../composables/useDialog'
 import { shortAddress } from '../../utils/format.js'
 import { useUserModel } from '../../composables/useUserModel.js'
 
+// 钱包连接态由壳 connect 域下传：密钥操作按钮的 disabled 判据（切刀曾漏供，静默坏）
+defineProps({
+  connected: { type: Boolean, default: false },
+})
+
 const {
   items,
   keySaving,

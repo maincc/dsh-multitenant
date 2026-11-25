@@ -31,6 +31,7 @@ const props = defineProps({
 })
 
 const {
+  enterDsh,
   containerBooting,
   bootNotice,
   autoBootContainer,

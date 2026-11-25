@@ -18,6 +18,7 @@ const {
   dshIncludePrerelease,
   dshSelectedVersion,
   dshBuild,
+  dshApply,
   dshApplyResults,
   dshImages,
   dshImagesLoading,
