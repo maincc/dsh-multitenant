@@ -225,7 +225,12 @@
 
         <!-- ════════ 容器管理 ════════ -->
         <div v-else-if="activeTab === 'container'" class="tab-content">
-          <UserTabContainer :initial-sub="containerInitialSub" :market-cat="marketCat" />
+          <UserTabContainer
+            :initial-sub="containerInitialSub"
+            :market-cat="marketCat"
+            :user-info="userInfo"
+            :connected="connected"
+          />
         </div>
 
         <!-- ════════ 我的技能 ════════ -->

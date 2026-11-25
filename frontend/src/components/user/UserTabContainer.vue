@@ -26,6 +26,9 @@ const statusText = (status) => {
 }
 
 const props = defineProps({
+  // connect 域两态壳下传（切刀曾把它们塞进 useUserContainer 解构=悬空 undefined）
+  userInfo: { type: Object, default: () => ({}) },
+  connected: { type: Boolean, default: false },
   initialSub: { type: String, default: 'info' },
   marketCat: { type: String, default: 'skills' },
 })
@@ -39,8 +42,6 @@ const {
   restartDSH,
   resetContainer,
   stopContainer,
-  userInfo,
-  connected,
 } = useUserContainer()
 const {
   mineData,
