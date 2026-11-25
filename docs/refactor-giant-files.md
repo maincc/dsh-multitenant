@@ -24,7 +24,7 @@
 2. **每步全绿**：1035 用例（63 文件，实测 90s）是 pre-commit 硬闸；拆分过程中它同时是
    行为不变的证明。禁止"先拆完再修测试"。
 3. **门面稳定**：`user.service.js` / `handleAdminRoutes` 的对外 import 签名不变——
-   24 个测试文件 import userService、9 个 import 路由 handler，一个都不改它们的 import。
+   26 个测试文件引用 userService（静态 import 18 + 动态 4 + 仅 vi.mock 5）、9 个 import 路由 handler，一个都不改它们的 import。（P2 审查 L5 订正计数）
 4. **默认拒绝**：新结构必须让"漏加守卫"从*会被遗忘*变成*不可能编译/通不过测试*（§2.2）。
 5. **不动判权语义**：凭证链路、签名用途绑定、cookie 剥离逻辑原样搬运；行号变了但
    `git log --follow` 可追。凡搬运块，文件头保留原注释（含事故判例援引）。
@@ -116,21 +116,21 @@ export function dispatch(routes, req, res, path, url) {
 
 ### 3.1 现状与切分线
 
-单 class ~50 方法、一个大 `state`（swtcUsers 端口账本 + usages 限时账 + cleanupPolicy +
+单 class 65 个成员（含 constructor）· P2 审查实测、一个大 `state`（swtcUsers 端口账本 + usages 限时账 + cleanupPolicy +
 等待队列）。按既有方法聚类，天然切五域（行号为现状锚点）：
 
 | 模块                      | 迁入方法                                                                                                                                                                                                                                                                                                                                    | 约行数       |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
-| `user/ports.js`           | allocateInternalPort, findFreePublicPort, probeBindable, reclaimDestroyedPorts, hasReclaimablePorts, tenantPortRanges, internalForPublic, recordOccupation, portInRange                                                                                                                                                                     | ~300         |
-| `user/usage.js`           | usageLimitConfig, settleUsage, getUsedMinutes, ensureUsageAllowed, checkUsageLimitAndStop, todayStr, dayStartMs, usageRecMs                                                                                                                                                                                                                 | ~200         |
-| `user/queue.js`           | addToWaitQueue, pruneWaitQueue, removeFromWaitQueue, getQueuePosition, processWaitQueue, preflightCheck, preflightMode                                                                                                                                                                                                                      | ~250         |
-| `user/resources.js`       | monitorResources, collectDiskUsage, scanVolumeUsage                                                                                                                                                                                                                                                                                         | ~250         |
-| `user/queries.js`         | getUserInfo, getAllUsers, _computeAllUsers, invalidateUsersCache, getStats, getTenantDshVersion, resolveTenantCapability                                                                                                                                                                                                                    | ~400         |
+| `user/ports.js`           | allocateInternalPort, findFreePublicPort, probeBindable, reclaimDestroyedPorts, hasReclaimablePorts, tenantPortRanges, internalForPublic, recordOccupation, portInRange                                                                                                                                                                     | 207（实测）  |
+| `user/usage.js`           | usageLimitConfig, settleUsage, getUsedMinutes, ensureUsageAllowed, checkUsageLimitAndStop, todayStr, dayStartMs, usageRecMs                                                                                                                                                                                                                 | 159（实测）  |
+| `user/queue.js`           | addToWaitQueue, pruneWaitQueue, removeFromWaitQueue, getQueuePosition, processWaitQueue, preflightCheck, preflightMode                                                                                                                                                                                                                      | 232（实测）  |
+| `user/resources.js`       | monitorResources, collectDiskUsage, scanVolumeUsage                                                                                                                                                                                                                                                                                         | 182（实测）  |
+| `user/queries.js`         | getUserInfo, getAllUsers, _computeAllUsers, invalidateUsersCache, getStats                                                                                                                                                                                                                                                                  | 170（实测）  |
 | （留守）`user.service.js` | ensureContainer, finalizeTenant, restart/reset/stop/destroy 生命周期主干, rollback/heal, syncTenantPatches, workspace 快照, adopt/unpin, _saveState, init/restore；**实施时钉正**：resolveTenantCapability/getTenantDshVersion 亦留守（网关热路径探针，非用户查询）；todayStr/dayStartMs/usageRecMs 入 usage.js（调用点 grep 证明域内独占） | 2423（实测） |
 
 ### 3.2 拆法：mixin 组装，不碰 this 语义
 
-24 个测试文件 `import { userService }` ——全部不动。做法：
+26 个测试文件引用 userService（18 静态 import + 4 动态 + 5 仅 mock）——全部不动。做法：
 
 ```js
 // user/ports.js 导出普通对象（方法可互访 this）
@@ -152,7 +152,7 @@ export const userService = new UserService();
 
 - `git diff --stat` 每步：user.service.js 减行 ≈ 新文件加行，且 24 个 import 方零改动；
 - 全量测试绿；finalize-tenant.test.js（真容器链）重点盯 ensureContainer 域；
-- 圈复杂度粗测：任意函数 ≤60 行，任意文件 ≤1000 行。
+- 圈复杂度粗测：任意函数 ≤60 行，任意文件 ≤1000 行。（**口径注·P2 审查 L7**：本线针对 P3 收口终态。P2 阶段 main 留守 2423 行属 §3.1 设计内——生命周期主干『最后再动或不动』；>60 行方法 13→12，搬运刀只消掉 preflightCheck。若终验仍不达标须另立 P4 拆生命周期，不在本轮 ✅ 语义内。）
 
 ## 四、P3 前端巨型视图 → tab 组件化（移动/桌面共享内核）
 

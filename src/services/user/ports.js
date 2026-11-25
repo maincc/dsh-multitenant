@@ -3,7 +3,7 @@
  *
  * mixin 法：本文件导出普通对象，由 user.service.js `Object.assign(UserService.prototype,
  * portsMixin)` 装配——方法体内 `this.state / this._saveState / this.portInRange` 等
- * 语义与拆分前完全一致（state 仍在实例上，24 个测试文件 import userService 零改动）。
+ * 语义与拆分前完全一致（state 仍在实例上，26 个引用 userService 的测试文件零改动（静态 18+动态 4+mock 5））。
  * 跨域互借（_saveState）是 §3.2 允许的过渡丑线，域间红线以调用面而非文件界为准。
  */
 

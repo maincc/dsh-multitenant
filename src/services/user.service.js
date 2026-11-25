@@ -18,7 +18,6 @@ import {
 } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { CONFIG, getTierLimits } from '../config/config.js'
-import { credentialService } from './credential.service.js'
 import { dockerService } from './docker.service.js'
 import { dataService } from './data.service.js'
 import { stateStore } from './state.store.js'
@@ -2411,13 +2410,19 @@ export class UserService {
 
 // P2 域拆装配（refactor-giant-files §三）：域 mixin 逐字节搬运，this 语义不变——
 // state 仍在实例上；跨域互借（如端口回收调 this._saveState）为 §3.2 过渡允许丑线。
-Object.assign(
-  UserService.prototype,
-  portsMixin,
-  usageMixin,
-  queueMixin,
-  resourcesMixin,
-  queriesMixin,
-)
+// P2 审查整改：弃用 Object.assign——它把 mixin 方法以 **enumerable** 描述符写上
+// prototype（Object.keys(UserService.prototype) 基线 0 → assign 后 29），与 class 体
+// 方法的非枚举语义有偏差；改 defineProperty 循环，描述符与 class 方法完全一致
+// （writable/configurable true、enumerable false）。结构闸见 test/p2-assembly.test.js。
+for (const mixin of [portsMixin, usageMixin, queueMixin, resourcesMixin, queriesMixin]) {
+  for (const [name, fn] of Object.entries(mixin)) {
+    Object.defineProperty(UserService.prototype, name, {
+      value: fn,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    })
+  }
+}
 
 export const userService = new UserService()
