@@ -13,6 +13,7 @@ defineProps({
   currentAdminAddress: { type: String, default: '' },
   dockerAvailable: { type: Boolean, default: false },
   refreshIntervalMs: { type: Number, default: 15000 },
+  loading: { type: Boolean, default: false },
 })
 defineEmits(['refresh'])
 

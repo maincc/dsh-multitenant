@@ -276,9 +276,14 @@ import {
   useUserCred,
   isRoleSettled,
   setMobileDeepLinkPending,
+  resetUserCredGates,
 } from '../composables/useUserCred.js'
 import { bindUserModelHost, useUserModel } from '../composables/useUserModel.js'
-import { bindUserContainerHost, useUserContainer } from '../composables/useUserContainer.js'
+import {
+  bindUserContainerHost,
+  useUserContainer,
+  resetUserContainerGates,
+} from '../composables/useUserContainer.js'
 import { bindUserSkillsHost, useUserSkills } from '../composables/useUserSkills.js'
 import UserTabCredential from '../components/user/UserTabCredential.vue'
 import UserTabModel from '../components/user/UserTabModel.vue'
@@ -1169,6 +1174,8 @@ bindUserContainerHost({
   enterDsh,
 })
 
+resetUserCredGates()
+resetUserContainerGates()
 onMounted(async () => {
   checkCCDAO()
 

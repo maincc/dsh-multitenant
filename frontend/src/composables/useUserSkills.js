@@ -3,7 +3,7 @@ import axios from 'axios'
 import i18n from '../i18n'
 import { toast, askConfirm } from './useDialog'
 import { shortAddress } from '../utils/format.js'
-import { friendlyPluginError } from '../api/wallet.js'
+import { friendlyPluginError } from '../utils/pluginErrorText.js'
 import { skillsApi } from '../api/skills.js'
 
 /**

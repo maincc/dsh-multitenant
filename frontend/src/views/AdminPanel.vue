@@ -113,13 +113,9 @@
 
         <!-- ════════ DSH 版本管理 ════════ -->
         <div v-else-if="activeTab === 'envtpl'" class="tab-content">
-          <AdminTabHead
-            :title="$t('admin.tabEnv')"
-            :hint="$t('env.admin.hint')"
-            :loading="loading"
-            :interval-ms="refreshIntervalMs"
-            @refresh="refreshNow(true)"
-          />
+          <!-- 基线形制：envtpl 页头光板（无刷新区——本 tab 数据由
+               EnvTemplatesAdmin 自拉，壳 refreshNow 拉的是 users/stats，挂按钮即误导） -->
+          <AdminTabHead :title="$t('admin.tabEnv')" :hint="$t('env.admin.hint')" />
           <EnvTemplatesAdmin />
         </div>
         <div v-else-if="activeTab === 'dsh'" class="tab-content">
@@ -188,12 +184,7 @@ import AdminTabMonitor from '../components/admin/AdminTabMonitor.vue'
 import AdminTabOverview from '../components/admin/AdminTabOverview.vue'
 import AdminTabCred from '../components/admin/AdminTabCred.vue'
 import AdminTabDsh from '../components/admin/AdminTabDsh.vue'
-import {
-  tierBadge as sharedTierBadge,
-  statusBadge,
-  fmtTime,
-  makeStatusText,
-} from '../components/admin/shared.js'
+import { tierBadge as sharedTierBadge, makeStatusText } from '../components/admin/shared.js'
 import EnvTemplatesAdmin from '../components/EnvTemplatesAdmin.vue'
 import {
   requestAccounts,
@@ -240,26 +231,6 @@ const hasCCDAO = ref(false)
 const currentAdminAddress = ref(null)
 const currentAddress = ref(null)
 const dockerAvailable = ref(false)
-
-/**
- * 本地已构建的版本行（来自 /versions 的 localTags）。
- * 注意：latest 是移动标签、不指向某个具体版本，界面里单独由「总体镜像」呈现，
- * 这里只列具体版本，避免同一镜像因为两个 tag 出现两行造成误解。
- */
-
-/** 把字节数格式化成人类可读（后端只给字节，避免在两端各写一套单位逻辑） */
-
-/** 短地址显示（前 6 + … + 后 4），表格里避免撑爆 */
-
-/** 镜像 ID 只留前 12 位（sha256: 前缀太长） */
-
-// 最高配额等级（随 tier 配置动态变化，不硬编码 3）
-const maxTier = computed(() => {
-  const keys = Object.keys(tiers.value || {})
-    .map(Number)
-    .filter(Number.isFinite)
-  return keys.length ? Math.max(...keys) : 3
-})
 
 let dataRefreshInterval = null
 /** 上次拉取时间：切 tab 时做 1 秒节流，避免狂点 tab 打爆后端 */
@@ -552,11 +523,6 @@ const fetchData = async (force = false) => {
   }
 }
 
-/** 手动触发精确扫描：du 实测每个租户卷真实占用（O(n)，管理员按需调用） */
-
-const tierBadge = sharedTierBadge
-const statusText = makeStatusText(t)
-
 /** 内存占比样式：达到自动升级阈值（80%）时高亮警示 */
 
 /** KB → 人类可读容量（如 "52.2 GB"） */
@@ -774,18 +740,9 @@ onUnmounted(() => {
 
 /* ─── 磁盘扫描（租户卷区块） ─── */
 
-.btn-disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
 /* ─── 管理员信息卡 ─── */
 /* ─── Docker 状态 ─── */
 /* ─── 操作按钮行 ─── */
-table {
-  font-size: 0.875rem;
-}
-
 .btn {
   margin-right: 0.375rem;
   text-decoration: none;
@@ -795,11 +752,6 @@ table {
 .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.badge-secondary {
-  background: var(--text-muted);
-  color: white;
 }
 
 /* ─── CWT 授权管理 ─── */

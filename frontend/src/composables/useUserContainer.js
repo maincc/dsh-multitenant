@@ -14,6 +14,10 @@ const t = (key, params) => i18n.global.t(key, params)
 
 // 每地址一次性自动开机闸门（随域迁入；壳旧 let 已删）
 let autoBootFor = ''
+// 挂载期一次性语义复位闸（同上判例）：重进用户中心应重新"进入即检"
+export function resetUserContainerGates() {
+  autoBootFor = ''
+}
 
 let host = {
   ensureContainer: async () => {},

@@ -3,7 +3,6 @@
 <script setup>
 import { onMounted } from 'vue'
 import { useAdminCred } from '../../composables/useAdminCred.js'
-import { shortAddress } from '../../utils/format.js'
 import { fmtTime } from './shared.js'
 
 const {

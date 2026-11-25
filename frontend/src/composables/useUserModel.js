@@ -2,7 +2,7 @@ import { ref, computed } from 'vue'
 import { userConfigApi } from '../api/userConfig.js'
 import i18n from '../i18n'
 import { toast, askConfirm } from './useDialog'
-import { friendlyPluginError } from '../api/wallet.js'
+import { friendlyPluginError } from '../utils/pluginErrorText.js'
 
 /**
  * 模型配置域单例（P3 UC 第二刀）：提供方 items 与增删改/探测/保存/重置。

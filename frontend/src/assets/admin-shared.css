@@ -62,3 +62,17 @@
   font-size: 0.85rem;
   margin-left: 0.5rem;
 }
+
+/* 审查批 2 回迁：消费面已迁子组件（statusBadge('unknown')→AdminTabUsers/Monitor），
+   父壳 scoped 罩不到子 DOM——基线同域生效的规则按祖先限定上收，恢复原状 */
+.admin-panel .badge-secondary {
+  background: var(--text-muted);
+  color: white;
+}
+.admin-panel table {
+  font-size: 0.875rem;
+}
+.admin-panel .btn-disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
