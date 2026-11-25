@@ -444,13 +444,9 @@ const { loadCredentialStatus, credInfo, credVc, credApp, credNoDid } = useUserCr
 const { items, fetchConfigStatus } = useUserModel()
 const { autoBootContainer, containerBooting } = useUserContainer()
 const { mineData, loadMine, loadContainerSkills } = useUserSkills()
-bindUserCredHost({
-  loginOnly,
-  currentAddress,
-  pluginCaseAddr,
-  rememberPluginCase,
-  connected,
-})
+// 当前生效地址（档案优先，localStorage 兜底）——connect 域 getter，cred/model/skills/container 四 composable 经 host 注入共用
+const currentAddress = () => userInfo.value.address || localStorage.getItem('swtc_address')
+
 const usageInfo = ref(null)
 const waiting = ref(false)
 const queuePosition = ref(0)
@@ -1137,6 +1133,13 @@ const statusText = (status) => {
   return map[status] || status
 }
 
+bindUserCredHost({
+  loginOnly,
+  currentAddress,
+  pluginCaseAddr,
+  rememberPluginCase,
+  connected,
+})
 bindUserModelHost({ signChallenge, currentAddress })
 bindUserSkillsHost({ signChallenge, currentAddress, connected })
 bindUserContainerHost({
