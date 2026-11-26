@@ -1,0 +1,78 @@
+/* 管理端跨 tab 视觉件（P3 tab 拆分伴生物）：
+   组件化后壳 scoped 不再命中子组件 DOM，跨 tab 共用的类上收全局。
+   .admin-panel 祖先限定——只在管理面板（独立页或 UC 内嵌）生效。 */
+.admin-panel .dsh-ver {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  color: #0f172a;
+}
+
+/* monitor/overview 共用的子区块标题（跨 tab 件上收） */
+.admin-panel .sub-section {
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--bg-page);
+}
+
+.admin-panel .sub-section h4 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-body);
+  margin-bottom: 0.25rem;
+}
+
+/* cred 刀跨 tab 件上收（users/monitor/cred/dsh 区复用） */
+.admin-panel .cwt-mono {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 0.82rem;
+}
+
+.admin-panel .ops-cell {
+  display: flex;
+  gap: 0.375rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.admin-panel .ops-cell .btn {
+  margin-right: 0;
+  padding: 0.25rem 0.625rem;
+  font-size: 0.8rem;
+}
+
+.admin-panel .dsh-ver-unknown {
+  font-size: 0.78rem;
+  color: var(--text-faint);
+}
+
+/* 升级遮罩留壳而样式曾随迁——spinner 两件上收（遮罩跨 tab 可见） */
+.admin-panel .dsh-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid #bfdbfe;
+  border-top-color: #1d4ed8;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+/* 切刀回归修复（审查 B 刀）：基线这些元素在壳模板内、壳 scoped 罩可达；拆分后
+   组件够不着——按原规则本体以祖先限定入库恢复原状（非全局化，不动 ET 旧例） */
+.admin-panel .btn-small {
+  padding: 0.25rem 0.75rem;
+  font-size: 0.85rem;
+  margin-left: 0.5rem;
+}
+
+/* 审查批 2 回迁：消费面已迁子组件（statusBadge('unknown')→AdminTabUsers/Monitor），
+   父壳 scoped 罩不到子 DOM——基线同域生效的规则按祖先限定上收，恢复原状 */
+.admin-panel .badge-secondary {
+  background: var(--text-muted);
+  color: white;
+}
+.admin-panel table {
+  font-size: 0.875rem;
+}
+.admin-panel .btn-disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

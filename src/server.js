@@ -20,7 +20,7 @@
  */
 
 import { createServer } from 'node:http'
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 

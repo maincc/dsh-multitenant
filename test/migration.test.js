@@ -7,7 +7,7 @@
  */
 import { mongoTestUri } from './mongo-test-env.js'
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
@@ -17,7 +17,6 @@ import {
   emptySources,
 } from '../src/services/migration.js'
 import { MongoStore } from '../src/services/mongo.store.js'
-import { CONFIG } from '../src/config/config.js'
 
 // —— 测试夹具（形状取自本机实测源文件的浓缩版）——
 const fx = () => ({

@@ -23,7 +23,7 @@
         <template v-if="current.fromTemplate">
           <div class="current-info">
             <span class="current-name">{{ current.fromTemplate.name }}</span>
-            <span class="current-author">来自 {{ shortAddr(current.fromTemplate.author) }}</span>
+            <span class="current-author">来自 {{ shortAddress(current.fromTemplate.author) }}</span>
           </div>
           <button class="btn btn-sm btn-outline" @click="revertEnv" :disabled="busy">
             回退默认
@@ -59,8 +59,8 @@
               <span v-if="!tpl.scrubbed" class="badge b-orange">未清洗</span>
             </div>
             <div class="env-meta">
-              <span>👤 {{ shortAddr(tpl.author) }}</span>
-              <span>📦 {{ fmtBytes(tpl.sizeBytes) }}</span>
+              <span>👤 {{ shortAddress(tpl.author) }}</span>
+              <span>📦 {{ formatBytes(tpl.sizeBytes) }}</span>
               <span>🔧 DSH {{ tpl.dshVersion }}</span>
             </div>
             <div class="env-desc">{{ tpl.intro || '暂无介绍' }}</div>
@@ -96,9 +96,9 @@
         </div>
         <div class="modal-body">
           <div class="detail-meta">
-            <div>👤 作者：{{ shortAddr(detailFor.author) }}</div>
+            <div>👤 作者：{{ shortAddress(detailFor.author) }}</div>
             <div>📅 创建时间：{{ new Date(detailFor.createdAt).toLocaleString() }}</div>
-            <div>📦 大小：{{ fmtBytes(detailFor.sizeBytes) }}</div>
+            <div>📦 大小：{{ formatBytes(detailFor.sizeBytes) }}</div>
             <div>🔧 DSH 版本：{{ detailFor.dshVersion }}</div>
             <div>👥 使用人数：{{ detailFor.pinnedByCount }}</div>
           </div>
@@ -147,24 +147,13 @@
 import { ref, onMounted } from 'vue'
 import axios from 'axios'
 import { toast, askConfirm } from '../../composables/useDialog'
+import { formatBytes, shortAddress } from '../../utils/format.js'
 
 const loading = ref(true)
 const busy = ref(false)
 const list = ref([])
 const current = ref(null)
 const detailFor = ref(null)
-
-function shortAddr(addr) {
-  return addr ? `${addr.slice(0, 8)}…${addr.slice(-4)}` : ''
-}
-
-function fmtBytes(bytes) {
-  if (!bytes) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i]
-}
 
 async function loadList() {
   try {
@@ -309,7 +298,7 @@ onMounted(async () => {
 
 /* 当前环境 */
 .current-env {
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 12px;
   padding: 16px;
   margin-bottom: 16px;
@@ -359,7 +348,7 @@ onMounted(async () => {
 }
 
 .env-card {
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 12px;
   padding: 16px;
   box-shadow: 0 2px 8px rgba(60, 70, 120, 0.06);
@@ -417,7 +406,7 @@ onMounted(async () => {
 }
 
 .modal-panel {
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 16px;
   max-width: 500px;
   width: 100%;
@@ -450,7 +439,7 @@ onMounted(async () => {
   border-radius: 8px;
   font-size: 18px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: var(--transition-fast);
 }
 
 .close-btn:hover {

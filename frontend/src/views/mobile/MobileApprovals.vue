@@ -211,6 +211,7 @@ import axios from 'axios'
 import { signAdminOperation } from '../../api/adminSign.js'
 import { useAdminBadges, refreshIfWatching } from '../../composables/useAdminBadges.js'
 import { toast, askConfirm } from '../../composables/useDialog'
+import { formatBytes, shortAddress } from '../../utils/format.js'
 
 const { badgeFor } = useAdminBadges()
 
@@ -251,10 +252,6 @@ const envStatuses = [
 
 const currentEnvStatusLabel = ref('待审核')
 
-function shortAddress(addr) {
-  return addr ? `${addr.slice(0, 10)}…${addr.slice(-4)}` : ''
-}
-
 function formatDate(dateStr) {
   if (!dateStr) return ''
   return new Date(dateStr).toLocaleString()
@@ -276,14 +273,6 @@ function statusClass(status) {
     rejected: 'b-red',
   }
   return classes[status] || ''
-}
-
-function formatBytes(bytes) {
-  if (!bytes) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i]
 }
 
 function envStatusLabel(status) {
@@ -511,12 +500,6 @@ onMounted(() => {
   animation: spin 0.8s linear infinite;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .loading-text {
   font-size: 14px;
   color: var(--m-muted);
@@ -526,7 +509,7 @@ onMounted(() => {
 .ghead {
   background: linear-gradient(135deg, var(--m-primary) 0%, var(--m-primary-2) 100%);
   padding: 20px 16px 24px;
-  color: #fff;
+  color: var(--surface-white);
 }
 
 .row1 {
@@ -569,7 +552,7 @@ onMounted(() => {
   display: flex;
   gap: 8px;
   margin-bottom: 16px;
-  background: #fff;
+  background: var(--surface-white);
   padding: 8px;
   border-radius: 12px;
   box-shadow: 0 2px 8px rgba(60, 70, 120, 0.06);
@@ -585,7 +568,7 @@ onMounted(() => {
   font-weight: 600;
   color: var(--m-muted);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: var(--transition-fast);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -595,7 +578,7 @@ onMounted(() => {
 
 .type-tab.active {
   background: linear-gradient(135deg, var(--m-primary) 0%, var(--m-primary-2) 100%);
-  color: #fff;
+  color: var(--surface-white);
   box-shadow: 0 2px 8px rgba(106, 114, 232, 0.3);
 }
 
@@ -604,7 +587,7 @@ onMounted(() => {
   display: flex;
   gap: 8px;
   margin-bottom: 16px;
-  background: #fff;
+  background: var(--surface-white);
   padding: 8px;
   border-radius: 12px;
   box-shadow: 0 2px 8px rgba(60, 70, 120, 0.06);
@@ -620,7 +603,7 @@ onMounted(() => {
   font-weight: 600;
   color: var(--m-muted);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: var(--transition-fast);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -629,7 +612,7 @@ onMounted(() => {
 
 .filter-btn.active {
   background: linear-gradient(135deg, var(--m-primary) 0%, var(--m-primary-2) 100%);
-  color: #fff;
+  color: var(--surface-white);
   box-shadow: 0 2px 8px rgba(106, 114, 232, 0.3);
 }
 
@@ -647,7 +630,7 @@ onMounted(() => {
 .empty-state {
   text-align: center;
   padding: 60px 20px;
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 14px;
   box-shadow: 0 4px 16px rgba(60, 70, 120, 0.08);
 }
@@ -670,7 +653,7 @@ onMounted(() => {
 }
 
 .app-card {
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 12px;
   padding: 16px;
   box-shadow: 0 2px 8px rgba(60, 70, 120, 0.06);
@@ -758,7 +741,7 @@ onMounted(() => {
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: var(--transition-fast);
 }
 
 .btn:disabled {
@@ -773,16 +756,16 @@ onMounted(() => {
 
 .btn-green {
   background: var(--m-green);
-  color: #fff;
+  color: var(--surface-white);
 }
 
 .btn-red {
   background: var(--m-danger-bright);
-  color: #fff;
+  color: var(--surface-white);
 }
 
 .btn-outline {
-  background: #fff;
+  background: var(--surface-white);
   color: var(--m-primary);
   border: 1px solid var(--m-primary);
 }
@@ -799,7 +782,7 @@ onMounted(() => {
   gap: 12px;
   margin-top: 20px;
   padding: 16px;
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 12px;
   box-shadow: 0 2px 8px rgba(60, 70, 120, 0.06);
 }
@@ -824,7 +807,7 @@ onMounted(() => {
 }
 
 .sheet {
-  background: #fff;
+  background: var(--surface-white);
   width: 100%;
   max-width: 500px;
   border-radius: 16px 16px 0 0;

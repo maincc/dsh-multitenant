@@ -219,6 +219,7 @@ import {
 } from '../../api/wallet.js'
 import { sha256Hex as sha256HexFallback } from '../../utils/sha256.js'
 import { toast, askConfirm } from '../../composables/useDialog'
+import { shortAddress } from '../../utils/format.js'
 
 const loading = ref(true)
 const sessionAddr = ref('')
@@ -243,10 +244,9 @@ const roleLabel = computed(() => {
   if (!sessionAddr.value) return walletAddr.value ? '钱包已连接 · 未登录' : '未连接钱包'
   return role.value === 'admin' ? '管理员 · 已登录' : '用户 · 已登录'
 })
-const shortAddr = computed(() => {
-  const a = sessionAddr.value || walletAddr.value
-  return a ? `${a.slice(0, 12)}…${a.slice(-4)}` : '未连接'
-})
+const shortAddr = computed(() =>
+  shortAddress(sessionAddr.value || walletAddr.value, { head: 12, empty: '未连接' }),
+)
 const addrMismatch = computed(
   () =>
     !!walletAddr.value &&
@@ -568,12 +568,6 @@ onMounted(loadAll)
   animation: spin 0.8s linear infinite;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .loading-text {
   font-size: 14px;
   color: var(--m-muted);
@@ -582,7 +576,7 @@ onMounted(loadAll)
 .ghead {
   background: linear-gradient(135deg, var(--m-primary) 0%, var(--m-primary-2) 100%);
   padding: 20px 16px 24px;
-  color: #fff;
+  color: var(--surface-white);
 }
 
 .row1 {
@@ -658,7 +652,7 @@ onMounted(loadAll)
 }
 
 .card {
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 14px;
   padding: 16px;
   box-shadow: 0 4px 16px rgba(60, 70, 120, 0.08);
@@ -755,7 +749,7 @@ onMounted(loadAll)
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: var(--transition-fast);
 }
 
 .btn:disabled {
@@ -765,7 +759,7 @@ onMounted(loadAll)
 
 .btn-p {
   background: linear-gradient(135deg, var(--m-primary), var(--m-primary-2));
-  color: #fff;
+  color: var(--surface-white);
   box-shadow: 0 4px 12px rgba(106, 114, 232, 0.3);
 }
 

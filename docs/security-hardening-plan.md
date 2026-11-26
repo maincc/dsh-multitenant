@@ -49,7 +49,7 @@
 
 ### P0-3 请求体上限 + 挑战 Map 治理 + 队列上限
 
-- **现状**：`parseBody` 无限累加（admin.routes.js:18-24、user.routes.js:17-23）；`challenges` Map 只增不删（tenant-config.service.js:87-102）；`waitQueue` 无界纯内存（user.service.js:39）。
+- **现状**：`parseBody` 无限累加（admin.routes.js:18-24、user.routes.js:17-23）；`challenges` Map 只增不删（tenant-config.service.js:87-102）；`waitQueue` 无界纯内存（原 user.service.js:39，P2 后队列域在 user/queue.js）。
 - **方案**：
   - `parseBody` 加 64KB 上限 + Content-Length 预检，超限 413
   - 挑战 Map：TTL 过期清理定时器（复用启动定时器模式）+ 总条目上限（如 10k，超限拒绝新挑战）
@@ -70,33 +70,33 @@
 
 ## 2. P1 —— 纵深与资源防线（每个独立可做，S~M）
 
-| 编号  | 问题                                                     | 方案                                                                                                                                                                                                      | 测试/验收                                                |
-| ----- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| P1-1  | API Key 经 argv 泄露（tenant-config.service.js:157-161） | `merge-credentials.mjs` 增加 stdin 读值模式；`execFile('docker', args, {stdin})`；`runScript` 错误剥离命令行只留退出码+裁剪 stderr                                                                        | docker 失败时响应/日志无密钥                             |
-| P1-2  | SSRF（probe-models.mjs）                                 | 服务端拒绝私网/链路本地/环回/云 metadata 段；DNS 解析后校验目标 IP；并发限流                                                                                                                              | baseURL 指向 169.254.x 被拒                              |
-| P1-3  | IDOR `/api/user/:address`（user.routes.js:194-202）      | 无会话一律 403，仅 `session===address \|\| isAdmin`；用户会话见 P0-1 会话体系扩展                                                                                                                         | 无 Cookie 读任意用户 403                                 |
-| P1-4  | 内存预检 Linux 恒真（user.service.js:60-68）             | 改用 Linux 可用内存（`/proc/meminfo` 或 `free`）；查询失败 **fail-closed** 拒绝供应                                                                                                                       | Linux 下耗尽时拒绝创建                                   |
-| P1-5  | 卷无配额（docker.service.js:125-129）                    | `--storage-opt size=<tier.disk>` 已接入；仅 btrfs/zfs/devicemapper（及 overlay2+xfs+pquota）硬生效；overlay2/overlayfs 下记录不强制 → 降级告警 + 监控兜底。选型矩阵见 roadmap-next.md §P1-5               | 写满卷被拒而非写满宿主（配额后端）；软配额环境有降级告警 |
-| P1-6  | 容器特权过大（docker.service.js:104-109）                | 评估去掉 `SYS_ADMIN`（需容器内验证 bwrap 可用性）；至少 `--cap-drop ALL` + `--security-opt no-new-privileges`                                                                                             | 租户容器内无特权/提权操作                                |
-| P1-7  | CWT 申请队列/token 无限（cwt-admin.service.js:59-73）    | ✅ **已完成（限流+上限）**：token ≤8KB（413）、pending 总条数上限 500（503，**先于验签**卸载）、接口按 IP 限流 10/min；⬜ 剩余：approved token 改存 SHA-256 摘要（属存储格式迁移，需单独一轮 + 迁移方案） | 洪泛申请被拒；磁盘增长受控                               |
-| P1-8  | CWT 状态泄露 approvedBy（cwt-admin.service.js:100-107）  | approvedBy 仅管理员可见；usr 对非本人脱敏                                                                                                                                                                 | 匿名查不到审批人                                         |
-| P1-9  | 数据文件 0644（data.service.js 全量）                    | `writeFileSync` 显式 `{mode:0o600}`（state/cwt/日志）                                                                                                                                                     | 落到磁盘 0600                                            |
-| P1-10 | 技能正文审核（接 P0-4 第 2 步）                          | 发布扫描 + 未审核标记 + 举报                                                                                                                                                                              | 恶意技能被标记拦截                                       |
+| 编号  | 问题                                                                                                           | 方案                                                                                                                                                                                                      | 测试/验收                                                |
+| ----- | -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| P1-1  | API Key 经 argv 泄露（tenant-config.service.js:157-161）                                                       | `merge-credentials.mjs` 增加 stdin 读值模式；`execFile('docker', args, {stdin})`；`runScript` 错误剥离命令行只留退出码+裁剪 stderr                                                                        | docker 失败时响应/日志无密钥                             |
+| P1-2  | SSRF（probe-models.mjs）                                                                                       | 服务端拒绝私网/链路本地/环回/云 metadata 段；DNS 解析后校验目标 IP；并发限流                                                                                                                              | baseURL 指向 169.254.x 被拒                              |
+| P1-3  | IDOR `/api/user/:address`（user.routes.js:194-202）                                                            | 无会话一律 403，仅 `session===address \|\| isAdmin`；用户会话见 P0-1 会话体系扩展                                                                                                                         | 无 Cookie 读任意用户 403                                 |
+| P1-4  | 内存预检 Linux 恒真（原 user.service.js:60-68，P2 后 host-resources 三件套随 queue 域入 user/queue.js:48-115） | 改用 Linux 可用内存（`/proc/meminfo` 或 `free`）；查询失败 **fail-closed** 拒绝供应                                                                                                                       | Linux 下耗尽时拒绝创建                                   |
+| P1-5  | 卷无配额（docker.service.js:125-129）                                                                          | `--storage-opt size=<tier.disk>` 已接入；仅 btrfs/zfs/devicemapper（及 overlay2+xfs+pquota）硬生效；overlay2/overlayfs 下记录不强制 → 降级告警 + 监控兜底。选型矩阵见 roadmap-next.md §P1-5               | 写满卷被拒而非写满宿主（配额后端）；软配额环境有降级告警 |
+| P1-6  | 容器特权过大（docker.service.js:104-109）                                                                      | 评估去掉 `SYS_ADMIN`（需容器内验证 bwrap 可用性）；至少 `--cap-drop ALL` + `--security-opt no-new-privileges`                                                                                             | 租户容器内无特权/提权操作                                |
+| P1-7  | CWT 申请队列/token 无限（cwt-admin.service.js:59-73）                                                          | ✅ **已完成（限流+上限）**：token ≤8KB（413）、pending 总条数上限 500（503，**先于验签**卸载）、接口按 IP 限流 10/min；⬜ 剩余：approved token 改存 SHA-256 摘要（属存储格式迁移，需单独一轮 + 迁移方案） | 洪泛申请被拒；磁盘增长受控                               |
+| P1-8  | CWT 状态泄露 approvedBy（cwt-admin.service.js:100-107）                                                        | approvedBy 仅管理员可见；usr 对非本人脱敏                                                                                                                                                                 | 匿名查不到审批人                                         |
+| P1-9  | 数据文件 0644（data.service.js 全量）                                                                          | `writeFileSync` 显式 `{mode:0o600}`（state/cwt/日志）                                                                                                                                                     | 落到磁盘 0600                                            |
+| P1-10 | 技能正文审核（接 P0-4 第 2 步）                                                                                | 发布扫描 + 未审核标记 + 举报                                                                                                                                                                              | 恶意技能被标记拦截                                       |
 
 ## 3. P2 —— 部署与体验类（依赖外部环境，S）
 
-| 编号  | 问题                                              | 方案                                                                      |
-| ----- | ------------------------------------------------- | ------------------------------------------------------------------------- |
-| P2-1  | 明文 HTTP + Cookie 无 Secure                      | 前置反代 HTTPS（外部依赖）；Cookie 加 `Secure`（直接改，无依赖）          |
-| P2-2  | `target=_blank` 无 noopener                       | 全局补 `rel="noopener noreferrer"`（前端，立即做）                        |
-| P2-3  | 无 CSP / SRI                                      | index.html 加保守 CSP（`default-src 'self'`）；构建产物 SRI（可选）       |
-| P2-4  | writeWithLock 无真锁/fsync/损坏兜底               | 进程内互斥串行化 CWT 写；写前读回校验；损坏保留 `.bak`+告警（不静默置空） |
-| P2-5  | restoreFromDocker 无白名单（user.service.js:893） | 容器名提取地址复用 `isValidSwtcAddress` 断言                              |
-| P2-6  | token 未来时间窗口（cwt.service.js:98-101）       | 改单向 `0 ≤ now-issued ≤ ttl`                                             |
-| P2-7  | 超时/maxConnections                               | `server.requestTimeout`、`headersTimeout`、`maxConnections` 显式配置      |
-| P2-8  | 配置浅合并 + 死配置                               | 深合并；清理 `allowCwtEnt` 死配置；admin 名单单一数据源                   |
-| P2-9  | 错误消息回显内部信息（/connect 502 等）           | 统一脱敏：只透传稳定错误码，详情进日志                                    |
-| P2-10 | 等待队列丢失（重启即空）                          | 队列落盘（data/queue.json）                                               |
+| 编号  | 问题                                                                                  | 方案                                                                      |
+| ----- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| P2-1  | 明文 HTTP + Cookie 无 Secure                                                          | 前置反代 HTTPS（外部依赖）；Cookie 加 `Secure`（直接改，无依赖）          |
+| P2-2  | `target=_blank` 无 noopener                                                           | 全局补 `rel="noopener noreferrer"`（前端，立即做）                        |
+| P2-3  | 无 CSP / SRI                                                                          | index.html 加保守 CSP（`default-src 'self'`）；构建产物 SRI（可选）       |
+| P2-4  | writeWithLock 无真锁/fsync/损坏兜底                                                   | 进程内互斥串行化 CWT 写；写前读回校验；损坏保留 `.bak`+告警（不静默置空） |
+| P2-5  | restoreFromDocker 无白名单（原 user.service.js:893，P2 后仍在 main，现约 L2037-2152） | 容器名提取地址复用 `isValidSwtcAddress` 断言                              |
+| P2-6  | token 未来时间窗口（cwt.service.js:98-101）                                           | 改单向 `0 ≤ now-issued ≤ ttl`                                             |
+| P2-7  | 超时/maxConnections                                                                   | `server.requestTimeout`、`headersTimeout`、`maxConnections` 显式配置      |
+| P2-8  | 配置浅合并 + 死配置                                                                   | 深合并；清理 `allowCwtEnt` 死配置；admin 名单单一数据源                   |
+| P2-9  | 错误消息回显内部信息（/connect 502 等）                                               | 统一脱敏：只透传稳定错误码，详情进日志                                    |
+| P2-10 | 等待队列丢失（重启即空）                                                              | 队列落盘（data/queue.json）                                               |
 
 ---
 

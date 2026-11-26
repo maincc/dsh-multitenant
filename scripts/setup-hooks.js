@@ -4,7 +4,7 @@
  * 在 npm install 时自动运行
  */
 
-import { writeFileSync, chmodSync, existsSync, mkdirSync, unlinkSync } from 'node:fs'
+import { writeFileSync, chmodSync, existsSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 

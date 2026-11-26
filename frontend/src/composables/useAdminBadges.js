@@ -1,5 +1,7 @@
 import { ref } from 'vue'
-import axios from 'axios'
+import { adminOpsApi } from '../api/adminOps.js'
+import { envApi } from '../api/env.js'
+import { adminStatusApi } from '../api/adminStatus.js'
 
 /**
  * 管理页签待审红点（单例共享：AdminPanel 独立侧栏与 UserCenter 并入侧栏两处消费）。
@@ -28,16 +30,14 @@ let visBound = false
 async function refresh() {
   // 返回 promise：出生日志要等两轮查询落定
   try {
-    const res = await axios.get('/api/admin/environments')
-    syncEnvRows(res.data.environments)
+    const res = await envApi.adminList()
+    syncEnvRows(res.environments)
   } catch {
     /* 查不了不夺上一读数 */
   }
   try {
-    const res = await axios.get('/api/admin/cwt-applications', {
-      params: { status: 'pending', limit: 1 },
-    })
-    syncCredCount(res.data.total)
+    const d = await adminStatusApi.cwtApplications({ status: 'pending', limit: 1 })
+    syncCredCount(d.total)
   } catch {
     /* 同上 */
   }
@@ -46,8 +46,8 @@ async function refresh() {
 /** 频率读取：搭 /api/stats 的 uiConfig 顺风车（requireAdmin——非管理员 403 静默落默认） */
 async function initTick() {
   try {
-    const res = await axios.get('/api/stats')
-    const v = Number(res.data?.uiConfig?.refreshIntervalMs)
+    const d = await adminOpsApi.stats()
+    const v = Number(d?.uiConfig?.refreshIntervalMs)
     if (v >= 1000) tickMs = v
   } catch {
     /* 读不到就用默认 15s，不因此罢工也不因此报错 */
@@ -95,10 +95,8 @@ export function syncCredCount(n) {
 /** 非 pending 视图时的轻取：limit=1 只为拿 total */
 export async function refreshCred() {
   try {
-    const res = await axios.get('/api/admin/cwt-applications', {
-      params: { status: 'pending', limit: 1 },
-    })
-    syncCredCount(res.data.total)
+    const d = await adminStatusApi.cwtApplications({ status: 'pending', limit: 1 })
+    syncCredCount(d.total)
   } catch {
     /* fail-open：查不了保留上一读数 */
   }

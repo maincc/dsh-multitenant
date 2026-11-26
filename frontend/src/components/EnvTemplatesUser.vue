@@ -37,7 +37,7 @@
         <span class="badge badge-info">{{
           $t('env.fromTemplate', {
             name: current.fromTemplate.name,
-            author: shortAddr(current.fromTemplate.author),
+            author: shortAddress(current.fromTemplate.author),
           })
         }}</span>
         <button class="btn btn-small btn-secondary" :disabled="busy" @click="revertNow">
@@ -77,8 +77,8 @@
             >
           </div>
           <div class="env-card-meta">
-            {{ $t('env.author') }} {{ shortAddr(tpl.author) }} · DSH {{ tpl.dshVersion }} ·
-            {{ fmtBytes(tpl.sizeBytes) }}
+            {{ $t('env.author') }} {{ shortAddress(tpl.author) }} · DSH {{ tpl.dshVersion }} ·
+            {{ formatBytes(tpl.sizeBytes) }}
           </div>
           <div class="env-card-intro">{{ tpl.intro || $t('env.noIntro') }}</div>
           <div class="env-card-actions">
@@ -123,7 +123,7 @@
                 >
                   {{ $t('env.conflicts', { n: preview.conflicts.length }) }}
                   <div v-for="c in preview.conflicts" :key="c.p" class="env-conflict-item">
-                    {{ c.p }}（{{ fmtBytes(c.size) }}）
+                    {{ c.p }}（{{ formatBytes(c.size) }}）
                   </div>
                 </li>
                 <li v-if="preview.skillsPlanned?.length">
@@ -244,8 +244,8 @@
           <button class="btn btn-small" @click="detailFor = null">✕</button>
         </div>
         <div class="env-card-meta">
-          {{ $t('env.author') }} {{ shortAddr(detailFor.author) }} · DSH
-          {{ detailFor.dshVersion }} · {{ fmtBytes(detailFor.sizeBytes) }} ·
+          {{ $t('env.author') }} {{ shortAddress(detailFor.author) }} · DSH
+          {{ detailFor.dshVersion }} · {{ formatBytes(detailFor.sizeBytes) }} ·
           {{ new Date(detailFor.createdAt).toLocaleString() }} ·
           {{ $t('env.detailUsers', { n: detailFor.pinnedByCount }) }}
           <span v-if="!detailFor.scrubbed" class="badge badge-warning">{{
@@ -285,7 +285,7 @@
               {{
                 $t('env.dBundle', {
                   files: detailFor.bundleFiles,
-                  size: fmtBytes(detailFor.bundleBytes),
+                  size: formatBytes(detailFor.bundleBytes),
                 })
               }}
             </div>
@@ -370,7 +370,7 @@
             </div>
             <label v-for="sk in wz.inv.skills" :key="sk.name" class="env-check">
               <input type="checkbox" v-model="wz.skills" :value="sk.name" /> {{ sk.name }}
-              <span class="env-muted">{{ fmtBytes(sk.size) }}</span>
+              <span class="env-muted">{{ formatBytes(sk.size) }}</span>
             </label>
             <div class="env-muted">{{ $t('env.skillsFollowNote') }}</div>
           </div>
@@ -380,7 +380,7 @@
             </div>
             <label v-for="pl in wz.inv.plugins" :key="pl.name" class="env-check">
               <input type="checkbox" v-model="wz.plugins" :value="pl.name" /> {{ pl.name }}
-              <span class="env-muted">{{ fmtBytes(pl.size) }} · {{ pl.sha8 }}</span>
+              <span class="env-muted">{{ formatBytes(pl.size) }} · {{ pl.sha8 }}</span>
             </label>
             <div class="env-danger env-small">{{ $t('env.pluginsWarn') }}</div>
             <div v-if="wz.plugins.length" class="env-prov">
@@ -424,7 +424,7 @@
                 <span v-else class="env-ws-caret env-ws-caret-void">·</span>
                 {{ w.dir ? '📁' : '📄' }} {{ w.name }}{{ w.dir ? '/' : '' }}
                 <span class="env-muted">
-                  {{ fmtBytes(w.sizeBytes)
+                  {{ formatBytes(w.sizeBytes)
                   }}{{ w.dir ? $t('env.wsDirNote', { n: (w.children || []).length }) : '' }}
                 </span>
               </label>
@@ -442,7 +442,7 @@
                   />
                   {{ c.dir ? '📁' : '📄' }} {{ c.name }}
                   <span class="env-muted">
-                    {{ fmtBytes(c.sizeBytes)
+                    {{ formatBytes(c.sizeBytes)
                     }}{{
                       wz.wsExcludes.includes(w.name + '/' + c.name)
                         ? ' · ' + $t('env.wsExcludedTag')
@@ -461,7 +461,7 @@
           <div class="env-pick-total">
             {{
               $t('env.bundleTotal', {
-                size: fmtBytes(totalBundleBytes),
+                size: formatBytes(totalBundleBytes),
                 n: wz.plugins.length,
                 cap: '200 MB',
               })
@@ -558,9 +558,10 @@ const emit = defineEmits(['mine-changed'])
 const props = defineProps({ mode: { type: String, default: 'both' } })
 const mode = props.mode
 import { useI18n } from 'vue-i18n'
-import axios from 'axios'
+import { envApi } from '../api/env.js'
 import { toast, askConfirm } from '../composables/useDialog'
 import { refreshIfWatching } from '../composables/useAdminBadges'
+import { formatBytes, shortAddress } from '../utils/format.js'
 
 const { t } = useI18n()
 // 出身自述（判例 55 B 面）：闭包引用后定义的 wz——调用期取值，无 TDZ 问题
@@ -595,11 +596,11 @@ function dupOf(t) {
 const drafts = ref([])
 const current = ref(null)
 const canFreeze = ref(false)
+const elig = ref({ status: 'loading', containerRunning: true, msg: '', onTemplate: null })
 // 顶部快捷钮在场判据：eligibility 已定、可格、非套来态（与底部主按钮同一把闸）
 const topUploadReady = computed(
   () => elig.value.status === 'ok' && canFreeze.value && !elig.value.onTemplate,
 )
-const elig = ref({ status: 'loading', containerRunning: true, msg: '', onTemplate: null })
 const loadingInv = ref(true)
 const busy = ref(false)
 // 中间态（用户验收：按了钮要有动静）：哪个动作在跑，对应按钮就转圈+说人话
@@ -647,23 +648,23 @@ async function loadAll() {
   // 用户侧动作全走本函数收口重拉——管理员在同一浏览器时顺手补问红点判数
   // （refreshIfWatching 只在节拍器在场才发请求：普通用户零流量约束不破）
   refreshIfWatching()
-  const res = await axios.get('/api/user/environments')
-  list.value = res.data.environments || []
-  drafts.value = res.data.myWorks || []
-  current.value = res.data.yourCurrent || null
+  const res = await envApi.list()
+  list.value = res.environments || []
+  drafts.value = res.myWorks || []
+  current.value = res.yourCurrent || null
 }
 
 async function loadFreezeEligibility() {
   loadingInv.value = true
   try {
-    const res = await axios.post('/api/user/environment-inventory', {})
-    canFreeze.value = !!res.data.canFreeze
+    const res = await envApi.inventory()
+    canFreeze.value = !!res.canFreeze
     // 状态分道：ok 才信 canFreeze/运行态；denied 走拒绝卡；error 走故障卡+重试
     // ——错误归错原因=让用户去修没坏的东西（本地测试亲历的坑）
     elig.value = {
       status: 'ok',
-      containerRunning: res.data.containerRunning !== false,
-      onTemplate: res.data.onTemplate || null,
+      containerRunning: res.containerRunning !== false,
+      onTemplate: res.onTemplate || null,
     }
   } catch (e) {
     const code = e?.response?.status
@@ -683,18 +684,6 @@ onMounted(() => {
 })
 
 const errMsg = (e) => e?.response?.data?.error || e?.message || 'error'
-const shortAddr = (a) => (a ? `${a.slice(0, 8)}…${a.slice(-4)}` : '—')
-const fmtBytes = (n) => {
-  if (!n) return '0 B'
-  const u = ['B', 'KB', 'MB', 'GB']
-  let i = 0
-  let v = n
-  while (v >= 1024 && i < 3) {
-    v /= 1024
-    i++
-  }
-  return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)} ${u[i]}`
-}
 
 const detailFor = ref(null)
 function detailToApply() {
@@ -714,8 +703,8 @@ async function togglePreview(tpl) {
   busy.value = true
   pending.value = 'preview'
   try {
-    const res = await axios.post('/api/user/environment/apply', { id: tpl.id, dryRun: true })
-    preview.value = res.data
+    const res = await envApi.apply({ id: tpl.id, dryRun: true })
+    preview.value = res
   } catch (e) {
     preview.value = { __fail: true }
     toast(errMsg(e))
@@ -730,18 +719,16 @@ async function applyForReal(tpl) {
   busy.value = true
   pending.value = 'apply'
   try {
-    const res = await axios.post('/api/user/environment/apply', { id: tpl.id })
+    const res = await envApi.apply({ id: tpl.id })
     expanded.value = ''
     preview.value = null
     const warns = []
-    if (res.data.conflicts?.length)
-      warns.push(t('env.appliedWithConflicts', { n: res.data.conflicts.length }))
-    if (res.data.skillsFailed?.length)
-      warns.push(
-        t('env.skillsFailed', { list: res.data.skillsFailed.map((x) => x.name).join('、') }),
-      )
-    if (res.data.bundleError) warns.push(res.data.bundleError)
-    ;(res.data.notices || []).forEach((n) => warns.push(n))
+    if (res.conflicts?.length)
+      warns.push(t('env.appliedWithConflicts', { n: res.conflicts.length }))
+    if (res.skillsFailed?.length)
+      warns.push(t('env.skillsFailed', { list: res.skillsFailed.map((x) => x.name).join('、') }))
+    if (res.bundleError) warns.push(res.bundleError)
+    ;(res.notices || []).forEach((n) => warns.push(n))
     toast(warns.length ? warns.join('；') : t('env.appliedOk'))
     await loadAll()
     emit('mine-changed') // apply 按清单装了技能——同页的「我的技能」账本视图跟着重载
@@ -756,7 +743,7 @@ async function applyForReal(tpl) {
 async function resubmit(d) {
   busy.value = true
   try {
-    await axios.post('/api/user/environment/submit', { id: d.id })
+    await envApi.submit(d.id)
     toast(t('env.resubmitted'))
     await loadAll()
   } catch (e) {
@@ -776,15 +763,15 @@ async function unpublishNow(tpl) {
   if (!go) return
   busy.value = true
   try {
-    const r = await axios.post('/api/user/environment/unpublish', { id: tpl.id })
-    const n = r.data?.usingCount || 0
+    const r = await envApi.unpublish(tpl.id)
+    const n = r?.usingCount || 0
     toast(
       (n ? t('env.unpublishedUsing', { n }) : t('env.unpublished')) +
-        (r.data?.selfUnpinned ? t('env.unpublishSelfDefault') : ''),
+        (r?.selfUnpinned ? t('env.unpublishSelfDefault') : ''),
     )
     detailFor.value = null
     await loadAll()
-    if (r.data?.selfUnpinned) emit('mine-changed') // 来源条立刻改口认默认（定格完结账的镜像面）
+    if (r?.selfUnpinned) emit('mine-changed') // 来源条立刻改口认默认（定格完结账的镜像面）
   } catch (e) {
     toast(errMsg(e))
   } finally {
@@ -810,14 +797,12 @@ async function revertNow() {
   busy.value = true
   pending.value = 'revert'
   try {
-    const r = await axios.post('/api/user/environment/revert', { alsoClean: revertClean.value })
+    const r = await envApi.revert(revertClean.value)
     // 后端如实说明随行物处置（保留或按清单清除）——有则转告，无则原话
-    toast(
-      (r.data?.revertNote || t('env.reverted')) + (r.data?.cleanNote ? ' ' + r.data.cleanNote : ''),
-    )
+    toast((r?.revertNote || t('env.reverted')) + (r?.cleanNote ? ' ' + r.cleanNote : ''))
     revertClean.value = true // 复位到默认（回退=干净默认的家规），不是复位到 false
     await loadAll()
-    if (r.data?.cleanNote) emit('mine-changed') // 销了账的行不能再挂在「我的技能」里当证据
+    if (r?.cleanNote) emit('mine-changed') // 销了账的行不能再挂在「我的技能」里当证据
   } catch (e) {
     toast(errMsg(e))
   } finally {
@@ -871,10 +856,10 @@ async function loadInventory() {
   wzStep.value = 'pick'
   wz.value.invLoading = true
   try {
-    const res = await axios.post('/api/user/environment-inventory', {})
-    wz.value.inv = res.data.inventory
-    wz.value.workspace = res.data.workspace || []
-    wz.value.containerUp = res.data.containerRunning !== false
+    const res = await envApi.inventory()
+    wz.value.inv = res.inventory
+    wz.value.workspace = res.workspace || []
+    wz.value.containerUp = res.containerRunning !== false
   } catch (e) {
     toast(errMsg(e))
     wzStep.value = 'name'
@@ -887,8 +872,8 @@ async function runPreview() {
   wz.value.previewLoading = true
   wz.value.preview = null
   try {
-    const res = await axios.post('/api/user/environment-commit', { ...commitBody(), dryRun: true })
-    wz.value.preview = res.data
+    const res = await envApi.commit({ ...commitBody(), dryRun: true })
+    wz.value.preview = res
   } catch (e) {
     toast(errMsg(e))
     wzStep.value = 'pick'
@@ -916,8 +901,8 @@ async function doFreeze() {
   wz.value.result = null
   wz.value.error = ''
   try {
-    const res = await axios.post('/api/user/environment-commit', commitBody())
-    wz.value.result = res.data
+    const res = await envApi.commit(commitBody())
+    wz.value.result = res
     await loadAll() // 我的作品即刻见新名字
     emit('mine-changed') // 来源条立刻改口认这套定格物（定格完结账——不该等刷新才见真相）
   } catch (e) {
@@ -1001,13 +986,13 @@ const totalBundleBytes = computed(() => {
   gap: 1rem;
 }
 .env-card {
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-light);
   border-radius: 12px;
   padding: 1rem;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  background: #fff;
+  background: var(--surface-white);
 }
 .env-card-head {
   display: flex;
@@ -1017,7 +1002,7 @@ const totalBundleBytes = computed(() => {
 }
 .env-card-name {
   font-size: 1.05rem;
-  color: #1e293b;
+  color: var(--text-main);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .env-card-meta {
@@ -1026,7 +1011,7 @@ const totalBundleBytes = computed(() => {
   align-items: center;
   flex-wrap: wrap;
   font-size: 0.78rem;
-  color: #94a3b8;
+  color: var(--text-faint);
 }
 .env-card-actions {
   display: flex;
@@ -1035,7 +1020,7 @@ const totalBundleBytes = computed(() => {
 }
 .env-card-intro {
   margin: 0;
-  color: #475569;
+  color: var(--text-secondary);
   font-size: 0.9rem;
   line-height: 1.5;
   flex: 1;
@@ -1131,7 +1116,7 @@ const totalBundleBytes = computed(() => {
   z-index: 100;
 }
 .modal-panel {
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 16px;
   padding: 1.5rem;
   max-width: 720px;
@@ -1142,7 +1127,7 @@ const totalBundleBytes = computed(() => {
   flex-direction: column;
   gap: 0.75rem;
   box-shadow: 0 20px 50px rgba(0, 0, 42, 0.25);
-  color: #1e293b;
+  color: var(--text-main);
 }
 .detail-head {
   display: flex;
@@ -1151,15 +1136,15 @@ const totalBundleBytes = computed(() => {
 }
 .detail-head h3 {
   margin: 0;
-  color: #1e293b;
+  color: var(--text-main);
 }
 .detail-cols {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 0.75rem;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-light);
   border-radius: 10px;
-  background: #f8fafc;
+  background: var(--bg-page);
   padding: 0.9rem 1rem;
   font-size: 0.9rem;
 }
@@ -1179,27 +1164,22 @@ const totalBundleBytes = computed(() => {
   margin-right: 6px;
   vertical-align: -1px;
   border: 2px solid rgba(255, 255, 255, 0.45);
-  border-top-color: #fff;
+  border-top-color: var(--surface-white);
   border-radius: 50%;
-  animation: env-spin 0.8s linear infinite;
+  animation: spin 0.8s linear infinite;
 }
 .env-card-actions .btn-secondary .btn-spin,
 .env-current .btn-spin,
 .btn-secondary .btn-spin {
   border-color: rgba(100, 116, 139, 0.35);
-  border-top-color: #475569;
-}
-@keyframes env-spin {
-  to {
-    transform: rotate(360deg);
-  }
+  border-top-color: var(--text-secondary);
 }
 .env-clean-opt {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
   font-size: 0.8rem;
-  color: #64748b;
+  color: var(--text-muted);
   cursor: pointer;
   user-select: none;
 }
@@ -1320,7 +1300,7 @@ const totalBundleBytes = computed(() => {
   }
 }
 .badge-danger {
-  color: #fff;
+  color: var(--surface-white);
   background: rgba(217, 107, 107, 0.25);
   border: 1px solid rgba(217, 107, 107, 0.5);
 }

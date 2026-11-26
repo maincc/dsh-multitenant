@@ -29,7 +29,6 @@ vi.mock('../src/services/data.service.js', async (importOriginal) => {
 })
 
 import { tenantGateway, gwOkToken } from '../src/services/tenant-proxy.service.js'
-import { createHash } from 'node:crypto'
 import { userSessionStore } from '../src/middleware/user-auth.middleware.js'
 import { tenantConfigService, SIGN_PURPOSE } from '../src/services/tenant-config.service.js'
 import { Keypairs } from '@swtc/keypairs'

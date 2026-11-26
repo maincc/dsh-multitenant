@@ -9,7 +9,6 @@ import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest
 import { StateStore, USER_OWNED_FIELDS } from '../src/services/state.store.js'
 import { MongoStore } from '../src/services/mongo.store.js'
 import { dataService } from '../src/services/data.service.js'
-import { CONFIG } from '../src/config/config.js'
 
 const fixtureState = () => ({
   swtcUsers: {

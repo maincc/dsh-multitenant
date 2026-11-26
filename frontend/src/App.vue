@@ -53,7 +53,7 @@ const isMobile = useIsMobile()
   align-items: center;
   padding: 0 1.5rem;
   gap: 1rem;
-  background: linear-gradient(135deg, #6c69c2 0%, #6b7bdb 100%);
+  background: linear-gradient(135deg, #6c69c2 0%, var(--brand-text) 100%);
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
 }
 
@@ -104,7 +104,7 @@ const isMobile = useIsMobile()
   border-radius: 8px;
   font-size: 14px;
   font-weight: 500;
-  transition: all 0.2s;
+  transition: var(--transition-fast);
 }
 
 .nav-tab:hover {
@@ -123,7 +123,7 @@ const isMobile = useIsMobile()
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  background: #f8fafc;
+  background: var(--bg-page);
   width: 100%;
 }
 

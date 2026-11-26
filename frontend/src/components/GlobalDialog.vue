@@ -18,7 +18,7 @@
           :disabled="busy"
           @click="confirmWithRun"
         >
-          <span v-if="busy" class="gd-spin"></span>
+          <span v-if="busy" class="spin"></span>
           {{
             busy
               ? $t('common.confirmBusy')
@@ -89,7 +89,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 }
 .gd-msg + .gd-msg,
 .gd-msg-sub {
-  color: #64748b;
+  color: var(--text-muted);
   font-size: 12.5px;
   margin-top: 0.35rem;
 }
@@ -97,8 +97,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   margin: 0.75rem 0 0;
   padding: 0.5rem 0.75rem;
   list-style: none;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  background: var(--bg-page);
+  border: 1px solid var(--border-light);
   border-radius: 8px;
   max-height: 180px;
   overflow-y: auto;
@@ -106,13 +106,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 .gd-detail-item {
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
   font-size: 11.5px;
-  color: #475569;
+  color: var(--text-secondary);
   padding: 0.12rem 0;
   word-break: break-all;
 }
 .gd-detail-item::before {
   content: '▸ ';
-  color: #94a3b8;
+  color: var(--text-faint);
 }
 .gd-actions {
   display: flex;
@@ -124,13 +124,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   padding: 0.4rem 0.9rem;
   font-size: 13px;
   border-radius: 8px;
-  border: 1px solid #e2e8f0;
-  background: #f8fafc;
-  color: #475569;
+  border: 1px solid var(--border-light);
+  background: var(--bg-page);
+  color: var(--text-secondary);
   cursor: pointer;
 }
 .gd-btn:hover {
-  background: #f1f5f9;
+  background: var(--surface-soft);
 }
 .gd-btn:disabled {
   opacity: 0.65;
@@ -140,7 +140,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 .gd-btn-danger:disabled {
   opacity: 0.8;
 }
-.gd-spin {
+.spin {
   display: inline-block;
   width: 12px;
   height: 12px;
@@ -149,12 +149,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   border: 2px solid rgba(255, 255, 255, 0.45);
   border-top-color: white;
   border-radius: 50%;
-  animation: gd-spin 0.7s linear infinite;
-}
-@keyframes gd-spin {
-  to {
-    transform: rotate(360deg);
-  }
+  animation: spin 0.7s linear infinite;
 }
 .gd-btn-primary {
   background: #2563eb;
@@ -165,8 +160,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   background: #1d4ed8;
 }
 .gd-btn-danger {
-  background: #dc2626;
-  border-color: #dc2626;
+  background: var(--danger);
+  border-color: var(--danger);
   color: white;
 }
 .gd-btn-danger:hover {
@@ -191,12 +186,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   font-size: 13px;
   text-align: center;
   color: white;
-  background: #334155;
+  background: var(--text-body);
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.25);
   word-break: break-word;
 }
 .gd-toast-error {
-  background: #dc2626;
+  background: var(--danger);
 }
 .gd-toast-enter-active,
 .gd-toast-leave-active {

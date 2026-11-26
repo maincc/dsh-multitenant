@@ -439,6 +439,7 @@ import { signChallenge, friendlyPluginError } from '../../api/wallet.js'
 import { signConnectPlugin, buildConnectUrl } from '../../api/connect.js'
 import { skillsApi } from '../../api/skills.js'
 import { toast, askConfirm } from '../../composables/useDialog'
+import { formatBytes, shortAddress } from '../../utils/format.js'
 
 // 移动深链穿透（2026-11-11 幻影键 adm:model 正链）：壳 applyMobileTabLink('model')
 // 落本 tab 时经 initial-sub 指定子页签；一次性消费——应用后立即 emit 请壳清空，
@@ -1254,13 +1255,6 @@ async function unpublishSkill(skillName) {
 }
 
 // 格式化字节数
-function formatBytes(bytes) {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i]
-}
 </script>
 
 <style scoped>
@@ -1288,12 +1282,6 @@ function formatBytes(bytes) {
   animation: spin 0.8s linear infinite;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .loading-text {
   font-size: 14px;
   color: var(--m-muted);
@@ -1303,7 +1291,7 @@ function formatBytes(bytes) {
 .ghead {
   background: linear-gradient(135deg, var(--m-primary) 0%, var(--m-primary-2) 100%);
   padding: 20px 16px 24px;
-  color: #fff;
+  color: var(--surface-white);
 }
 
 .row1 {
@@ -1343,7 +1331,7 @@ function formatBytes(bytes) {
 
 /* 卡片 */
 .card {
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 14px;
   padding: 16px;
   box-shadow: 0 4px 16px rgba(60, 70, 120, 0.08);
@@ -1447,7 +1435,7 @@ function formatBytes(bytes) {
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: var(--transition-fast);
   width: 100%;
 }
 
@@ -1458,7 +1446,7 @@ function formatBytes(bytes) {
 
 .btn-p {
   background: linear-gradient(135deg, var(--m-primary) 0%, var(--m-primary-2) 100%);
-  color: #fff;
+  color: var(--surface-white);
   box-shadow: 0 4px 12px rgba(106, 114, 232, 0.3);
 }
 
@@ -1496,7 +1484,7 @@ function formatBytes(bytes) {
   display: flex;
   gap: 6px;
   margin-bottom: 16px;
-  background: #fff;
+  background: var(--surface-white);
   padding: 6px;
   border-radius: 12px;
   box-shadow: 0 2px 8px rgba(60, 70, 120, 0.06);
@@ -1514,12 +1502,12 @@ function formatBytes(bytes) {
   font-weight: 600;
   color: var(--m-muted);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: var(--transition-fast);
 }
 
 .sub-tab.active {
   background: linear-gradient(135deg, var(--m-primary) 0%, var(--m-primary-2) 100%);
-  color: #fff;
+  color: var(--surface-white);
   box-shadow: 0 2px 8px rgba(106, 114, 232, 0.3);
 }
 
@@ -1634,7 +1622,7 @@ function formatBytes(bytes) {
 }
 
 .modal-panel {
-  background: #fff;
+  background: var(--surface-white);
   border-radius: 16px;
   max-width: 500px;
   width: 100%;
@@ -1701,7 +1689,7 @@ function formatBytes(bytes) {
 .pick-mark.on {
   border-color: var(--m-primary);
   background: var(--m-primary);
-  box-shadow: inset 0 0 0 3px #fff;
+  box-shadow: inset 0 0 0 3px var(--surface-white);
 }
 
 .ms-input {

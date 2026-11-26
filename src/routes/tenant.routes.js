@@ -17,8 +17,7 @@ import { rateLimit } from '../middleware/rate-limit.middleware.js'
 import { userSessionStore } from '../middleware/user-auth.middleware.js'
 import { secureFlag } from '../utils/cookie-flags.js'
 import { publicScheme } from '../utils/public-endpoint.js'
-import { normalizeAddress, swtcVolumeName } from '../utils/address.js'
-import { handleError } from '../utils/errors.js'
+import { normalizeAddress } from '../utils/address.js'
 import { tenantGateway } from '../services/tenant-proxy.service.js'
 
 /**
