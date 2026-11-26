@@ -1,6 +1,6 @@
 # 巨型文件拆分方案（技术债清偿）
 
-> 状态：§P1 §P2 ✅（2026-11-24 落地，判例 59/60 入册）｜§P3 🔨 主体完成（2026-12：AP 4084→923 / UC 4106→1621 十刀组件化全绿，判例 64 入册；api 收编刀①② 69 调用点→6 模块（userSession/env/adminOps/adminStatus/userConfig/adminDsh；stats×3、connect-status×3、自助vs代管双生面全收口）；Tier A token 化+B① 骨架+Tier C 样式随刀落地。**未完**：Tier B② 移动命名空间等 cly-phone 合回（原 §五 暂缓裁定对移动簇继续生效）、桌面余 14 处单发（login/challenge 会话核心族+credential 上传族，无单源收益）与 mobile 端点随 B② 同窗口走、独立+embedded 双路径目检交人工。CSS 公用施工图：docs/css-dedup-report.md（判例 63 在册））
+> 状态：§P1 §P2 ✅（2026-11-24 落地，判例 59/60 入册）｜§P3 🔨 主体完成（2026-12：AP 4084→923 / UC 4106→1621 十刀组件化全绿，判例 64 入册；api 收编刀①② 69 调用点→6 模块（userSession/env/adminOps/adminStatus/userConfig/adminDsh；stats×3、connect-status×3、自助vs代管双生面全收口）；Tier A token 化+B① 骨架+Tier C 样式随刀落地。**真机目检+三批机审收官（判例 65 入册）**：八波炸单全清、五刀批修（A+B+C/D/E）、八项静态闸定型。未完：Tier B② 移动命名空间等 cly-phone 合回、桌面余 14 处单发与 mobile 端点随 B② 同窗口走。CSS 公用施工图：docs/css-dedup-report.md（判例 63 在册））
 > 目标文件：`user.service.js`(3281) / `admin.routes.js`(2007) / `UserCenter.vue`(4106) / `AdminPanel.vue`(4084)
 > 上位纪律：五条判权不变量（README）不动；判例 58"半拉子不对称"是本方案要**结构性根除**的对象——
 > 用结构保证代替"修一条先 grep 孪生面"的人肉纪律。
