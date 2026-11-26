@@ -20,6 +20,12 @@ const DEFAULTS = {
     // publicScheme: 'https'|'http'|''（空=按请求自动判形）；⚠️ 设 'https' 即承诺
     // **入口与全部租户网关端口都是 https 终结**（cookie 按 host 跨端口共享，混形态
     // 会断会话）。publicPort: 对外入口端口（如隧道 8550→进程 8090）；0=同 port。
+    // tenantUrlTemplate: 租户对外形态模板（泛域名反代部署，2026-11-26 apisix 形态）。
+    // 形如 'https://t{port}.wh.jccdex.cn:8550'——{port} 替换为租户网关端口。生效后：
+    // 进入/重置/代开三处 URL 与容器 trustedHosts 全部按模板说话（每租户一个子域，
+    // 共用入口的 TLS 监听，不再要求浏览器直连 31000+N）。空=旧形态（host:租户端口）。
+    // 前提：泛域名 DNS + apisix 按 host 路由到本服务对应端口（scripts/apisix-tenant-sync.js）。
+    tenantUrlTemplate: '',
     // env PUBLIC_SCHEME/PUBLIC_PORT 可覆盖（systemd 注入位）。口径单点 utils/public-endpoint.js。
     publicScheme: '',
     publicPort: 0,

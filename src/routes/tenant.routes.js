@@ -16,7 +16,7 @@ import { validateSwtcAddress } from '../middleware/validate.middleware.js'
 import { rateLimit } from '../middleware/rate-limit.middleware.js'
 import { userSessionStore } from '../middleware/user-auth.middleware.js'
 import { secureFlag } from '../utils/cookie-flags.js'
-import { publicScheme } from '../utils/public-endpoint.js'
+import { publicScheme, tenantBaseUrl } from '../utils/public-endpoint.js'
 import { normalizeAddress } from '../utils/address.js'
 import { tenantGateway } from '../services/tenant-proxy.service.js'
 
@@ -172,9 +172,11 @@ export async function handleTenantRoutes(req, res, path, url) {
         }
       }
       const gwTicket = tenantGateway.issueTicket(address)
-      // 对外 scheme 走 publicScheme 单点（隧道/反代 https 形态，2026-11-12）
+      // 对外形态单点（2026-11-12 隧道口径；2026-11-26 增子域模板，入口感知）：
+      // 域名入口且配了 tenantUrlTemplate → t{port}.泛域:入口口；否则旧形态
+      const tplBase = tenantBaseUrl(port, req, address)
       const containerUrl =
-        `${publicScheme(req)}://${targetHost}:${port}/` +
+        (tplBase ? `${tplBase}/` : `${publicScheme(req)}://${targetHost}:${port}/`) +
         (gwTicket ? `?gateway_ticket=${gwTicket}` : '')
       // 签名验证通过 → 签发普通用户会话（网关门禁凭据，2h；切钱包时前端会主动吊销）
       const sessionToken = userSessionStore.create(address)
@@ -546,8 +548,9 @@ export async function handleTenantRoutes(req, res, path, url) {
           }
         }
         const gwTicket = tenantGateway.issueTicket(address)
+        const tplBase = tenantBaseUrl(result.port, req, address)
         containerUrl =
-          `${publicScheme(req)}://${targetHost}:${result.port}/` +
+          (tplBase ? `${tplBase}/` : `${publicScheme(req)}://${targetHost}:${result.port}/`) +
           (gwTicket ? `?gateway_ticket=${gwTicket}` : '')
       }
       if (!res.headersSent) {

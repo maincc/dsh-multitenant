@@ -18,6 +18,7 @@ import {
 } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { CONFIG, getTierLimits } from '../config/config.js'
+import { tenantAuthority } from '../utils/public-endpoint.js'
 import { dockerService } from './docker.service.js'
 import { dataService } from './data.service.js'
 import { stateStore } from './state.store.js'
@@ -1947,10 +1948,16 @@ export class UserService {
     // 对外 authority：用户浏览器经网关访问时的 Host 头（网关透传不改 Host），
     // 显式列入 trustedHosts，保证将来关闭"局域网自动信任"后也能过 DSH 的 fence。
     const externalAuthority = this.externalAuthority(port)
+    // 子域模板形态（泛域名反代部署，2026-11-26）：patch 烘死时不分辨入口，
+    // 传统 authority 与子域 authority 并列入 trustedHosts（去重）——同一容器
+    // 局域网 IP 直连与公网子域进都合法。模板改了 patch 必重建=本函数所在的
+    // 每次重启重建链（见上方漂移注释块），无第二本账。
+    const tplAuthority = tenantAuthority(port)
     const trusted = [
       `127.0.0.1:${port}`,
       `localhost:${port}`,
       ...(externalAuthority ? [externalAuthority] : []),
+      ...(tplAuthority && tplAuthority !== externalAuthority ? [tplAuthority] : []),
       ...PUBLIC_TRUST,
     ]
     return (

@@ -13,7 +13,7 @@ import { dockerService } from '../../services/docker.service.js'
 import { tenantGateway } from '../../services/tenant-proxy.service.js'
 import { validateSwtcAddress } from '../../middleware/validate.middleware.js'
 import { normalizeAddress } from '../../utils/address.js'
-import { publicScheme, publicEntryPort } from '../../utils/public-endpoint.js'
+import { publicScheme, publicEntryPort, tenantBaseUrl } from '../../utils/public-endpoint.js'
 import { defineRoute } from '../registry.js'
 import { timingSafeEqual } from 'node:crypto'
 
@@ -66,7 +66,11 @@ export const GATEWAY_ROUTES = [
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(
         JSON.stringify({
-          url: `${publicScheme(req)}://${PUBLIC_HOST}:${user.port}/?gateway_ticket=${ticket}`,
+          url:
+            (
+              tenantBaseUrl(user.port, req, address) ||
+              `${publicScheme(req)}://${PUBLIC_HOST}:${user.port}`
+            ).replace(/\/+$/, '') + `/?gateway_ticket=${ticket}`,
           address,
           port: user.port,
         }),

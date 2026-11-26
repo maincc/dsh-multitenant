@@ -6,7 +6,12 @@
  */
 import { describe, it, expect, afterEach } from 'vitest'
 import { CONFIG } from '../src/config/config.js'
-import { publicScheme, publicEntryPort } from '../src/utils/public-endpoint.js'
+import {
+  publicScheme,
+  publicEntryPort,
+  tenantBaseUrl,
+  tenantAuthority,
+} from '../src/utils/public-endpoint.js'
 import { secureFlag } from '../src/utils/cookie-flags.js'
 
 const http = { socket: {}, headers: {} }
@@ -75,6 +80,63 @@ describe('publicEntryPort 回退链', () => {
       setEnv('PUBLIC_PORT', String(bad))
       expect(publicEntryPort()).toBe(8090)
     }
+  })
+})
+
+describe('tenantBaseUrl 入口感知（2026-11-26 子域模板刀）', () => {
+  afterEach(() => {
+    delete process.env.TENANT_URL_TEMPLATE
+    CONFIG.server.tenantUrlTemplate = ''
+  })
+  const domReq = { headers: { host: 'dsh.wh.jccdex.cn:8550' } }
+
+  it('未配置模板 → 恒 null（旧行为零影响）', () => {
+    expect(tenantBaseUrl(31000, domReq)).toBeNull()
+    expect(tenantAuthority(31000)).toBeNull()
+  })
+
+  it('域名入口 → 模板代入 {port}，尾斜杠容忍', () => {
+    process.env.TENANT_URL_TEMPLATE = 'https://t{port}.wh.jccdex.cn:8550/'
+    expect(tenantBaseUrl(31000, domReq)).toBe('https://t31000.wh.jccdex.cn:8550')
+    expect(tenantBaseUrl(31007, domReq)).toBe('https://t31007.wh.jccdex.cn:8550')
+  })
+
+  it('IP/回环/无 Host 入口 → null（本机测试与局域网直连原样）', () => {
+    process.env.TENANT_URL_TEMPLATE = 'https://t{port}.wh.jccdex.cn:8550'
+    expect(tenantBaseUrl(31000, { headers: { host: '192.168.77.121:8090' } })).toBeNull()
+    expect(tenantBaseUrl(31000, { headers: { host: '127.0.0.1:8090' } })).toBeNull()
+    expect(tenantBaseUrl(31000, { headers: { host: 'localhost:8090' } })).toBeNull()
+    expect(tenantBaseUrl(31000, { headers: { host: '[::1]:8090' } })).toBeNull()
+    expect(tenantBaseUrl(31000, { headers: {} })).toBeNull()
+    expect(tenantBaseUrl(31000, undefined)).toBeNull()
+  })
+
+  it('非法端口 → null；{address} 占位可替换', () => {
+    expect(tenantBaseUrl(0, domReq)).toBeNull()
+    expect(tenantBaseUrl(undefined, domReq)).toBeNull()
+    process.env.TENANT_URL_TEMPLATE = 'https://{address}.dsh.example.com'
+    expect(tenantBaseUrl(31000, domReq, 'jndwabc')).toBe('https://jndwabc.dsh.example.com')
+  })
+})
+
+describe('tenantAuthority patch 派生（恒不看入口）', () => {
+  afterEach(() => {
+    delete process.env.TENANT_URL_TEMPLATE
+    CONFIG.server.tenantUrlTemplate = ''
+  })
+
+  it('带端口模板 → host:port；443/无端口 → 仅 host', () => {
+    process.env.TENANT_URL_TEMPLATE = 'https://t{port}.wh.jccdex.cn:8550'
+    expect(tenantAuthority(31000)).toBe('t31000.wh.jccdex.cn:8550')
+    process.env.TENANT_URL_TEMPLATE = 'https://t{port}.wh.jccdex.cn'
+    expect(tenantAuthority(31001)).toBe('t31001.wh.jccdex.cn')
+    process.env.TENANT_URL_TEMPLATE = 'https://t{port}.wh.jccdex.cn:443'
+    expect(tenantAuthority(31001)).toBe('t31001.wh.jccdex.cn')
+  })
+
+  it('缺 scheme 的坏模板 → null（fail-safe，宁缺毋错烘）', () => {
+    process.env.TENANT_URL_TEMPLATE = 't{port}.wh.jccdex.cn:8550'
+    expect(tenantAuthority(31000)).toBeNull()
   })
 })
 
