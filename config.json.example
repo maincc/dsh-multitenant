@@ -2,7 +2,10 @@
   "server": {
     "port": 8090,
     "publicHost": "127.0.0.1",
-    "comment": "服务端口和对外主机名（局域网请填 192.168.x.x）"
+    "publicScheme": "",
+    "publicPort": 0,
+    "tenantUrlTemplate": "",
+    "comment": "port=进程监听口；publicHost=对外主机名（局域网填 192.168.x.x）。下面三个是『反代/隧道部署的对外形态』键族（浏览器看到的 ≠ 进程侧时声明，2026-11/12-apisix 实战形）：publicScheme=''|'https'|'http'（空=按请求自动判形；设 https 即承诺对外只有 TLS 终结形态，cookie 全程 secure）；publicPort=对外入口端口（如反代 8550→进程 40001，0=同 port——『返回平台』等链接用它，不配会把用户指到公网没开的进程口）；tenantUrlTemplate=租户子域模板（泛域名反代形态：形如 'https://t{port}.wh.jccdex.cn:8550'，{port} 代入租户网关端口；仅当浏览器从域名入口进来才生效，IP/localhost 入口自动维持旧形态 host:port，本地测试无感。前置=泛解析+通配证书+反代按 Host 建每租户路由 t{port}.域名→本服:{port}（websocket 开），在线端口清单轮询 GET /api/admin/gateway-ports。反代部署完整例：{port:40001, publicScheme:'https', publicPort:8550, tenantUrlTemplate:'https://t{port}.域名:8550'}）"
   },
   "admin": {
     "addresses": ["your-admin-address-here"],
