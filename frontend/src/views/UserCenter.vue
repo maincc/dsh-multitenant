@@ -76,22 +76,33 @@
           <div class="wallet-summary">
             <span class="live-dot"></span>
             <span class="wallet-label">{{ $t('user.connected') }}</span>
-            <code class="wallet-short addr-tip" :data-full="userInfo.address">{{
-              shortAddrText
-            }}</code>
+            <code class="wallet-short addr-tip" :data-full="displayAddr">{{ shortAddrText }}</code>
           </div>
-          <!-- 导航项 -->
+          <!-- 导航项（v1.5：管理员页签与用户页签同侧栏并列，中间一条"管理"分组线） -->
           <nav class="sidebar-nav">
-            <button
-              v-for="tab in sidebarTabs"
-              :key="tab.key"
-              class="sidebar-item"
-              :class="{ active: activeTab === tab.key }"
-              @click="activeTab = tab.key"
-            >
-              <span class="sidebar-icon" v-html="tab.icon"></span>
-              <span>{{ tab.label }}</span>
-            </button>
+            <template v-for="tab in sidebarTabs" :key="tab.key || 'div-' + tab.label">
+              <div v-if="tab.divider" class="sidebar-divider">{{ tab.label }}</div>
+              <button
+                v-else
+                class="sidebar-item"
+                :class="{ active: activeTab === tab.key }"
+                @click="activeTab = tab.key"
+              >
+                <span class="sidebar-icon" v-html="tab.icon"></span>
+                <span>{{ tab.label }}</span>
+                <span
+                  v-if="badgeFor(tab.subKey)"
+                  class="tab-dot"
+                  :title="$t('admin.pendingTip', { n: badgeFor(tab.subKey) })"
+                ></span>
+                <!-- 后台自动拉起指示：容器 tab 右侧小转圈（完成/失败即消失，弹窗收尾） -->
+                <span
+                  v-if="tab.key === 'container' && containerBooting"
+                  class="tab-boot-spin"
+                  :title="$t('user.tabBooting')"
+                ></span>
+              </button>
+            </template>
           </nav>
         </div>
       </aside>
@@ -107,9 +118,271 @@
           <div class="stat-rows">
             <div class="stat-row">
               <span class="stat-label">{{ $t('user.swtcAddress') }}</span>
-              <code class="stat-value mono addr-tip" :data-full="userInfo.address">{{
-                userInfo.address
+              <code class="stat-value mono addr-tip" :data-full="displayAddr">{{
+                shortAddrText
               }}</code>
+            </div>
+            <!-- v1.5 验收反馈③：账号详情区分管理员/普通用户（判权来自服务端活验证 role） -->
+            <div class="stat-row">
+              <span class="stat-label">{{ $t('user.roleLabel') }}</span>
+              <span
+                class="badge"
+                :class="role === 'admin' ? 'badge-danger' : 'badge-info'"
+                style="align-self: center"
+              >
+                {{ role === 'admin' ? $t('user.roleAdmin') : $t('user.roleUser') }}
+              </span>
+            </div>
+          </div>
+
+          <!-- ════ v1.4 凭证体系（v1.5 三分：DID 普通 / CWT 解限 / 管理凭证，互斥单卡） ════ -->
+          <div v-if="credInfo" class="cred-card">
+            <div class="cred-head">
+              <span class="cred-title">{{ $t('user.credTitle') }}</span>
+              <span
+                class="badge"
+                :class="
+                  credInfo.isAdmin
+                    ? 'badge-danger'
+                    : credInfo.kind === 'cwt'
+                      ? 'badge-success'
+                      : 'badge-info'
+                "
+              >
+                {{
+                  credInfo.isAdmin
+                    ? $t('user.credKindAdmin')
+                    : credInfo.kind === 'cwt'
+                      ? $t('user.credKindCwt')
+                      : $t('user.credKindDid')
+                }}
+              </span>
+              <span
+                class="badge"
+                :class="credInfo.state === 'claimed' ? 'badge-success' : 'badge-warning'"
+              >
+                {{
+                  credInfo.state === 'claimed'
+                    ? $t('user.credStateClaimed')
+                    : $t('user.credStateAssigned')
+                }}
+              </span>
+            </div>
+            <p class="tab-hint">
+              {{
+                credInfo.isAdmin
+                  ? $t('user.credHintAdmin')
+                  : credInfo.kind === 'cwt'
+                    ? $t('user.credHintCwt')
+                    : $t('user.credHintDid')
+              }}
+            </p>
+
+            <!-- 凭证明细：这张卡的关键字段（与平台档案登记册一致） -->
+            <div class="cred-detail">
+              <div class="stat-row">
+                <span class="stat-label">{{ $t('user.credDVCId') }}</span>
+                <span class="stat-value mono addr-tip" :data-full="credInfo.vcId || '—'">
+                  <span class="stat-clip">{{
+                    credInfo.vcId ? '#' + (credInfo.vcId.split('#')[1] || credInfo.vcId) : '—'
+                  }}</span>
+                  <button
+                    v-if="credInfo.vcId"
+                    class="copy-mini"
+                    :title="$t('user.credCopy')"
+                    @click="copyText(credInfo.vcId)"
+                  >
+                    📋
+                  </button>
+                </span>
+              </div>
+              <div v-if="credInfo.profileDid" class="stat-row">
+                <span class="stat-label">{{ $t('user.credDProfile') }}</span>
+                <span class="stat-value mono addr-tip" :data-full="credInfo.profileDid">
+                  <span class="stat-clip">
+                    {{ credInfo.profileDid.slice(0, 18) }}…{{ credInfo.profileDid.slice(-6) }}
+                  </span>
+                  <button
+                    class="copy-mini"
+                    :title="$t('user.credCopy')"
+                    @click="copyText(credInfo.profileDid)"
+                  >
+                    📋
+                  </button>
+                </span>
+              </div>
+              <div class="stat-row">
+                <span class="stat-label">{{ $t('user.credDSource') }}</span>
+                <span class="stat-value">{{ $t('user.credSrc_' + credInfo.source) }}</span>
+              </div>
+              <div class="stat-row">
+                <span class="stat-label">{{ $t('user.credDIssued') }}</span>
+                <span class="stat-value">{{
+                  credInfo.issuedAt ? new Date(credInfo.issuedAt).toLocaleString() : '—'
+                }}</span>
+              </div>
+              <div v-if="credInfo.claimedAt" class="stat-row">
+                <span class="stat-label">{{ $t('user.credDClaimed') }}</span>
+                <span class="stat-value">{{ new Date(credInfo.claimedAt).toLocaleString() }}</span>
+              </div>
+              <div v-if="credInfo.expiresAt" class="stat-row">
+                <span class="stat-label">{{ $t('user.credDExpires') }}</span>
+                <span
+                  class="stat-value"
+                  :class="{ 'cred-exp-warn': credExpDays !== null && credExpDays <= 30 }"
+                  >{{ new Date(credInfo.expiresAt).toLocaleDateString() }}
+                  <em v-if="credExpDays > 30">{{ $t('user.credExpLeft', { n: credExpDays }) }}</em>
+                  <em v-else-if="credExpDays > 0">{{ $t('user.credExpSoon') }}</em>
+                  <em v-else>{{ $t('user.credExpRenewing') }}</em></span
+                >
+              </div>
+              <!-- 判权依据溯源（2026-10-23 定式"先跑档案，出错跑台账"）：让用户看见
+                   本轮放行是档案活验背书、还是官网抖动下的台账兜底 -->
+              <div v-if="credInfo.state === 'claimed' && credVerifiedBy" class="stat-row">
+                <span class="stat-label">{{ $t('user.credDVerifiedBy') }}</span>
+                <span class="stat-value">
+                  <span v-if="credVerifiedBy === 'archive'" class="badge badge-success">
+                    {{ $t('user.verifiedByArchive') }}
+                  </span>
+                  <span v-else class="badge badge-warning" :title="$t('user.verifiedByLedgerHint')">
+                    {{ $t('user.verifiedByLedger') }}
+                  </span>
+                </span>
+              </div>
+              <div v-if="credInfo.state === 'claimed'" class="stat-row">
+                <span class="stat-label">{{ $t('user.credDOnchain') }}</span>
+                <span class="stat-value">
+                  <span
+                    v-if="credInfo.onChain && credInfo.onChain.status === 'ok'"
+                    class="badge badge-success"
+                    >{{ $t('user.credOnchainOk') }}</span
+                  >
+                  <span
+                    v-else-if="credInfo.onChain && credInfo.onChain.status === 'stale'"
+                    class="badge badge-warning"
+                    :title="credInfo.onChain.reason || ''"
+                    >{{ $t('user.credOnchainStale') }}</span
+                  >
+                  <span
+                    v-else-if="
+                      credInfo.onChain &&
+                      (credInfo.onChain.status === 'invalid' ||
+                        credInfo.onChain.status === 'missing')
+                    "
+                    class="badge badge-warning"
+                    :title="credInfo.onChain.reason || ''"
+                    >{{ $t('user.credOnchainGone') }}</span
+                  >
+                  <span v-else class="badge badge-info">{{ $t('user.credOnchainPending') }}</span>
+                </span>
+              </div>
+              <div v-if="credInfo.state === 'claimed'" class="stat-row">
+                <span class="stat-label">{{ $t('user.credDBody') }}</span>
+                <span class="stat-value">
+                  <button
+                    class="btn btn-small btn-secondary"
+                    :disabled="credVcLoading"
+                    @click="toggleCredVc"
+                  >
+                    {{ credVcOpen ? $t('user.credVcHide') : $t('user.credVcShow') }}
+                  </button>
+                </span>
+              </div>
+            </div>
+            <div v-if="credVcOpen" class="cred-vc-view">
+              <div v-if="credVcOpen && credVc && !credVcConsistent" class="cred-nodid">
+                <p class="cred-nodid-title">⚠️ {{ $t('user.credVcStaleTitle') }}</p>
+                <p>{{ $t('user.credVcStaleBody') }}</p>
+              </div>
+              <div class="cred-vc-bar">
+                <span class="stat-label">{{ $t('user.credVcTitle') }}</span>
+                <button
+                  class="btn btn-small btn-secondary"
+                  :disabled="!credVc"
+                  @click="copyText(JSON.stringify(credVc, null, 2))"
+                >
+                  {{ $t('user.credCopyJson') }}
+                </button>
+              </div>
+              <div v-if="credVcLoading" class="loading">{{ $t('user.loading') }}</div>
+              <pre v-else-if="credVc" class="cred-vc-json">{{
+                JSON.stringify(credVc, null, 2)
+              }}</pre>
+            </div>
+
+            <!-- 无 DID 档案指引：先去生成，务必核对地址 -->
+            <div v-if="credNoDid" class="cred-nodid">
+              <p class="cred-nodid-title">⚠️ {{ $t('user.credNoDidTitle') }}</p>
+              <p>
+                {{ $t('user.credNoDidBody') }}
+                <a :href="credNoDid.didGenUrl" target="_blank" rel="noopener" class="mono">{{
+                  credNoDid.didGenUrl
+                }}</a>
+              </p>
+              <p class="cred-warn">
+                {{ $t('user.credNoDidWarnPrefix') }}
+                <code class="mono">{{ credNoDid.expectedAddress }}</code>
+                {{ $t('user.credNoDidWarnSuffix') }}
+              </p>
+            </div>
+
+            <div class="action-buttons">
+              <button
+                v-if="credInfo.state === 'assigned' || credNeedsSync"
+                class="btn btn-primary"
+                :disabled="credBusy === 'claim'"
+                @click="claimCredential"
+              >
+                {{
+                  credBusy === 'claim'
+                    ? $t('user.credClaiming')
+                    : credInfo.state === 'assigned'
+                      ? $t('user.credClaimBtn')
+                      : $t('user.credSyncBtn')
+                }}
+              </button>
+              <button
+                v-if="
+                  credInfo.kind === 'did' &&
+                  credInfo.state === 'claimed' &&
+                  (!credApp || credApp.status === 'rejected')
+                "
+                class="btn btn-secondary"
+                :disabled="credBusy === 'apply'"
+                @click="applyCwt"
+              >
+                {{ credBusy === 'apply' ? $t('user.credApplying') : $t('user.credApplyBtn') }}
+              </button>
+              <span v-if="credApp && credApp.status === 'pending'" class="badge badge-warning">{{
+                $t('user.credAppPending')
+              }}</span>
+            </div>
+          </div>
+
+          <!-- 凭证区占位态（用户反馈"凭证在哪"的兜底）：读取失败不再让整块静默消失——
+               永远可见"发生了什么 + 一键重试"，与 credInfo 有值时的卡面互斥（v-if/v-else） -->
+          <div v-else class="cred-card">
+            <div class="cred-head">
+              <span class="cred-title">{{ $t('user.credTitle') }}</span>
+              <span class="badge badge-warning">{{ $t('user.credNotLoaded') }}</span>
+            </div>
+            <p class="tab-hint">
+              {{
+                credErr?.code === 'SESSION_MISMATCH'
+                  ? $t('user.credMismatchHint')
+                  : credErr?.status === 401
+                    ? $t('user.credExpiredHint')
+                    : $t('user.credNotLoadedHint')
+              }}
+            </p>
+            <div class="action-buttons">
+              <button
+                class="btn btn-secondary"
+                :disabled="!connected || credRetrying"
+                @click="retryCredential"
+              >
+                {{ credRetrying ? $t('user.credRetrying') : $t('user.credRetry') }}
+              </button>
             </div>
           </div>
         </div>
@@ -343,213 +616,265 @@
             <h4>{{ $t('user.containerManage') }}</h4>
             <p class="tab-hint">{{ $t('user.containerManageHint') }}</p>
           </div>
-          <!-- 容器信息（原在账户信息）：端口/配额/状态/资源使用都归容器 -->
-          <div class="stat-rows">
-            <div class="stat-row">
-              <span class="stat-label">{{ $t('user.port') }}</span>
-              <code class="stat-value mono">{{ userInfo.port }}</code>
+          <!-- 容器管理页顶三段页签（用户裁定 2026-11-02：与市场品类 pill 同款）：
+               原一页竖堆 容器信息/我的技能/环境现场 三段，翻到底上传之苦——现在点一段看一段。
+               v-show 互斥非卸载：向导在途草稿、技能列表状态翻页不丢。 -->
+          <div class="action-buttons container-subtabs">
+            <button
+              class="btn btn-small"
+              :class="cSub === 'info' ? 'btn-primary' : 'btn-secondary'"
+              @click="cSub = 'info'"
+            >
+              {{ $t('user.subTabInfo') }}
+            </button>
+            <button
+              class="btn btn-small"
+              :class="cSub === 'skills' ? 'btn-primary' : 'btn-secondary'"
+              @click="cSub = 'skills'"
+            >
+              {{ $t('user.tabSkillsPlugins') }}
+            </button>
+            <button
+              class="btn btn-small"
+              :class="cSub === 'env' ? 'btn-primary' : 'btn-secondary'"
+              @click="cSub = 'env'"
+            >
+              {{ $t('user.subTabEnv') }}
+            </button>
+          </div>
+          <div v-show="cSub === 'info'">
+            <!-- 容器信息（原在账户信息）：端口/配额/状态/资源使用都归容器 -->
+            <div class="stat-rows">
+              <div class="stat-row">
+                <span class="stat-label">{{ $t('user.port') }}</span>
+                <code class="stat-value mono">{{ userInfo.port }}</code>
+              </div>
+              <div class="stat-row">
+                <span class="stat-label">{{ $t('user.tier') }}</span>
+                <span class="badge" :class="tierBadge(userInfo.tier)">{{
+                  userInfo.tierLabel
+                }}</span>
+              </div>
+              <div class="stat-row">
+                <span class="stat-label">{{ $t('user.containerStatus') }}</span>
+                <span class="badge" :class="statusBadge(userInfo.status)">{{
+                  statusText(userInfo.status)
+                }}</span>
+                <button
+                  v-if="userInfo.status !== 'running'"
+                  class="btn btn-small btn-success"
+                  :disabled="containerBooting"
+                  :title="containerBooting ? $t('user.tabBooting') : ''"
+                  @click="restartContainer"
+                >
+                  {{ $t('user.startContainer') }}
+                </button>
+              </div>
             </div>
-            <div class="stat-row">
-              <span class="stat-label">{{ $t('user.tier') }}</span>
-              <span class="badge" :class="tierBadge(userInfo.tier)">{{ userInfo.tierLabel }}</span>
+
+            <div v-if="userInfo.stats" class="resource-usage">
+              <div class="resource-item">
+                <div class="resource-header">
+                  <span>{{ $t('user.cpuUsage') }}</span>
+                  <span class="mono">{{ userInfo.stats.cpu }}</span>
+                </div>
+              </div>
+              <div class="resource-item">
+                <div class="resource-header">
+                  <span>{{ $t('user.memUsage') }}</span>
+                  <span class="mono"
+                    >{{ userInfo.stats.memory }} ({{ userInfo.stats.memoryPercent }})</span
+                  >
+                </div>
+                <div class="progress-bar">
+                  <div class="progress-fill" :style="{ width: userInfo.stats.memoryPercent }"></div>
+                </div>
+              </div>
             </div>
-            <div class="stat-row">
-              <span class="stat-label">{{ $t('user.containerStatus') }}</span>
-              <span class="badge" :class="statusBadge(userInfo.status)">{{
-                statusText(userInfo.status)
-              }}</span>
-              <button
-                v-if="userInfo.status !== 'running'"
-                class="btn btn-small btn-success"
-                @click="restartContainer"
-              >
-                {{ $t('user.startContainer') }}
+            <div v-else class="loading">{{ $t('user.noData') }}</div>
+
+            <div class="tab-divider" />
+
+            <!-- 进入容器入口（连同容器状态/端口/配额/资源使用一起，均已从账户信息迁来） -->
+            <div class="enter-box">
+              <div class="enter-info">
+                <div class="enter-title">{{ $t('user.enterDsh') }}</div>
+                <div class="enter-hint">{{ $t('user.enterDshHint') }}</div>
+              </div>
+              <button class="btn btn-primary btn-enter" @click="enterDsh">
+                {{ $t('user.openDsh') }}
               </button>
             </div>
-          </div>
 
-          <div v-if="userInfo.stats" class="resource-usage">
-            <div class="resource-item">
-              <div class="resource-header">
-                <span>{{ $t('user.cpuUsage') }}</span>
-                <span class="mono">{{ userInfo.stats.cpu }}</span>
+            <div class="tab-divider" />
+
+            <div class="action-buttons">
+              <button class="btn btn-primary" @click="restartDSH">
+                {{ $t('user.restartDsh') }}
+              </button>
+              <button
+                class="btn btn-secondary"
+                :disabled="!connected || userInfo.status !== 'running'"
+                @click="stopContainer"
+              >
+                {{ $t('user.stopContainer') }}
+              </button>
+              <button class="btn btn-danger" @click="resetContainer">
+                {{ $t('user.resetContainer') }}
+              </button>
+            </div>
+            <div class="action-hints">
+              <div class="hint">
+                <strong>{{ $t('user.restartDshFlowTitle') }}</strong>
+                {{ $t('user.restartDshFlow') }}
+              </div>
+              <div class="hint">
+                <strong>{{ $t('user.stopFlowTitle') }}</strong>
+                {{ $t('user.stopFlow') }}
+                {{ usageInfoLabel ? $t('user.todayUsagePrefix') + usageInfoLabel : '' }}
+              </div>
+              <div class="hint">
+                <strong>{{ $t('user.resetFlowTitle') }}</strong>
+                {{ $t('user.resetContainerFlow') }}
               </div>
             </div>
-            <div class="resource-item">
-              <div class="resource-header">
-                <span>{{ $t('user.memUsage') }}</span>
-                <span class="mono"
-                  >{{ userInfo.stats.memory }} ({{ userInfo.stats.memoryPercent }})</span
-                >
+          </div>
+
+          <div v-show="cSub === 'skills'">
+            <div class="tab-head">
+              <h4>{{ $t('user.mySkills') }}</h4>
+              <p class="tab-hint">{{ $t('user.mySkillsHint') }}</p>
+            </div>
+            <!-- 按钮行只放按钮（用户反馈 2026-11-02 挤一行别扭）：解释文案归上方
+                 tab-hint 唯一一处——原先行尾重复挂了一遍，删 -->
+            <div class="action-buttons skill-actions">
+              <button class="btn btn-primary" @click="openImportDialog">
+                {{ $t('user.importSkill') }}
+              </button>
+              <button class="btn btn-secondary" @click="openShareDialog">
+                {{ $t('user.shareSkill') }}
+              </button>
+            </div>
+
+            <div v-if="mySkillsLoading" class="config-loading">
+              <div class="mini-spinner"></div>
+              <span>{{ $t('user.mySkillsLoading') }}</span>
+            </div>
+            <template v-else>
+              <div v-if="mineData.published.length > 0" class="skill-subsection">
+                <h3>{{ $t('user.myPublished') }}</h3>
+                <div v-for="s in mineData.published" :key="'p-' + s.name" class="skill-row">
+                  <div class="skill-row-main">
+                    <strong>{{ s.name }}</strong>
+                    <span class="skill-desc">{{ s.description }}</span>
+                  </div>
+                  <button class="btn btn-small btn-danger" @click="unpublishSkill(s.name)">
+                    {{ $t('user.unpublish') }}
+                  </button>
+                </div>
               </div>
-              <div class="progress-bar">
-                <div class="progress-fill" :style="{ width: userInfo.stats.memoryPercent }"></div>
+              <div v-if="mineData.installed.length > 0" class="skill-subsection">
+                <h3>{{ $t('user.myInstalled') }}</h3>
+                <p v-if="mineData.unverified" class="skill-desc">{{ $t('user.unverifiedNote') }}</p>
+                <div v-for="s in mineData.installed" :key="'i-' + s.name" class="skill-row">
+                  <div class="skill-row-main">
+                    <strong>{{ s.name }}</strong>
+                    <span class="skill-desc">
+                      {{
+                        s.description ||
+                        (s.installedAt
+                          ? $t('user.installedSource', {
+                              source: s.source,
+                              date: new Date(s.installedAt).toLocaleString(),
+                            })
+                          : $t('user.installedFromVolume'))
+                      }}
+                    </span>
+                    <span v-if="s.hasUpdate" class="badge badge-warning">{{
+                      $t('user.hasUpdate')
+                    }}</span>
+                  </div>
+                  <button class="btn btn-small btn-danger" @click="uninstallSkill(s.name)">
+                    {{ $t('user.uninstall') }}
+                  </button>
+                </div>
               </div>
-            </div>
-          </div>
-          <div v-else class="loading">{{ $t('user.noData') }}</div>
-
-          <div class="tab-divider" />
-
-          <!-- 进入容器入口（连同容器状态/端口/配额/资源使用一起，均已从账户信息迁来） -->
-          <div class="enter-box">
-            <div class="enter-info">
-              <div class="enter-title">{{ $t('user.enterDsh') }}</div>
-              <div class="enter-hint">{{ $t('user.enterDshHint') }}</div>
-            </div>
-            <button class="btn btn-primary btn-enter" @click="enterDsh">
-              {{ $t('user.openDsh') }}
-            </button>
-          </div>
-
-          <div class="tab-divider" />
-
-          <div class="action-buttons">
-            <button class="btn btn-primary" @click="restartDSH">{{ $t('user.restartDsh') }}</button>
-            <button
-              class="btn btn-secondary"
-              :disabled="!connected || userInfo.status !== 'running'"
-              @click="stopContainer"
-            >
-              {{ $t('user.stopContainer') }}
-            </button>
-            <button class="btn btn-danger" @click="resetContainer">
-              {{ $t('user.resetContainer') }}
-            </button>
-          </div>
-          <div class="action-hints">
-            <div class="hint">
-              <strong>{{ $t('user.restartDshFlowTitle') }}</strong>
-              {{ $t('user.restartDshFlow') }}
-            </div>
-            <div class="hint">
-              <strong>{{ $t('user.stopFlowTitle') }}</strong>
-              {{ $t('user.stopFlow') }}
-              {{ usageInfoLabel ? $t('user.todayUsagePrefix') + usageInfoLabel : '' }}
-            </div>
-            <div class="hint">
-              <strong>{{ $t('user.resetFlowTitle') }}</strong>
-              {{ $t('user.resetContainerFlow') }}
-            </div>
-          </div>
-        </div>
-
-        <!-- ════════ CWT 验证 ════════ -->
-        <div v-else-if="activeTab === 'cwt'" class="tab-content">
-          <div class="tab-head">
-            <h4>{{ $t('user.cwtVerify') }}</h4>
-            <p class="tab-hint">{{ $t('user.cwtVerifyHint') }}</p>
-          </div>
-
-          <div v-if="cwtLoading" class="config-loading">
-            <div class="mini-spinner"></div>
-            <span>{{ $t('user.cwtLoading') }}</span>
-          </div>
-
-          <template v-else-if="cwtStatus">
-            <!-- 已授权 -->
-            <div v-if="cwtStatus.authorized" class="info-row">
-              <span class="badge badge-success">{{ $t('user.cwtAuthorized') }}</span>
-            </div>
-
-            <!-- 待审批 -->
-            <div v-else-if="hasPendingApplication" class="info-row">
-              <span class="badge badge-warning">{{ $t('user.cwtPending') }}</span>
-              <span class="cwt-meta">
-                {{ $t('user.cwtPendingHint', { text: pendingAppText }) }}
-              </span>
-            </div>
-
-            <!-- 未申请 / 被拒 / 已撤销 -->
-            <div v-else>
-              <p class="cwt-meta">
-                {{ $t('user.cwtNotVerified', { min: dailyLimitText }) }}
-                {{
-                  cwtStatus.applications?.[0]?.status === 'rejected'
-                    ? $t('user.cwtRejectedHint')
-                    : ''
-                }}
+              <p
+                v-if="mineData.published.length === 0 && mineData.installed.length === 0"
+                class="hint"
+              >
+                {{ $t('user.noSkillsHint') }}
               </p>
-              <div class="cwt-apply-form">
-                <button class="btn btn-primary" :disabled="cwtSubmitting" @click="applyCwt">
-                  {{ cwtSubmitting ? $t('user.cwtSigning') : $t('user.cwtApplyBtn') }}
-                </button>
-                <div class="action-hints">
-                  <div class="hint">
-                    <strong>{{ $t('user.cwtFlowTitle') }}</strong>
-                    {{ $t('user.cwtFlow') }}
+              <!-- 插件实物小节（判例 55：无账、以卷为断）：探针取法与技能同船；
+                   null=查不了（≠没了，话术分明）；只陈列不配删钮——插件退场语义
+                   归「回退/环境」侧，此处不开第二把刀 -->
+              <div class="skill-subsection">
+                <h3>{{ $t('user.pluginsTitle') }}</h3>
+                <p v-if="mineData.plugins === null" class="skill-desc">
+                  {{ $t('user.pluginsUnprobed') }}
+                </p>
+                <p v-else-if="mineData.plugins.length === 0" class="skill-desc">
+                  {{ $t('user.pluginsEmpty') }}
+                </p>
+                <div v-for="pl in mineData.plugins || []" :key="'pl-' + pl.name" class="skill-row">
+                  <div class="skill-row-main">
+                    <strong>{{ pl.name }}</strong>
+                    <span v-if="pl.version" class="badge badge-info">v{{ pl.version }}</span>
+                    <span class="skill-desc">{{ pl.description || $t('user.pluginNoDesc') }}</span>
+                    <span class="skill-desc">
+                      {{
+                        $t('user.pluginMeta', {
+                          kind:
+                            pl.kind === 'file' ? $t('user.pluginFileTag') : $t('user.pluginDirTag'),
+                          files: pl.fileCount,
+                          size: fmtBytes(pl.bytes),
+                        })
+                      }}
+                    </span>
                   </div>
                 </div>
               </div>
+            </template>
+          </div>
+
+          <div v-show="cSub === 'env'">
+            <!-- ════════ 环境·我的现场（货架/选用在「市场」的环境品类）════════ -->
+            <div class="tab-head">
+              <h4>{{ $t('env.mineSectionTitle') }}</h4>
+              <p class="tab-hint">{{ $t('env.mineSectionHint') }}</p>
             </div>
-          </template>
+            <EnvTemplatesUser mode="mine" @mine-changed="loadMine" />
+          </div>
         </div>
 
         <!-- ════════ 我的技能 ════════ -->
-        <div v-else class="tab-content">
-          <div class="tab-head">
-            <h4>{{ $t('user.mySkills') }}</h4>
-            <p class="tab-hint">{{ $t('user.mySkillsHint') }}</p>
-          </div>
-          <div class="action-buttons">
-            <button class="btn btn-primary" @click="openImportDialog">
-              {{ $t('user.importSkill') }}
-            </button>
-            <button class="btn btn-primary" @click="openShareDialog">
-              {{ $t('user.shareSkill') }}
-            </button>
-            <router-link to="/skills" class="btn btn-secondary">{{
-              $t('user.skillMarketLink')
-            }}</router-link>
-          </div>
+        <!-- ════════ v1.5 管理员页签（验收反馈①：与用户页签平级并列，无嵌套壳）════════
+             role='admin'（官网活验证属实）才装配；内嵌复用独立版 AdminPanel（源码不合并，
+             同一组件两用：externalTab 驱动子页、自带侧栏隐藏）。操作仍要登录会话+当场签名
+             签名——tab 可见=凭证判权，可操作=会话+钱包双门禁（刀2B 模型一字不松） -->
+        <div v-else-if="isSystemTab" class="tab-content admin-embed">
+          <AdminPanel embedded :external-tab="systemSubTab" />
+        </div>
 
-          <div v-if="mySkillsLoading" class="config-loading">
-            <div class="mini-spinner"></div>
-            <span>{{ $t('user.mySkillsLoading') }}</span>
-          </div>
-          <template v-else>
-            <div v-if="mineData.published.length > 0" class="skill-subsection">
-              <h3>{{ $t('user.myPublished') }}</h3>
-              <div v-for="s in mineData.published" :key="'p-' + s.name" class="skill-row">
-                <div class="skill-row-main">
-                  <strong>{{ s.name }}</strong>
-                  <span class="skill-desc">{{ s.description }}</span>
-                </div>
-                <button class="btn btn-small btn-danger" @click="unpublishSkill(s.name)">
-                  {{ $t('user.unpublish') }}
-                </button>
-              </div>
-            </div>
-            <div v-if="mineData.installed.length > 0" class="skill-subsection">
-              <h3>{{ $t('user.myInstalled') }}</h3>
-              <div v-for="s in mineData.installed" :key="'i-' + s.name" class="skill-row">
-                <div class="skill-row-main">
-                  <strong>{{ s.name }}</strong>
-                  <span class="skill-desc">
-                    {{
-                      s.description ||
-                      $t('user.installedSource', {
-                        source: s.source,
-                        date: new Date(s.installedAt).toLocaleString(),
-                      })
-                    }}
-                  </span>
-                  <span v-if="s.hasUpdate" class="badge badge-warning">{{
-                    $t('user.hasUpdate')
-                  }}</span>
-                </div>
-                <button class="btn btn-small btn-danger" @click="uninstallSkill(s.name)">
-                  {{ $t('user.uninstall') }}
-                </button>
-              </div>
-            </div>
-            <p
-              v-if="mineData.published.length === 0 && mineData.installed.length === 0"
-              class="hint"
+        <div v-else class="tab-content">
+          <div class="action-buttons">
+            <button
+              class="btn btn-small"
+              :class="marketCat === 'skills' ? 'btn-primary' : 'btn-secondary'"
+              @click="marketCat = 'skills'"
             >
-              {{ $t('user.noSkillsHint') }}
-            </p>
-          </template>
+              {{ $t('env.catSkills') }}
+            </button>
+            <button
+              class="btn btn-small"
+              :class="marketCat === 'env' ? 'btn-primary' : 'btn-secondary'"
+              @click="marketCat = 'env'"
+            >
+              {{ $t('env.catEnv') }}
+            </button>
+          </div>
+          <SkillMarket v-if="marketCat === 'skills'" embedded external-tab="market" />
+          <EnvTemplatesUser v-if="marketCat === 'env'" mode="market" />
         </div>
       </section>
 
@@ -644,47 +969,81 @@
 <script setup>
 import { askConfirm, toast } from '../composables/useDialog'
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { useAdminBadges, startAdminBadges, stopAdminBadges } from '../composables/useAdminBadges'
+const { badgeFor } = useAdminBadges()
+// 红点节拍起停的组件侧凭证：防角色状态反复刷新叠加引用计数（起一次=守一次）
+let badgesStarted = false
 import axios from 'axios'
 import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
 import { skillsApi } from '../api/skills.js'
-import { requestAccounts, signMessage, getPublicKey, watchAccountsChanged } from '../api/wallet.js'
+import { sha256Hex as sha256HexFallback } from '../utils/sha256.js'
+import AdminPanel from './AdminPanel.vue'
+import EnvTemplatesUser from '../components/EnvTemplatesUser.vue'
+import SkillMarket from './SkillMarket.vue'
+import { buildAdminTabs } from '../admin-tabs'
+import {
+  requestAccounts,
+  signMessage,
+  getPublicKey,
+  signFileBytes,
+  getIpfsPublicKey,
+  watchAccountsChanged,
+} from '../api/wallet.js'
 
 const { t } = useI18n()
+const route = useRoute()
 
 // ---- 侧栏导航（与 React 原型稿一致） ----
 // 落地页 = 容器管理：多数操作（进入 DSH、启停、资源查看）都发生在这里，
 // 账户信息只剩地址一项，不该默认挡在前面。
-const activeTab = ref('container')
-const sidebarTabs = [
-  {
-    key: 'account',
-    label: t('user.tabAccount'),
-    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>',
-  },
-  {
-    key: 'model',
-    label: t('user.tabModel'),
-    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="7" cy="17" r="4"/><path d="M10.6 13.4L21 3"/><path d="M19 5l2 2"/><path d="M15 9l2 2"/></svg>',
-  },
-  {
-    key: 'container',
-    label: t('user.tabContainer'),
-    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41m11.32-11.32 1.41-1.41"/></svg>',
-  },
-  {
-    key: 'cwt',
-    label: t('user.tabCwt'),
-    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
-  },
-  {
-    key: 'skills',
-    label: t('user.tabSkills'),
-    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>',
-  },
-]
+// v1.5 用户验收②修订：进用户中心**不再自动建容器**，容器可能不存在——
+// 首屏停在"容器管理"会直面一片未就绪；改默认「账户信息」（凭证/角色第一眼看，反馈③）。
+const activeTab = ref('account')
+// 市场页签内品类（用户终审 IA）：市场=挑（技能/环境）；容器管理=经营（定格/显示/回退/技能装卸）
+const marketCat = ref('skills')
+// 容器管理页三段页签（info/skills/env）；默认容器信息=原第一屏
+const cSub = ref('info')
+// v1.5 刀5C：判权面（credential-status 的 role，服务端活验证 admin 凭证属实才为 'admin'）。
+// tab 注册表按 role 装配——管理页签对普通用户不存在（数据面砍掉，不是 CSS 隐藏）；
+// 对管理员则与用户页签**平级并列**（验收反馈①：消灭"系统管理"嵌套壳，同一侧栏）。
+const role = ref('user')
+const sidebarTabs = computed(() => {
+  const tabs = [
+    {
+      key: 'account',
+      label: t('user.tabAccount'),
+      icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>',
+    },
+    {
+      key: 'model',
+      label: t('user.tabModel'),
+      icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="7" cy="17" r="4"/><path d="M10.6 13.4L21 3"/><path d="M19 5l2 2"/><path d="M15 9l2 2"/></svg>',
+    },
+    {
+      key: 'container',
+      label: t('user.tabContainer'),
+      icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41m11.32-11.32 1.41-1.41"/></svg>',
+    },
+    {
+      key: 'skills',
+      label: t('user.tabSkills'),
+      icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>',
+    },
+  ]
+  if (role.value === 'admin') {
+    // 管理页签与用户页签同一侧栏并列（key 前缀 adm: 防碰撞；子页 key 见 subKey）
+    tabs.push({ divider: true, label: t('user.adminGroup') })
+    tabs.push(...buildAdminTabs(t, 'adm:'))
+  }
+  return tabs
+})
+const isSystemTab = computed(() => activeTab.value.startsWith('adm:'))
+const systemSubTab = computed(() => (isSystemTab.value ? activeTab.value.slice(4) : 'overview'))
+let initialTabApplied = false
 
 const shortAddrText = computed(() => {
-  const a = userInfo.value.address
+  const a = displayAddr.value
   return a ? `${a.slice(0, 12)}…${a.slice(-4)}` : ''
 })
 
@@ -692,6 +1051,18 @@ const connected = ref(false)
 const connecting = ref(false)
 const hasCCDAO = ref(false)
 const userInfo = ref({})
+// 地址展示统一为钱包原始大小写形态（内部匹配/台账主键仍是小写，不动语义）
+const pluginCaseAddr = ref(localStorage.getItem('swtc_plugin_case') || '')
+const displayAddr = computed(
+  () =>
+    pluginCaseAddr.value || userInfo.value.address || localStorage.getItem('swtc_address') || '',
+)
+function rememberPluginCase(a) {
+  if (a && typeof a === 'string' && /[A-Z]/.test(a)) {
+    pluginCaseAddr.value = a
+    localStorage.setItem('swtc_plugin_case', a)
+  }
+}
 const usageInfo = ref(null)
 const waiting = ref(false)
 const queuePosition = ref(0)
@@ -707,76 +1078,417 @@ const usageInfoLabel = computed(() => {
   return t('user.usageToday', { used: u.usedMinutes, total: u.dailyMinutes })
 })
 
+const loginAttempted = ref(false)
+const walletLogin = async (address) => {
+  const pluginAddress = await requestAccounts()
+  rememberPluginCase(pluginAddress)
+  const target =
+    (address || '').toLowerCase() === pluginAddress.toLowerCase() ? address : pluginAddress
+  const ch = await axios.post('/api/user/wallet-login-challenge', { address: target })
+  const { nonce, message } = ch.data
+  const signature = await signMessage(pluginAddress, message)
+  const publicKey = await getPublicKey(pluginAddress)
+  await axios.post('/api/user/wallet-login', {
+    address: pluginAddress,
+    nonce,
+    signature,
+    publicKey,
+  })
+  return pluginAddress
+}
+
 const fetchUsage = async (address) => {
   try {
     const res = await axios.get(`/connect-status?address=${encodeURIComponent(address)}`)
     usageInfo.value = res.data.usage || null
+    // 隐私门分支（无 tier 字段）且还没试过 → 静默签名登录一次再刷新
+    if (res?.data?.exists === true && !('tier' in res.data) && !loginAttempted.value && address) {
+      loginAttempted.value = true
+      try {
+        await walletLogin(address)
+        await fetchUsage(address)
+        loadCredentialStatus(address)
+        return
+      } catch {
+        /* 保持"需要重新登录"提示，按钮手动兜底 */
+      }
+    }
   } catch {
     usageInfo.value = null
   }
 }
 
-// ---- CWT 验证状态（M1：展示 + 插件签名申请）----
-const cwtStatus = ref(null)
-const cwtLoading = ref(false)
-const cwtSubmitting = ref(false)
+// ════ v1.4 凭证体系（进入即判定 / 账户详情领取 / CWT 申请）════════
+const credInfo = ref(null) // 台账公开形态 {kind:'did'|'cwt', state:'assigned'|'claimed', source}
+const credApp = ref(null) // 本人 CWT 申请单（did 凭证已领取态才查）
+const credBusy = ref('') // 'claim' | 'apply' | ''
+// 凭证卡自愈态：credErr=上次失败摘要 {status,code}；credRetrying=重试进行中（含重签会话）
+const credErr = ref(null)
+const credRetrying = ref(false)
+// 判权依据来源（2026-10-23 用户定式"先跑档案出错跑台账"）：'archive'=本轮经档案
+// 活验背书 / 'ledger'=档案出错或超预算落台账兜底 / ''=未加载或 assigned（无档可验）
+const credVerifiedBy = ref('')
+const credNoDid = ref(null) // scaffold 返回的无档案指引 {didGenUrl, expectedAddress}
+const credPopupShown = ref('') // 已弹过提醒的地址（切钱包=新地址=再提醒一次，轮询不轰炸）
+const credVcOpen = ref(false) // 凭证本体 JSON 展开态
+const credVc = ref(null) // 档案读回的 VC 全文（收起再开会用缓存；换凭证时置 null）
+const credVcConsistent = ref(true) // 档案卡与台账现行卡是否一致（false=档案是旧副本）
+const credVcLoading = ref(false)
 
-const hasPendingApplication = computed(() =>
-  (cwtStatus.value?.applications || []).some((a) => a.status === 'pending'),
-)
-
-const pendingAppText = computed(() => {
-  const app = (cwtStatus.value?.applications || []).find((a) => a.status === 'pending')
-  return app
-    ? t('user.pendingAppText', { id: app.id, date: new Date(app.submittedAt).toLocaleString() })
-    : ''
+// 档案需要跟上链上：续发/被改动/缺失——显示"同步凭证"按钮，让信息归一
+const credNeedsSync = computed(() => {
+  const c = credInfo.value
+  return !!c && c.state === 'claimed' && ['stale', 'missing', 'invalid'].includes(c.onChain?.status)
 })
 
-const dailyLimitText = computed(() => usageInfo.value?.dailyMinutes ?? '120')
+// 到期剩余天数：到期前 30 天黄标；≤0 无需慌——登录时平台按台账记录自动续发
+const credExpDays = computed(() => {
+  if (!credInfo.value?.expiresAt) return null
+  return Math.ceil((new Date(credInfo.value.expiresAt).getTime() - Date.now()) / 864e5)
+})
 
-const fetchCwtStatus = async (address) => {
-  if (!address) return
+const copyText = async (text) => {
+  if (!text) return
   try {
-    cwtLoading.value = true
-    const res = await axios.get(`/api/user/cwt/status?address=${encodeURIComponent(address)}`)
-    cwtStatus.value = res.data || null
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text)
+    } else {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+    }
+    toast(t('user.credCopied'))
   } catch {
-    cwtStatus.value = null
-  } finally {
-    cwtLoading.value = false
+    toast(t('user.credCopyFail'))
   }
 }
 
+const toggleCredVc = async () => {
+  credVcOpen.value = !credVcOpen.value
+  if (!credVcOpen.value || credVc.value || credVcLoading.value) return
+  credVcLoading.value = true
+  try {
+    const res = await axios.get('/api/user/credential-vc')
+    const cred = res.data.credential
+    // 同款防线：卡面 subject/id 的持有人必须=当前地址（会话切号竞态下拒显他人卡）
+    const holder = String(cred?.id || cred?.credentialSubject?.id || '')
+      .replace(/^did:swtc:/i, '')
+      .split('#')[0]
+    const mine = String(displayAddr.value || '').toLowerCase()
+    if (holder && mine && holder.toLowerCase() !== mine) {
+      toast(t('user.sessionMismatch'))
+      credVcOpen.value = false
+      return
+    }
+    credVc.value = cred
+    credVcConsistent.value = res.data.consistent !== false
+  } catch (err) {
+    toast(t('user.credVcFail', { err: err?.response?.data?.error || err.message }))
+    credVcOpen.value = false
+  } finally {
+    credVcLoading.value = false
+  }
+}
+
+// 自动重签单飞器（切账户自愈用）：并发调用共享同一次钱包弹窗与结果，
+// 成功返回"已按新会话重查且地址吻合"的 credential-status 载荷，否则 null。
+let autoResignPromise = null
+const resignSessionTo = (addr) => {
+  if (!autoResignPromise) {
+    autoResignPromise = (async () => {
+      const st = await loginOnly(addr)
+      if (st !== 'ok') return null
+      try {
+        const r = await axios.get('/api/user/credential-status', {
+          params: { address: addr, canonical: pluginCaseAddr.value || undefined },
+        })
+        const d = r.data || {}
+        return String(d.address || '').toLowerCase() === String(addr).toLowerCase() ? d : null
+      } catch {
+        return null
+      }
+    })().finally(() => {
+      autoResignPromise = null
+    })
+  }
+  return autoResignPromise
+}
+
+const loadCredentialStatus = async (address) => {
+  if (!address) return
+  // ★致命/非致命彻底分离（用户实测"200 却报服务连不上"的根治）：此前 fetch、
+  // 状态装配、领取弹窗同居一个 try——axios 成功之后任何一行抛 JS 异常都会被
+  // catch 当成请求失败：清掉已装配好的 credInfo、置无状态码的 credErr，
+  // retryCredential 的 netFail()（判据=status 空）把干净的 200 谎报成"网络中断"。
+  // 现在 catch 只包 fetch——credErr 有值 ⇔ 请求本身真失败；后续装配/弹窗的
+  // 异常只留 console 痕，绝不动 credInfo/credErr。
+  let data
+  try {
+    const res = await axios.get('/api/user/credential-status', {
+      // canonical=钱包原始大小写：给服务端"档案优先发现"当拼法线索（台账丢行也能
+      // 直达档案真卡）；服务端验归一同址才采信，缺省不影响既有链路
+      params: { address, canonical: pluginCaseAddr.value || undefined },
+    })
+    data = res.data || {}
+  } catch (err) {
+    credInfo.value = null
+    credErr.value = {
+      status: err?.response?.status || null,
+      code:
+        err?.response?.data?.code || err?.code || (err?.request ? 'ERR_NETWORK' : 'ERR_UNKNOWN'),
+    }
+    console.error(
+      '[UserCenter] credential-status 请求失败:',
+      credErr.value.status,
+      credErr.value.code,
+      err?.message,
+    )
+    return
+  }
+  // ★钱包切换防线（2026-10-23 用户报"凭证与address不一致"严重 bug 的根治）：
+  // credential-status 服务端绑定的是 user_session cookie（上次签名登录的钱包），
+  // 插件切账户未重签时返回的是**会话主人**的卡与角色。绝不把他人凭证/role=admin
+  // 渲染在当前地址名下——假页签、真泄露都不许过。后端所有写操作严格绑会话，
+  // 权限不可冒用，此处切断的是显示层串号+领取弹窗误导。
+  // 用户拍板恢复方式：**检测到账户切换即自动发起重签**（钱包弹一次，零操作自愈）；
+  // 拒签/重签未完成才落到被动引导态（"重新登录并重载凭证"按钮出口）。
+  if (data.address && String(data.address).toLowerCase() !== String(address).toLowerCase()) {
+    const fresh = await resignSessionTo(address)
+    if (fresh) {
+      data = fresh
+      toast(t('user.autoResigned'))
+    }
+  }
+  if (data.address && String(data.address).toLowerCase() !== String(address).toLowerCase()) {
+    credInfo.value = null
+    credVc.value = null
+    credApp.value = null
+    credErr.value = { status: null, code: 'SESSION_MISMATCH' }
+    role.value = 'user'
+    if (isSystemTab.value) activeTab.value = 'account'
+    // 不动 connected：插件确实连着，只是会话 cookie 属旧账户——若置 false 会把
+    // retryCredential（解药，:disabled="!connected"）锁死，用户困进无出口空态
+    toast(t('user.sessionMismatch'))
+    return
+  }
+  // ↓↓↓ 以下为"请求已成功"的纯装配段：任何异常都不许推翻凭证卡本身 ↓↓↓
+  try {
+    credErr.value = null // 成功即清因（占位态/文案随之消退）
+    credVerifiedBy.value = data.verifiedBy || 'ledger' // 判权顺序溯源（档案活验/台账兜底）
+    credInfo.value = data.credential || null
+    // v1.5 判权面：role='admin' 才装配「系统管理」tab（服务端活验证凭证属实）
+    role.value = data.role === 'admin' ? 'admin' : 'user'
+    // 红点节拍只在管理员在场：首起一次（badgesStarted 守，凭证状态刷新反复走此
+    // 函数不叠加计数）；角色跌落=普通用户/登出，立即停表并复位
+    if (role.value === 'admin') {
+      if (!badgesStarted) {
+        badgesStarted = true
+        startAdminBadges()
+      }
+    } else if (badgesStarted) {
+      badgesStarted = false
+      stopAdminBadges()
+    }
+    // （2026-10-23 修重大 bug：initialTabApplied 声明是裸布尔（:918），这里曾按
+    // ref 用 .value——赋值即 TypeError，管理员每次装配都在此 throw，深链页签/
+    // 续发提示/申请单态全被 catch 吞掉。恢复纯布尔用法，语义不变=仅首次生效）
+    if (role.value === 'admin' && !initialTabApplied) {
+      initialTabApplied = true
+      // 深链落地：?tab=adm:cred 直达子页；旧入口 ?tab=system（/admin 重定向）落管理总览
+      const q = String(route.query.tab || '')
+      if (q.startsWith('adm:')) activeTab.value = q
+      else if (q === 'system') activeTab.value = 'adm:overview'
+    } else if (!initialTabApplied) {
+      // 治动作歧义（用户裁定 2026-11-02）：首页「系统管理」按钮与普通入口同去用户
+      // 中心——非管理员由管理深链进来时，管理页签根本不装配，旧版静默弹回账户页，
+      // 用户无从知道是点错了、坏了、还是权限不够。现在给明话：落点在此、缘由在此。
+      initialTabApplied = true
+      const q0 = String(route.query.tab || '')
+      if (q0.startsWith('adm:') || q0 === 'system') toast(t('user.adminEntryLocked'))
+    }
+    // 撤销即时收面：角色掉出 admin 且正停在管理页 → 弹回账户信息
+    if (role.value !== 'admin' && isSystemTab.value) activeTab.value = 'account'
+    if (data.renewed) {
+      // 平台按台账 cwt/did 记录自动续发了新凭证（链上登记册同步换卡）
+      credVc.value = null
+      toast(t('user.credRenewed'))
+    }
+    if (data.credential && data.credential.kind === 'did' && data.credential.state === 'claimed') {
+      try {
+        const ar = await axios.get('/api/user/cwt-application', { params: { address } })
+        credApp.value = ar.data.application || null
+      } catch {
+        credApp.value = null
+      }
+    } else {
+      credApp.value = null
+    }
+  } catch (err) {
+    console.error('[UserCenter] 凭证装配异常（不影响凭证卡）:', err?.message)
+  }
+  // 分配了但还没领取 → 弹窗提醒（领取=把凭证写进用户自己的 DID 档案）；按地址节流。
+  // 弹窗是锦上添花：its 成败与凭证卡彻底无关（askConfirm 本身永不 reject，双保险）
+  try {
+    if (data.popup && credInfo.value && credPopupShown.value !== address) {
+      credPopupShown.value = address
+      await askConfirm({
+        message:
+          credInfo.value.kind === 'cwt' && (credInfo.value.roles || []).includes('admin')
+            ? t('user.credPopupAdmin') // v1.5：管理凭证到位（领取后即可见「系统管理」）
+            : credInfo.value.kind === 'cwt'
+              ? t('user.credPopupCwt')
+              : t('user.credPopupDid'),
+        confirmLabel: t('user.credClaimBtn'),
+        run: () => claimCredential(),
+      })
+    }
+  } catch (err) {
+    console.error('[UserCenter] 领取弹窗异常（不影响凭证卡）:', err?.message)
+  }
+}
+
+// 占位态的"重试"＝完整自愈：先重建会话再重拉。
+// 历史根因：会话签发点曾硬编码 2h（cookie 却 12h），开着页面过夜必 401，
+// 而旧重试只重发死请求、无反馈——表现"没反应"。后端已修（12h + 滑动续期），
+// 但前端仍保留自愈路做纵深：loginOnly 会话健在→session-info 命中零弹窗复用；
+// 已失效→走插件重签换 cookie（一次性挑战，验签与登录同式）。全程态可见、成败有话。
+const retryCredential = async () => {
+  const address = currentAddress()
+  if (!address) {
+    toast(t('user.errConnectFirst'))
+    return
+  }
+  credRetrying.value = true
+  // loadCredentialStatus 已保证：credErr 有值 ⇔ fetch 本身真失败（有留痕无  // HTTP 状态码=连接级：重启窗口/断网/超时）
+  const netFail = () => credErr.value && !credErr.value.status
+  try {
+    const st = await loginOnly(address)
+    if (st === 'ok') await loadCredentialStatus(address)
+    // 连接级失败（实测主因：服务部署重启 ~10s 窗口 ECONNREFUSED）→ 等 3s 自动
+    // 再试一次，瞬断不该劳烦用户二次点击
+    if (st === 'ok' && !credInfo.value && netFail()) {
+      await new Promise((r) => setTimeout(r, 3000))
+      await loadCredentialStatus(address)
+    }
+    if (credInfo.value) {
+      toast(t('user.credReloaded'))
+    } else if (st === 'denied') {
+      // loginOnly 已 toast 具体原因（拒签/验签失败），此处不叠话
+    } else if (credErr.value?.code === 'SESSION_MISMATCH') {
+      // 重签后仍不一致（理论上近零：loginOnly 失败静默/被拒的残余态）——
+      // 不许误报成"应答异常"，直说是会话与账户没对齐
+      toast(t('user.sessionMismatch'))
+    } else if (credErr.value?.status === 401 || credErr.value?.status === 403) {
+      toast(t('user.credFailSession'))
+    } else if (netFail()) {
+      toast(t('user.credFailNet'))
+    } else if (credErr.value?.status) {
+      toast(t('user.credFailHttp', { err: credErr.value.status }))
+    } else {
+      // 200 却无凭证体：服务端应答异常，与网络无关——旧版谎报"网络"的定位坑
+      toast(t('user.credFailEmpty'))
+    }
+  } finally {
+    credRetrying.value = false
+  }
+}
+
+const sha256Hex = async (bytes) => {
+  // 非安全上下文（http+局域网 IP）没有 crypto.subtle——纯 JS 兜底，输出逐字节一致
+  // （2026-10-26 服务器实弹："存入失败：…digest"；fixlog#5/#27 同族；兜底见 utils/sha256.js）
+  if (window.crypto?.subtle) {
+    const buf = await crypto.subtle.digest('SHA-256', bytes)
+    return Array.from(new Uint8Array(buf))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('')
+  }
+  return sha256HexFallback(bytes)
+}
+
 /**
- * 申请 CWT 验证：点击 → 插件 cwt_sign 签名（usr 统一为 dsh-usr）→ 自动提交后端。
- * 插件弹窗确认后返回 token（header.payload.Signature），无需用户手动粘贴。
- * cwt_sign 参数：对象 { address: 插件当前账户(原始大小写), usr: 'dsh-usr' }。
+ * 领取凭证：scaffold（平台签 VC）→ 插件对档案字节做 IPFS 口径文件签 → upload 上链。
+ * 无 DID 档案时只亮指引（生成地址 + 核对提醒），不硬试写入。
  */
-const applyCwt = async () => {
+const claimCredential = async () => {
   if (!window.ccdao || !window.ccdao.request) {
     toast(t('user.errNoCcdao'))
     return
   }
-  cwtSubmitting.value = true
+  credBusy.value = 'claim'
   try {
-    // 插件当前账户（requestAccounts 返回原始大小写，插件 accounts.includes 大小写敏感）
     const pluginAddress = await requestAccounts()
-    // 插件 cwt_sign：usr 统一使用平台标识 dsh-usr（用户无需输入）
-    const result = await window.ccdao.request({
-      method: 'cwt_sign',
-      params: [{ address: pluginAddress, usr: 'dsh-usr' }],
-    })
-    const token = typeof result === 'string' ? result : (result?.token ?? result?.signature)
-    if (!token) {
-      throw new Error(t('user.errNoToken'))
+    rememberPluginCase(pluginAddress)
+    if (!pluginAddress) {
+      toast(t('user.errNoAccount'))
+      return
     }
-    await axios.post('/api/user/cwt/apply', { token })
-    toast(t('user.cwtAppliedOk'))
-    await fetchCwtStatus(userInfo.value.address)
+    const scfRes = await axios.post('/api/user/credential-scaffold', {
+      canonicalAddress: pluginAddress,
+    })
+    const scf = scfRes.data || {}
+    if (scf.alreadyClaimed) {
+      credNoDid.value = null
+      toast(t('user.credAlreadyClaimed'))
+      await loadCredentialStatus(pluginAddress.toLowerCase())
+      return
+    }
+    if (scf.probeFailed) {
+      // 档案服务瞬断≠没档案：只提示重试，不出"去生成 DID"的重指引（防误导）
+      credNoDid.value = null
+      toast(scf.hint || t('user.credProbeFail'))
+      return
+    }
+    if (scf.noProfile) {
+      credNoDid.value = scf
+      toast(t('user.credNeedDid'))
+      return
+    }
+    if (!scf.document) throw new Error(scf.error || t('user.credScaffoldFail'))
+    // wodecards 文件签口径：签的字节是 utf8(sha256(文件).hex)（官方 ipfs-rpc-client 拆包定样）
+    const docBytes = new TextEncoder().encode(JSON.stringify(scf.document))
+    const msgBytes = new TextEncoder().encode(await sha256Hex(docBytes))
+    const signature = await signFileBytes(pluginAddress, msgBytes)
+    let publicKey = null
+    try {
+      publicKey = await getIpfsPublicKey(pluginAddress)
+    } catch {
+      publicKey = await getPublicKey(pluginAddress)
+    }
+    await axios.post('/api/user/credential-upload', {
+      document: scf.document,
+      fileName: scf.fileName,
+      publicKey,
+      signature,
+    })
+    credNoDid.value = null
+    toast(scf.reissue ? t('user.credSynced') : t('user.credClaimed'))
+    credVc.value = null // 换卡/首领：重置凭证本体查看态
+    credVcOpen.value = false
+    await loadCredentialStatus(pluginAddress.toLowerCase())
   } catch (err) {
-    toast(t('user.cwtApplyFail', { err: err.response?.data?.error || err.message }))
+    const msg = err?.response?.data?.error || err?.message || String(err)
+    toast(t('user.credClaimFail', { msg }))
   } finally {
-    cwtSubmitting.value = false
+    credBusy.value = ''
+  }
+}
+
+const applyCwt = async () => {
+  const address = currentAddress()
+  credBusy.value = 'apply'
+  try {
+    await axios.post('/api/user/cwt-apply', { address })
+    toast(t('user.credApplied'))
+    await loadCredentialStatus(address)
+  } catch (err) {
+    toast(err?.response?.data?.error || t('user.credApplyFail'))
+  } finally {
+    credBusy.value = ''
   }
 }
 
@@ -908,6 +1620,7 @@ const signChallenge = async (challengeUrl = '/api/user/config-challenge') => {
   //    jndwret... 再传回去会被判"未授权"(4100)。只有 requestAccounts 原样
   //    返回的字符串才能通过。后端 normalizeAddress 会自己转小写，无需担心。
   const pluginAddress = await requestAccounts()
+  rememberPluginCase(pluginAddress)
   // 2. 领一次性挑战（响应含 message：服务端构造的用途绑定被签内容）
   const challengeRes = await axios.post(challengeUrl, { address: pluginAddress })
   const { nonce, message } = challengeRes.data
@@ -1035,6 +1748,9 @@ const saveConfig = async () => {
 /** 探测某个自定义端点的模型列表（优先用输入框 key，否则用该端点已存 key） */
 const discoverItem = async (idx) => {
   if (!currentAddress()) return toast(t('user.errConnectFirst'))
+  // 串行互斥（2026-10 审计）：discovering 只记一个下标，点了 A 再点 B 会让
+  // A 的"探测中"态被顶掉且两笔并发——签名挑战/限流都会交叠。一次只探一个。
+  if (discovering.value !== null) return
   const item = items.value[idx]
   if (!item?.baseURL?.trim()) return toast(t('user.errNeedBaseUrl'))
   discovering.value = idx
@@ -1165,10 +1881,12 @@ const handleAccountsChanged = async (accounts) => {
     localStorage.removeItem('swtc_address')
     connected.value = false
     userInfo.value = {}
+    pluginCaseAddr.value = ''
     toast(t('user.walletDisconnected'))
     return
   }
 
+  rememberPluginCase(accounts[0]) // 先记原始大小写（全界面地址展示以它为准）
   const newAddress = accounts[0].toLowerCase()
   const saved = localStorage.getItem('swtc_address')
   if (!saved || saved === newAddress) {
@@ -1219,12 +1937,36 @@ const establishConnected = async (address) => {
   connected.value = true
 }
 
+// ★v1.5 验收反馈②：登录与建容器解耦（后端 /connect action=login：验签+换 cookie，不 docker、
+// 不过准入闸——准入闸只咬"进容器"，登录被咬会让过期凭证者进不了续发通道，死锁）。
+// 会话有效且地址一致 → 免签名弹窗秒进；否则一次性签名登录。绝不调 ensureContainer。
+const loginOnly = async (address) => {
+  try {
+    const s = await axios.get('/api/user/session-info')
+    if (s.data?.address && String(s.data.address).toLowerCase() === String(address).toLowerCase())
+      return 'ok'
+  } catch {
+    /* 会话查询失败按"无会话"处理，走签名登录 */
+  }
+  try {
+    const res = await connectWithOwnership(address, {
+      action: 'login',
+      title: t('user.loadingLogin'),
+      progress: 35,
+    })
+    if (res.status === 200) return 'ok'
+    const data = await res.json().catch(() => ({}))
+    toast(data.error || t('user.loginFail', { err: res.status }))
+    return 'denied'
+  } catch (err) {
+    toast(t('user.loginFail', { err: err?.message || err }))
+    return 'denied'
+  }
+}
+
 // 处理地址变化的通用函数
 const handleAddressChange = async (newAddress, isInitialLoad = false) => {
   const oldAddress = localStorage.getItem('swtc_address')
-  console.log(
-    `[flow] F3 handleAddressChange 进入 (${isInitialLoad ? '初始加载' : '按钮/事件'}, old=${oldAddress}, new=${newAddress})`,
-  )
 
   if (isInitialLoad) {
     console.log('[UserCenter] 初始加载，恢复地址:', newAddress)
@@ -1238,72 +1980,50 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
   // 避免切换后短暂闪现上一个用户的共享/安装列表；
   // 也保证后续失败分支（额度用完/资源排队/异常）不会残留旧地址的页面与信息
   if (!isInitialLoad && newAddress !== oldAddress) {
-    mineData.value = { published: [], installed: [], inContainer: [] }
+    mineData.value = { published: [], installed: [], inContainer: [], plugins: null }
     mySkillsLoading.value = true
     userInfo.value = {}
     connected.value = false
     usageInfo.value = null
-    cwtStatus.value = null
+    // 2026-10 审计补：凭证与模型配置也是**按地址**的数据——切钱包瞬间把上一个
+    // 地址的卡片/申请状态/模型条目留在屏上，既是误导（新地址显示"已领取"），
+    // 也有把旧配置原样保存到新地址的串写风险。
+    credInfo.value = null
+    credVc.value = null
+    credApp.value = null
+    items.value = []
   }
 
   try {
     // 显示加载页面
-    console.log('[flow] L1 loading=10% 验证地址')
     showLoading(t('user.loadingConnect'), t('user.loadingVerify'), 10)
 
-    // 关键：无论地址是否变化，都要确保容器存在并运行
-    const containerStatus = await ensureContainer(newAddress)
-
-    // 如果在等待队列中，不继续加载用户信息
-    if (containerStatus === 'waiting') {
+    // ★v1.5 验收反馈②：进入用户中心 = **登录**，不再顺手建容器。
+    // 签名换 cookie（/connect action=login，后端不碰 docker）→ 正常拉账户/凭证/角色。
+    // 容器创建/启动是显式动作：容器管理页「启动容器」按钮（restartContainer→ensureContainer
+    // 全状态机）或「进入 DSH」（enterDsh，自带创建+跳转）。管理员进来管理不再空转容器，
+    // 普通用户也不再被"进来即计费起时限"绑架——启动时机还给用户。
+    const loginState = await loginOnly(newAddress)
+    if (loginState === 'denied') {
+      // 换 cookie 失败（验签被拒/准入异常）→ 停在连接钱包卡片，loginOnly 已弹人话原因
       hideLoading()
-      // 保存地址
-      localStorage.setItem('swtc_address', newAddress)
-      // 身份已确立（地址已拿到）→ 必须进入已连接态，否则模板会停在
-      // 「连接钱包」卡片上（!connected 分支在 waiting 分支之前），排队页根本看不到
-      await establishConnected(newAddress)
       return
     }
-
-    // 今日额度用完：明确提示（初始加载不打扰），不再弹签名/进队列
-    if (containerStatus === 'usage-limit') {
-      hideLoading()
-      localStorage.setItem('swtc_address', newAddress)
-      // 关键修复：额度用完 ≠ 没连上钱包。这里必须进入「已连接」态并直接切到
-      // CWT 验证页 —— 否则页面停在「连接钱包」卡片，而解除限时的 CWT 入口又在
-      // 已连接界面里，点了弹限时、弹完还是连接钱包，形成死循环（用户实测反馈）
-      await establishConnected(newAddress)
-      activeTab.value = 'cwt'
-      if (!isInitialLoad) {
-        toast(lastConnect202Message || t('user.usageLimitReached'))
-      }
-      return
-    }
-
-    // 更新加载状态
-    showLoading(
-      t('user.loadingCreateContainer'),
-      containerStatus === 'created' ? t('user.loadingFirstStart') : t('user.loadingStartExisting'),
-      50,
-    )
 
     // 保存地址（即使是相同的地址也要保存，确保格式正确）
     localStorage.setItem('swtc_address', newAddress)
 
-    // 获取用户信息
-    showLoading(t('user.loadingFetchInfo'), t('user.loadingAccountData'), 80)
-    await fetchUserInfo(newAddress)
+    // ★凭证/角色是"登录"这一动作的直接结论，不寄生在用户信息接口的分支里：
+    //   先拉 credential-status（账户信息的凭证卡 + 管理 tab 判权），再补业务数据。
+    //   （历史坑：fetchUserInfo 走 403/401 分支时早退，loadCredentialStatus 没被调，
+    //   credInfo 空置 → 凭证卡整块"消失"——用户实测反馈即此。）
+    await loadCredentialStatus(newAddress)
 
-    // 关键：设置 connected 为 true，否则页面不显示用户信息
-    if (userInfo.value.address) {
-      connected.value = true
-      console.log('[flow] L4 connected=true → hideLoading（loading 在此结束）')
-      console.log('[UserCenter] 已设置 connected = true')
-      hideLoading()
-    } else {
-      console.error('[UserCenter] userInfo.value.address 为空，无法设置 connected')
-      hideLoading()
-    }
+    // 身份已确立 → 进入已连接态（establishConnected 内部 fetchUserInfo 拉全量；
+    // 其内部再调一次 loadCredentialStatus 属幂等刷新，无副作用）
+    showLoading(t('user.loadingFetchInfo'), t('user.loadingAccountData'), 70)
+    await establishConnected(newAddress)
+    hideLoading()
 
     // 只在地址真正变化时才显示提示
     if (!isInitialLoad && newAddress !== oldAddress) {
@@ -1311,9 +2031,7 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
     }
 
     // 切换/连接后刷新"我的技能"为当前地址的个人视图
-    console.log('[flow] F13 loadMine 开始（loading 已结束）')
     await loadMine()
-    console.log('[flow] F13b loadMine 完成')
   } catch (err) {
     console.error('[UserCenter] 处理地址失败:', err)
     hideLoading()
@@ -1324,7 +2042,6 @@ const handleAddressChange = async (newAddress, isInitialLoad = false) => {
 }
 
 const connectWallet = async () => {
-  console.log('[flow] F1 connectWallet 进入')
   if (!hasCCDAO.value) return
 
   connecting.value = true
@@ -1332,10 +2049,9 @@ const connectWallet = async () => {
   showLoading(t('user.connecting'), t('user.loadingWalletConnect'), 5)
   try {
     const pluginAddress = await requestAccounts()
-
+    rememberPluginCase(pluginAddress)
     // 统一转小写
     const address = pluginAddress.toLowerCase()
-    console.log('[flow] F2 拿到地址:', address)
     console.log('[UserCenter] 连接钱包，地址:', address)
 
     // 使用通用处理函数
@@ -1362,7 +2078,9 @@ const connectWallet = async () => {
 // 避免重复弹签名窗、重复创建容器。
 let ownershipInFlight = false
 const connectWithOwnership = async (address, opts = {}) => {
-  console.log('[flow] F6 connectWithOwnership 进入（签名链路）')
+  // quiet=后台自动拉起（进入用户中心触发）：钱包签名弹窗照常（归属闸不放松），
+  // 但不糊全屏 loading——用户可继续浏览，进度由容器 tab 的加载图标承担
+  const quiet = !!opts.quiet
   if (ownershipInFlight) {
     console.warn('[UserCenter] 签名连接进行中，忽略重复请求')
     throw new Error(t('user.busy'))
@@ -1376,35 +2094,41 @@ const connectWithOwnership = async (address, opts = {}) => {
   try {
     // 阶段化 loading（每次 show 不 hide，由调用方统一 hideLoading）：
     // 覆盖"钱包弹窗请求账户 → 领取挑战 → 等待签名 → 建立连接"的每个耗时环节
-    showLoading(title, t('user.loadingVerify'), progress0)
+    if (!quiet) showLoading(title, t('user.loadingVerify'), progress0)
 
     const pluginAddress = await requestAccounts()
-    // 1) 领取一次性挑战：**必须向 /connect 领**（CONNECT 用途分池）。
-    //    不能借用 config-challenge —— 挑战池按用途隔离，借来的 nonce 在 /connect
-    //    处取不到（这正是防"跨端点凭证混淆"的设计）。无签名调用 /connect 会
-    //    返回 401 + { nonce, message }，这就是本流程要签的材料。
-    showLoading(title, t('user.loadingWalletConnect'), Math.max(progress0, 25))
-    const chalRes = await fetch(`/connect?address=${encodeURIComponent(pluginAddress)}`)
+    rememberPluginCase(pluginAddress)
+    // 1) 领取一次性挑战：走 /connect-challenge（200 正身；旧链路借 /connect 的
+    //    无签名 401 下发挑战，浏览器必标红、每次登录都像"报错"）。用途仍是
+    //    CONNECT 专属——挑战池按用途隔离，借别的 nonce 在 /connect 取不到
+    //    （防跨端点凭证混淆），兑现也只由后续带签名 /connect 一步完成。
+    if (!quiet) showLoading(title, t('user.loadingWalletConnect'), Math.max(progress0, 25))
+    const chalRes = await fetch(`/connect-challenge?address=${encodeURIComponent(pluginAddress)}`)
     const challenge = await chalRes.json()
     const nonce = challenge.nonce
     const message = challenge.message
     if (!nonce || !message) {
       throw new Error(challenge.error || '领取连接挑战失败，请重试')
     }
-    console.log('[flow] F7 挑战获取完成 nonce.length=' + (nonce ? String(nonce).length : 0))
     // 2) 插件签名（用户确认弹窗，可能等待较久）：签的是用途绑定消息（hex）
-    showLoading(title, t('user.loadingSign'), Math.max(progress0, 45))
+    if (!quiet) showLoading(title, t('user.loadingSign'), Math.max(progress0, 45))
     const signature = await signMessage(pluginAddress, message)
     const publicKey = await getPublicKey(pluginAddress)
-    console.log('[flow] F8 钱包签名+公钥完成')
     // 3) 带签名访问 /connect（已存在容器同样验签并发 cookie）
     // format=json：浏览器 fetch 的 redirect:manual 会把 302 包成 opaque (status 0)，
     // 取不到 location → 后端直接回 200 JSON {url}，前端 window.open。
-    showLoading(title, t('user.loadingEstablish'), Math.max(progress0, 70))
-    const params = new URLSearchParams({ address, nonce, signature, publicKey, format: 'json' })
-    console.log('[flow] F9a 发起 /connect（带签名）')
+    if (!quiet) showLoading(title, t('user.loadingEstablish'), Math.max(progress0, 70))
+    // action=login（v1.5 反馈②）：只换 cookie 不建容器——签的仍是 CONNECT 用途同一消息，
+    // 额外 query 不参与签名内容，防重放语义不变。
+    const params = new URLSearchParams({
+      address,
+      nonce,
+      signature,
+      publicKey,
+      format: 'json',
+      ...(opts.action ? { action: opts.action } : {}),
+    })
     const cRes = await fetch(`/connect?${params}`)
-    console.log('[flow] F9b /connect 返回 status=' + cRes.status)
     return cRes
   } finally {
     ownershipInFlight = false
@@ -1433,7 +2157,6 @@ const enterDsh = async () => {
     if (res.status === 200) {
       const data = await res.json()
       if (data?.url) {
-        console.log('[flow] F14 打开容器页: ' + data.url)
         window.open(data.url, '_blank', 'noopener')
         return
       }
@@ -1443,7 +2166,6 @@ const enterDsh = async () => {
     if (res.status === 302) {
       const loc = res.headers.get('location')
       if (loc) {
-        console.log('[flow] F14 302 打开容器页: ' + loc)
         window.open(loc, '_blank', 'noopener')
       }
       return
@@ -1462,14 +2184,10 @@ const enterDsh = async () => {
 
 // 最近一次 /connect 202 的后端提示（资源不足/额度用完），供上层展示
 let lastConnect202Message = ''
-const ensureContainer = async (address) => {
-  console.log('[flow] F4a ensureContainer 进入')
+const ensureContainer = async (address, opts = {}) => {
   // 先检查容器状态
   try {
     const statusRes = await axios.get(`/connect-status?address=${encodeURIComponent(address)}`)
-    console.log(
-      `[flow] F4b /connect-status 返回 exists=${statusRes.data.exists} status=${statusRes.data.status}`,
-    )
 
     // 如果在等待队列中
     if (statusRes.data.status === 'waiting') {
@@ -1484,11 +2202,11 @@ const ensureContainer = async (address) => {
 
     // 如果容器不存在或已销毁，创建新容器
     if (!statusRes.data.exists || statusRes.data.status === 'destroyed') {
-      console.log('[flow] F5 容器不存在 → 签名并创建')
       console.log('[UserCenter] 容器不存在，正在创建...')
       const connectRes = await connectWithOwnership(address, {
         title: t('user.loadingCreateContainer'),
         progress: 50,
+        quiet: !!opts.quiet,
       })
 
       // 检查是否返回 202（资源不足 → 排队；额度用完 → 明确提示，不排队）
@@ -1603,28 +2321,42 @@ const cancelWaiting = () => {
   }
   connected.value = false
   userInfo.value = {}
+  // 断开即清凭证视图（防上一钱包的卡片残留给下一个地址）
+  credInfo.value = null
+  credApp.value = null
+  credNoDid.value = null
 }
 
 const fetchUserInfo = async (address) => {
-  console.log('[flow] F11 fetchUserInfo 开始')
   // 门控 loading：仅当调用方没有在展示 loading 时才自己开/关，
   // 避免打断 handleAddressChange 的整体加载流程（它自己会 hide）
   const opened = !loading.value
   if (opened) showLoading(t('user.loadingFetchInfo'), t('user.loadingAccountData'), 80)
   try {
     const res = await axios.get(`/api/user/${address}`)
-    console.log(
-      '[flow] F12 用户信息返回 OK, address=' +
-        (res.data?.address || '(空)') +
-        ', status=' +
-        res.data?.status,
-    )
+    // 未建档新用户空态：后端以 200+USER_NOT_FOUND 表达（根治浏览器网络层红字
+    // 404；catch 里的 404 分支保留兼容旧服务端）。空态不发 usage/config 请求；
+    // 装配必须先于 userInfo 落位——领取弹窗由装配触发，若后于容器管理块的
+    // 档案加载完成，会被其"无档案→弹连接引导"时序顶掉（新用户首见弹窗不能丢）。
+    if (res.data && res.data.code === 'USER_NOT_FOUND') {
+      await loadCredentialStatus(address)
+      userInfo.value = { address, status: 'none', exists: false }
+      return
+    }
     userInfo.value = res.data
     fetchUsage(address)
-    fetchCwtStatus(address)
     fetchConfigStatus()
+    loadCredentialStatus(address)
+    // 进入即检容器态并后台拉起（每地址一次性；不 await——凭证装配不受牵制）
+    void autoBootContainer(res.data)
   } catch (err) {
-    console.error('获取用户信息失败:', err)
+    // 403/404 是已知良性态（未连接/未建档空态），不再 error 级刷屏——
+    // 真异常仍走 error（下面分支处理不到的情况）
+    const benign = err.response?.status === 404 || err.response?.status === 403
+    ;(benign ? console.info : console.error)(
+      benign ? '[UserCenter] 用户信息空态/待解锁:' : '获取用户信息失败:',
+      err,
+    )
 
     // 如果是 400 错误，说明地址无效，清除 localStorage
     if (err.response?.status === 400) {
@@ -1632,6 +2364,7 @@ const fetchUserInfo = async (address) => {
       localStorage.removeItem('swtc_address')
       connected.value = false
       userInfo.value = {}
+      pluginCaseAddr.value = ''
       toast(t('user.invalidAddress'))
       return
     }
@@ -1639,6 +2372,23 @@ const fetchUserInfo = async (address) => {
     // 403（会话无效/他人地址）：不打断、不弹错——签名连接后自动解锁
     if (err.response?.status === 403) {
       console.warn('[UserCenter] 用户信息需完成签名连接后解锁（403），请点击「进入 DSH」')
+      return
+    }
+
+    // 401（2026-10 审计补）：user_session 过期/被吊销。吞进"重试"会把界面
+    // 停在半连接的假象——明确回到未连接态，提示一键重连。
+    if (err.response?.status === 401) {
+      connected.value = false
+      toast(t('user.sessionExpired'))
+      return
+    }
+
+    // 404（v1.5 反馈②）：登录建档分离后，未启动过容器=无档案——**正常初始态**，
+    // 不是错误：渲染"未创建"空态（容器管理页的「启动容器」按钮就是入口），不重试不弹错。
+    // 凭证/角色不依赖容器，照常拉取（判权与卡面展示都挂在 credential-status 上）。
+    if (err.response?.status === 404) {
+      userInfo.value = { address, status: 'none', exists: false }
+      loadCredentialStatus(address)
       return
     }
 
@@ -1655,40 +2405,75 @@ const fetchUserInfo = async (address) => {
   }
 }
 
-const restartContainer = async () => {
+// ══ 进入用户中心·容器后台自动拉起（2026-10-23 用户拍板）══
+// 检查容器态 → 未跑则后台启动（不糊页面，tab 挂加载图标）→ 完毕弹窗；
+// 本来就在跑 → 直接弹窗告知。与 v1.5"进入不顺手建容器"的关系：当年痛点是
+// **全屏 loading 阻断浏览**，这里改为后台化+图标化，签名仅 destroyed 重建
+// 时按归属闸照常请求一次（闸口语义不放松）。每地址一次性，轮询/手动刷新不重复弹。
+let autoBootFor = ''
+const containerBooting = ref(false)
+// 弹窗收尾约定（2026-10-23 用户拍板）：确定=跳「容器管理」页看结果/手动重试，
+// 取消=仅关闭。后台启动期间 restartContainer 入口同样置灰+防御性直返
+const bootNotice = (msg) => {
+  askConfirm({ message: msg }).then((ok) => {
+    if (ok) activeTab.value = 'container'
+  })
+}
+const autoBootContainer = async (data) => {
+  const address = data?.address || currentAddress()
+  if (!address || autoBootFor === address) return
+  autoBootFor = address
+  const st = data?.status
+  if (st === 'running') {
+    bootNotice(t('user.bootAlreadyRunning'))
+    return
+  }
+  // 只拉"登过账的停机户"：stopped（纯 session 静默启动）与 destroyed（需一次
+  // 归属签名重建）；none 未建档/waiting 已在排队页/未知态都不自动造轮子
+  if (st !== 'stopped' && st !== 'destroyed') return
+  containerBooting.value = true
   try {
-    const address = userInfo.value.address
-    showLoading(t('user.loadingStarting'), t('user.loadingPleaseWait'), 40)
-
-    const res = await connectWithOwnership(address, {
-      title: t('user.loadingStarting'),
-      progress: 40,
-    })
-
-    // 必须检查 /connect 的 HTTP 状态：容器创建/启动失败时后端会回
-    // 502（未就绪/内部错误）、202（额度用尽或排队）、503（队列满），
-    // 旧实现完全不看状态码就弹"启动成功"，于是出现"提示启动了、
-    // 状态却仍是已销毁"（实测：容器未就绪被回滚，用户以为已就绪）。
-    if (!res.ok) {
-      let detail = ''
-      try {
-        const data = await res.json()
-        detail = data?.message || data?.error || ''
-      } catch {
-        try {
-          detail = (await res.text()).slice(0, 300)
-        } catch {
-          /* 响应体不可读则只用状态码 */
-        }
+    if (st === 'stopped') {
+      await axios.post(`/api/user/${address}/restart`)
+      await new Promise((resolve) => setTimeout(resolve, 3000))
+    } else {
+      const r = await ensureContainer(address, { quiet: true })
+      if (r === 'waiting') return // 排队页由状态机挂出——页面本身即告知
+      if (r === 'usage-limit') {
+        bootNotice(lastConnect202Message || t('user.bootUsageLimit'))
+        return
       }
-      throw new Error(detail || `HTTP ${res.status}`)
     }
-
-    // 等待容器完全就绪
-    await new Promise((resolve) => setTimeout(resolve, 5000))
-
     await fetchUserInfo(address)
+    bootNotice(t('user.bootDoneNotice'))
+  } catch (err) {
+    bootNotice(t('user.bootFailNotice', { err: err?.message || String(err) }))
+  } finally {
+    containerBooting.value = false
+  }
+}
+
+const restartContainer = async () => {
+  // 后台自动拉起进行中：按钮已置灰，这里再挡一层（快捷键/其他路径直触）
+  if (containerBooting.value) return
+  const address = userInfo.value.address || currentAddress()
+  if (!address) {
+    toast(t('user.errConnectFirst'))
+    return
+  }
+  try {
+    showLoading(t('user.loadingStarting'), t('user.loadingPleaseWait'), 40)
+    // ★v1.5 反馈②：进页面不再建容器，此按钮成为建/启容器的唯一自动入口——
+    // 走 ensureContainer 全状态机（不存在→创建、停止→启动、排队→排队页、额度尽→提示），
+    // 旧实现直连 /connect 不看 202 的坑也一并消掉（202 在状态机内转成排队/usage-limit）。
+    const st = await ensureContainer(address)
     hideLoading()
+    if (st === 'waiting') return // 排队页已由状态机挂出（waiting.value）
+    if (st === 'usage-limit') {
+      toast(lastConnect202Message || t('user.usageLimitReached'))
+      return
+    }
+    await fetchUserInfo(address)
     toast(t('user.startedOk'))
   } catch (err) {
     hideLoading()
@@ -1786,7 +2571,11 @@ const statusText = (status) => {
     running: t('user.statusRunning'),
     stopped: t('user.statusStopped'),
     destroyed: t('user.statusDestroyed'),
+    // v1.5 反馈②：登录不建容器后"未创建"是常态首屏，不该裸显 null/none
+    none: t('user.statusNone'),
+    null: t('user.statusNone'),
   }
+  if (!status) return map.none
   return map[status] || status
 }
 
@@ -1802,7 +2591,7 @@ onMounted(async () => {
   if (hasCCDAO.value && window.ccdao && window.ccdao.request) {
     try {
       const pluginAddress = await requestAccounts()
-
+      rememberPluginCase(pluginAddress)
       if (pluginAddress) {
         const currentAddress = pluginAddress.toLowerCase()
         console.log('[UserCenter] 从 CCDAO 获取当前地址:', currentAddress)
@@ -1862,7 +2651,7 @@ onMounted(async () => {
 })
 
 // ===================== 🧩 我的技能（技能市场集成） =====================
-const mineData = ref({ published: [], installed: [], inContainer: [] })
+const mineData = ref({ published: [], installed: [], inContainer: [], unverified: false })
 const mySkillsLoading = ref(true) // 初始即 loading：面板首帧显示 spinner，避免空态闪现后突然出数据
 const importDialogOpen = ref(false)
 const importName = ref('')
@@ -1883,6 +2672,12 @@ const fetchMine = async () => {
 let mineInFlight = null
 
 /** 我的技能列表整体刷新（控制下方列表区的 loading） */
+function fmtBytes(n) {
+  if (typeof n !== 'number' || Number.isNaN(n)) return '—'
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
+}
 const loadMine = async () => {
   if (mineInFlight) return mineInFlight // 并发去重：watch 与切换流程可能重叠触发
   if (!connected.value) return
@@ -1897,7 +2692,10 @@ const loadMine = async () => {
         ...mineData.value,
         published: res.published || [],
         installed: res.installed || [],
+        unverified: Boolean(res.unverified),
+        plugins: Array.isArray(res.plugins) ? res.plugins : null,
       }
+      if (res.reconciled) toast(t('skills.reconciledGone', { n: res.reconciled }))
     } catch (err) {
       // 我的技能加载失败不阻塞其他功能
       console.warn('[skills] 加载我的技能失败（忽略）:', err)
@@ -1935,7 +2733,10 @@ const loadContainerSkills = async () => {
 }
 
 watch(connected, (v) => {
-  if (v) loadMine()
+  if (v) {
+    loadMine()
+    loadCredentialStatus(userInfo.value.address)
+  }
 })
 
 const openImportDialog = () => {
@@ -2079,6 +2880,13 @@ const doShare = async () => {
 }
 
 onUnmounted(() => {
+  stopAdminBadges()
+  // 排队轮询是全局 interval：不随组件卸载停止的话，切走页面的用户仍在后台
+  // 空转打接口（僵尸组件 setState），重挂载后新旧两条轮询并行（2026-10 审计）。
+  if (queuePollingTimer) {
+    clearInterval(queuePollingTimer)
+    queuePollingTimer = null
+  }
   // 解绑账户监听，避免组件重挂载后重复监听
   unbindAccounts?.()
   unbindAccounts = null
@@ -2086,6 +2894,11 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* 技能动作行：紧凑贴标题，别再让全局 action-buttons 的 1.25rem 上下大空档 */
+.skill-actions {
+  margin: 0.5rem 0 1rem;
+}
+
 .user-center {
   height: 100%;
   display: flex;
@@ -2319,6 +3132,7 @@ onUnmounted(() => {
 }
 
 .sidebar-item {
+  position: relative;
   width: 100%;
   display: flex;
   align-items: center;
@@ -2355,6 +3169,25 @@ onUnmounted(() => {
 }
 
 .sidebar-icon :deep(svg) {
+  display: block;
+}
+
+/* v1.5 验收①：用户页签与管理页签同侧栏并列，中间一条"管理"分组细线 */
+.sidebar-divider {
+  margin: 0.85rem 0.75rem 0.4rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid rgba(226, 232, 240, 0.9);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #94a3b8;
+  user-select: none;
+}
+
+/* v1.5 验收①：管理页签内嵌 AdminPanel——外层 tab-content 不再叠 padding，
+   避免双层留白；AdminPanel(embedded) 自身不渲染侧栏，内容即全宽 */
+.tab-content.admin-embed {
+  padding: 0;
   display: block;
 }
 
@@ -2423,6 +3256,22 @@ onUnmounted(() => {
 .stat-value {
   font-size: 13px;
   color: #334155;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 长值行（vcId/profileDid+复制按钮）：2026-10-23 实锤——.addr-tip[data-full] 全局
+   overflow:visible（hover 提示不能被裁）把上面的省略号推翻，nowrap 长串+不可压缩的
+   emoji 按钮一起撑破卡片边界。解法=职责拆分：外层宿主自然收窄成 flex 行，
+   省略号交给内层 .stat-clip，按钮永不缩 */
+.stat-value.addr-tip {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+.stat-clip {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2836,6 +3685,16 @@ onUnmounted(() => {
   color: #1e293b;
 }
 
+/* 下拉框自绘箭头：文字左右等距（原生箭头挤右侧会失衡） */
+.import-field select {
+  -webkit-appearance: none;
+  appearance: none;
+  padding: 0.5rem 1.85rem 0.5rem 0.6rem;
+  background: #fff
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='11' height='7' viewBox='0 0 11 7'><path d='M1 1l4.5 4.5L10 1' fill='none' stroke='%2364748b' stroke-width='1.6' stroke-linecap='round'/></svg>")
+    no-repeat right 0.7rem center;
+}
+
 .share-empty-hint {
   padding: 0.5rem 0.6rem;
   border: 1px dashed #cbd5e1;
@@ -2860,6 +3719,12 @@ onUnmounted(() => {
   position: relative;
   cursor: help;
 }
+/* 悬停提示是元素的 ::after 子节点：带 overflow:hidden 的省略号会把提示裁掉。
+   凡承载 data-full 提示的元素一律不裁剪，短展示由 JS 头尾截取负责 */
+.addr-tip[data-full] {
+  overflow: visible;
+  text-overflow: clip;
+}
 .addr-tip[data-full]:hover::after {
   content: attr(data-full);
   position: absolute;
@@ -2883,5 +3748,110 @@ onUnmounted(() => {
   word-break: break-all;
   text-align: left;
   pointer-events: none;
+}
+
+/* ─── v1.4 凭证体系 ─── */
+.cred-card {
+  margin-top: 1rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 0.75rem;
+  background: var(--surface-2, #f9fafb);
+}
+.cred-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.tab-boot-spin {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  margin-left: auto;
+  border: 2px solid rgba(107, 123, 219, 0.25);
+  border-top-color: #6b7bdb;
+  border-radius: 50%;
+  animation: tab-boot-spin 0.8s linear infinite;
+}
+@keyframes tab-boot-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.cred-detail {
+  margin: 0.5rem 0 0.75rem;
+  padding: 0.25rem 0.75rem;
+  background: var(--surface-1, rgba(127, 127, 127, 0.05));
+  border-radius: 0.6rem;
+}
+.copy-mini {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 0.8em;
+  padding: 0 0.2rem;
+  opacity: 0.6;
+  vertical-align: baseline;
+  flex-shrink: 0;
+}
+.copy-mini:hover {
+  opacity: 1;
+}
+.cred-vc-view {
+  margin: -0.25rem 0 0.75rem;
+}
+.cred-vc-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.35rem;
+}
+.cred-exp-warn {
+  color: #d97706;
+}
+.cred-exp-warn em {
+  font-style: normal;
+  font-size: 0.85em;
+}
+.cred-vc-json {
+  max-height: 18rem;
+  overflow: auto;
+  padding: 0.75rem;
+  background: var(--surface-1, #f3f4f6);
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 0.6rem;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.cred-title {
+  font-weight: 600;
+  font-size: 1rem;
+}
+.cred-nodid {
+  margin: 0.75rem 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--warning, #f59e0b);
+  border-radius: 0.5rem;
+  background: rgba(245, 158, 11, 0.08);
+  font-size: 0.875rem;
+}
+.cred-nodid a {
+  font-weight: 600;
+  word-break: break-all;
+}
+.cred-nodid-title {
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+.cred-warn {
+  margin-top: 0.25rem;
+  color: var(--danger, #dc2626);
+  font-weight: 500;
+}
+.cred-warn code {
+  word-break: break-all;
 }
 </style>

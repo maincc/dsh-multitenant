@@ -23,19 +23,47 @@ const DEFAULTS = {
   },
   usageLimit: {
     enabled: true, // 每日使用时限开关
-    dailyMinutes: 120, // 每个地址每天累计使用上限（分钟），CWT 授权用户豁免
+    dailyMinutes: 120, // 每个地址每天累计使用上限（分钟）
     checkIntervalMs: 60000, // 超时检查间隔（毫秒）
   },
-  cwt: {
-    enabled: true, // CWT 申请-审批-出示体系开关
-    ttlMs: 300000, // 出示 token 时效（单向：0 ≤ now−issued ≤ ttl，拒绝未来签发）
-    allowCwtEnt: false, // CWT_ENT 组形态预留，本期关闭
-    // 防洪泛（未认证端点 + token 自签，零成本）：待审批申请总条数上限，
-    // 超限直接 503 卸载；单个 token 字节上限。改动需重启服务。
-    // 注意 config.json 是**浅合并**：config.json 里已有 cwt 块时，这里新增的键
-    // 不会自动生效，需在 config.json 的 cwt 块里显式写（服务端对缺失值有兜底）。
-    maxPending: 500,
-    maxTokenBytes: 8192,
+  // ---- v1.4 凭证体系（2026-10-19）：DID 普通凭证 / CWT 解除凭证，一地址一条互斥 ----
+  credential: {
+    enabled: true,
+    // relay：公共档案读（免签）+ 档案写（multipart，带用户插件的文件签）
+    relayBaseURL: 'https://ipfsserver.ccda.ooo',
+    apiBase: '/v0/api/ipfs',
+    chain: 'swtc',
+    // 判权顺序预算（2026-10-23 用户定式："先跑档案，出错跑台账"）：enter 对
+    // claimed 卡同步等档案活验结论的上限；超预算不拖登录——落台账结论，后台
+    // 核验照跑照落库。relay resolve 冷启动实测 2.7s 级常态，5s 覆盖尾部。
+    enterVerifyBudgetMs: 5000,
+    profileProbeTimeoutMs: 8000, // 实测 resolve 冷启动 2.7s 级常态，3s 会误判"没档案"
+    profileProbeCacheMs: 900000,
+    // 平台签发钥与公共档案：VC proof 用 @jccdex/did SDK 真签（EcdsaSecp256k1Signature2019）
+    // keyFile/profileFile 是"部署者提供区"（因环境而异+敏感，永不移出 data/keys/）；
+    // contextFile 是公开固定 schema——2026-10-23 迁进仓 src/assets/ 随代码走（loader
+    // 兼容回退旧位置 data/keys/，存量服务器不炸）。装配说明见 README「平台签发身份」。
+    // 平台 DID 显式声明（形态 A 接管常用）：本地 profileFile 缺失时 init 据此
+    // 从官网 relay 自取档案落成镜像（只读线上、零写线上、不动私钥）。留空=不自取。
+    platformDid: '',
+    keyFile: 'data/keys/issuer.key',
+    profileFile: 'data/keys/issuer-profile.json',
+    contextFile: 'src/assets/secp256k1-2019-v1.json',
+    // 无 DID 档案时的用户指引（务必提醒核对地址）
+    didGenUrl: 'https://app.ccda.ooo/#/',
+    // VC issuer 展示名（2026-10-23 用户实测：官网删卡弹窗读 issuer.name 显示签发方，
+    // 纯 DID 字符串=空白）——mintVC 经 SDK issuerObject 槽注入 {id,name}
+    platformName: 'DSH 平台',
+    // 旧版 CWT registry（解除限制白名单）：命中=直接签发 CWT 凭证
+    legacyFile: 'data/legacy-cwt.json',
+    exemptCacheMs: 60000,
+    // vcNamespace 下线（2026-10-23 生态统一）：凭证词表/形态以官网 jdid 品牌为准
+  },
+  // v1.5 刀5B·准入闸（凭证即准入，V3.1 定式）：建容器与网关导航须持台账有效凭证。
+  // credential=did|cwt 任一有效即进（默认；admin=cwt+roles 天然在内）；
+  // license=仅 cwt/admin 可进（did 拒，运营备用方向）；off=全放行（灰度逃生门）。
+  accessGate: {
+    mode: 'credential',
   },
   skills: {
     autoInvoke: false, // 市场技能默认禁止模型自动调用（P0-4：安装到用户卷时强制
@@ -57,6 +85,10 @@ const DEFAULTS = {
     basePort: 31000,
     maxPort: 65535,
     startupTimeoutMs: 120000,
+    // 租户隔离网络（2026-10 审计 CRITICAL）：所有租户容器落这张
+    // enable_icc=false 的自定义 bridge——容器间数据面丢弃、宿主回环映射
+    // 不受影响（default bridge 上租户 shell 可直连他人 3080 绕过网关）。
+    tenantNetwork: 'dsh-tenant-net',
     // 租户容器安全参数档位（P1-6 降权第一阶段，2026-09）：
     //   auto   默认。首次供应容器前用 strict 参数跑一次 DSH 同款 bwrap 探测：
     //          通过 → 全租户用 strict；失败 → 回落 compat 并告警（结果缓存，
@@ -123,7 +155,7 @@ const DEFAULTS = {
     usersCacheTtlMs: 3000,
   },
   storage: {
-    // 业务数据存储介质。见 docs/storage-design.md（MongoDB 集中存储，9 集合合同）。
+    // 业务数据存储介质。见 docs/storage-design.md（MongoDB 集中存储，集合合同见 mongo.store.js COLLECTIONS）。
     // provider：'json'=维持现状（文件，默认）；'mongodb'=迁入 Mongo。
     // D5 灰度：本地验证通过后手动切 'mongodb'，服务器本期不部署。
     provider: 'json',
@@ -138,12 +170,29 @@ const DEFAULTS = {
   },
 }
 
+/**
+ * 递归深合并（2026-10 审计）：旧实现 `{ ...DEFAULTS, ...config }` 是**浅**合并——
+ * config.json 只要写 `usageLimit: { enabled: true }`，DEFAULTS.usageLimit 整段
+ * （dailyMinutes/checkIntervalMs…）就被替换蒸发，功能随"半个配置"悄悄失灵
+ * （privilegeProfile/minFreeBytes 等同理）。深合并让"部分覆盖"回归直觉：
+ * 用户没写的子键保留默认。数组按整体替换（宿主列表等语义本就显式）。
+ */
+function deepMerge(base, over) {
+  if (over === undefined) return base
+  if (Array.isArray(over)) return over.slice()
+  if (over === null || typeof over !== 'object') return over
+  if (base === null || typeof base !== 'object' || Array.isArray(base)) return deepMerge({}, over)
+  const out = { ...base }
+  for (const [k, v] of Object.entries(over)) out[k] = deepMerge(base[k], v)
+  return out
+}
+
 export function loadConfig() {
   let merged = DEFAULTS
   try {
     if (existsSync(CONFIG_FILE)) {
       const config = JSON.parse(readFileSync(CONFIG_FILE, 'utf8'))
-      merged = { ...DEFAULTS, ...config }
+      merged = deepMerge(DEFAULTS, config)
     }
   } catch (err) {
     console.error(`[config] Failed to load config.json: ${err.message}, using defaults`)
@@ -212,4 +261,17 @@ export function getTierLimits(tier) {
 }
 
 export const CONFIG = loadConfig()
-export { ROOT, CONFIG_FILE }
+
+// ★存储护栏（2026-10-16 生产事故根修）：测试进程读本地 config.json（provider=mongodb），
+// 凡未 mock storage 的测试就会拿 fixture 内存对生产库做 fanoutOps —— $unset 凭证账本、
+// deleteMany 多行；服务端再加载被污染快照并反向固化，对账器把真卡当无主摘架。
+// 6 处 provider 分叉拦不住漏网之鱼，在唯一出口整体降档：测试进程永不碰生产库。
+if (
+  (process.env.VITEST === 'true' || process.env.NODE_ENV === 'test') &&
+  CONFIG.storage?.provider === 'mongodb'
+) {
+  CONFIG.storage = { ...(CONFIG.storage || {}), provider: 'json' }
+  // eslint-disable-next-line no-console
+  console.warn('[config] 测试进程护栏：storage 已由 mongodb 降档为 json（生产库保护）')
+}
+export { ROOT, CONFIG_FILE, deepMerge as _deepMergeForTest }

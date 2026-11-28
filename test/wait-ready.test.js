@@ -51,7 +51,12 @@ describe('waitReady：web 接口就绪的状态码 → true', () => {
 
     await dockerService.waitReady(49707, 5000)
 
-    expect(f).toHaveBeenCalledWith('http://127.0.0.1:49707/')
+    // 第二参 = AbortSignal.timeout 硬超时（2026-10 审计：探测 fetch 必须可超时，
+    // 否则挂起的 web 层吃掉整个等待预算）
+    expect(f).toHaveBeenCalledWith(
+      'http://127.0.0.1:49707/',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
   })
 })
 

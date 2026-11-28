@@ -14,10 +14,18 @@
  *   - 入仓前 frontmatter 全量校验（validateSkill），非法内容拒绝进入市场
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 
 import { tenantConfigService, SIGN_PURPOSE, buildSignedMessage } from './tenant-config.service.js'
 import { dataService } from './data.service.js'
@@ -95,7 +103,7 @@ export class SkillService {
   // 存储基础
   // ---------------------------------------------------------------------------
 
-  /** provider 分流（与 user.service/cwtStore 同型：json 默认=逐调用不变） */
+  /** provider 分流（与 user.service 同型：json 默认=逐调用不变） */
   get provider() {
     return CONFIG.storage?.provider || 'json'
   }
@@ -164,7 +172,10 @@ export class SkillService {
     const addrs = Object.keys(all)
     await store.withTransaction(async (session) => {
       const c = store.col('skill_installs')
-      await c.deleteMany({ _id: { $nin: addrs } }, { session })
+      // 2026-10 审计护栏（与 state.store 同款）：空缓存时 $nin:[] 会删掉全体
+      // 用户的安装记录；"所有人同时失去技能记录"只可能是异常态。跳过对账。
+      if (addrs.length) await c.deleteMany({ _id: { $nin: addrs } }, { session })
+      else console.error('[skill] 安装记录缓存为空：跳过 $nin 对账删除（防整表清库）')
       if (addrs.length) {
         await c.bulkWrite(
           addrs.map((a) => ({
@@ -192,9 +203,19 @@ export class SkillService {
     const dir = join(this.storeDir, name)
     mkdirSync(dir, { recursive: true })
     const file = join(dir, 'SKILL.md')
-    const tmp = `${file}.tmp.${process.pid}`
-    writeFileSync(tmp, text, 'utf8')
-    renameSync(tmp, file)
+    // tmp 名必须每写唯一（2026-10 审计）：旧版用 process.pid——租户容器内
+    // PID 恒同，同一用户并发安装同名技能时两条流共写同一 tmp 互相截断，
+    // rename 过去就是**半篇内容当完整技能落地**（pid 还会撞）。
+    const tmp = `${file}.tmp.${randomBytes(6).toString('hex')}`
+    try {
+      writeFileSync(tmp, text, 'utf8')
+      renameSync(tmp, file)
+    } catch (err) {
+      try {
+        unlinkSync(tmp)
+      } catch {} // 失败不留孤儿 tmp 污染目录
+      throw err
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -208,8 +229,11 @@ export class SkillService {
       .sort((a, b) => a.name.localeCompare(b.name))
     const mine = new Set()
     if (address && isValidAddressLike(address)) {
-      const installs = this.readInstalls()
-      ;(installs[normalizeAddress(address)] || []).forEach((r) => mine.add(r.name))
+      // 差异以容器实际为主（判例 53 完成态）："已安装"徽标认卷内实物名单，
+      // 宿主账本只在查不了实物时兜底（旧语义，可能滞后）
+      const physical = await this.listContainerSkillsProbe(address)
+      if (physical) physical.forEach((name) => mine.add(name))
+      else (this.readInstalls()[normalizeAddress(address)] || []).forEach((r) => mine.add(r.name))
     }
     return entries.map((e) => this.toPublic(e, mine.has(e.name)))
   }
@@ -235,16 +259,70 @@ export class SkillService {
    * 只读操作，失败时返回 []（不给用户中心造成阻塞）。
    */
   async listContainerSkills(address) {
+    return (await this.listContainerSkillsProbe(address)) ?? []
+  }
+
+  /**
+   * 实物探测（判例 2026-10-31 幽灵案）：null=查不到（卷未建/docker 故障），
+   * 数组=卷里实有名单。与 [] 的分别是销账的生死线——**查不到≠没了**，
+   * 探测失败绝不许当成实物消失（fail-open：绝不上锁、绝不因看不见就销账）。
+   */
+  async listContainerSkillsProbe(address) {
+    const items = await this.probeVolumeItems(address)
+    return items ? items.map((i) => i.name) : null
+  }
+
+  /**
+   * 实物探测（内容级）：[{name, sha256}]——卷里此刻的字节就是断言的依据。
+   * 旧版脚本无 items 时 sha256=null（结构兼容，哈希级对账自动降级名单级）。
+   */
+  async probeVolumeItems(address) {
+    const full = await this.probeVolumeFull(address)
+    return full ? full.items : null
+  }
+
+  /** 卷实物全量探针：技能 items + 插件 plugins（判例 55：插件无账，以卷为断）
+   *  返回 null=查不了（无容器/无卷/脚本炸）；数组可为空=实物真没有——口径分明 */
+  async probeVolumeFull(address) {
     try {
       const out = await tenantConfigService.runScript(address, 'list-skills.mjs', [])
       const parsed = JSON.parse(out)
-      return Array.isArray(parsed?.names) ? parsed.names : []
+      let items = null
+      if (Array.isArray(parsed?.items)) items = parsed.items
+      else if (Array.isArray(parsed?.names))
+        items = parsed.names.map((name) => ({ name, sha256: null }))
+      if (!items) return null
+      return {
+        items,
+        plugins: Array.isArray(parsed.plugins) ? parsed.plugins : [],
+        pluginsDir: parsed.pluginsDir ?? null,
+      }
     } catch {
-      return []
+      return null
     }
   }
 
-  /** 我的发布 + 我的安装（个人视图，读取宿主侧数据，无需签名/卷访问） */
+  /**
+   * 按货架当前版本算"安装后卷里应有的实物哈希"（含 P0-4 改写，与 install
+   * 落盘变换同型）。查不了=未知（null），未知不许判"可更新"。
+   */
+  expectedVolumeHash(entry) {
+    try {
+      const text = this.readEntryBody(entry.name)
+      const body = CONFIG.skills?.autoInvoke ? text : forceDisableModelInvocation(text)
+      return createHashForText(body)
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * 我的发布 + 我的安装（个人视图）。
+   * **实物为主**（裁定 2026-10-31："以容器本身里面的东西为主"）：卷内实物名单
+   * 就是底账——容器里真实存在的技能一律显示（含手写在卷里、宿主账从没记过的）；
+   * 宿主账本只供附属信息（安装日期/可更新对比）。账上有、卷里没有=幽灵就地卸账
+   * （判例 52）；卷查不了≠没了：退回账本视图并如实标 unverified（fail-open）。
+   */
   async mineView(address) {
     address = normalizeAddress(address)
     const entries = this.readIndex()
@@ -252,10 +330,24 @@ export class SkillService {
       .filter((e) => e.sharer === address && e.status === 'active')
       .map((e) => this.toPublic(e))
     const installs = this.readInstalls()[address] || []
-    const installed = installs.map((rec) => {
+    // 一船两舱：技能实物 + 插件实物同探针取回（不多开一次容器跑）
+    const probeFull = await this.probeVolumeFull(address)
+    const volume = probeFull ? probeFull.items : null
+    const physical = volume ? volume.map((i) => i.name) : null
+    const volHash = new Map((volume || []).map((i) => [i.name, i.sha256]))
+    // 内容级对账（判例 53）：卷实物哈希 ≠ 货架当前版本应有的哈希 = 有差异——
+    // 用户手改文件、仓库升版，一律现形；实物查不了则降级账本哈希对比并如实存在
+    const judgeUpdate = (entry, rec) => {
+      if (!entry || entry.status !== 'active') return false
+      const actual = volHash.get(entry.name)
+      if (actual) {
+        const expected = this.expectedVolumeHash(entry)
+        if (expected) return actual !== expected
+      }
+      return entry.contentHash !== rec.contentHash
+    }
+    const toRow = (rec) => {
       const entry = entries.find((e) => e.name === rec.name)
-      const hasUpdate =
-        Boolean(entry) && entry.status === 'active' && entry.contentHash !== rec.contentHash
       return {
         name: rec.name,
         source: rec.source,
@@ -263,14 +355,77 @@ export class SkillService {
         contentHash: rec.contentHash,
         installedHash: rec.installedHash ?? null,
         size: rec.size,
-        hasUpdate,
+        hasUpdate: judgeUpdate(entry, rec),
         status: entry?.status ?? 'removed',
         description: entry?.description ?? '',
         whenToUse: entry?.whenToUse ?? '',
         hasResources: Boolean(entry?.hasResources),
       }
-    })
-    return { published, installed }
+    }
+    let installed
+    let reconciled = 0
+    let unverified = false
+    if (physical) {
+      const gone = installs.filter((r) => !physical.includes(r.name))
+      // 销账不连坐读面（判例 57 M5）：账销不动只少记一笔——"我的技能"实物视图
+      // 不许被写侧异常砸成 500（fail-open 绝不上锁）。
+      let reconciledOk = 0
+      for (const r of gone) {
+        try {
+          await this.removeInstallRecord(address, r.name)
+          dataService.logOperation('skill_install_reconciled_gone', {
+            address,
+            skill: r.name,
+            reason: 'volume-listed-missing',
+          })
+          reconciledOk++
+        } catch {
+          /* 实物说了算：卷里没了是事实，账面迟销是事故——事故不夺视图 */
+        }
+      }
+      reconciled = reconciledOk
+      const recOf = new Map(
+        installs.filter((r) => physical.includes(r.name)).map((r) => [r.name, r]),
+      )
+      // 实物为底账：卷里有、账上没记=容器内自写/手放的实物，如实展示 source='volume'
+      installed = physical.map((name) => {
+        const rec = recOf.get(name)
+        if (rec) return toRow(rec)
+        const entry = entries.find((e) => e.name === name)
+        // 手写实物与货架同名版本内容不一致——也以实物为断呈差异，不装看不见
+        const actual = volHash.get(name)
+        const expected = entry ? this.expectedVolumeHash(entry) : null
+        return {
+          name,
+          source: 'volume',
+          installedAt: null,
+          contentHash: null,
+          installedHash: null,
+          size: null,
+          hasUpdate:
+            Boolean(entry) &&
+            entry.status === 'active' &&
+            actual &&
+            expected &&
+            actual !== expected,
+          status: entry?.status ?? 'volume',
+          description: entry?.description ?? '',
+          whenToUse: entry?.whenToUse ?? '',
+          hasResources: Boolean(entry?.hasResources),
+        }
+      })
+    } else {
+      // 查不了≠没了：不销任何账、不假装对过——退账本视图，诚实标记
+      installed = installs.map(toRow)
+      unverified = true
+    }
+    const out = { published, installed }
+    if (reconciled) out.reconciled = reconciled
+    if (unverified) out.unverified = true
+    // 插件实物：null=本轮没探到卷（容器未运行等），[]=卷里真没有——前台两话分开说
+    out.plugins = probeFull ? probeFull.plugins : null
+    out.pluginsDir = probeFull ? probeFull.pluginsDir : null
+    return out
   }
 
   /** 我的发布 + 我的安装 + 容器内可共享列表（共享弹窗用，需签名） */
@@ -320,7 +475,7 @@ export class SkillService {
         ? assertSkillName(String(renameTo).trim())
         : sourceName
 
-    const entries = this.readIndex()
+    let entries = this.readIndex()
     const existing = entries.find((e) => e.name === shareName && e.status === 'active')
     if (existing) {
       const isOwnUpdate = existing.sharer === address && shareName === sourceName
@@ -369,7 +524,25 @@ export class SkillService {
       throw new BadRequestError(`技能 frontmatter 非法: ${err.message}`)
     }
 
-    // 3) 入仓
+    // 3) 提交前复核（2026-10 审计 TOCTOU 修复）：入口的"同名占位/上限"检查与
+    //    这里之间隔着容器提取的长 await——并发同名 publish 会双双通过入口检查，
+    //    后写覆盖前写。写索引必须以**当下索引**为准重新判互斥与上限，并在最新
+    //    副本上合并（窗口期别人新上架的条目不能被我方旧快照抹掉）。复核放在
+    //    入仓**之前**：被拒不留孤儿 body。
+    const fresh = this.readIndex()
+    const clash = fresh.find((e) => e.name === shareName && e.status === 'active')
+    if (clash && !(clash.sharer === address && shareName === sourceName)) {
+      throw new ConflictError(`技能名 "${shareName}" 已被共享，共享名必须唯一，请改名后再共享`)
+    }
+    const activeBySharerNow = fresh.filter(
+      (e) => e.sharer === address && e.status === 'active' && e.name !== shareName,
+    ).length
+    if (activeBySharerNow >= MAX_ACTIVE_PUBLISHED) {
+      throw new BadRequestError(`每个地址最多共享 ${MAX_ACTIVE_PUBLISHED} 个技能`)
+    }
+    entries = fresh
+
+    // 4) 入仓
     this.writeEntryBody(shareName, finalText)
     const now = new Date().toISOString()
     const entry = {
@@ -385,6 +558,7 @@ export class SkillService {
       bodyBytes: valid.bodyBytes,
       status: 'active',
     }
+
     const idx = entries.findIndex((e) => e.name === shareName)
     if (idx === -1) entries.push(entry)
     else entries[idx] = entry
@@ -408,12 +582,27 @@ export class SkillService {
     if (!admin && entry.sharer !== normalizeAddress(operator)) {
       throw new ForbiddenError('只能取消自己共享的技能（管理员可下架任意技能）')
     }
-    // 取消共享 = 删除共享仓正文文件 + 移除索引条目。
-    // 已安装用户持有的副本在自己卷里，不受影响；同名可重新发布（全新条目）。
+    // 取消共享 = 移出索引 + 正文存证归档（审查 H3 续：原 rmSync 直删违"被引用之物
+    // 不可物理删"——安装账的 installedHash/内容级对账仍要按货架版本复推期望哈希，
+    // 正文没了账就瞎；对齐 env 驳回"拆账先行+存证式"判例）。
+    // 已安装用户副本在自己卷，不受影响；同名可重新发布（归档不在货架路径，不占名）。
     const removed = this.toPublic(entry)
     entries.splice(idx, 1)
     await this.writeIndex(entries)
-    rmSync(join(this.storeDir, name), { recursive: true, force: true })
+    const src = join(this.storeDir, name)
+    if (existsSync(src)) {
+      try {
+        // 归档随仓走：storeDir 的上一级（默认=<data>/skills → <data>/archive/skills，
+        // 与 dataService.dataDir 同址；测试自定义 storeDir 时自然沙盒隔离，不踏公共盘）
+        const arch = join(this.storeDir, '..', 'archive', 'skills')
+        mkdirSync(arch, { recursive: true })
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+        renameSync(src, join(arch, `${name}-${stamp}`))
+      } catch {
+        // 归档失败宁留实物不直删（方向与"查不了不删"同律）：索引已摘=货架不可见，
+        // 磁盘残留交 GC 续账处理，绝不拿删除赌运气
+      }
+    }
     dataService.logOperation('skill_unpublish', {
       address: normalizeAddress(operator),
       skill: name,
@@ -542,11 +731,47 @@ export class SkillService {
     if (Array.isArray(list)) {
       const filtered = list.filter((r) => r.name !== name)
       if (filtered.length !== list.length) {
-        if (filtered.length === 0) delete all[address]
-        else all[address] = filtered
+        // 判例 2026-10-31：清零后留空行 [] 而非删 key——删 key 会让整缓存塌空，
+        // 触发 writeInstalls 的"空缓存防清库"护栏跳过对账删除，mongo 幽灵删不掉、
+        // 重启水合即复活。空行=查过销清，本来就是更诚实的账。
+        all[address] = filtered
         await this.writeInstalls(all)
+        return
       }
     }
+    // 幽灵案补刀（2026-10-31）：单轨存储下"本轨无记录"≠"全平台无记录"——
+    // provider 曾在 json/mongo 间翻转，旧账滞留文件轨，回切即复活。卸账顺轨扫掉。
+    if (this.provider !== 'json' && existsSync(this.installsFile)) {
+      try {
+        const data = dataService.readJson(this.installsFile)
+        const legacy = data && data[address]
+        if (Array.isArray(legacy)) {
+          const left = legacy.filter((r) => r.name !== name)
+          if (left.length !== legacy.length) {
+            if (left.length === 0) delete data[address]
+            else data[address] = left
+            dataService.writeWithLock(this.installsFile, data)
+            console.warn(`[skill] 「${name}」旧账滞留文件轨，卸账顺轨摘除（防回切复活）`)
+          }
+        }
+      } catch {}
+    }
+  }
+
+  /**
+   * 拆卷必销账（判例 2026-10-29，第九案的镜像面：账比实物活得久）。
+   * reset / 管理端清除数据 / 彻底删除用户——卷里的实物没了，安装账本就
+   * 成了幽灵：同地址重新注册会看见上辈子的技能"装着"。整户销记，返回行数。
+   */
+  async clearInstalls(address, reason = 'reset') {
+    address = normalizeAddress(address)
+    const all = this.readInstalls()
+    const list = Array.isArray(all[address]) ? all[address] : []
+    if (!list.length) return 0
+    all[address] = [] // 同款护栏避让（判例 2026-10-31）：留空行，删 key 塌空反锁死销账
+    await this.writeInstalls(all)
+    dataService.logOperation('skill_installs_cleared', { address, n: list.length, reason })
+    return list.length
   }
 
   checkInstallRate(address) {

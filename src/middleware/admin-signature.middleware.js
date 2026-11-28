@@ -3,7 +3,7 @@
  *
  * ## 为什么要加这层
  *
- * 管理侧的 `admin_session` 是一个 **12 小时有效的 bearer token**：
+ * 管理侧的登录会话（user_session，判例 2026-10-30 单源化前叫 admin_session）是 **12 小时有效的 bearer token**：
  * `requireAdmin` 只做 `sha256(token)` 查表 + 过期判断，不验签。而租户网关会把
  * 浏览器带来的 cookie 原样转发进租户容器（`path=/` 的 cookie 不按端口隔离，
  * `SameSite` 也不判端口），于是"管理员访问过的那个租户"能拿到这串 token ——
@@ -14,7 +14,7 @@
  * 样板：**每次数据操作当场签一个新的 nonce**，用完即毁、5 分钟过期，所以被
  * 拦截也没有价值。这里把那套样板搬到管理侧的破坏性操作上。
  *
- * `admin_session` 的设计（避免管理员每点一下都弹钱包）保持不变，只是给
+ * 登录会话的设计（避免管理员每点一下都弹钱包）保持不变，只是给
  * **会改变平台状态**的操作再加一道当场签名。纯读取接口不要求，日常查看
  * 不会被弹窗打断。
  *
@@ -39,17 +39,29 @@ import {
 /** 允许签名的操作名（白名单；未知操作一律拒绝，不做兜底） */
 export const ADMIN_SIGNED_OPERATIONS = Object.freeze([
   'promote',
+  // v1.5：撤销管理员=没收凭证+重签降格（持久化权限动作，与 promote 对称必须当场签名）
+  'demote',
   'force-stop',
   'remove',
   'delete-volume',
   'reset',
   'cleanup-orphan-volumes',
-  'cwt/approve',
-  'cwt/reject',
-  'cwt/revoke',
   'dsh/apply',
   'dsh/prune-images',
   'dsh/select',
+  // v1.4 凭证体系：批准=签发 CWT 解除凭证（改变用户限制语义），签目标地址绑定
+  'cwt/approve',
+  'cwt/reject',
+  // 2026-10 全面审计：补齐"代他人"的破坏性/打扰型操作。
+  // 治理原则=对称性：remove/force-stop 要签名，而更重的 leave（销毁他人容器）、
+  // 夺默认镜像的 dsh/image、停他人服务的 upgrade/downgrade/restart/stop 却免签——
+  // 白名单覆盖不完整时，攻击面恰好挑走最重的那几个（同站 CSRF 场景浏览器可代发）。
+  'leave',
+  'restart',
+  'stop',
+  'user-upgrade',
+  'user-downgrade',
+  'dsh/build-image',
 ])
 
 /** 待执行的管理操作挑战（地址 → 记录）。与 tenantConfigService 的挑战池同样是一次性 */
@@ -79,13 +91,61 @@ export function buildBinding(operation, payload = {}) {
   const addr = typeof p.address === 'string' ? p.address.toLowerCase() : ''
   switch (operation) {
     case 'promote':
+    case 'demote':
     case 'force-stop':
     case 'delete-volume':
     case 'reset':
       return addr ? `${operation}:address=${addr}` : null
+    // 2026-10 审计补：代他人操作的容器控制（仅"管理员对他人"路径要求签名，
+    // 本人对自己的操作在路由层直接放行，不到这里）
+    case 'leave':
+    case 'restart':
+    case 'stop':
+      return addr ? `${operation}:address=${addr}` : null
+    case 'user-upgrade':
+    case 'user-downgrade': {
+      // tier 决定"重启成什么配额"，不签进去就成了"签 1 档执行 3 档"的偷换面
+      const tier =
+        p.tier !== undefined && p.tier !== null && String(p.tier).trim()
+          ? String(p.tier).trim()
+          : ''
+      return addr && tier ? `${operation}:address=${addr}:tier=${tier}` : null
+    }
+    case 'dsh/build-image': {
+      // 构建产物直接夺平台默认镜像 tag（影响之后所有新租户）——version 必须签进去。
+      // 与 dshVersionService.isInstallable 同口径：这里只做字符面收敛，语义校验在路由。
+      const v = p.version ? String(p.version).trim() : ''
+      return v && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(v) ? `dsh/build-image:version=${v}` : null
+    }
     case 'remove':
       // keepVolume 会改变"数据卷是否保留"这一破坏性语义，必须签进去
       return addr ? `remove:address=${addr}:keepVolume=${p.keepVolume === true ? '1' : '0'}` : null
+    // 环境模板（2026-10-27 PR1）：定格"谁的环境"、上下架"哪个模板"、
+    // 分发"到哪个人"都是改变世界的动作——slug/id/address 全部进签名面，
+    // 签 A 执行 B 直接拒（promote/remove 同款纪律）。
+    case 'env-commit': {
+      // 审查 H4（2026-11-06）：勾选集合是"包里装什么"的正身——skills/plugins/folders
+      // 不签进去就是"签空勾选、执行全随行"的偷换面（folders 还直接决定 scrubKeep）；
+      // wsExcludes 是摘除清单，同进。两侧（挑战领取/执行校验）都吃客户端原样 payload，
+      // 各自不改动地规范化：逐项串化+排序，与顺序无关；缺位/坏形记空。
+      const inc = p.include && typeof p.include === 'object' ? p.include : {}
+      const canon = (v) => (Array.isArray(v) ? v.map(String).sort().join(',') : '')
+      return addr && p.slug
+        ? `env-commit:address=${addr}:slug=${String(p.slug)}:inc=${canon(inc.skills)}|${canon(inc.plugins)}|${canon(inc.folders)}|${canon(inc.wsExcludes)}`
+        : null
+    }
+    // 审查 H3（2026-11-06）：管理员下架他人技能=移走作者正文，入双门禁白名单
+    case 'skill-hide': {
+      const n = typeof p.name === 'string' ? p.name.trim() : ''
+      return n ? `skill-hide:name=${n}` : null
+    }
+    case 'env-publish':
+    case 'env-revoke':
+    case 'env-reject':
+    case 'env-scan':
+      return p.id ? `${operation}:id=${String(p.id)}` : null
+    case 'env-apply':
+      return addr && p.id ? `env-apply:id=${String(p.id)}:address=${addr}` : null
     case 'cleanup-orphan-volumes': {
       // 批量删卷：删哪几个必须签进去（同 prune-images 的规范化：去重+排序，
       // 稳定可比对）。与 prune 不同，**空列表一律拒**——"不签任何东西"不该
@@ -94,14 +154,6 @@ export function buildBinding(operation, payload = {}) {
       const norm = [...new Set(names.map((s) => String(s).trim()).filter(Boolean))].sort()
       return norm.length ? `cleanup-orphan-volumes:names=${norm.join(',')}` : null
     }
-    case 'cwt/approve':
-    case 'cwt/reject': {
-      // 审批绑申请 id，不绑地址：同一地址可以有多张申请，语义要精确到"哪一张"
-      const id = p.id ? String(p.id).trim() : ''
-      return id ? `${operation}:id=${id}` : null
-    }
-    case 'cwt/revoke':
-      return addr ? `cwt/revoke:address=${addr}` : null
     case 'dsh/apply': {
       // 必须把"钉到哪个镜像"也签进去：否则一个针对 latest 的签名可以被改成
       // 装任意本地镜像（越权通道）。image 为空 = 平台默认，binding 保持不变，
@@ -137,6 +189,13 @@ export function buildBinding(operation, payload = {}) {
       // 空 ref 与含非法字符的 ref 一律拒发挑战（路由层还会查存在性）。
       const ref = p.ref ? String(p.ref).trim() : ''
       return ref && /^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/.test(ref) ? `dsh/select:ref=${ref}` : null
+    }
+    case 'cwt/approve':
+    case 'cwt/reject': {
+      // 批准=给用户签发解除限制凭证。签"哪一张申请单 + 批准给谁"双绑定，
+      // 防签 A 单批 B 单（路由层从库里取申请人地址并入 payload，前端伪造无效）。
+      const id = p.id ? String(p.id).trim() : ''
+      return id && addr ? `${operation}:id=${id}:address=${addr}` : null
     }
     default:
       return null
@@ -196,7 +255,7 @@ export function issueAdminSignatureChallenge(address, operation, payload = {}) {
  *
  * 顺序（每步失败都明确拒绝，且 ③ 早于 ④/⑤：nonce 一旦拿来用就作废，
  * 验签失败也不给第二次机会）：
- *   ① 有 admin_session 会话
+ *   ① 有登录会话（user_session 单源）
  *   ② 该操作可签名（白名单 + 目标齐全）
  *   ③ 存在与之匹配的待执行挑战，且**这次请求推导出的 binding 与发放时一致**
  *   ④ nonce 未过期未使用 → 先消费
@@ -226,6 +285,12 @@ export function requireAdminSignature(req, res, operation, payload = {}, session
 
   const sig = req.__adminSignature
   if (!sig || !sig.nonce || !sig.signature || !sig.publicKey) {
+    // 拒因入日志（只记三个头名的在场性，不记任何值）：区分"前端没发"与
+    // "发了被半路丢"（2026-11-02 降级案：插件回 undefined、axios 静默丢头）
+    const h = req.headers || {}
+    console.warn(
+      `[sig-gate] SIGNATURE_REQUIRED ${req.method} ${req.url} · nonce:${h['x-admin-nonce'] ? '有' : '无'} signature:${h['x-admin-signature'] ? '有' : '无'} pubkey:${h['x-admin-pubkey'] ? '有' : '无'}`,
+    )
     return deny('该操作需要钱包签名确认（请对本次操作签名后重试）', 'SIGNATURE_REQUIRED')
   }
 

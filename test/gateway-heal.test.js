@@ -93,6 +93,7 @@ describe('ensureGatewayRoutes：网关路由自愈', () => {
       45377,
       A1,
       expect.objectContaining({ requiresToken: true }),
+      null, // 无 rebuildEpoch 记录 → 代际传 null（网关侧兜底 attach 时刻）
     )
   })
 

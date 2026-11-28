@@ -7,11 +7,12 @@
           <span class="brand-title">{{ $t('common.brand') }}</span>
         </router-link>
       </div>
-      <!-- 左组：面向所有访问者的入口，紧跟品牌 -->
-      <div class="nav-links">
-        <router-link to="/skills" class="nav-tab">{{ $t('common.nav.skills') }}</router-link>
-        <router-link to="/admin" class="nav-tab">{{ $t('common.nav.admin') }}</router-link>
-      </div>
+      <!-- 左组：面向所有访问者的入口，紧跟品牌
+           （v1.6：摘除"系统管理"tab——v1.5 起管理页签已并入用户中心侧栏（role=admin
+           活验属实才装配），/admin 仅剩 redirect 跳板（书签兼容保留）；顶部入口对
+           管理员是死路绕行、对普通用户是噪音+管理面存在性泄露，两头皆纯冗余） -->
+      <!-- 顶栏「技能市场」入口拆除（用户验收 IA：市场是用户中心里的单独功能；
+           公开页 /skills 路由保留可用，导航不再给第二条门） -->
       <!-- 右组：账户性入口靠右 -->
       <div class="nav-links nav-links-right">
         <router-link to="/user" class="nav-tab">{{ $t('common.nav.user') }}</router-link>
@@ -85,7 +86,7 @@ import GlobalDialog from './components/GlobalDialog.vue'
 }
 
 /* 右组（用户中心）：margin-left:auto 把它单独推到导航条最右端，
-   左组（技能市场 / 系统管理）自然紧跟品牌靠左 */
+   左组（技能市场）自然紧跟品牌靠左 */
 .nav-links-right {
   margin-left: auto;
 }

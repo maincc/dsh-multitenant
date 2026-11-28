@@ -34,6 +34,9 @@ EXCLUDES=(
   --exclude='*.log'
   --exclude='logs/'
   --exclude='.DS_Store'
+  # 签发私钥保护（did-vc-runbook §3.4，毁灭级红线）：**无条件排除**，
+  # UPLOAD_DATA=1 也不上传本地 keys、--delete 也不碰服务器 keys——现场钥只进不出。
+  --exclude='data/keys/'
 )
 if [ "${UPLOAD_DATA:-0}" = "1" ]; then
   echo "!! UPLOAD_DATA=1：本次将【携带本地 data/】覆盖服务器同名文件——仅"注入外部数据"合法（老服务器升级不需要它，原料在服务器本地）！"
@@ -54,6 +57,7 @@ echo ">> 上传完成。下一步在服务器上执行首次安装："
 echo "   ssh ${SERVER_USER}@${SERVER_HOST}"
 echo "   cd ${REMOTE_DIR}"
 echo "   ADMIN_ADDRESS=<你的SWTC地址> PUBLIC_HOST=<公网IP或域名> ./deploy/install.sh"
-echo "   （存储默认 mongodb 形态连本机 27018 副本集 dsh_prod；"
-echo "     应急回退文件形态加 STORAGE=json，详见 deploy/install.sh 头部与"
-echo "     docs/deploy-test-server.md）"
+echo "   （存储形态**现场优先**：install.sh 取参次序=显式参数 > 现场 config.json"
+echo "     的 storage 段 > 内置默认 27018/dsh_prod——服务器连 27017/dsh_test 这类"
+echo "     现场声明会被尊重，预检按现场串走；应急回退文件形态加 STORAGE=json。"
+echo "     详见 deploy/install.sh 头部与 docs/deploy-test-server.md。）"

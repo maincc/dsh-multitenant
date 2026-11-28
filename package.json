@@ -19,13 +19,19 @@
     "hooks:uninstall": "rm -f .git/hooks/pre-commit .git/hooks/pre-push"
   },
   "dependencies": {
+    "@jccdex/did": "^0.3.2",
+    "@jccdex/ipfs-rpc-client": "^0.1.8",
+    "@jccdex/vc-vocabularies": "^0.1.2",
+    "@noble/curves": "^1.9.7",
+    "@noble/hashes": "^1.8.0",
     "@swtc/keypairs": "^1.2.0",
+    "bs58": "^5.0.0",
     "mongodb": "^7.7.0"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^1.6.0",
+    "@vitest/coverage-v8": "^4.1.12",
     "prettier": "^3.2.0",
-    "vitest": "^1.6.0",
+    "vitest": "^4.1.12",
     "yaml": "^2.9.0"
   }
 }

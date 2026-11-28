@@ -1,7 +1,7 @@
 <template>
-  <div class="skill-market">
-    <!-- 左侧栏（与 React 原型稿一致） -->
-    <aside class="gate-sidebar">
+  <div class="skill-market" :class="{ embedded }">
+    <!-- 左侧栏（与 React 原型稿一致；内嵌面收起，由宿主品类条驱动） -->
+    <aside v-if="!embedded" class="gate-sidebar">
       <div class="sidebar-card">
         <nav class="sidebar-nav">
           <button
@@ -211,7 +211,7 @@
 
 <script setup>
 import { askConfirm, toast } from '../composables/useDialog'
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { skillsApi } from '../api/skills.js'
 import {
@@ -224,6 +224,12 @@ import {
 const { t } = useI18n()
 
 // ---- 侧栏导航（与 React 原型稿一致） ----
+// 内嵌面（用户验收 IA：市场功能搬进用户中心，AdminPanel embedded 同款先例）：
+// 自带侧栏收起，子页由宿主品类条经 external-tab 驱动；独立路由 /skills 一切照旧
+const props = defineProps({
+  embedded: { type: Boolean, default: false },
+  externalTab: { type: String, default: '' },
+})
 const marketTab = ref('market')
 const marketTabs = [
   {
@@ -237,6 +243,16 @@ const marketTabs = [
     icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>',
   },
 ]
+
+watch(
+  () => props.externalTab,
+  (v) => {
+    if (props.embedded && v && v !== marketTab.value) {
+      marketTab.value = v
+      if (v === 'mine') loadMine()
+    }
+  },
+)
 
 const switchTab = (key) => {
   marketTab.value = key
@@ -268,6 +284,7 @@ const loadMine = async () => {
       published: res.published || [],
       installed: res.installed || [],
     }
+    if (res.reconciled) toast(t('skills.reconciledGone', { n: res.reconciled }))
   } catch (err) {
     console.warn('[skills] 加载我的技能失败（忽略）:', err)
   } finally {
@@ -498,22 +515,8 @@ onUnmounted(() => {
   margin-bottom: 1rem;
 }
 
-.search-input {
-  padding: 0.5rem 0.75rem;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  font-size: 0.9rem;
-  width: 240px;
-  box-sizing: border-box;
-  outline: none;
-  color: #1e293b;
-  background: #fff;
-}
-
-.search-input:focus {
-  border-color: #6b7bdb;
-  box-shadow: 0 0 0 3px rgba(107, 123, 219, 0.15);
-}
+/* .search-input 制式已升全局 assets/style.css（2026-10-23 三框统一），
+   本页 scoped 版删除防双源漂移 */
 
 .notice {
   padding: 0.75rem 1rem;

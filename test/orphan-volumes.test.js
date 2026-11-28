@@ -8,7 +8,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { adminSessionStore } from '../src/middleware/auth.middleware.js'
+import { userSessionStore } from '../src/middleware/user-auth.middleware.js'
 
 const ADMIN_TOKEN = '11'.repeat(32) // 64 位 hex
 const sha256 = (v) => createHash('sha256').update(v).digest('hex')
@@ -139,7 +139,7 @@ const TYPICAL_VOLUMES = [
 
 beforeEach(() => {
   vi.clearAllMocks()
-  adminSessionStore.sessions[sha256(ADMIN_TOKEN)] = {
+  userSessionStore.sessions[sha256(ADMIN_TOKEN)] = {
     address: STATE_ADDR,
     expiresAt: Date.now() + 3600e3,
   }
@@ -177,7 +177,7 @@ async function signedHeaders(operation, payload) {
     makeReq({
       method: 'POST',
       url: '/api/admin/challenge',
-      cookie: `admin_session=${ADMIN_TOKEN}`,
+      cookie: `user_session=${ADMIN_TOKEN}`,
       body: { address: STATE_ADDR, operation, payload },
     }),
     res,
@@ -200,7 +200,7 @@ async function callCleanup({ headers = {}, body } = {}) {
     makeReq({
       method: 'POST',
       url: ROUTES.orphanCleanup,
-      cookie: `admin_session=${ADMIN_TOKEN}`,
+      cookie: `user_session=${ADMIN_TOKEN}`,
       body,
       ...headers,
     }),
@@ -227,7 +227,7 @@ describe('管理端孤儿卷管理', () => {
   it('GET 列出孤儿卷：只包含「非 state 用户 + 无引用」的 dsh-data-swtc-* 卷', async () => {
     const res = makeRes()
     await handleAdminRoutes(
-      makeReq({ url: ROUTES.orphanList, cookie: `admin_session=${ADMIN_TOKEN}` }),
+      makeReq({ url: ROUTES.orphanList, cookie: `user_session=${ADMIN_TOKEN}` }),
       res,
       ROUTES.orphanList,
       new URL(`http://x${ROUTES.orphanList}`),
@@ -247,7 +247,7 @@ describe('管理端孤儿卷管理', () => {
     ])
     const res = makeRes()
     await handleAdminRoutes(
-      makeReq({ url: ROUTES.orphanList, cookie: `admin_session=${ADMIN_TOKEN}` }),
+      makeReq({ url: ROUTES.orphanList, cookie: `user_session=${ADMIN_TOKEN}` }),
       res,
       ROUTES.orphanList,
       new URL(`http://x${ROUTES.orphanList}`),

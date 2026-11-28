@@ -15,7 +15,7 @@
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { createHash } from 'node:crypto'
-import { createServer } from 'node:http'
+import http, { createServer } from 'node:http'
 
 vi.mock('../src/services/data.service.js', async (importOriginal) => {
   const mod = await importOriginal()
@@ -28,7 +28,7 @@ vi.mock('../src/services/data.service.js', async (importOriginal) => {
   return { dataService: { ...mod.dataService, ...empty } }
 })
 
-import { tenantGateway } from '../src/services/tenant-proxy.service.js'
+import { tenantGateway, gwOkToken } from '../src/services/tenant-proxy.service.js'
 import { userSessionStore } from '../src/middleware/user-auth.middleware.js'
 import { tenantConfigService, SIGN_PURPOSE } from '../src/services/tenant-config.service.js'
 import { Keypairs } from '@swtc/keypairs'
@@ -80,17 +80,39 @@ describe('租户网关门禁：顶层导航一致性校验（插件地址 vs 会
     expect(body).toContain('正在校验访问身份')
   })
 
-  it('有会话 + gw_ok=1 → 跳过校验页，直接转发（上游不可达 → 502）', async () => {
+  it('有会话 + 本租户本端口的 gw_ok → 跳过校验页，直接转发（上游不可达 → 502）', async () => {
     const token = userSessionStore.create(OWNER)
     const res = await fetch(`http://127.0.0.1:${publicPort}/`, {
       headers: {
         'sec-fetch-mode': 'navigate',
         accept: 'text/html',
-        cookie: `user_session=${token}; gw_ok=1`,
+        cookie: `user_session=${token}; gw_ok=${gwOkToken(OWNER, publicPort)}`,
       },
     })
     expect(res.status).toBe(502) // forward 到未监听的内部口
     expect(await res.text()).toContain('gateway: upstream unreachable')
+  })
+
+  it('gw_ok 串门防御：别的端口派生的 token / 旧常量 "1" 都换不来本端口放行（2026-10 审计）', async () => {
+    const token = userSessionStore.create(OWNER)
+    // 旧契约里 gw_ok=1 是全局常量：先进租户 A 过校验的用户访问租户 B 时，
+    // 浏览器照带 "1" 就跳过 B 的签名校验——cookie 按 host 共享、不分端口。
+    // 现在值按 (address, port) 派生，别的端口/旧值一律回校验页。
+    for (const stale of [
+      '1',
+      gwOkToken(OWNER, publicPort + 1),
+      gwOkToken('jothertenant0000000000000000000000000', publicPort),
+    ]) {
+      const res = await fetch(`http://127.0.0.1:${publicPort}/`, {
+        headers: {
+          'sec-fetch-mode': 'navigate',
+          accept: 'text/html',
+          cookie: `user_session=${token}; gw_ok=${stale}`,
+        },
+      })
+      expect(res.status).toBe(200)
+      expect(await res.text()).toContain('__gw__/session-info') // 校验页，而非放行
+    }
   })
 
   it('非导航子资源（js/css/fetch）→ 走原始门禁，不返回校验页', async () => {
@@ -117,6 +139,41 @@ describe('租户网关门禁：顶层导航一致性校验（插件地址 vs 会
     expect(await r.json()).toEqual({ ok: true, address: OWNER })
     r = await fetch(`http://127.0.0.1:${publicPort}/__gw__/session-info`)
     expect(await r.json()).toEqual({ ok: true, address: null })
+  })
+
+  it('恶意 Host 头的校验页投毒被封死（2026-10 审计：Host 原样拼进 HTML）', async () => {
+    const token = userSessionStore.create(OWNER)
+    // undici 的 fetch 会剥掉自定义 host 头（按 URL authority 重写），够不着
+    // 这条攻击面——必须用原生 http.client 发真实 Host。
+    const pageFor = (host) =>
+      new Promise((resolve, reject) => {
+        http
+          .get(
+            `http://127.0.0.1:${publicPort}/`,
+            {
+              headers: {
+                host,
+                'sec-fetch-mode': 'navigate',
+                accept: 'text/html',
+                cookie: `user_session=${token}`,
+              },
+            },
+            (res) => {
+              let buf = ''
+              res.on('data', (d) => (buf += d))
+              res.on('end', () => resolve(buf))
+            },
+          )
+          .on('error', reject)
+      })
+
+    const evil = await pageFor('evil.com"><script>alert(1)</script>')
+    expect(evil).toContain('/user') // 仍是校验页
+    expect(evil).not.toContain('evil.com') // 投毒串被白名单拦下
+    expect(evil).not.toContain('<script>alert(1)</script>')
+    // 合法形态的 Host 照旧跟随（用户从 LAN IP 进来要能对回 LAN IP）
+    const lan = await pageFor('192.168.77.121:31000')
+    expect(lan).toContain('http://192.168.77.121:')
   })
 
   it('/__gw__/logout 吊销会话并下发清 cookie', async () => {
@@ -320,14 +377,30 @@ describe('tenantGateway.listen：绑定结果可见性', () => {
     }
   })
 
-  it('同端口重复 listen → 幂等成功（重启/重绑场景）', async () => {
+  it('同端口同租户重复 listen → 幂等成功（重启/重绑场景）', async () => {
     const port = 39600 + Math.floor(Math.random() * 300)
-    const other = 'jga9j9tkqtbcuohe2zqhvffbguved6o9or'
 
     await tenantGateway.listen(port, 39950, OWNER)
     expect(tenantGateway.ownerOf(port)).toBe(OWNER)
 
-    // listen 内部会 close(port) 再重绑，因此同端口应成功并换主
+    await expect(tenantGateway.listen(port, 39951, OWNER)).resolves.toBeUndefined()
+    expect(tenantGateway.ownerOf(port)).toBe(OWNER)
+  })
+
+  it('同端口异租户 listen → 拒绝抢占，原监听保持服务（2026-10 审计 owner 门）', async () => {
+    // 旧契约是"换主成功"——那正是跨租户劫持：B 的重绑静默关掉 A 的监听，
+    // A 的用户流量被转到 B 的容器上。现在端口归属必须显式移交（先 close）。
+    const port = 39600 + Math.floor(Math.random() * 300)
+    const other = 'jother000tenant000000000000000000' // 必须 ≠ OWNER：同主是幂等重绑，异主才走拒绝
+
+    await tenantGateway.listen(port, 39950, OWNER)
+    await expect(tenantGateway.listen(port, 39951, other)).rejects.toMatchObject({
+      code: 'PORT_TAKEN',
+    })
+    expect(tenantGateway.ownerOf(port)).toBe(OWNER) // 原主未被撼动
+
+    // 显式移交后（destroy/close 语义）新主才能上
+    tenantGateway.close(port)
     await expect(tenantGateway.listen(port, 39951, other)).resolves.toBeUndefined()
     expect(tenantGateway.ownerOf(port)).toBe(other)
   })

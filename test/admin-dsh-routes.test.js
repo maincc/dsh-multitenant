@@ -79,7 +79,7 @@ import { dockerService } from '../src/services/docker.service.js'
 import { dshVersionService } from '../src/services/dsh-version.service.js'
 import { userService } from '../src/services/user.service.js'
 import { dataService } from '../src/services/data.service.js'
-import { adminSessionStore } from '../src/middleware/auth.middleware.js'
+import { userSessionStore } from '../src/middleware/user-auth.middleware.js'
 import { isAdmin, CONFIG } from '../src/config/config.js'
 import { tenantConfigService } from '../src/services/tenant-config.service.js'
 
@@ -174,16 +174,17 @@ async function adminSignatureHeaders(operation, payload) {
 }
 
 function adminCookie() {
-  const token = adminSessionStore.create(ADMIN_ADDR, 3600_000)
-  return `admin_session=${token}`
+  const token = userSessionStore.create(ADMIN_ADDR, 3600_000)
+  return `user_session=${token}`
 }
 
 const json = (res) => JSON.parse(res.body)
 
 beforeEach(() => {
   vi.restoreAllMocks()
+  vi.clearAllMocks() // vitest4: 模块级vi.mock工厂的fn不被restore覆盖，需显式清调用历史
   isAdmin.mockReturnValue(true)
-  adminSessionStore.sessions = {}
+  userSessionStore.sessions = {}
   userService.state.swtcUsers = {}
 
   vi.spyOn(dshVersionService, 'getVersions').mockResolvedValue({
@@ -230,7 +231,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  adminSessionStore.sessions = {}
+  userSessionStore.sessions = {}
   userService.state.swtcUsers = {}
 })
 
@@ -528,6 +529,8 @@ describe('POST /api/admin/dsh/image', () => {
         url: '/api/admin/dsh/image',
         cookie: adminCookie(),
         body: { version: '9.9.9' },
+        // 2026-10 审计：构建夺默认镜像 → 当场签名（version 进 binding）
+        headers: await adminSignatureHeaders('dsh/build-image', { version: '9.9.9' }),
       }),
       res,
       '/api/admin/dsh/image',
@@ -535,6 +538,23 @@ describe('POST /api/admin/dsh/image', () => {
 
     expect(res.statusCode).toBe(400)
     expect(json(res).error).toMatch(/不存在/)
+    expect(dockerService.buildImage).not.toHaveBeenCalled()
+  })
+
+  it('免签构建 → 403 SIGNATURE_REQUIRED（2026-10 审计白名单补齐回归位）', async () => {
+    const res = makeRes()
+    await handleAdminRoutes(
+      makeReq({
+        method: 'POST',
+        url: '/api/admin/dsh/image',
+        cookie: adminCookie(),
+        body: { version: '0.1.6-alpha.1' },
+      }),
+      res,
+      '/api/admin/dsh/image',
+    )
+    expect(res.statusCode).toBe(403)
+    expect(json(res).code).toBe('SIGNATURE_REQUIRED')
     expect(dockerService.buildImage).not.toHaveBeenCalled()
   })
 
@@ -550,6 +570,7 @@ describe('POST /api/admin/dsh/image', () => {
           url: '/api/admin/dsh/image',
           cookie: adminCookie(),
           body: { version: '0.1.6-alpha.1' },
+          headers: await adminSignatureHeaders('dsh/build-image', { version: '0.1.6-alpha.1' }),
         }),
         res,
         '/api/admin/dsh/image',
@@ -571,6 +592,7 @@ describe('POST /api/admin/dsh/image', () => {
         url: '/api/admin/dsh/image',
         cookie: adminCookie(),
         body: { version: '0.1.6-alpha.1' },
+        headers: await adminSignatureHeaders('dsh/build-image', { version: '0.1.6-alpha.1' }),
       }),
       res,
       '/api/admin/dsh/image',

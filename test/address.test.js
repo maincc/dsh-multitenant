@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { isValidSwtcAddress, normalizeAddress, swtcContainerName, swtcVolumeName } from '../src/utils/address.js'
+import {
+  isValidSwtcAddress,
+  normalizeAddress,
+  swtcContainerName,
+  swtcVolumeName,
+} from '../src/utils/address.js'
 
 describe('SWTC 地址工具', () => {
   describe('isValidSwtcAddress', () => {
@@ -29,19 +34,25 @@ describe('SWTC 地址工具', () => {
 
   describe('normalizeAddress', () => {
     it('应该转小写', () => {
-      expect(normalizeAddress('jGa9J9TkqtBcUoHe2zqhVFFbgUVED6o9or')).toBe('jga9j9tkqtbcuohe2zqhvffbguved6o9or')
+      expect(normalizeAddress('jGa9J9TkqtBcUoHe2zqhVFFbgUVED6o9or')).toBe(
+        'jga9j9tkqtbcuohe2zqhvffbguved6o9or',
+      )
     })
   })
 
   describe('swtcContainerName', () => {
     it('应该生成容器名', () => {
-      expect(swtcContainerName('jGa9J9TkqtBcUoHe2zqhVFFbgUVED6o9or')).toBe('dsh-swtc-jga9j9tkqtbcuohe2zqhvffbguved6o9or')
+      expect(swtcContainerName('jGa9J9TkqtBcUoHe2zqhVFFbgUVED6o9or')).toBe(
+        'dsh-swtc-jga9j9tkqtbcuohe2zqhvffbguved6o9or',
+      )
     })
   })
 
   describe('swtcVolumeName', () => {
     it('应该生成卷名', () => {
-      expect(swtcVolumeName('jGa9J9TkqtBcUoHe2zqhVFFbgUVED6o9or')).toBe('dsh-data-swtc-jga9j9tkqtbcuohe2zqhvffbguved6o9or')
+      expect(swtcVolumeName('jGa9J9TkqtBcUoHe2zqhVFFbgUVED6o9or')).toBe(
+        'dsh-data-swtc-jga9j9tkqtbcuohe2zqhvffbguved6o9or',
+      )
     })
   })
 })

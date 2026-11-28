@@ -2,7 +2,7 @@
  * RESOURCE_EXHAUSTED（F1 等待队列）202 响应的统一组装。
  *
  * 为什么单独成文件：/connect（tenant.routes，浏览器门禁跳转）与
- * /api/cwt/gateway-enter（user.routes，CWT 出示）两条进入链共用同一句
+ * 进入链（wallet-login / gateway 入场）共用同一句
  * 排队话术；2026-09 查重时这里已发现两处手抄近似代码（我加 failedResources
  * 时亲手贴成了第二处）。话术/字段以后只会一起演进，单源是唯一正确姿势。
  */

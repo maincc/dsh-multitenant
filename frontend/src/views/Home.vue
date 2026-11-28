@@ -21,6 +21,11 @@
           <p>{{ $t('home.features.scale.desc') }}</p>
         </div>
         <div class="feature-card">
+          <div class="icon">🪪</div>
+          <h3>{{ $t('home.features.credential.title') }}</h3>
+          <p>{{ $t('home.features.credential.desc') }}</p>
+        </div>
+        <div class="feature-card">
           <div class="icon">💾</div>
           <h3>{{ $t('home.features.persist.title') }}</h3>
           <p>{{ $t('home.features.persist.desc') }}</p>
@@ -31,9 +36,9 @@
         <router-link to="/user" class="btn btn-primary btn-large">
           {{ $t('home.actions.start') }}
         </router-link>
-        <router-link to="/admin" class="btn btn-success btn-large">
-          {{ $t('home.actions.admin') }}
-        </router-link>
+        <!-- 2026-11-02 用户裁定：首页「系统管理」公共通道关闭——双按钮同去用户中心
+             造成动作歧义，且管理判权本在侧栏装配（role=admin 才给页签）+ /admin
+             书签跳板，门面按钮于管理员多余、于普通用户只剩误导。摘钮不留痕。 -->
       </div>
     </div>
 
@@ -62,7 +67,9 @@
             <h3>{{ $t('home.guide.step2.title') }}</h3>
             <p>
               {{ $t('home.guide.step2.body') }}
-              {{ $t('home.guide.step2.sig', { sign: $t('home.guide.step2.signLabel') }) }}
+              {{ $t('home.guide.step2.sig', { sign: $t('home.guide.step2.signLabel') }) }}　{{
+                $t('home.guide.step2.cred', { cred: $t('home.guide.step2.credLabel') })
+              }}
             </p>
           </div>
         </div>
@@ -73,9 +80,8 @@
             <p>
               {{
                 $t('home.guide.step3.body', {
-                  min: $t('home.guide.step3.minLabel'),
-                  cwt: $t('home.guide.step3.cwtLabel'),
-                  exempt: $t('home.guide.step3.exemptLabel'),
+                  claim: $t('home.guide.step3.claimLabel'),
+                  verify: $t('home.guide.step3.verifyLabel'),
                 })
               }}
             </p>
@@ -86,7 +92,13 @@
           <div class="step-body">
             <h3>{{ $t('home.guide.step4.title') }}</h3>
             <p>
-              {{ $t('home.guide.step4.body', { admin: $t('home.guide.step4.adminLabel') }) }}
+              {{
+                $t('home.guide.step4.body', {
+                  min: $t('home.guide.step4.minLabel'),
+                  cwt: $t('home.guide.step4.cwtLabel'),
+                  exempt: $t('home.guide.step4.exemptLabel'),
+                })
+              }}
             </p>
           </div>
         </div>
@@ -95,12 +107,7 @@
           <div class="step-body">
             <h3>{{ $t('home.guide.step5.title') }}</h3>
             <p>
-              {{
-                $t('home.guide.step5.body', {
-                  install: $t('home.guide.step5.installLabel'),
-                  noAuto: $t('home.guide.step5.noAutoLabel'),
-                })
-              }}
+              {{ $t('home.guide.step5.body', { admin: $t('home.guide.step5.adminLabel') }) }}
             </p>
           </div>
         </div>
@@ -109,7 +116,21 @@
           <div class="step-body">
             <h3>{{ $t('home.guide.step6.title') }}</h3>
             <p>
-              {{ $t('home.guide.step6.body', { sign: $t('home.guide.step6.signLabel') }) }}
+              {{
+                $t('home.guide.step6.body', {
+                  install: $t('home.guide.step6.installLabel'),
+                  noAuto: $t('home.guide.step6.noAutoLabel'),
+                })
+              }}
+            </p>
+          </div>
+        </div>
+        <div class="guide-step">
+          <div class="step-num">7</div>
+          <div class="step-body">
+            <h3>{{ $t('home.guide.step7.title') }}</h3>
+            <p>
+              {{ $t('home.guide.step7.body', { sign: $t('home.guide.step7.signLabel') }) }}
             </p>
           </div>
         </div>
@@ -123,6 +144,14 @@
             {{ $t('home.guide.notes.item2', { before: $t('home.guide.notes.beforeLabel') }) }}
           </li>
           <li>{{ $t('home.guide.notes.item3') }}</li>
+          <li>
+            {{
+              $t('home.guide.notes.item4', {
+                sync: $t('home.guide.notes.syncLabel'),
+                btn: $t('home.guide.notes.btnLabel'),
+              })
+            }}
+          </li>
         </ul>
       </div>
     </div>
@@ -186,7 +215,7 @@
   background: linear-gradient(135deg, #6b7bdb 0%, #6c69c2 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.75rem;
 }
 
 .subtitle {
@@ -197,17 +226,25 @@
 
 .features {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 1.5rem;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 1.25rem;
   margin: 2rem 0;
   text-align: left;
 }
 
 .feature-card {
-  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  padding: 1.5rem 1.35rem;
   background: #f9fafb;
   border-radius: 12px;
   transition: transform 0.3s;
+}
+
+.feature-card p {
+  flex: 1; /* 文字块撑满，末行底边齐 */
+  font-size: 0.88rem;
+  color: #6b7280;
 }
 
 .feature-card:hover {
@@ -216,18 +253,13 @@
 
 .feature-card .icon {
   font-size: 2rem;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.75rem;
 }
 
 .feature-card h3 {
   font-size: 1.1rem;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.6rem;
   color: #374151;
-}
-
-.feature-card p {
-  font-size: 0.9rem;
-  color: #6b7280;
 }
 
 .actions {
@@ -258,9 +290,14 @@
 
 .guide-steps {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 1.25rem;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.5rem 1.5rem;
   margin-bottom: 2rem;
+}
+
+/* 第 7 步独占整行收尾：三列永远排齐，不留半行空格 */
+.guide-step:nth-child(7) {
+  grid-column: 1 / -1;
 }
 
 .guide-step {
@@ -286,7 +323,7 @@
 }
 
 .step-body h3 {
-  margin: 0 0 0.35rem;
+  margin: 0 0 0.6rem;
   font-size: 1rem;
   color: #374151;
 }
@@ -295,7 +332,7 @@
   margin: 0;
   font-size: 0.88rem;
   color: #6b7280;
-  line-height: 1.55;
+  line-height: 1.7;
 }
 
 .step-body a {
@@ -341,8 +378,36 @@
 
 .tier-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  grid-template-columns: repeat(3, 1fr);
   gap: 1.5rem;
+}
+
+/* ── 响应式收列：每档都保证末行整行收尾，不出半宽孤儿卡 ── */
+@media (max-width: 980px) {
+  .features {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .features .feature-card:last-child {
+    grid-column: 1 / -1;
+  }
+  .guide-steps {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .tier-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  .features {
+    grid-template-columns: 1fr;
+  }
+  .features .feature-card:last-child {
+    grid-column: auto;
+  }
+  .guide-steps {
+    grid-template-columns: 1fr;
+  }
 }
 
 .tier-card {

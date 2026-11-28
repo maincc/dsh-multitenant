@@ -14,7 +14,6 @@
 
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { createHash } from 'node:crypto'
-import { adminSessionStore } from '../src/middleware/auth.middleware.js'
 
 // 有效管理员会话（P0-1：会话 = 服务端随机 token，Cookie 值不再是地址）
 const ADMIN_TOKEN = '11'.repeat(32) // 64 位 hex
@@ -22,7 +21,7 @@ const sha256 = (v) => createHash('sha256').update(v).digest('hex')
 
 // 全局注入有效会话（内存），所有依赖 admin_session 的用例默认可用
 beforeEach(() => {
-  adminSessionStore.sessions[sha256(ADMIN_TOKEN)] = {
+  userSessionStore.sessions[sha256(ADMIN_TOKEN)] = {
     address: 'jndwretndumoqbt2uauclmfmx7xbqjykva',
     expiresAt: Date.now() + 3600e3,
   }
@@ -57,6 +56,7 @@ vi.mock('../src/services/user.service.js', () => ({
     destroyContainer: vi.fn(),
     restartContainer: vi.fn(),
     resetContainer: vi.fn(),
+    upgradeContainer: vi.fn(), // 2026-10 审计：/api/upgrade 加签名门后需要的 spy
     getUserInfo: vi.fn(),
     getAllUsers: vi.fn(),
     state: { swtcUsers: {} },
@@ -82,20 +82,16 @@ vi.mock('../src/services/tenant-config.service.js', async (importOriginal) => {
 
 // 数据层默认走真实实现，但把「会话/状态 load/save」全部替换为内存空 + 落空：
 // 避免测试写入真实 data/（state.json、user-sessions.json、admin sessions），
-// 同时保留 loadCwt* 等只读方法的行为（routes.test.js 不涉及 CWT 用例，空值即可）
+// 只读探测方法置空即可
 vi.mock('../src/services/data.service.js', async (importOriginal) => {
   const mod = await importOriginal()
   const empty = {
     loadSessions: vi.fn(() => ({})),
     loadUserSessions: vi.fn(() => ({})),
-    loadCwtRegistry: vi.fn(() => ({})),
-    loadCwtApplications: vi.fn(() => []),
     readStateFile: vi.fn(() => null), // migrateLegacy 只读探测，空即可
     saveState: vi.fn(() => {}),
     saveUserSessions: vi.fn(() => {}),
     saveSessions: vi.fn(() => {}),
-    saveCwtRegistry: vi.fn(() => {}),
-    saveCwtApplications: vi.fn(() => {}),
     logOperation: vi.fn(() => Promise.resolve()), // 留痕加固后 reset/remove/logout 会调它——防写真实 operations.log
   }
   return { dataService: { ...mod.dataService, ...empty } }
@@ -173,7 +169,9 @@ async function makeSignedReq(base, operation, payload) {
   const { nonce, message } = JSON.parse(chalRes.body)
   return makeReq({
     ...base,
-    body: undefined,
+    // 默认不带 body（force-stop/remove 等不读体的端点用签名头即可）；
+    // 需要请求体的端点（如 upgrade 的 tier）由调用方在 base 里传 body 保留
+    body: base.body,
     // 签名材料走请求头（与前端一致）
     'x-admin-nonce': nonce,
     'x-admin-signature': `sig:${message}`,
@@ -191,7 +189,7 @@ describe('user.routes.js 详情分支', () => {
     const req = makeReq({
       method: 'POST',
       url: `/api/user/${TARGET_ADDR}/remove`,
-      cookie: `admin_session=${ADMIN_TOKEN}`,
+      cookie: `user_session=${ADMIN_TOKEN}`,
     })
     const res = makeRes()
 
@@ -205,7 +203,7 @@ describe('user.routes.js 详情分支', () => {
     const req = makeReq({
       method: 'GET',
       url: `/api/user/${TARGET_ADDR}`,
-      cookie: `admin_session=${ADMIN_TOKEN}`,
+      cookie: `user_session=${ADMIN_TOKEN}`,
     })
     const res = makeRes()
 
@@ -235,14 +233,14 @@ describe('user.routes.js 详情分支', () => {
     userService.getUserInfo.mockResolvedValue({ address: TARGET_ADDR, port: 31001 })
     // 另一个非管理员地址的会话访问 TARGET_ADDR
     const strangerToken = 'aa'.repeat(32)
-    adminSessionStore.sessions[sha256(strangerToken)] = {
+    userSessionStore.sessions[sha256(strangerToken)] = {
       address: 'jpfx5i4xxnzggbl1sgm1cfabayvyyb9vzp', // 非管理员、非 TARGET_ADDR
       expiresAt: Date.now() + 3600e3,
     }
     const req = makeReq({
       method: 'GET',
       url: `/api/user/${TARGET_ADDR}`,
-      cookie: `admin_session=${strangerToken}`,
+      cookie: `user_session=${strangerToken}`,
     })
     const res = makeRes()
 
@@ -264,7 +262,7 @@ describe('tenant.routes.js remove / restart 错误码', () => {
       {
         method: 'POST',
         url: `/api/user/${TARGET_ADDR}/remove`,
-        cookie: `admin_session=${ADMIN_TOKEN}`,
+        cookie: `user_session=${ADMIN_TOKEN}`,
       },
       'remove',
       { address: TARGET_ADDR, keepVolume: false },
@@ -291,7 +289,7 @@ describe('tenant.routes.js remove / restart 错误码', () => {
       {
         method: 'POST',
         url: `/api/user/${TARGET_ADDR}/remove`,
-        cookie: `admin_session=${ADMIN_TOKEN}`,
+        cookie: `user_session=${ADMIN_TOKEN}`,
       },
       'remove',
       { address: TARGET_ADDR, keepVolume: false },
@@ -323,7 +321,7 @@ describe('tenant.routes.js remove / restart 错误码', () => {
       {
         method: 'POST',
         url: `/api/user/${TARGET_ADDR}/remove?keepVolume=1`,
-        cookie: `admin_session=${ADMIN_TOKEN}`,
+        cookie: `user_session=${ADMIN_TOKEN}`,
       },
       'remove',
       { address: TARGET_ADDR, keepVolume: true },
@@ -356,7 +354,7 @@ describe('tenant.routes.js remove / restart 错误码', () => {
       {
         method: 'POST',
         url: `/api/user/${TARGET_ADDR}/reset`,
-        cookie: `admin_session=${ADMIN_TOKEN}`,
+        cookie: `user_session=${ADMIN_TOKEN}`,
       },
       'reset',
       { address: TARGET_ADDR },
@@ -385,7 +383,7 @@ describe('tenant.routes.js remove / restart 错误码', () => {
       makeReq({
         method: 'POST',
         url: `/api/user/${TARGET_ADDR}/reset`,
-        cookie: `admin_session=${ADMIN_TOKEN}`,
+        cookie: `user_session=${ADMIN_TOKEN}`,
       }),
       res,
       `/api/user/${TARGET_ADDR}/reset`,
@@ -407,7 +405,7 @@ describe('tenant.routes.js remove / restart 错误码', () => {
       makeReq({
         method: 'POST',
         url: `/api/user/${ADMIN_ADDR}/reset`,
-        cookie: `admin_session=${ADMIN_TOKEN}`,
+        cookie: `user_session=${ADMIN_TOKEN}`,
       }),
       res,
       `/api/user/${ADMIN_ADDR}/reset`,
@@ -424,7 +422,7 @@ describe('tenant.routes.js remove / restart 错误码', () => {
       {
         method: 'POST',
         url: `/api/user/${TARGET_ADDR}/reset`,
-        cookie: `admin_session=${ADMIN_TOKEN}`,
+        cookie: `user_session=${ADMIN_TOKEN}`,
       },
       'reset',
       { address: TARGET_ADDR },
@@ -499,11 +497,16 @@ describe('tenant.routes.js remove / restart 错误码', () => {
     userService.restartContainer.mockRejectedValue(
       new NotFoundError(`Container dsh-swtc-${TARGET_ADDR} not found`),
     )
-    const req = makeReq({
-      method: 'POST',
-      url: `/api/user/${TARGET_ADDR}/restart`,
-      cookie: `admin_session=${ADMIN_TOKEN}`,
-    })
+    // 管理员代他人重启 → 2026-10 审计起需当场签名（与 force-stop 对称）
+    const req = await makeSignedReq(
+      {
+        method: 'POST',
+        url: `/api/user/${TARGET_ADDR}/restart`,
+        cookie: `user_session=${ADMIN_TOKEN}`,
+      },
+      'restart',
+      { address: TARGET_ADDR },
+    )
     const res = makeRes()
 
     const handled = await handleTenantRoutes(
@@ -519,11 +522,15 @@ describe('tenant.routes.js remove / restart 错误码', () => {
 
   it('restart 成功返回 200', async () => {
     userService.restartContainer.mockResolvedValue({ ok: true, status: 'restarted' })
-    const req = makeReq({
-      method: 'POST',
-      url: `/api/user/${TARGET_ADDR}/restart`,
-      cookie: `admin_session=${ADMIN_TOKEN}`,
-    })
+    const req = await makeSignedReq(
+      {
+        method: 'POST',
+        url: `/api/user/${TARGET_ADDR}/restart`,
+        cookie: `user_session=${ADMIN_TOKEN}`,
+      },
+      'restart',
+      { address: TARGET_ADDR },
+    )
     const res = makeRes()
 
     const handled = await handleTenantRoutes(
@@ -560,13 +567,18 @@ describe('user.routes.js 模型配置端点', () => {
     vi.clearAllMocks()
   })
 
-  it('GET /api/user/tenant-config 返回扩展状态（key + baseURL + models，不回显 key）', async () => {
+  it('GET /api/user/tenant-config 本人会话返回扩展状态（key + baseURL + models，不回显 key）', async () => {
     tenantConfigService.getStatus.mockResolvedValue({
       apiKeyConfigured: true,
       baseURL: 'https://gw.example.com',
       models: [{ id: 'm1', name: 'M1' }],
     })
-    const req = makeReq({ method: 'GET', url: `/api/user/tenant-config?address=${TARGET_ADDR}` })
+    const token = userSessionStore.create(TARGET_ADDR, 3600_000)
+    const req = makeReq({
+      method: 'GET',
+      url: `/api/user/tenant-config?address=${TARGET_ADDR}`,
+      cookie: `user_session=${token}`,
+    })
     const res = makeRes()
 
     const handled = await handleUserRoutes(req, res, '/api/user/tenant-config')
@@ -578,6 +590,48 @@ describe('user.routes.js 模型配置端点', () => {
     expect(body.baseURL).toBe('https://gw.example.com')
     expect(body.models).toEqual([{ id: 'm1', name: 'M1' }])
     expect(JSON.stringify(body)).not.toContain('sk-')
+  })
+
+  it('GET /api/user/tenant-config 匿名/窥他人 → 403（2026-10 审计 owner-gate 回归位）', async () => {
+    // 匿名：任何人可枚举任意租户的 baseURL/模型/Provider 拓扑
+    const anonRes = makeRes()
+    await handleUserRoutes(
+      makeReq({ method: 'GET', url: `/api/user/tenant-config?address=${TARGET_ADDR}` }),
+      anonRes,
+      '/api/user/tenant-config',
+    )
+    expect(anonRes.statusCode).toBe(403)
+    expect(tenantConfigService.getStatus).not.toHaveBeenCalled()
+
+    // 别的登录用户窥探：同样 403
+    const other = 'jotheruseraaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    const token = userSessionStore.create(other, 3600_000)
+    const spyRes = makeRes()
+    await handleUserRoutes(
+      makeReq({
+        method: 'GET',
+        url: `/api/user/tenant-config?address=${TARGET_ADDR}`,
+        cookie: `user_session=${token}`,
+      }),
+      spyRes,
+      '/api/user/tenant-config',
+    )
+    expect(spyRes.statusCode).toBe(403)
+    expect(tenantConfigService.getStatus).not.toHaveBeenCalled()
+
+    // 管理员可读（运维排查路径保留）
+    tenantConfigService.getStatus.mockResolvedValue({ apiKeyConfigured: false })
+    const adminRes = makeRes()
+    await handleUserRoutes(
+      makeReq({
+        method: 'GET',
+        url: `/api/user/tenant-config?address=${TARGET_ADDR}`,
+        cookie: `user_session=${ADMIN_TOKEN}`,
+      }),
+      adminRes,
+      '/api/user/tenant-config',
+    )
+    expect(adminRes.statusCode).toBe(200)
   })
 
   it('POST /api/user/tenant-config 透传 apiKey + baseURL + models 到 service', async () => {
@@ -710,7 +764,7 @@ describe('网关门禁会话（TTL 分权 + logout 吊销）', () => {
     vi.clearAllMocks()
   })
 
-  it('create(address) 默认 12h；create(address, ttl) 使用自定义 TTL（CWT 入场 30min）', () => {
+  it('create(address) 默认 12h；create(address, ttl) 使用自定义 TTL', () => {
     const shortToken = userSessionStore.create(TARGET_ADDR, 30 * 60 * 1000)
     const longToken = userSessionStore.create(TARGET_ADDR)
     const shortEntry = userSessionStore.sessions[sha256(shortToken)]
@@ -772,21 +826,179 @@ describe('网关门禁会话（TTL 分权 + logout 吊销）', () => {
     expect(handled).toBe(true)
     expect(JSON.parse(res.body).address).toBeNull()
   })
+})
 
-  // ---------- CWT 申请防洪泛（P1-7） ----------
+describe('容器控制签名对称性（2026-10 全面审计回归位）', () => {
+  // 事故形态：remove/force-stop 要签名，而更重的 /leave（GET 即销毁他人容器）与
+  // restart/stop/upgrade 免签免留痕——同站 CSRF（租户页驱动管理员浏览器）可成串停/毁。
+  // 钉三条契约：代他人必签、本人免签（日常流不弹窗）、免签必 403 不落服务层。
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockChallengeFlow()
+  })
 
-  it('POST /api/user/cwt/apply 未认证端点按 IP 限流 → 第 11 次 429', async () => {
-    // 前 10 次：缺 token → 400（限流放行到业务层）；第 11 次：限流拦截
-    let last = null
-    for (let i = 0; i < 11; i++) {
-      last = makeRes()
-      await handleUserRoutes(
-        makeReq({ method: 'POST', url: '/api/user/cwt/apply', body: {} }),
-        last,
-        '/api/user/cwt/apply',
-      )
-    }
-    expect(last.statusCode).toBe(429)
-    expect(JSON.parse(last.body).code).toBe('RATE_LIMITED')
+  it('管理员免签 restart 他人 → 403 SIGNATURE_REQUIRED，不触服务层', async () => {
+    const req = makeReq({
+      method: 'POST',
+      url: `/api/user/${TARGET_ADDR}/restart`,
+      cookie: `user_session=${ADMIN_TOKEN}`,
+    })
+    const res = makeRes()
+    await handleTenantRoutes(
+      req,
+      res,
+      `/api/user/${TARGET_ADDR}/restart`,
+      new URL(`http://127.0.0.1:8090/api/user/${TARGET_ADDR}/restart`),
+    )
+    expect(res.statusCode).toBe(403)
+    expect(JSON.parse(res.body).code).toBe('SIGNATURE_REQUIRED')
+    expect(userService.restartContainer).not.toHaveBeenCalled()
+  })
+
+  it('管理员带签 restart 他人 → 200 + 审计留痕', async () => {
+    userService.restartContainer.mockResolvedValue({ ok: true })
+    const req = await makeSignedReq(
+      {
+        method: 'POST',
+        url: `/api/user/${TARGET_ADDR}/restart`,
+        cookie: `user_session=${ADMIN_TOKEN}`,
+      },
+      'restart',
+      { address: TARGET_ADDR },
+    )
+    const res = makeRes()
+    await handleTenantRoutes(
+      req,
+      res,
+      `/api/user/${TARGET_ADDR}/restart`,
+      new URL(`http://127.0.0.1:8090/api/user/${TARGET_ADDR}/restart`),
+    )
+    expect(res.statusCode).toBe(200)
+    expect(dataService.logOperation).toHaveBeenCalledWith(
+      'admin_restart_user',
+      expect.objectContaining({ address: TARGET_ADDR }),
+    )
+  })
+
+  it('本人 user_session restart 自己 → 免签直达（防未来过度签名）', async () => {
+    const token = userSessionStore.create(TARGET_ADDR, 3600_000)
+    userService.restartContainer.mockResolvedValue({ ok: true })
+    const req = makeReq({
+      method: 'POST',
+      url: `/api/user/${TARGET_ADDR}/restart`,
+      cookie: `user_session=${token}`,
+    })
+    const res = makeRes()
+    await handleTenantRoutes(
+      req,
+      res,
+      `/api/user/${TARGET_ADDR}/restart`,
+      new URL(`http://127.0.0.1:8090/api/user/${TARGET_ADDR}/restart`),
+    )
+    expect(res.statusCode).toBe(200)
+    expect(dataService.logOperation).toHaveBeenCalledWith(
+      'user_restart',
+      expect.objectContaining({ address: TARGET_ADDR }),
+    )
+  })
+
+  it('免签 GET /leave/他人（CSRF 头号入口）→ 403，容器没被毁', async () => {
+    const req = makeReq({
+      url: `/leave/${TARGET_ADDR}`,
+      cookie: `user_session=${ADMIN_TOKEN}`,
+    })
+    const res = makeRes()
+    const handled = await handleTenantRoutes(
+      req,
+      res,
+      `/leave/${TARGET_ADDR}`,
+      new URL(`http://127.0.0.1:8090/leave/${TARGET_ADDR}`),
+    )
+    expect(handled).toBe(true)
+    expect(res.statusCode).toBe(403)
+    expect(JSON.parse(res.body).code).toBe('SIGNATURE_REQUIRED')
+    expect(userService.destroyContainer).not.toHaveBeenCalled()
+  })
+
+  it('带签 GET /leave/他人 → 200 + admin_leave_user 留痕', async () => {
+    userService.destroyContainer.mockResolvedValue({ ok: true })
+    const req = await makeSignedReq(
+      { url: `/leave/${TARGET_ADDR}`, cookie: `user_session=${ADMIN_TOKEN}` },
+      'leave',
+      { address: TARGET_ADDR },
+    )
+    const res = makeRes()
+    await handleTenantRoutes(
+      req,
+      res,
+      `/leave/${TARGET_ADDR}`,
+      new URL(`http://127.0.0.1:8090/leave/${TARGET_ADDR}`),
+    )
+    expect(res.statusCode).toBe(200)
+    expect(userService.destroyContainer).toHaveBeenCalledWith(TARGET_ADDR)
+    expect(dataService.logOperation).toHaveBeenCalledWith(
+      'admin_leave_user',
+      expect.objectContaining({ address: TARGET_ADDR }),
+    )
+  })
+
+  it('免签 POST /api/upgrade/他人 → 403（tier 变更当场重启他人容器，必签）', async () => {
+    // swtcUsers 里有目标用户（走到签名门）
+    userService.state.swtcUsers = { [TARGET_ADDR]: { tier: 1 } }
+    const req = makeReq({
+      method: 'POST',
+      url: `/api/upgrade/${TARGET_ADDR}`,
+      cookie: `user_session=${ADMIN_TOKEN}`,
+      body: { tier: 2 },
+    })
+    const res = makeRes()
+    await handleUserRoutes(req, res, `/api/upgrade/${TARGET_ADDR}`)
+    expect(res.statusCode).toBe(403)
+    expect(JSON.parse(res.body).code).toBe('SIGNATURE_REQUIRED')
+    expect(userService.upgradeContainer).not.toHaveBeenCalled()
+    delete userService.state.swtcUsers
+  })
+
+  it('带签 /api/upgrade/他人 tier=2 → 200 + admin_tier_change 留痕', async () => {
+    userService.state.swtcUsers = { [TARGET_ADDR]: { tier: 1 } }
+    userService.upgradeContainer.mockResolvedValue({ ok: true, tier: 2 })
+    const req = await makeSignedReq(
+      {
+        method: 'POST',
+        url: `/api/upgrade/${TARGET_ADDR}`,
+        cookie: `user_session=${ADMIN_TOKEN}`,
+        body: { tier: 2 },
+      },
+      'user-upgrade',
+      { address: TARGET_ADDR, tier: 2 },
+    )
+    const res = makeRes()
+    await handleUserRoutes(req, res, `/api/upgrade/${TARGET_ADDR}`)
+    expect(res.statusCode).toBe(200)
+    expect(dataService.logOperation).toHaveBeenCalledWith(
+      'admin_tier_change',
+      expect.objectContaining({ address: TARGET_ADDR, tier: '2' }),
+    )
+    delete userService.state.swtcUsers
+  })
+
+  it('签 1 档执行 3 档 → binding 不一致拒签（偷换回归位）', async () => {
+    userService.state.swtcUsers = { [TARGET_ADDR]: { tier: 1 } }
+    const signedFor1 = await makeSignedReq(
+      {
+        method: 'POST',
+        url: `/api/upgrade/${TARGET_ADDR}`,
+        cookie: `user_session=${ADMIN_TOKEN}`,
+        body: { tier: 3 },
+      },
+      'user-upgrade',
+      { address: TARGET_ADDR, tier: 1 },
+    )
+    const res = makeRes()
+    await handleUserRoutes(signedFor1, res, `/api/upgrade/${TARGET_ADDR}`)
+    expect(res.statusCode).toBe(403)
+    expect(JSON.parse(res.body).code).toBe('SIGNATURE_MISMATCH')
+    expect(userService.upgradeContainer).not.toHaveBeenCalled()
+    delete userService.state.swtcUsers
   })
 })

@@ -84,6 +84,9 @@ export const SIGN_PURPOSE = Object.freeze({
   SKILLS: 'skills',
   GATEWAY: 'gateway-verify',
   ADMIN_OP: 'admin-op',
+  // VC 出示/领取确认（did-vc-runbook §3/ADR-5）：挑战机器新用途，
+  // 被签内容绑定 purpose|addr|nonce|jti——凭证被盗也签不出这一域。
+  VC_PRESENT: 'vc-present',
 })
 
 /** 签名域前缀：把"哪个应用"也绑进被签内容，避免与其它 DSH 部署互换签名 */
@@ -143,12 +146,16 @@ function sh(cmd, args, opts = {}) {
     execFile(
       cmd,
       args,
-      { maxBuffer: 16 * 1024 * 1024, ...opts, timeout },
+      // 2026-10 审计：execFile 超时默认只发 SIGTERM——`docker run` 的本地 CLI
+      // 收到 TERM 就退出，但**不通知 daemon 侧已建容器**：被杀的只是客户端，
+      // 容器继续带着用户卷跑 = 幽灵执行 + 卷被占（后续合并脚本全挂）。
+      // SIGKILL 硬杀 CLI，触发 daemon 回收其子进程容器。
+      { maxBuffer: 16 * 1024 * 1024, ...opts, timeout, killSignal: 'SIGKILL' },
       (err, stdout, stderr) => {
         if (err) {
           err.stdout = String(stdout ?? '')
           err.stderr = String(stderr ?? '')
-          if (err.killed || err.signal === 'SIGTERM') {
+          if (err.killed || err.signal === 'SIGTERM' || err.signal === 'SIGKILL') {
             err.code = err.code ?? 'ETIMEDOUT'
             err.timedOut = true
             err.stderr = `${err.stderr}\n[docker-cli] timed out after ${timeout}ms`.trim()
@@ -314,6 +321,12 @@ export class TenantConfigService {
 
   /** 查询配置状态（只回 configured/absent，不回显 key） */
   async getStatus(address) {
+    // 无卷 = 无配置：一次探卷后短路返回空态。此前直接串行跑 3 个 runScript，
+    // 每个内部再各自探卷失败抛错被吞——无容器的地址（验收②后管理员进中心不再
+    // 自动建容器，这是常态首屏）也要白跑 docker 三连，实测 6751ms 慢源。
+    if (!(await this.volumeExists(address))) {
+      return { apiKeyConfigured: false, baseURL: null, models: null, providers: [] }
+    }
     // 凭据引用集合（一次容器调用，list 不输出值）
     let configuredRefs = []
     try {

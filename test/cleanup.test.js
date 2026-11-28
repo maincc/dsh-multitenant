@@ -147,6 +147,54 @@ describe('空闲清理活动检测', () => {
     expect(seenArgs?.some((a) => a.startsWith('--authority='))).toBe(true)
   })
 
+  // ---- 2026-10 全面审计：RPC 判据三态化（探测失败≠无任务） ----
+  it('check-rpc 应答 ok:true 但缺 runningSessions（形状漂移）→ 保守判活跃', async () => {
+    vi.spyOn(dockerService, 'runVolumeScript').mockImplementation(
+      (volume, scriptPath, scriptName) => {
+        if (scriptName === 'check-rpc.mjs') {
+          // 镜像升级后字段名变了/丢了——旧实现 `?? 0` 折叠成"无任务"→ 误停
+          return Promise.resolve(JSON.stringify({ ok: true, totalSessions: 3 }))
+        }
+        if (scriptName === 'check-connections.mjs') {
+          return Promise.resolve(JSON.stringify({ established: 0 }))
+        }
+        return Promise.resolve(JSON.stringify({ latestSessionMtime: 0, sessionCount: 0 }))
+      },
+    )
+    vi.spyOn(dockerService, 'topProcessCount').mockResolvedValue(2)
+    expect(await userService.isContainerActive(ADDR, NAME)).toBe(true)
+  })
+
+  it('check-rpc 探测抛错 + 容器确在运行 → 保守判活跃（超时恰是 DSH 忙的时候）', async () => {
+    vi.spyOn(dockerService, 'runVolumeScript').mockImplementation(
+      (volume, scriptPath, scriptName) => {
+        if (scriptName === 'check-rpc.mjs') return Promise.reject(new Error('rpc probe timeout'))
+        if (scriptName === 'check-connections.mjs') {
+          return Promise.resolve(JSON.stringify({ established: 0 }))
+        }
+        return Promise.resolve(JSON.stringify({ latestSessionMtime: 0, sessionCount: 0 }))
+      },
+    )
+    vi.spyOn(dockerService, 'topProcessCount').mockResolvedValue(2)
+    vi.spyOn(dockerService, 'containerInfo').mockResolvedValue({ exists: true, status: 'running' })
+    expect(await userService.isContainerActive(ADDR, NAME)).toBe(true)
+  })
+
+  it('check-rpc 探测抛错 + 容器其实不在（状态漂移僵尸）→ 放行继续判空闲（不清不掉）', async () => {
+    vi.spyOn(dockerService, 'runVolumeScript').mockImplementation(
+      (volume, scriptPath, scriptName) => {
+        if (scriptName === 'check-rpc.mjs') return Promise.reject(new Error('no such container'))
+        if (scriptName === 'check-connections.mjs') {
+          return Promise.resolve(JSON.stringify({ established: 0 }))
+        }
+        return Promise.resolve(JSON.stringify({ latestSessionMtime: 0, sessionCount: 0 }))
+      },
+    )
+    vi.spyOn(dockerService, 'topProcessCount').mockResolvedValue(2)
+    vi.spyOn(dockerService, 'containerInfo').mockResolvedValue({ exists: false })
+    expect(await userService.isContainerActive(ADDR, NAME)).toBe(false)
+  })
+
   it('cleanup：活跃容器被跳过并刷新 lastSeenAt（不调用 stop）', async () => {
     vi.spyOn(dockerService, 'runVolumeScript').mockResolvedValue(
       JSON.stringify({ latestSessionMtime: Date.now(), sessionCount: 1 }),

@@ -145,6 +145,43 @@ describe('/connect 所有权签名（一律要求签名，匿名 401）', () => 
     expect(userService.ensureContainer).toHaveBeenCalledWith(wallet.address)
   })
 
+  it('action=login：验签换 cookie 但**绝不建容器**（v1.5 进用户中心≠启动容器）', async () => {
+    const wallet = makeWallet()
+    userService.containerExists.mockResolvedValue(false)
+    userService.ensureContainer.mockResolvedValue(31002)
+
+    const first = await bareConnect(wallet.address)
+    const { nonce, message } = JSON.parse(first.body)
+
+    const res = makeRes()
+    const url = connectUrl({
+      address: wallet.address,
+      nonce,
+      signature: wallet.sign(message),
+      publicKey: wallet.publicKey,
+      action: 'login',
+    })
+    await handleTenantRoutes(makeReq(), res, '/connect', url)
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.loggedIn).toBe(true)
+    expect(body.url).toBeUndefined() // 不带容器 URL（不跳转、不泄露端口）
+    expect(res.headers.location).toBeUndefined()
+    // 核心：登录通道绝不调用 ensureContainer
+    expect(userService.ensureContainer).not.toHaveBeenCalled()
+    // 且换发了 user_session cookie（前端凭它进用户中心读凭证/角色）
+    expect(String(res.headers['set-cookie'] || '')).toMatch(/user_session=/)
+  })
+
+  it('action=login：无签名材料 → 仍 401 挑战（登录也须验签，无绕过）', async () => {
+    const res = makeRes()
+    const url = connectUrl({ address: ADDR, action: 'login' })
+    await handleTenantRoutes(makeReq(), res, '/connect', url)
+    expect(res.statusCode).toBe(401)
+    expect(JSON.parse(res.body).code).toBe('SIGNATURE_REQUIRED')
+    expect(userService.ensureContainer).not.toHaveBeenCalled()
+  })
+
   it('跨用途签名：拿 CONNECT 的挑战却签 CONFIG 用途消息 → 403（用途绑定加固）', async () => {
     const wallet = makeWallet()
     userService.containerExists.mockResolvedValue(false)

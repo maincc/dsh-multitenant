@@ -24,13 +24,15 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { createHash } from 'node:crypto'
 import { tenantConfigService } from '../src/services/tenant-config.service.js'
-import { adminSessionStore } from '../src/middleware/auth.middleware.js'
+import { userSessionStore } from '../src/middleware/user-auth.middleware.js'
 import { buildBinding } from '../src/middleware/admin-signature.middleware.js'
 import { handleAdminRoutes } from '../src/routes/admin.routes.js'
 import { handleTenantRoutes } from '../src/routes/tenant.routes.js'
 import { userService } from '../src/services/user.service.js'
+import { dataService } from '../src/services/data.service.js'
 import { dockerService } from '../src/services/docker.service.js'
-import { cwtAdminService } from '../src/services/cwt-admin.service.js'
+import { credentialService } from '../src/services/credential.service.js'
+import { getAdminAddresses } from '../src/config/config.js'
 
 const ADMIN_ADDR = 'jndwretndumoqbt2uauclmfmx7xbqjykva'
 const OTHER_ADDR = 'jga9j9tkqtbcuohe2zqhvffbguved6o9or'
@@ -58,15 +60,12 @@ vi.mock('../src/services/data.service.js', async (importOriginal) => {
       ...mod.dataService,
       loadSessions: vi.fn(() => ({})),
       loadUserSessions: vi.fn(() => ({})),
-      loadCwtRegistry: vi.fn(() => ({})),
-      loadCwtApplications: vi.fn(() => []),
       readStateFile: vi.fn(() => null),
       saveState: vi.fn(() => {}),
       saveUserSessions: vi.fn(() => {}),
       saveSessions: vi.fn(() => {}),
-      saveCwtRegistry: vi.fn(() => {}),
-      saveCwtApplications: vi.fn(() => {}),
       addAdmin: vi.fn(() => true),
+      removeAdmin: vi.fn(() => true),
       logOperation: vi.fn(),
       getAdminConfig: vi.fn(() => ({ addresses: [], history: [] })),
       saveAdminConfig: vi.fn(),
@@ -80,18 +79,29 @@ vi.mock('../src/services/docker.service.js', () => ({
     removeVolume: vi.fn().mockResolvedValue(undefined),
   },
 }))
-vi.mock('../src/services/cwt-admin.service.js', () => ({
-  cwtAdminService: {
-    approveApplication: vi.fn().mockResolvedValue({ ok: true }),
-    rejectApplication: vi.fn().mockResolvedValue({ ok: true }),
-    revokeRegistry: vi.fn().mockResolvedValue({ ok: true }),
-  },
-}))
 vi.mock('../src/services/tenant-proxy.service.js', () => ({ tenantGateway: {} }))
 vi.mock('../src/services/dsh-version.service.js', () => ({ dshVersionService: {} }))
+// v1.5 编排面替换、isAdmSync 保真实（它的"对账前落 config.isAdmin 名册兜底"正被本文件
+// 的 isAdmin mock 覆盖——判权改道的这条兜底链路要在真实代码上回归）
+vi.mock('../src/services/credential.service.js', async (importOriginal) => {
+  const mod = await importOriginal()
+  const real = mod.credentialService
+  return {
+    ...mod,
+    // 原型代理保 isAdmSync 等真实方法（对象展开只拷自有属性、类方法在原型上会全丢）
+    credentialService: Object.assign(Object.create(real), real, {
+      provisionAdmin: vi.fn(async () => ({ ok: true, issued: true, credential: null })),
+      demoteAdmin: vi.fn(async () => ({ ok: true, to: 'did', credential: null })),
+    }),
+  }
+})
 vi.mock('../src/config/config.js', async (importOriginal) => ({
   ...(await importOriginal()),
   isAdmin: vi.fn(() => true),
+  // 字面量=ADMIN_ADDR/TENANT 值（vi.mock 工厂先于测试体内 const 执行，引用会 TDZ 崩）
+  getAdminAddresses: vi.fn(
+    () => new Set(['jndwretndumoqbt2uauclmfmx7xbqjykva', 'jga9j9tkqtbcuohe2zqhvffbguved6o9or']),
+  ),
 }))
 
 class MockReq extends EventEmitter {
@@ -136,7 +146,7 @@ function makeReq(opts) {
   return new MockReq(opts)
 }
 
-const adminCookie = () => `admin_session=${ADMIN_TOKEN}`
+const adminCookie = () => `user_session=${ADMIN_TOKEN}`
 
 /** 走真实的挑战池领一个绑定到 (operation,payload) 的挑战 */
 async function issueChallenge(operation, payload, { address = ADMIN_ADDR } = {}) {
@@ -185,7 +195,7 @@ beforeEach(() => {
   vi.spyOn(tenantConfigService, 'verifySignature').mockImplementation(
     (addr, message, signature) => signature === `sig:${message}`,
   )
-  adminSessionStore.sessions = {
+  userSessionStore.sessions = {
     [sha256(ADMIN_TOKEN)]: { address: ADMIN_ADDR, expiresAt: Date.now() + 3600e3 },
   }
   userService.state.swtcUsers = {}
@@ -424,38 +434,13 @@ describe('加固：绑定串由服务端推导', () => {
     expect(json(res).code).toBe('SIGNATURE_NOT_APPLICABLE')
   })
 
-  it('cwt/approve 绑定申请 id（非地址）', async () => {
-    const { data } = await issueChallenge('cwt/approve', { id: 'app-77' })
-    expect(data.binding).toBe('cwt/approve:id=app-77')
-  })
-
-  it('cwt/revoke 绑定地址', async () => {
-    const { data } = await issueChallenge('cwt/revoke', { address: TENANT.toUpperCase() })
-    expect(data.binding).toBe(`cwt/revoke:address=${TENANT}`)
-  })
-
   it('reset 绑定地址', async () => {
     const { data } = await issueChallenge('reset', { address: TENANT })
     expect(data.binding).toBe(`reset:address=${TENANT}`)
   })
 })
 
-describe('收口：CWT 审批 + 孤儿卷清理也要求当场签名', () => {
-  async function callCwtApprove(id, headers = {}) {
-    const res = makeRes()
-    await handleAdminRoutes(
-      makeReq({
-        method: 'POST',
-        url: `/api/admin/cwt/applications/${id}/approve`,
-        cookie: adminCookie(),
-        ...headers,
-      }),
-      res,
-      `/api/admin/cwt/applications/${id}/approve`,
-    )
-    return res
-  }
-
+describe('收口：孤儿卷清理要求当场签名', () => {
   async function callCleanupOrphans(body, headers = {}) {
     const res = makeRes()
     await handleAdminRoutes(
@@ -505,26 +490,102 @@ describe('收口：CWT 审批 + 孤儿卷清理也要求当场签名', () => {
     expect(json(res).code).toBe('SIGNATURE_MISMATCH')
     expect(dockerService.removeVolume).not.toHaveBeenCalled()
   })
+})
 
-  it('CWT approve：只有会话无签名 → SIGNATURE_REQUIRED，业务层零触达', async () => {
-    const res = await callCwtApprove('app-1')
+describe('v1.5 撤销管理员（demote）：签名门禁 + 防锁死 + 凭证联动', () => {
+  async function callDemote(headers, address = TENANT) {
+    const res = makeRes()
+    await handleAdminRoutes(
+      makeReq({
+        method: 'POST',
+        url: `/api/admin/demote/${address}`,
+        cookie: adminCookie(),
+        ...headers,
+      }),
+      res,
+      `/api/admin/demote/${address}`,
+    )
+    return res
+  }
+
+  it('promote 联动 provisionAdmin（任命即配发 admin 凭证）', async () => {
+    const { data } = await issueChallenge('promote', { address: TENANT })
+    const res = await callPromote(headersFor(data))
+    expect(res.statusCode).toBe(200)
+    expect(credentialService.provisionAdmin).toHaveBeenCalledWith(TENANT, ADMIN_ADDR)
+  })
+
+  it('demote 无签名 → SIGNATURE_REQUIRED（cookie 单独不够）', async () => {
+    const res = await callDemote({})
     expect(res.statusCode).toBe(403)
     expect(json(res).code).toBe('SIGNATURE_REQUIRED')
-    expect(cwtAdminService.approveApplication).not.toHaveBeenCalled()
+    expect(credentialService.demoteAdmin).not.toHaveBeenCalled()
   })
 
-  it('CWT approve：签名正确 → 落到业务层且传入会话地址为审批人', async () => {
-    const { data } = await issueChallenge('cwt/approve', { id: 'app-2' })
-    const res = await callCwtApprove('app-2', headersFor(data))
+  it('demote 签名正确 → 名册移除 + 凭证降格编排', async () => {
+    const { data } = await issueChallenge('demote', { address: TENANT })
+    const res = await callDemote(headersFor(data))
     expect(res.statusCode).toBe(200)
-    expect(cwtAdminService.approveApplication).toHaveBeenCalledWith('app-2', ADMIN_ADDR)
+    expect(json(res).demotedTo).toBe('did')
+    expect(dataService.removeAdmin).toHaveBeenCalledWith(TENANT, ADMIN_ADDR)
+    expect(credentialService.demoteAdmin).toHaveBeenCalledWith(TENANT, ADMIN_ADDR)
   })
 
-  it('CWT approve：签 app-2 却执行 app-3 → MISMATCH（不能偷换审批对象）', async () => {
-    const { data } = await issueChallenge('cwt/approve', { id: 'app-2' })
-    const res = await callCwtApprove('app-3', headersFor(data))
+  it('promote 挑战去 demote → SIGNATURE_MISMATCH（撤销复用任命签名=死路）', async () => {
+    const { data } = await issueChallenge('promote', { address: TENANT })
+    const res = await callDemote(headersFor(data))
     expect(res.statusCode).toBe(403)
     expect(json(res).code).toBe('SIGNATURE_MISMATCH')
-    expect(cwtAdminService.approveApplication).not.toHaveBeenCalled()
+    expect(credentialService.demoteAdmin).not.toHaveBeenCalled()
+  })
+
+  it('名册只剩目标一人 → LAST_ADMIN 拒（防平台锁死，且不动任何状态）', async () => {
+    vi.mocked(getAdminAddresses).mockReturnValueOnce(new Set([TENANT]))
+    const { data } = await issueChallenge('demote', { address: TENANT })
+    const res = await callDemote(headersFor(data))
+    expect(res.statusCode).toBe(400)
+    expect(json(res).code).toBe('LAST_ADMIN')
+    expect(dataService.removeAdmin).not.toHaveBeenCalled()
+    expect(credentialService.demoteAdmin).not.toHaveBeenCalled()
+  })
+
+  it('demote 绑定串含操作名（签 demote 才执行 demote）', async () => {
+    const { data } = await issueChallenge('demote', { address: TENANT })
+    expect(data.binding).toBe(`demote:address=${TENANT}`)
+  })
+})
+
+describe('环境模板动作签名绑定（environment-templates PR1）', () => {
+  const A = 'jNyJLQkxfYh12wu8jYnwStyZBJUvEDW7jj'
+  it('env-commit 需 address+slug 双全；binding 含 slug（签错环境名即拒）', () => {
+    expect(buildBinding('env-commit', { address: A, slug: 'stock' })).toBe(
+      'env-commit:address=jnyjlqkxfyh12wu8jynwstyzbjuvedw7jj:slug=stock:inc=|||',
+    )
+    // H4（审查 2026-11-06）：勾选集合成进签名面——空勾选与带内容两票不等价，
+    // "签不随行、执行全随行"从此换不动；canon 排序，勾选顺序不敏感
+    const inc = { skills: ['b', 'a'], plugins: [], folders: ['策略'] }
+    const bInc = buildBinding('env-commit', { address: A, slug: 'stock', include: inc })
+    expect(bInc).toContain(':inc=a,b||策略|')
+    expect(bInc).toBe(
+      buildBinding('env-commit', {
+        address: A,
+        slug: 'stock',
+        include: { skills: ['a', 'b'], plugins: [], folders: ['策略'] },
+      }),
+    )
+    expect(bInc).not.toContain(':inc=|||')
+    // skill-hide 绑定技能名（H3 双门禁的偷换闸）
+    expect(buildBinding('skill-hide', { name: 'good-skill' })).toBe('skill-hide:name=good-skill')
+    expect(buildBinding('skill-hide', {})).toBe(null)
+    expect(buildBinding('env-commit', { address: A })).toBe(null)
+    expect(buildBinding('env-commit', { slug: 'stock' })).toBe(null)
+  })
+  it('env-publish/env-revoke 需 id；env-apply 需 id+address 双全（分发对象签死）', () => {
+    expect(buildBinding('env-publish', { id: 't1' })).toBe('env-publish:id=t1')
+    expect(buildBinding('env-revoke', {})).toBe(null)
+    expect(buildBinding('env-apply', { id: 't1', address: A })).toBe(
+      'env-apply:id=t1:address=jnyjlqkxfyh12wu8jynwstyzbjuvedw7jj',
+    )
+    expect(buildBinding('env-apply', { id: 't1' })).toBe(null)
   })
 })

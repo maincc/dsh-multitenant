@@ -1,6 +1,6 @@
 /**
  * MongoDB 存储层（M0 地基）
- * 见 docs/storage-design.md —— 9 集合合同 + 单成员副本集事务。
+ * 见 docs/storage-design.md —— 集合合同（users/sessions/audit/…/environments，见 COLLECTIONS）+ 单成员副本集事务。
  *
  * 设计要点：
  * - **惰性**：provider='json'（默认）时，本模块 import 不产生任何连接；只有
@@ -22,17 +22,21 @@ import { CONFIG } from '../config/config.js'
 import { InternalError } from '../utils/errors.js'
 import { readSources, buildCollections, expectedCounts } from './migration.js'
 
-/** 设计 §4.1 定稿的 9 集合；访问器与索引初始化都以此为准，越界即拒 */
+/** 设计 §4.1 定稿集合（2026-10 大拆除后 7 + v1.4 凭证体系新增 2 = 9）；访问器与索引初始化都以此为准，越界即拒 */
 const COLLECTIONS = Object.freeze([
   'users',
   'meta',
   'sessions',
-  'cwt_registry',
-  'cwt_applications',
   'audit',
   'usage',
   'skills',
   'skill_installs',
+  'credentials',
+  'cwt_applications',
+  'environments',
+  // 环境模板账本（定格）：_id=镜像 tag。2026-10-27 补登——PR1 写入面已在用而
+  // 合同漏了，测试全 mock store 掩盖、真库 ensureIndexes 当场逮住（实弹缺陷判例：
+  // mock 绿≠真库通，新集合必须同车过 COLLECTIONS+INDEX_SPECS 两处合同）。
 ])
 
 /** 索引合同（storage-design §4.1）。TTL 秒数按拍板：audit 90 天(P4)。 */
@@ -47,11 +51,21 @@ const INDEX_SPECS = Object.freeze({
     // P4：审计 90 天 TTL。expireAfterSeconds 单位是秒（相对 at 字段值）。
     { key: { at: 1 }, options: { name: 'ttl_90d', expireAfterSeconds: 90 * 24 * 3600 } },
   ],
-  cwt_applications: [
-    { key: { status: 1 }, options: { name: 'by_status' } },
-    { key: { 'parsed.address': 1 }, options: { name: 'by_address' } },
-  ],
   users: [{ key: { containerStatus: 1 }, options: { name: 'by_status' } }],
+  // v1.4 凭证台账：_id=addrLower 天然互斥（一地址一条）；kind 供管理端统计
+  credentials: [{ key: { kind: 1, state: 1 }, options: { name: 'by_kind_state' } }],
+  // CWT 申请：管理端按状态分页 + 时间序
+  cwt_applications: [
+    { key: { status: 1, submittedAt: -1 }, options: { name: 'by_status_time' } },
+    { key: { address: 1, submittedAt: -1 }, options: { name: 'by_addr_time' } },
+  ],
+  // 环境模板（定格）：_id=镜像 tag 天然唯一（同名覆盖物理不可能）；
+  // 选用面按状态取 published、配额按来源计数（每来源 ≤5）、列表时间序。
+  environments: [
+    { key: { status: 1 }, options: { name: 'by_status' } },
+    { key: { sourceAddr: 1, status: 1 }, options: { name: 'by_source_status' } },
+    { key: { createdAt: -1 }, options: { name: 'by_time' } },
+  ],
 })
 
 export class MongoStore {
@@ -76,21 +90,32 @@ export class MongoStore {
   /** 惰性连接；幂等。连上后探一次拓扑（副本集=事务可用）。 */
   async connect() {
     if (this._client) return this._client
-    const client = new MongoClient(this.uri, {
-      serverSelectionTimeoutMS: this.connectTimeoutMs,
-      retryWrites: true,
-    })
-    await client.connect()
-    this._client = client
-    this._db = client.db(this.dbName)
-    this._topology = await this._probeTopology()
-    if (this._topology !== 'replset') {
-      // 不抛——读写仍可用；只是事务不可用。由 withTransaction 处守门。
-      console.warn(
-        `[mongo.store] 拓扑=${this._topology}（非副本集）：多文档事务将不可用，见 storage-design §5.2 R1`,
-      )
-    }
-    return client
+    // 2026-10 审计：单飞锁——client.connect() 是长 await，此前并发调用各自
+    // new MongoClient 各连一份：连接翻倍、后写覆盖 this._client，先连上的
+    // 句柄泄漏（没人 close）。后来者复用同一条 connect Promise；失败解锁可重试。
+    if (this._connecting) return this._connecting
+    this._connecting = (async () => {
+      const client = new MongoClient(this.uri, {
+        serverSelectionTimeoutMS: this.connectTimeoutMs,
+        retryWrites: true,
+      })
+      try {
+        await client.connect()
+        this._client = client
+        this._db = client.db(this.dbName)
+        this._topology = await this._probeTopology()
+        if (this._topology !== 'replset') {
+          // 不抛——读写仍可用；只是事务不可用。由 withTransaction 处守门。
+          console.warn(
+            `[mongo.store] 拓扑=${this._topology}（非副本集）：多文档事务将不可用，见 storage-design §5.2 R1`,
+          )
+        }
+        return client
+      } finally {
+        this._connecting = null
+      }
+    })()
+    return this._connecting
   }
 
   async _probeTopology() {
@@ -115,7 +140,7 @@ export class MongoStore {
   /** 白名单集合访问器（不含事务会话参数时用于常规读写） */
   col(name) {
     if (!COLLECTIONS.includes(name)) {
-      throw new InternalError(`未知集合 "${name}"（不在 9 集合合同内）`)
+      throw new InternalError(`未知集合 "${name}"（不在 ${COLLECTIONS.length} 集合合同内）`)
     }
     if (!this._db) throw new InternalError('MongoStore 未连接，先 await connect()')
     return this._db.collection(name)

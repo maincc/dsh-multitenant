@@ -12,15 +12,18 @@ import {
   readFileSync,
   accessSync,
   constants,
+  rmSync,
+  renameSync,
+  readdirSync,
 } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { CONFIG, getTierLimits, isAdmin } from '../config/config.js'
+import { CONFIG, getTierLimits } from '../config/config.js'
+import { credentialService } from './credential.service.js'
 import { dockerService } from './docker.service.js'
 import { dataService } from './data.service.js'
 import { stateStore } from './state.store.js'
-import { cwtStore } from './cwt.store.js'
 import { tenantGateway } from './tenant-proxy.service.js'
 // 代激活 cookie 缓存（check-rpc 的 /api 调用也要带上，否则新版会 401）
 import { authCookieCache } from './dsh-auth.service.js'
@@ -189,14 +192,27 @@ function todayStr() {
   return `${d.getFullYear()}-${m}-${day}`
 }
 
+/** 今日本地 00:00 的毫秒时间戳（跨午夜运行段的截断点，2026-10 审计 #配额精度） */
+function dayStartMs() {
+  const d = new Date()
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+}
+
+/**
+ * usages 记录 → 毫秒累计。
+ * 新格式 {date, ms, minutes} 直取 ms；旧格式 {date, minutes}（历史落盘/测试夹具）
+ * 折算 minutes*60000——下次 settle 写回即自然完成迁移，无需启动期批量改写。
+ */
+function usageRecMs(rec) {
+  return typeof rec.ms === 'number' ? rec.ms : (rec.minutes || 0) * 60000
+}
+
 export class UserService {
   /** 管理端列表的短 TTL 缓存：{ at, data }；由 _saveState 失效 */
   _usersCache = { at: 0, data: null }
   constructor() {
     this.state = dataService.loadState()
     this.state.usages = this.state.usages || {} // 每日使用时长记录 { address: { date, minutes } }
-    // 注：CWT 数据（cwtRegistry / cwtApplications / cwtRecords）已迁移到 data/cwt/，
-    // 由 cwtStore 管理，不再写入 state.json
     this.waitQueue = [] // 等待队列
   }
 
@@ -534,9 +550,25 @@ export class UserService {
         internalPort,
         address,
         await this.resolveTenantCapability(address),
+        this.state.swtcUsers?.[address]?.rebuildEpoch ?? null,
       )
     } catch (err) {
-      throw new Error(`restart 后网关端口 ${port} 绑定失败：${err.message}`)
+      // bind 失败不能把状态留在 running（2026-10 审计：与创建路径同纪律，
+      // 假绿=网关没人监听而面板/门禁都当活着）。PORT_TAKEN 额外弃端口：
+      // 那是"另一租户在服务这个号"，留着重连会永远撞同一占位。
+      const takenByOther = err?.code === 'PORT_TAKEN'
+      const rec = this.state.swtcUsers?.[address]
+      if (rec) {
+        rec.containerStatus = 'stopped'
+        rec.stoppedAt = Date.now()
+        if (takenByOther) rec.port = null
+        await this._saveState()
+      }
+      throw new Error(
+        takenByOther
+          ? `restart 后对外端口 ${port} 正为另一租户服务（已弃号，重连将分配新端口）：${err.message}`
+          : `restart 后网关端口 ${port} 绑定失败：${err.message}`,
+      )
     }
 
     console.log(
@@ -655,21 +687,36 @@ export class UserService {
       try {
         await dockerService.stopContainer(name)
       } catch {
-        // ignore
+        // stop 失败不阻塞：rm 才是终结判定（已停/无响应都直接摘除）
       }
       try {
         await dockerService.removeContainer(name)
-      } catch {
-        // ignore
+      } catch (err) {
+        // 2026-10 审计：旧实现把 rm 失败整个吞掉——旧容器还活着却继续删记录、
+        // 回收端口，结果容器成孤儿（占着数据卷，后续 removeVolume 必失败），
+        // 用户界面"重置成功"实为假动作。删不掉就中止抛错（可重试），
+        // "已经没了"则放行。
+        if (!/no such container|not found/i.test(String(err?.message || err))) {
+          throw new Error(
+            `reset 中止：无法移除旧容器（${String(err?.message || err).slice(0, 120)}），请稍后重试`,
+          )
+        }
       }
     }
 
     // 2. 删除数据卷
     try {
       await dockerService.removeVolume(volume)
+      this._purgeWorkspaceSnapshots(address)
+      await this._clearInstallsSafe(address, 'reset')
       console.log(`[reset] Volume ${volume} deleted`)
-    } catch {
-      // 卷可能不存在，忽略
+    } catch (err) {
+      const msg = String(err?.message || err)
+      // "卷不存在"合法（从未建卷/已清）；其它失败必须中止——卷没删成而记录被删，
+      // 下次重建会原样挂回旧卷：用户以为重置了，实际拿到旧数据（重置语义破产）。
+      if (!/not found|does not exist|no such volume/i.test(msg)) {
+        throw new Error(`reset 中止：无法删除数据卷（${msg.slice(0, 120)}），请稍后重试`)
+      }
     }
 
     // 3. 删除用户记录（保留端口分配）
@@ -731,34 +778,34 @@ export class UserService {
   }
 
   /**
-   * CWT 授权用户豁免每日限时。
-   * 判定：审批注册表（cwtStore，data/cwt/registry.json）status=approved 优先（权威）；
-   * 其次兼容 swtcUsers 上的授权/验证时间戳字段。撤销（revoked）后不再豁免，冗余字段同步清除。
-   */
-  isUsageExempt(address) {
-    const registry = cwtStore.getRegistry()[address]
-    if (registry?.status === 'approved') return true
-    const user = this.state.swtcUsers?.[address]
-    return Boolean(user && (user.cwtAuthorizedAt || user.cwtVerifiedAt))
-  }
-
-  /**
    * 结算一段运行时长：把 usageStartedAt 累计进当日 usages，然后清零起点。
    * 所有"容器停止"路径都要调用，保证挂机时间也被准确结算。
-   * @returns {number} 本次结算的分钟数
+   *
+   * 2026-10 全面审计三处精度修复（原实现在免费额度语义上是可绕过的）：
+   * ① 尾差：原先每段 `Math.floor(段/60000)`，<60s 的段整段记 0——反复"起 59s 停一次"
+   *    当日额度几乎不掉，限时形同虚设。现按**毫秒**累计（usages[].ms），
+   *    minutes 字段照旧双写供展示/旧读方使用，只有视图层才 floor。
+   * ② 跨午夜：容器 23:50 起、00:10 结算时，原先把 20 分钟全记进"今天"——
+   *    新的一天被昨天开的段白白吃掉。现段起点截到今日 00:00（昨日槽本就归零，
+   *    跨日部分丢弃即是正确语义）。
+   * ③ 锚点：settledAt 由调用方在 **docker stop 成功之后**传入（默认现在），
+   *    与"先停再结"的顺序纪律配套（见各停止路径）。
+   * @returns {number} 本次结算的分钟数（视图口径）
    */
-  settleUsage(address) {
+  settleUsage(address, settledAt = Date.now()) {
     const user = this.state.swtcUsers?.[address]
     const startedAt = user?.usageStartedAt
     if (!startedAt) return 0
     const today = todayStr()
     const rec = this.state.usages[address] || {}
-    const prev = rec.date === today ? rec.minutes || 0 : 0
-    const minutes = Math.floor((Date.now() - startedAt) / 60000)
+    const baseMs = rec.date === today ? usageRecMs(rec) : 0
+    const effStart = Math.max(startedAt, dayStartMs())
+    const segMs = Math.max(0, settledAt - effStart)
     // P7 顺序纪律：先清表针再累计——若颠倒，中间任何失败会让下一段重复计费
     delete user.usageStartedAt
-    this.state.usages[address] = { date: today, minutes: prev + minutes }
-    return minutes
+    const ms = baseMs + segMs
+    this.state.usages[address] = { date: today, ms, minutes: Math.floor(ms / 60000) }
+    return Math.floor(segMs / 60000)
   }
 
   /**
@@ -767,12 +814,13 @@ export class UserService {
   getUsedMinutes(address) {
     const today = todayStr()
     const rec = this.state.usages[address]
-    let minutes = rec && rec.date === today ? rec.minutes || 0 : 0
+    let ms = rec && rec.date === today ? usageRecMs(rec) : 0
     const user = this.state.swtcUsers?.[address]
     if (user?.usageStartedAt) {
-      minutes += Math.floor((Date.now() - user.usageStartedAt) / 60000)
+      // 与 settleUsage 同口径：跨午夜的段只计今日部分
+      ms += Math.max(0, Date.now() - Math.max(user.usageStartedAt, dayStartMs()))
     }
-    return minutes
+    return Math.floor(ms / 60000)
   }
 
   /**
@@ -816,19 +864,18 @@ export class UserService {
   }
 
   /**
-   * 启动容器前的每日额度检查；超限抛 USAGE_LIMIT_REACHED（CWT 授权豁免、开关关闭则放行）
+   * 启动容器前的每日额度检查；超限抛 USAGE_LIMIT_REACHED（开关关闭则放行）
    */
   ensureUsageAllowed(address) {
     const cfg = this.usageLimitConfig()
     if (!cfg.enabled) return
-    if (this.isUsageExempt(address)) return
+    // v1.4：持 CWT 解除凭证 = 不限时（台账快照同步查，零 I/O）
+    if (credentialService.isExemptSync(address)) return
     const limit = cfg.dailyMinutes
-    if (!Number.isFinite(limit) || limit <= 0) return
+    if (limit === null || !Number.isFinite(limit) || limit <= 0) return
     const used = this.getUsedMinutes(address)
     if (used >= limit) {
-      const err = new Error(
-        `今日使用时长已达上限（${limit} 分钟），请明日再试，或完成 CWT 验证解锁`,
-      )
+      const err = new Error(`今日使用时长已达上限（${limit} 分钟），请明日再试`)
       err.code = 'USAGE_LIMIT_REACHED'
       err.usedMinutes = used
       err.dailyLimit = limit
@@ -845,6 +892,7 @@ export class UserService {
     try {
       const cfg = this.usageLimitConfig()
       if (!cfg.enabled) return
+      // 豁免判据走 credentialService 内存快照（其 init 自带周期水合，不在热循环里 await 库）
       const limit = cfg.dailyMinutes
       if (!Number.isFinite(limit) || limit <= 0) return
       const grace =
@@ -852,10 +900,11 @@ export class UserService {
       let changed = false
       for (const [address, user] of Object.entries(this.state.swtcUsers || {})) {
         if (user.containerStatus !== 'running') continue
-        if (this.isUsageExempt(address)) continue
+        if (credentialService.isExemptSync(address)) continue
         if (this.getUsedMinutes(address) < limit) continue
-        // 超限：先结算本次运行段，再优雅停止
-        this.settleUsage(address)
+        // 2026-10 审计：原先"先结算后停止"——若 stop 失败（continue 走人），
+        // 表针已被清掉而容器还在跑，此后一分钟都不计费 = 免费无限运行。
+        // 现在停成功才结算（锚点=此刻，容器实际已停）。
         const name = swtcContainerName(address)
         try {
           await dockerService.stopContainer(name, grace)
@@ -863,6 +912,7 @@ export class UserService {
           console.error(`[usage-limit] failed to stop ${name}:`, err.message)
           continue
         }
+        this.settleUsage(address)
         user.containerStatus = 'stopped'
         user.stoppedAt = Date.now()
         changed = true
@@ -973,8 +1023,12 @@ export class UserService {
       if (host) {
         const threshold = CONFIG.docker?.maintenance?.lowFreeBytes ?? 4 * 1024 * 1024 * 1024
         lowFree = host.availableKB * 1024 < threshold
+        // dockerDiskSummary 实物返 {items}；历史上有的调用方按裸数组消费
+        // （判例十一：mock 数组绿、真机 {items} 崩——低盘告警形同虚设，
+        // 可回收 21GB 报成"无回收项"）。宽容双契约，再不让形状分歧说谎。
+        const dockerList = Array.isArray(docker) ? docker : (docker?.items ?? [])
         if (lowFree) {
-          const reclaim = (docker || [])
+          const reclaim = dockerList
             .filter((d) => d.reclaimable && !/^0B$/i.test(String(d.reclaimable)))
             .slice(0, 3)
             .map((d) => `${d.name}:${d.reclaimable}`)
@@ -1065,13 +1119,16 @@ export class UserService {
       return { ok: true, address, status: 'already_stopped' }
     }
 
-    // 结算当前运行段：时间停在停止时刻，剩余额度保全
-    this.settleUsage(address)
-
+    // 2026-10 审计：停成功才结算——先结算后停止若失败抛 500，表针已清而容器
+    // 照常运行，用户后续使用全部免计（额度保全反被绕过）。
     if (info.status === 'running') {
       const grace =
         this.state.cleanupPolicy?.stopGraceSeconds ?? CONFIG.cleanup.stopGraceSeconds ?? 60
       await dockerService.stopContainer(name, grace)
+      this.settleUsage(address)
+    } else {
+      // 存在但未在跑（paused/exited）：残段就地结算（容器没有"未来"可计费）
+      this.settleUsage(address)
     }
 
     const user = this.state.swtcUsers?.[address]
@@ -1158,6 +1215,8 @@ export class UserService {
     // 删除数据卷
     try {
       await dockerService.removeVolume(volume)
+      this._purgeWorkspaceSnapshots(address)
+      await this._clearInstallsSafe(address, 'volume_deleted')
       console.log(`[delete-volume] Volume ${volume} deleted for ${address}`)
     } catch (err) {
       // 卷已被"移除用户"流程删过 → 重复点清除数据应静默成功，不该弹 500
@@ -1214,7 +1273,7 @@ export class UserService {
       createdAt: user.createdAt,
       lastSeenAt: user.lastSeenAt,
       idle: Date.now() - user.lastSeenAt,
-      isAdmin: isAdmin(address),
+      isAdmin: credentialService.isAdmSync(address),
       stats: stats
         ? {
             cpu: stats.cpu,
@@ -1257,7 +1316,7 @@ export class UserService {
   /**
    * 状态落盘 + 列表缓存失效。所有 saveState 统一走这里 ——
    * 少挂一处就会让管理员点完按钮看到旧状态。
-   * {session}：加入外部事务（CWT 审批四方写，§5.2 边界①）；缺省自开单事务。
+   * {session}：加入外部事务（审批多表写共用事务，§5.2 边界①）；缺省自开单事务。
    */
   async _saveState(opts = {}) {
     this.invalidateUsersCache()
@@ -1331,7 +1390,7 @@ export class UserService {
           lastSeenAt: user.lastSeenAt,
           lastAutoUpgradeAt: user.lastAutoUpgradeAt ?? null,
           idle: Date.now() - user.lastSeenAt,
-          isAdmin: isAdmin(address),
+          isAdmin: credentialService.isAdmSync(address),
           stats: stats
             ? {
                 cpu: stats.cpu,
@@ -1352,7 +1411,7 @@ export class UserService {
   async ensureContainer(address, skipQueueCheck = false, image = null) {
     address = normalizeAddress(address)
 
-    // 每日使用时限额度检查（CWT 授权用户豁免；超限抛 USAGE_LIMIT_REACHED）
+    // 每日使用时限额度检查（超限抛 USAGE_LIMIT_REACHED）
     this.ensureUsageAllowed(address)
 
     const name = swtcContainerName(address)
@@ -1426,7 +1485,14 @@ export class UserService {
       port = this.state.availablePorts.shift() // 取出最小的可用端口
       console.log(`[port] using recycled port ${port} for ${address}`)
     } else {
-      port = this.state.swtcUsers?.[address]?.port ?? this.state.nextPort ?? CONFIG.docker.basePort
+      const own = this.state.swtcUsers?.[address]?.port ?? null
+      port = own ?? this.state.nextPort ?? CONFIG.docker.basePort
+      // 2026-10 审计：领号即推进 nextPort（同步原子，两个 await 之间不插队）。
+      // 此前只在 createContainer 成功后才推进——并发开通的两个租户读到同一个
+      // nextPort，各自建容器都成功，撞点在网关 listen（见 tenant-proxy 的
+      // owner 门）：第二个会关掉第一个的监听=跨租户劫持。预推进让端口发放
+      // 本身就是原子的；创建失败多跳的号作废不用回收（跳号无害，重排有洞）。
+      if (!own) this.state.nextPort = port + 1
       // 端口即将耗尽：把「容器已销毁（destroyed）、记录还占着端口」的闲置端口
       // 一次性征用进回收池，供新用户使用（被征用者下次连接时重新分配新端口，内部透明）
       if (port > CONFIG.docker.maxPort && (await this.reclaimDestroyedPorts(address)) > 0) {
@@ -1440,7 +1506,11 @@ export class UserService {
     const excludedInternal = new Set() // 本次创建已尝试过的内部端口（冲突时换新）
 
     for (let attempt = 0; attempt < 64; attempt++) {
-      if (attempt > 0) port = port + 1
+      if (attempt > 0) {
+        port = port + 1
+        // 跳号重试同样先占后建（与领号处同一纪律，见上方注释）
+        if (port >= (this.state.nextPort ?? 0)) this.state.nextPort = port + 1
+      }
       if (port > CONFIG.docker.maxPort) {
         throw new Error(`exhausted host port range for SWTC tenant ${address}`)
       }
@@ -1452,7 +1522,16 @@ export class UserService {
         await dockerService.createContainer(name, internalPort, volume, patchFile, limits, {
           image,
         })
+        // 换容器是"代际事件"：记入 rebuildEpoch，网关雷达据此让旧页面自愈
+        if (this.state.swtcUsers[address]) this.state.swtcUsers[address].rebuildEpoch = Date.now()
+        // 审查 F6：立刻落盘。旧顺序要等 finalize 的 _saveState——崩在那之前就
+        // 等于 epoch 回拨，重启后重绑的网关揣着旧代号，旧页面雷达永不再刷
+        try {
+          await this._saveState()
+        } catch {}
         this.state.nextPort = Math.max(this.state.nextPort ?? CONFIG.docker.basePort, port + 1)
+        // 新容器 = 可还原画面：active 快照合回（不覆盖已有文件；判例 2026-10-29）
+        await this._restoreWorkspace(address, name)
         return await this.finalizeTenant(address, name, port, internalPort)
       } catch (err) {
         const msg = String(err.stderr)
@@ -1657,17 +1736,27 @@ export class UserService {
     //    能力随路由一起交给网关：网关据此决定"放行即进"还是"明确拒绝"，
     //    网关刻意不 import 本模块（会成环），只保留这一份快照。
     try {
-      await tenantGateway.listen(port, internalPort, address, {
-        requiresToken: cap.requiresToken,
-        version: cap.version,
-        tokenAuthSince: cap.tokenAuthSince,
-      })
+      await tenantGateway.listen(
+        port,
+        internalPort,
+        address,
+        {
+          requiresToken: cap.requiresToken,
+          version: cap.version,
+          tokenAuthSince: cap.tokenAuthSince,
+        },
+        this.state.swtcUsers?.[address]?.rebuildEpoch ?? null,
+      )
     } catch (err) {
+      // PORT_TAKEN（2026-10 审计）：端口正在为**另一租户**服务——把号留在记录里
+      // 会让重连永远撞同一个占位（restart 路径也照记录 port 重绑），必须弃号，
+      // 下次重连经 ensureContainer 领新号。其余失败（宿主程序占用等）保号重试。
+      const takenByOther = err?.code === 'PORT_TAKEN'
       // 容器本身是好的，只是对外端口绑不上：保留容器与卷，标记 stopped，
       // 端口留在记录里供下次重连复用（listen 是幂等的，会先 close 再重绑）。
       this.state.swtcUsers[address] = {
         ...prev,
-        port,
+        port: takenByOther ? null : port,
         internalPort,
         tier,
         createdAt: prev.createdAt ?? Date.now(),
@@ -1678,7 +1767,11 @@ export class UserService {
         ...healFields,
       }
       await this._saveState()
-      throw new Error(`网关端口 ${port} 绑定失败（该端口可能被宿主其他程序占用）：${err.message}`)
+      throw new Error(
+        takenByOther
+          ? `对外端口 ${port} 正被另一租户服务（状态竞态已自愈：稍后重连将自动分配新端口）`
+          : `网关端口 ${port} 绑定失败（该端口可能被宿主其他程序占用）：${err.message}`,
+      )
     }
 
     // ③ 就绪 + 门禁都通了，才对外宣告 running
@@ -1844,6 +1937,186 @@ export class UserService {
    * @param {{mode?: 'rebuild'|'inplace', dryRun?: boolean, backup?: boolean,
    *          skipQueueCheck?: boolean}} opts
    */
+  // ═══ 工作目录快照（判例 2026-10-29：workspace 在镜像层，任何拆建都连坐丢文件）═══
+  _snapDir() {
+    const d = join(dataService.dataDir, 'workspace-snapshots')
+    mkdirSync(d, { recursive: true })
+    return d
+  }
+
+  _snapActive(address) {
+    return join(this._snapDir(), `ws-${address}.tar`)
+  }
+
+  // 默认进 active 槽（下次容器创建时自动合回）；archiveOnly=true 只进存档槽并
+  // 清空 active——**回退语义 = 干净默认**：个人文件存档可寻，但不塞回新容器
+  async _snapshotWorkspace(address, name, { archiveOnly = false } = {}) {
+    try {
+      const dir = this._snapDir()
+      const active = this._snapActive(address)
+      if (archiveOnly) {
+        const arch = join(dir, `ws-${address}-${Date.now()}.archived.tar`)
+        const r = await dockerService.exportWorkspaceDir(name, '/root/workspace', arch)
+        if (!r.ok) {
+          try {
+            rmSync(arch, { force: true }) // 半截档/0 字节壳都别留垃圾（审查 F4）
+          } catch {}
+          if (!r.missing)
+            console.warn(`[ws] ${address} 回退前存档失败（回退照常，active 槽保留）：${r.error}`)
+          return null
+        }
+        try {
+          rmSync(active, { force: true }) // 新档落定才拆旧档——绝不让两次失败清零唯一留存
+        } catch {}
+        return arch
+      }
+      // 审查 F7：同地址并发快照（闲置销毁 vs 管理员 apply 撞车）共用 .tmp 会
+      // 交织写坏 tar——tmp 名唯一化，rename 覆盖仍是原子
+      const tmp = join(dir, `ws-${address}.${process.pid}-${Date.now()}.tar.tmp`)
+      const r = await dockerService.exportWorkspaceDir(name, '/root/workspace', tmp)
+      if (!r.ok) {
+        try {
+          rmSync(tmp, { force: true })
+        } catch {}
+        if (!r.missing)
+          console.warn(`[ws] ${address} 快照失败（重建照常，下次合并的可能是旧快照）：${r.error}`)
+        return null
+      }
+      renameSync(tmp, active)
+      return active
+    } catch (err) {
+      console.warn(
+        `[ws] ${address} 快照异常（不阻塞重建）：${String(err?.message || err).slice(0, 160)}`,
+      )
+      return null
+    }
+  }
+
+  async _restoreWorkspace(address, name) {
+    try {
+      const active = this._snapActive(address)
+      if (!existsSync(active)) return null
+      const r = await dockerService.importWorkspaceMerge(name, active, '/root/workspace')
+      if (!r.ok)
+        console.warn(
+          `[ws] ${address} 快照恢复失败（容器照常可用，画面为新镜像的文件态）：${r.error}`,
+        )
+      else console.log(`[ws] ${address} 工作文件已从快照合回（不覆盖，已有文件优先）`)
+      return r.ok
+    } catch (err) {
+      console.warn(
+        `[ws] ${address} 恢复异常（不阻塞）：${String(err?.message || err).slice(0, 160)}`,
+      )
+      return null
+    }
+  }
+
+  /** 拆卷后销安装账（异步容错：账清失败只吼不动主流程——实物已随卷离场，
+   *  幽灵行等下次对账/重装自愈；绝不为销账失败回滚已完成的卷删除） */
+  async _clearInstallsSafe(address, reason) {
+    try {
+      const { skillService } = await import('./skill.service.js')
+      const n = await skillService.clearInstalls(address, reason)
+      if (n) console.log(`[ledger] ${address} 安装账本销记 ${n} 行（${reason}）`)
+    } catch (err) {
+      console.error(`[ledger] ${address} 销账失败（${reason}）：`, err?.message || err)
+    }
+  }
+
+  _purgeWorkspaceSnapshots(address) {
+    // 审查 F8：地址是变长 base32（30~35 位），`ws-<A>` 裸前缀理论上连坐
+    // `ws-<A>x…` 的 B 档——边界字符必须紧跟 . 或 -；单文件抛错也别中断整轮
+    try {
+      const dir = this._snapDir()
+      const base = `ws-${address}`
+      for (const f of readdirSync(dir)) {
+        if (!f.startsWith(base)) continue
+        const rest = f.slice(base.length)
+        if (rest && rest[0] !== '.' && rest[0] !== '-') continue
+        try {
+          rmSync(join(dir, f), { force: true })
+        } catch {}
+      }
+    } catch {
+      // 尽力清理
+    }
+  }
+
+  /**
+   * 定格完结账（2026-10-30 判例）：作者把自己容器定格成模板的那一刻，
+   * 他"当前用的"就是这套定格物——物理容器内容一字不差（快照正是从它
+   * 导出的），只是镜像引用还是母镜像；按 pin 认账即真话。换钉即迁账
+   * （与 apply 面同款纪律）：从旧钉模板的引用账里摘掉自己。
+   */
+  async adoptCommitAsOwn(address, templateId) {
+    const rec = this.state.swtcUsers?.[address]
+    if (!rec) return { skipped: true, reason: '无该租户记录' }
+    const prev = rec.pinnedImage ?? null
+    if (prev && prev !== templateId) {
+      const envs = await dataService.listEnvironments()
+      const old = envs.find((e) => String(e._id) === String(prev))
+      if (old && Array.isArray(old.pinnedBy) && old.pinnedBy.includes(address)) {
+        old.pinnedBy = old.pinnedBy.filter((x) => x !== address)
+        await dataService.putEnvironment(old)
+      }
+    }
+    this.state.swtcUsers[address] = { ...rec, pinnedImage: templateId }
+    await this._saveState()
+    dataService.logOperation('env_adopt_on_commit', {
+      address,
+      from: prev,
+      to: templateId,
+    })
+    return { from: prev, to: templateId }
+  }
+
+  /**
+   * 驳回解钉：镜像即弃之后，钉必须跟着卸——被吊空引用的人下次重建容器
+   * 会直接炸。驳回不同于撤板（撤板不驱逐在用者，对象还在；驳回对象物理
+   * 消失，吊着的钉是断头账）。返回解绑地址清单，审计如实留痕。
+   */
+  async unpinHolders(templateId, reason = 'env_reject') {
+    const holders = Object.keys(this.state.swtcUsers || {}).filter(
+      (a) => String(this.state.swtcUsers[a]?.pinnedImage) === String(templateId),
+    )
+    for (const a of holders) {
+      this.state.swtcUsers[a] = { ...this.state.swtcUsers[a], pinnedImage: null }
+    }
+    if (holders.length) await this._saveState()
+    dataService.logOperation('env_unpin_on_reject', {
+      id: String(templateId),
+      count: holders.length,
+      reason,
+    })
+    return holders
+  }
+
+  /**
+   * 下架/撤板时作者回落默认（裁定 2026-10-30）：作者不该继续"住进下架物"。
+   * 只动作者本人且只当他当前钉的正是这张模板；其他在用者的钉一律不动
+   * （撤板不驱逐在用者的判例保持原样）。文件零风险——重建保文件靠工作目录
+   * 快照三件套（拆前存建后合），与 pin 归属无关；变的只是重连不再"回滚到
+   * 定格点"，下次定格直接定现在的样子。
+   */
+  async unpinAuthorOnOffshelf(address, templateId, via = 'offshelf') {
+    const rec = this.state.swtcUsers?.[address]
+    if (!rec || String(rec.pinnedImage) !== String(templateId)) return { skipped: true }
+    this.state.swtcUsers[address] = { ...rec, pinnedImage: null }
+    await this._saveState()
+    const fresh = await dataService.getEnvironment(String(templateId))
+    if (fresh && Array.isArray(fresh.pinnedBy) && fresh.pinnedBy.includes(address)) {
+      await dataService.patchEnvironment(String(templateId), {
+        pinnedBy: fresh.pinnedBy.filter((a) => a !== address),
+      })
+    }
+    dataService.logOperation('env_offshelf_unpin', {
+      address,
+      id: String(templateId),
+      via,
+    })
+    return { unpinned: true }
+  }
+
   async applyImageVersion(address, opts = {}) {
     address = normalizeAddress(address)
     const { mode = 'rebuild', dryRun = false, skipQueueCheck = true } = opts
@@ -1924,11 +2197,29 @@ export class UserService {
 
     const containerImageId = await dockerService.containerImageId(name)
     if (containerImageId === imageId) {
+      // 判例（2026-10 用户报"切换后画面没更新还是默认环境"）：容器实际已
+      // 在目标镜像上（imageId 相等即证），但账本 pin 停在历史脏值——界面
+      // 按 pin 渲染"当前环境"，于是永远显示默认。already-current 必须把
+      // pin 自愈成实物：pin 是"我现在用的是哪个模板"的语义指针，真相优先。
+      const wantPin = targetImage ?? null
+      if ((user.pinnedImage ?? null) !== wantPin) {
+        this.state.swtcUsers[address] = { ...user, pinnedImage: wantPin }
+        await this._saveState()
+        dataService.logOperation('dsh_version_pin', {
+          address,
+          from: user.pinnedImage ?? null,
+          to: wantPin,
+          image: wantPin,
+          port: user.port ?? null,
+          note: '容器已在目标镜像上，pin 按实物自愈（画面与真相收敛）',
+        })
+      }
       return {
         skipped: true,
         reason: 'already-current',
         containerImageId,
         imageId,
+        pinnedImage: wantPin,
         dshVersion: user.baseImageVersion ?? null,
       }
     }
@@ -1978,37 +2269,48 @@ export class UserService {
       }
     }
 
-    // ② 结算当前运行段，避免租户被按停机时间或重建时间计费
-    this.settleUsage(address)
-
-    // ③ 保护对外端口：重建窗口内不能被回收池分给别的租户（否则 URL 会变）
+    // ② 意图先入账（判例 2026-10-29 真机第八案的**字面补全**，审查 F10：原实现
+    // 把这段落在 rm 之后——崩溃落在 rm~入账之间时旧 pin 复活、回退意图丢）。
+    // 定规：**动手改世界之前，意图先入账**。记录此刻宣告新代；stop/rm 失败留
+    // "记录 stopped + 容器犹活"的半态，connect 时按实物自愈（takeover 路径）。
     const keptPort = user.port ?? null
-
-    // ④ 停容器 → 删容器（保数据卷）
-    try {
-      await dockerService.stopContainer(name, 30)
-    } catch (err) {
-      console.error(`[apply] ${address} stop failed:`, err.message)
-    }
-    try {
-      await dockerService.removeContainer(name) // 不删卷
-    } catch (err) {
-      throw new Error(`移除旧容器失败，已中止：${err.message}`)
-    }
-
-    if (keptPort !== null && Array.isArray(this.state.availablePorts)) {
-      this.state.availablePorts = this.state.availablePorts.filter((p) => p !== keptPort)
-    }
-    // 标记为待重建，同时保留 port 供 ensureContainer 复用
     this.state.swtcUsers[address] = {
       ...user,
       port: keptPort,
+      pinnedImage: targetImage,
       containerStatus: 'stopped',
       stoppedAt: Date.now(),
       lastDshVersion: user.baseImageVersion ?? null,
     }
     delete this.state.swtcUsers[address].usageStartedAt
     await this._saveState()
+
+    // ③ 停容器（失败被吞：下面的快照对仍在跑的容器照样可导，行为不比旧版差）
+    try {
+      await dockerService.stopContainer(name, 30)
+    } catch (err) {
+      console.error(`[apply] ${address} stop failed:`, err.message)
+    }
+
+    // ③.5 拆前必存（判例：不存就重建 = 抹文件）。挪到 stop 之后取**停机定格**
+    //（审查 F3：热导运行中目录会捞到撕裂文件，下次代 merge 回新容器）
+    await this._snapshotWorkspace(address, name, {
+      archiveOnly: opts.workspaceSnapshot === 'archive-only',
+    })
+
+    // ④ 删容器（保数据卷）；rm 成功 = 运行段确定终结，此刻结算最准（审计判例：
+    // stop 被吞 + remove 中止时清表针 = 旧容器还活却从此不计费）
+    try {
+      await dockerService.removeContainer(name) // 不删卷
+    } catch (err) {
+      throw new Error(`移除旧容器失败，已中止：${err.message}`)
+    }
+    this.settleUsage(address)
+
+    // 保护对外端口：重建窗口内不能被回收池分给别的租户（否则 URL 会变）
+    if (keptPort !== null && Array.isArray(this.state.availablePorts)) {
+      this.state.availablePorts = this.state.availablePorts.filter((p) => p !== keptPort)
+    }
 
     // ⑤ 重建容器（ensureContainer 会复用记录里的 port → 对外 URL 不变）
     let newPort
@@ -2087,17 +2389,29 @@ export class UserService {
       return { tier, limits, deferredToNextCreate: true }
     }
 
-    // 先结算当前运行段，再停止容器
+    // 2026-10 审计：停成功再结算——stop 抛错则整体失败、表针保留（容器还在跑，
+    // 计费不断档）；update/start 阶段的中断不再制造"已清表针的免费运行段"
     if (info.status === 'running') {
-      this.settleUsage(address)
       await dockerService.stopContainer(name)
+      this.settleUsage(address)
     }
 
-    // 更新容器配置
-    await dockerService.updateContainer(name, limits)
-
-    // 重新启动容器
-    await dockerService.startContainer(name)
+    // 更新容器配置 + 重启（2026-10 审计：此前任一步抛错就裸奔——容器已停、
+    // 状态却仍标 running：网关继续把用户往死容器上转、管理面板假绿、额度
+    // 表针也清着，要等下一轮 restore 对账才自愈。现先对齐 stopped 再上抛；
+    // tier 不写（update 可能失败，写新值会与容器实况不符——下次升级重试）
+    try {
+      await dockerService.updateContainer(name, limits)
+      await dockerService.startContainer(name)
+    } catch (err) {
+      const u = this.state.swtcUsers?.[address]
+      if (u && u.containerStatus !== 'destroyed') {
+        u.containerStatus = 'stopped'
+        u.stoppedAt = Date.now()
+        await this._saveState()
+      }
+      throw err
+    }
 
     // 更新状态
     if (!this.state.swtcUsers) this.state.swtcUsers = {}
@@ -2128,18 +2442,31 @@ export class UserService {
     if (!user) throw new NotFoundError('User not found')
 
     const name = swtcContainerName(address)
+    // 2026-10 审计两处纠偏：
+    // ① settle-after-stop 纪律（与 checkUsageLimit/stop/apply 同款）：旧代码先
+    //    结算再 stop——stop/rm 全失败被吞时容器还活着但表针已清，记录又被删除，
+    //    孤儿容器从此**免费运行**且没人认领。
+    // ② rm 失败不再吞：容器删不掉而记录照删 = 孤儿。中止抛错、记录保留，
+    //    管理员可重试（"容器已不在"则正常放行）。
     try {
-      // 容器可能还在运行：先结算本次运行段（销毁也计入当日时长）
-      this.settleUsage(address)
       await dockerService.stopContainer(name)
-    } catch {
-      // ignore
+    } catch (err) {
+      // 停不下来继续尝试 rm（rm -f 语义由 removeContainer 的 force 承担）
+      console.warn(
+        `[destroy] ${address} stop 失败，继续 rm:`,
+        String(err?.message || err).slice(0, 120),
+      )
     }
     try {
       await dockerService.removeContainer(name)
-    } catch {
-      // ignore
+    } catch (err) {
+      const msg = String(err?.message || err)
+      if (!/no such container|not found/i.test(msg)) {
+        throw new Error(`销毁中止：无法移除容器（${msg.slice(0, 120)}），记录已保留，请稍后重试`)
+      }
     }
+    // 容器确认离场（删除成功/本就不在）才清表针：此刻运行段才真正终结
+    this.settleUsage(address)
 
     if (removeRecord) {
       const keepVolume = Boolean(options?.keepVolume)
@@ -2155,12 +2482,29 @@ export class UserService {
           await dockerService.removeVolume(swtcVolumeName(address))
           volumeStatus = 'deleted'
           console.log(`[destroy] volume ${swtcVolumeName(address)} deleted (${address})`)
-        } catch {
-          // 卷可能不存在，忽略
+        } catch (err) {
+          const msg = String(err?.message || err)
+          // 卷不存在合法；其它失败**可见化**（2026-10 审计：旧版全吞，管理员以为
+          // 删净了，磁盘上留着含用户数据的孤儿卷）。记录清理仍继续——卷可事后
+          // 用「孤儿扫描」补删，回滚整个销毁反而把已消失的租户卡死。
+          volumeStatus = /not found|does not exist|no such volume/i.test(msg)
+            ? 'absent'
+            : `failed: ${msg.slice(0, 100)}`
+          if (volumeStatus !== 'absent') {
+            console.error(
+              `[destroy] ${address} 数据卷删除失败（将进孤儿扫描补删）: ${msg.slice(0, 140)}`,
+            )
+          }
         }
       }
 
       delete this.state.swtcUsers[address]
+      if (volumeStatus === 'deleted' || volumeStatus === 'absent') {
+        // 卷没了（或被证实本来就没有）→ 账本跟葬；管理员选择留卷则账也留着
+        await this._clearInstallsSafe(address, 'tenant_removed')
+        // 快照槽同理（审查 F2）：户籍与卷都没了还留个人文件存档 = 磁盘泄漏+隐私面
+        this._purgeWorkspaceSnapshots(address)
+      }
 
       // 将端口回收到可用端口池
       if (!this.state.availablePorts) this.state.availablePorts = []
@@ -2319,6 +2663,7 @@ export class UserService {
           internalPort,
           address,
           await this.resolveTenantCapability(address),
+          this.state.swtcUsers?.[address]?.rebuildEpoch ?? null,
         )
         restored++
         console.log(
@@ -2427,6 +2772,7 @@ export class UserService {
           internalPort,
           address,
           await this.resolveTenantCapability(address),
+          this.state.swtcUsers?.[address]?.rebuildEpoch ?? null,
         )
       } catch (err) {
         console.error(`[restore] gateway bind failed for ${address} :${port}:`, err.message)
@@ -2535,15 +2881,25 @@ export class UserService {
         { networkContainer: name },
       )
       const parsed = JSON.parse(out)
+      const sessions = parsed?.runningSessions
       diag.rpc = {
         ok: parsed?.ok === true,
-        runningSessions: parsed?.runningSessions ?? 0,
-        active: parsed?.ok === true && parsed.runningSessions > 0,
+        runningSessions: typeof sessions === 'number' ? sessions : null,
+        active: parsed?.ok === true && typeof sessions === 'number' && sessions > 0,
         // 401 = 认证没带上/失效。**绝不能因此判空闲**：那会停掉正在跑任务的容器。
         // 认证问题应当"保守地认为可能活跃"，让上游走别的判据。
         authRequired: parsed?.authRequired === true,
       }
       if (diag.rpc.active) return true
+      // 2026-10 审计·形状漂移三态：RPC 应答成功（ok:true）却拿不到数值化的
+      // runningSessions（字段被镜像升级改掉/丢失）——"读不到"不等于"没有"。
+      // 此前 `?? 0` 把未知折叠成空闲，会误停正在跑任务的容器。保守判活跃。
+      if (parsed?.ok === true && typeof sessions !== 'number') {
+        console.warn(
+          `[cleanup] ${address} check-rpc 应答缺少 runningSessions 数值（脚本/镜像形状漂移）：无法确认无任务，保守判活跃`,
+        )
+        return true
+      }
       if (diag.rpc.authRequired) {
         console.warn(
           `[cleanup] ${address} check-rpc 认证失败（HTTP 401）：已保守跳过 RPC 判据，避免误停正在跑任务的容器`,
@@ -2552,6 +2908,17 @@ export class UserService {
       }
     } catch (err) {
       diag.rpc = { error: err.message }
+      // 2026-10 审计·探测失败铁律：超时/exec 失败/输出非 JSON = **未知**，
+      // 不是"没有任务"——DSH 忙到没回包恰恰是最不该停的时刻。容器确在运行
+      // 时保守判活跃；容器其实已不在（状态漂移的僵尸）才放行下游判据，
+      // 以免僵尸容器因"永远保守"而清不掉、白占端口。
+      const info = await dockerService.containerInfo(name)
+      if (info?.exists && info.status === 'running') {
+        console.warn(
+          `[cleanup] ${address} check-rpc 探测失败（${err.message}）：容器在运行，无法确认无任务，保守判活跃`,
+        )
+        return true
+      }
     }
 
     // 全部安静：记录诊断，便于排查"为何判空闲"
@@ -2605,8 +2972,10 @@ export class UserService {
         try {
           const grace =
             this.state.cleanupPolicy.stopGraceSeconds ?? CONFIG.cleanup.stopGraceSeconds ?? 60
-          this.settleUsage(address) // 结算本次运行段（空闲停止同样累计当日时长）
+          // 2026-10 审计：停成功才结算（与限时/用户停止路径同一顺序纪律；
+          // 原"先结后停"在 stop 抛错时留下"在跑却无表针"的免计费窗口）
           await dockerService.stopContainer(name, grace)
+          this.settleUsage(address) // 结算本次运行段（空闲停止同样累计当日时长）
           user.containerStatus = 'stopped'
           user.stoppedAt = now
           // 清理不相关字段
@@ -2639,6 +3008,8 @@ export class UserService {
         const stoppedDuration = now - (user.stoppedAt || user.lastSeenAt)
         if (stoppedDuration > this.state.cleanupPolicy.destroyTimeoutMs) {
           try {
+            // 闲置销毁也要先存工作目录——否则"销毁保卷"名不副实（卷里没有 workspace）
+            await this._snapshotWorkspace(address, name)
             await dockerService.removeContainer(name)
             user.containerStatus = 'destroyed'
             // 清理不相关字段

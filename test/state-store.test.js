@@ -20,7 +20,7 @@ const fixtureState = () => ({
       usageStartedAt: 123,
       pinnedImage: 'img:1',
     },
-    jb: { port: 31002, containerStatus: 'stopped', cwtAuthorizedAt: 999 },
+    jb: { port: 31002, containerStatus: 'stopped', pinnedImage: 'img:jb' },
   },
   nextPort: 31003,
   availablePorts: [31009],
@@ -47,9 +47,7 @@ describe('A 组·json 透传合同（无 DB 恒跑）', () => {
   })
 
   it('USER_OWNED_FIELDS 与水合合同互锁（新增运行时字段必须同步登记两处）', () => {
-    // cwt-admin 往缓存写的标记字段——漏一个，重启水合就丢、下次存盘还 $unset
-    expect(USER_OWNED_FIELDS).toContain('cwtAuthorizedAt')
-    expect(USER_OWNED_FIELDS).toContain('cwtVerifiedAt')
+    // 缓存往 user 写的标记字段——漏一个，重启水合就丢、下次存盘还 $unset
     expect(USER_OWNED_FIELDS).toContain('usageStartedAt')
     expect(USER_OWNED_FIELDS).toContain('pinnedImage')
   })
@@ -97,27 +95,27 @@ describe('B 组·mongodb 扇出', () => {
       usageStartedAt: 123,
       pinnedImage: 'img:1',
     })
-    expect(back.swtcUsers.jb.cwtAuthorizedAt).toBe(999)
+    expect(back.swtcUsers.jb.pinnedImage).toBe('img:jb')
     expect(back.nextPort).toBe(31003)
     expect(back.availablePorts).toEqual([31009])
     expect(back.cleanupPolicy.stopTimeoutMs).toBe(111)
     expect(back.usages.ja).toEqual({ date: '2026-01-02', minutes: 7 })
   })
 
-  it('所有权：白名单外的库字段（profile/迁移回填值）不被扇出误伤', async (ctx) => {
+  it('所有权：白名单外的库字段（profile/历史遗留值）不被扇出误伤', async (ctx) => {
     if (!skip(ctx)) return
     await store
       .col('users')
       .updateOne(
         { _id: 'ja' },
-        { $set: { profile: { nickname: 'keepme' }, cwtVerifiedAt: 777 } },
+        { $set: { profile: { nickname: 'keepme' }, legacyMarker: 777 } },
         { upsert: true },
       )
     await repo.save(fixtureState())
     const ja = await store.col('users').findOne({ _id: 'ja' })
     expect(ja.profile).toEqual({ nickname: 'keepme' })
-    // cwtVerifiedAt 在 USER_OWNED（缓存权威）但 fixture 没带 → 按纪律 $unset 传播
-    expect(ja.cwtVerifiedAt).toBe(undefined)
+    // 白名单外的库侧字段：扇出既不抹也不改
+    expect(ja.legacyMarker).toBe(777)
   })
 
   it('删除传播：缓存里消失的用户，库文档同步删除', async (ctx) => {
@@ -127,6 +125,20 @@ describe('B 组·mongodb 扇出', () => {
     await repo.save(state)
     expect(await store.col('users').countDocuments({})).toBe(1)
     expect(await store.col('users').findOne({ _id: 'jb' })).toBe(null)
+  })
+
+  it('空缓存护栏：swtcUsers={} 的写回不清库（2026-10 审计防整表清库回归位）', async (ctx) => {
+    // 水合失败/连接抖动窗口的空快照若走 `$nin: []` 对账 = deleteMany 全表——
+    // 用户域全灭且被反向固化。业务上"全体用户同时消失"不存在，空缓存只能是
+    // 异常态：护栏跳过对账删除，孤儿行留着可恢复。
+    if (!skip(ctx)) return
+    await store._db.dropDatabase()
+    await repo.save(fixtureState()) // 种 2 个用户
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await repo.save({ swtcUsers: {}, nextPort: 31003, availablePorts: [], usages: {} })
+    expect(await store.col('users').countDocuments({})).toBe(2)
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('跳过'))
+    errSpy.mockRestore()
   })
 
   it('usage 历史保全：扇出只 upsert 现行行，旧日期不动；load 取最新', async (ctx) => {

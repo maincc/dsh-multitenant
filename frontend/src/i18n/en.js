@@ -20,5 +20,6 @@ export default {
   home: {},
   user: {},
   admin: {},
+  env: {},
   skills: {},
 }

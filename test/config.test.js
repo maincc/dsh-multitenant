@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { loadConfig, isAdmin, getTierLimits, getAdminAddresses } from '../src/config/config.js'
+import {
+  loadConfig,
+  isAdmin,
+  getTierLimits,
+  getAdminAddresses,
+  _deepMergeForTest as deepMerge,
+} from '../src/config/config.js'
 
 describe('配置模块', () => {
   describe('loadConfig', () => {
@@ -54,5 +60,29 @@ describe('测试环境存储护盾', () => {
   it('worker env 被 globalSetup 钉死：provider=json、URI 无库名基串', () => {
     expect(process.env.DSH_STORAGE_PROVIDER).toBe('json')
     expect(process.env.MONGODB_URI).toBe('mongodb://127.0.0.1:27018/?replicaSet=dsh-rs')
+  })
+})
+
+// 2026-10 审计：loadConfig 此前是浅合并——config.json 写半个 section
+// （如 usageLimit:{enabled:true}）会整段替换默认对象，未写的子键（dailyMinutes）
+// 蒸发，功能随"半个配置"悄悄失灵。深合并让部分覆盖回归直觉。
+describe('config 深合并', () => {
+  it('部分子键覆盖且保留默认兄弟键', () => {
+    const base = { usageLimit: { enabled: true, dailyMinutes: 120, checkIntervalMs: 60000 } }
+    expect(deepMerge(base, { usageLimit: { enabled: false } }).usageLimit).toEqual({
+      enabled: false,
+      dailyMinutes: 120,
+      checkIntervalMs: 60000,
+    })
+  })
+
+  it('新增键合并；数组整体替换；标量与对象同名互斥直接覆盖', () => {
+    expect(deepMerge({ a: { b: 1 } }, { a: { c: 2 }, list: [1] })).toEqual({
+      a: { b: 1, c: 2 },
+      list: [1],
+    })
+    expect(deepMerge({ list: [1, 2] }, { list: [3] }).list).toEqual([3])
+    expect(deepMerge({ x: { y: 1 } }, { x: 5 }).x).toBe(5)
+    expect(deepMerge({ x: 5 }, { x: { y: 1 } }).x).toEqual({ y: 1 })
   })
 })

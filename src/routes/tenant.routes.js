@@ -2,8 +2,9 @@
  * 租户路由模块
  */
 
-import { CONFIG, isAdmin } from '../config/config.js'
+import { CONFIG } from '../config/config.js'
 import { userService } from '../services/user.service.js'
+import { credentialService } from '../services/credential.service.js'
 import { dataService } from '../services/data.service.js'
 import { resourceExhaustedPayload } from '../utils/resource-exhausted.js'
 import {
@@ -24,10 +25,45 @@ import { tenantGateway } from '../services/tenant-proxy.service.js'
 export async function handleTenantRoutes(req, res, path, url) {
   // 未认证端点按 IP 限流（security-hardening-plan P0-2）
   // /connect 创建容器、/connect-status 状态轮询、/leave 销毁容器
-  if (path === '/connect' || path === '/connect-status' || path.startsWith('/leave/')) {
-    const key = path === '/connect' ? 'connect' : path === '/connect-status' ? 'status' : 'leave'
+  if (
+    path === '/connect' ||
+    path === '/connect-challenge' ||
+    path === '/connect-status' ||
+    path.startsWith('/leave/')
+  ) {
+    const key =
+      path === '/connect-challenge'
+        ? 'challenge'
+        : path === '/connect'
+          ? 'connect'
+          : path === '/connect-status'
+            ? 'status'
+            : 'leave'
     const max = path === '/connect-status' ? 30 : 10
     if (!rateLimit(req, res, { max, keyPrefix: key })) return true
+  }
+
+  // GET /connect-challenge — 挑战发放的 200 正身端点（2026-10-23 去噪整改）：
+  // "先领挑战再签名"本是流程的正常一步，旧链路借 /connect 的无签名 401 应答
+  // 下发挑战——语义没错，但浏览器必把 401 记成红色网络日志，每次登录都像报错
+  //（用户实测"登录有个 url 报错"）。此端点 200+同形载荷；/connect 的无签名
+  // 401 原样保留（旧客户端/直连兜底，"未签名不得过"不放）。挑战仍只进
+  // CONNECT 用途池、只在 /connect 兑现——跨端点凭证混淆防线不动。
+  if (path === '/connect-challenge') {
+    let address = url.searchParams.get('address')
+    if (!validateSwtcAddress(address, res)) return true
+    address = normalizeAddress(address)
+    const challenge = tenantConfigService.issueChallenge(address, SIGN_PURPOSE.CONNECT)
+    if (!challenge) {
+      res.writeHead(503, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: '挑战发放过载，请稍后重试', code: 'OVERLOAD' }))
+      return true
+    }
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+    res.end(
+      JSON.stringify({ ok: true, nonce: challenge.nonce, message: challenge.message, address }),
+    )
+    return true
   }
 
   // GET /connect：CCDAO 插件连接端点
@@ -87,6 +123,37 @@ export async function handleTenantRoutes(req, res, path, url) {
         return true
       }
 
+      // ═══ 登录通道（v1.5）：只换 user_session cookie，**不建容器、不过准入闸** ═══
+      // 准入闸（gateConnect）咬的是"进容器"这条路（ensureContainer/网关导航）；
+      // 登录只证"是谁"（钱包签名）。若登录也过闸，凭证过期者会被挡在用户中心
+      // 门外——而续发（enter→_renewIfExpired）恰在门内，闭环成死锁，违背"绝不上锁"。
+      if (url.searchParams.get('action') === 'login') {
+        const loginToken = userSessionStore.create(address)
+        res.writeHead(200, {
+          'content-type': 'application/json; charset=utf-8',
+          'set-cookie': `user_session=${loginToken}; path=/; max-age=43200; httponly; samesite=strict`,
+        })
+        res.end(JSON.stringify({ ok: true, loggedIn: true, address }))
+        return true
+      }
+
+      // v1.5 刀5B 凭证即准入：签名证"是谁"，台账证"有没有资格"。
+      // 自动配发兜底=正常用户永不触发；咬的只是过期/伪造/异常态（license 模式另含 did）。
+      const gate = await credentialService.gateConnect(address)
+      if (!gate.allowed) {
+        res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(
+          JSON.stringify({
+            error:
+              gate.code === 'CREDENTIAL_EXPIRED'
+                ? '凭证已过期，请到用户中心登录后重新连接'
+                : '凭证缺失或已失效，请到用户中心连接领取',
+            code: 'NO_VALID_CREDENTIAL',
+          }),
+        )
+        return true
+      }
+
       // 连接/创建容器
       const port = await userService.ensureContainer(address)
       // 跳转/返回的 host 跟随请求 Host（浏览器当前 origin）：127 入口跳 127 容器页
@@ -107,7 +174,7 @@ export async function handleTenantRoutes(req, res, path, url) {
       const containerUrl =
         `http://${targetHost}:${port}/` + (gwTicket ? `?gateway_ticket=${gwTicket}` : '')
       // 签名验证通过 → 签发普通用户会话（网关门禁凭据，2h；切钱包时前端会主动吊销）
-      const sessionToken = userSessionStore.create(address, 2 * 60 * 60 * 1000)
+      const sessionToken = userSessionStore.create(address)
       const cookieHeader = `user_session=${sessionToken}; path=/; max-age=43200; httponly; samesite=strict`
       // 前端 XHR/fetch 场景：浏览器 fetch 的 redirect:manual 会把 302 包成 opaque
       // (status 0)，前端拿不到 location。format=json 时直接给 200 JSON + cookie，
@@ -137,7 +204,7 @@ export async function handleTenantRoutes(req, res, path, url) {
             code: 'USAGE_LIMIT_REACHED',
             usedMinutes: err.usedMinutes,
             dailyLimit: err.dailyLimit,
-            message: `今日使用时长已达上限（${err.dailyLimit} 分钟），请明日再试，或完成 CWT 验证解锁`,
+            message: `今日使用时长已达上限（${err.dailyLimit} 分钟），请明日再试`,
           }),
         )
       } else if (err.code === 'QUEUE_FULL') {
@@ -187,7 +254,7 @@ export async function handleTenantRoutes(req, res, path, url) {
     // 端口即"地址保密"的最后一道侦察口，必须会话化）
     const { getRequestAddress } = await import('../middleware/auth.middleware.js')
     const viewer = getRequestAddress(req)
-    const isViewer = viewer === address || (viewer && isAdmin(viewer))
+    const isViewer = viewer === address || (viewer && credentialService.isAdmSync(viewer))
     if (!isViewer) {
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(
@@ -202,9 +269,15 @@ export async function handleTenantRoutes(req, res, path, url) {
 
     const idle = Date.now() - user.lastSeenAt
     const usageCfg = userService.usageLimitConfig()
-    const exempt = userService.isUsageExempt(address)
     const used = userService.getUsedMinutes(address)
+    // 权益判定与凭证体系解耦（2026-10 大拆除）：全员统一按 usageLimit 默认档
     const limit = usageCfg.enabled ? usageCfg.dailyMinutes : null
+    // v1.4：持 CWT 解除凭证 = 不限时（与 usage 闸门口径一致的同步快照判据）
+    const unlimited =
+      limit === null ||
+      !Number.isFinite(limit) ||
+      limit <= 0 ||
+      credentialService.isExemptSync(address)
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
     res.end(
       JSON.stringify({
@@ -212,6 +285,7 @@ export async function handleTenantRoutes(req, res, path, url) {
         address,
         port: user.port,
         status: user.containerStatus ?? 'running',
+        tier: 1,
         idleMs: idle,
         idleHuman:
           idle < 60000
@@ -221,10 +295,9 @@ export async function handleTenantRoutes(req, res, path, url) {
               : `${(idle / 3600000).toFixed(1)}h`,
         usage: {
           enabled: Boolean(usageCfg.enabled),
-          dailyMinutes: limit,
+          dailyMinutes: unlimited ? null : limit,
           usedMinutes: used,
-          remainingMinutes: limit !== null && !exempt ? Math.max(0, limit - used) : null,
-          exempt,
+          remainingMinutes: !unlimited ? Math.max(0, limit - used) : null,
         },
       }),
     )
@@ -234,9 +307,9 @@ export async function handleTenantRoutes(req, res, path, url) {
   // GET /leave/<address>：显式销毁指定 SWTC 用户的容器
   // （security-hardening-plan P0-2：本人或管理员；前端当前无调用方，不影响 UX）
   if (path.startsWith('/leave/')) {
-    const { getRequestAddress } = await import('../middleware/auth.middleware.js')
+    const { getRequestAddress, getAdminSession } = await import('../middleware/auth.middleware.js')
     const session = getRequestAddress(req)
-    const isAdminUser = session && isAdmin(session)
+    const isAdminUser = session && credentialService.isAdmSync(session)
 
     let address = decodeURIComponent(path.slice('/leave/'.length))
     if (!validateSwtcAddress(address, res)) return true
@@ -250,8 +323,26 @@ export async function handleTenantRoutes(req, res, path, url) {
       return true
     }
 
+    // 2026-10 审计修复：GET 即销毁 + 免签 + 无留痕 三合一曾是同站 CSRF 的头号
+    // 入口（恶意租户页可对管理员浏览器发一次 GET 就毁掉任意他人容器）。
+    // 本人销毁自己的容器维持免签（自己的数据自己的会话，历史契约）；
+    // **管理员代他人销毁必须当场钱包签名**（与 remove/force-stop 对称，
+    // 钱包弹窗无法被页面 JS 伪造，同站驱动就此失效）。全部路径进审计。
+    if (session !== address) {
+      const { requireAdminSignature, attachAdminSignature } =
+        await import('../middleware/admin-signature.middleware.js')
+      attachAdminSignature(req)
+      if (!requireAdminSignature(req, res, 'leave', { address }, getAdminSession(req))) {
+        return true
+      }
+    }
+
     try {
       const result = await userService.destroyContainer(address)
+      dataService.logOperation(session === address ? 'user_leave' : 'admin_leave_user', {
+        address,
+        operator: session,
+      })
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify(result))
     } catch (err) {
@@ -270,7 +361,7 @@ export async function handleTenantRoutes(req, res, path, url) {
   if (path.startsWith('/api/user/') && path.endsWith('/restart') && req.method === 'POST') {
     const { getRequestAddress, requireAdmin } = await import('../middleware/auth.middleware.js')
     const session = getRequestAddress(req)
-    const isAdminUser = session && isAdmin(session)
+    const isAdminUser = session && credentialService.isAdmSync(session)
 
     // 提取地址：/api/user/<address>/restart
     const match = path.match(/^\/api\/user\/(.+)\/restart$/)
@@ -293,8 +384,25 @@ export async function handleTenantRoutes(req, res, path, url) {
       return true
     }
 
+    // 2026-10 审计：管理员**代他人**重启要当场签名（与 force-stop 对称——
+    // 同源能力不能一个要签一个免签；同站 CSRF 场景重启=断他人会话）。
+    // 本人重启自己的容器维持免签（插件装完重启是日常流，弹窗不可接受）。留痕补齐。
+    if (session !== address) {
+      const { requireAdminSignature, attachAdminSignature } =
+        await import('../middleware/admin-signature.middleware.js')
+      const { getAdminSession } = await import('../middleware/auth.middleware.js')
+      attachAdminSignature(req)
+      if (!requireAdminSignature(req, res, 'restart', { address }, getAdminSession(req))) {
+        return true
+      }
+    }
+
     try {
       const result = await userService.restartContainer(address)
+      dataService.logOperation(session === address ? 'user_restart' : 'admin_restart_user', {
+        address,
+        operator: session,
+      })
       if (!res.headersSent) {
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify(result))
@@ -313,7 +421,7 @@ export async function handleTenantRoutes(req, res, path, url) {
   if (path.startsWith('/api/user/') && path.endsWith('/stop') && req.method === 'POST') {
     const { getRequestAddress } = await import('../middleware/auth.middleware.js')
     const session = getRequestAddress(req)
-    const isAdminUser = session && isAdmin(session)
+    const isAdminUser = session && credentialService.isAdmSync(session)
 
     // 提取地址：/api/user/<address>/stop
     const match = path.match(/^\/api\/user\/(.+)\/stop$/)
@@ -336,8 +444,23 @@ export async function handleTenantRoutes(req, res, path, url) {
       return true
     }
 
+    // 2026-10 审计：同 restart——管理员代他人停止（在用租户被断）需当场签名；本人免签。
+    if (session !== address) {
+      const { requireAdminSignature, attachAdminSignature } =
+        await import('../middleware/admin-signature.middleware.js')
+      const { getAdminSession } = await import('../middleware/auth.middleware.js')
+      attachAdminSignature(req)
+      if (!requireAdminSignature(req, res, 'stop', { address }, getAdminSession(req))) {
+        return true
+      }
+    }
+
     try {
       const result = await userService.stopContainerForUser(address)
+      dataService.logOperation(session === address ? 'user_stop' : 'admin_stop_user', {
+        address,
+        operator: session,
+      })
       if (!res.headersSent) {
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify(result))
@@ -361,7 +484,7 @@ export async function handleTenantRoutes(req, res, path, url) {
     // getRequestAddress，只有这里漏改。
     const { getRequestAddress } = await import('../middleware/auth.middleware.js')
     const session = getRequestAddress(req)
-    const isAdminUser = session && isAdmin(session)
+    const isAdminUser = session && credentialService.isAdmSync(session)
 
     // 提取地址：/api/user/<address>/reset
     const match = path.match(/^\/api\/user\/(.+)\/reset$/)
@@ -426,7 +549,7 @@ export async function handleTenantRoutes(req, res, path, url) {
       if (!res.headersSent) {
         const headers = { 'content-type': 'application/json; charset=utf-8' }
         if (containerUrl) {
-          const sessionToken = userSessionStore.create(address, 2 * 60 * 60 * 1000)
+          const sessionToken = userSessionStore.create(address)
           headers['set-cookie'] =
             `user_session=${sessionToken}; path=/; max-age=43200; httponly; samesite=strict`
           result.url = containerUrl

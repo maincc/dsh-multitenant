@@ -34,13 +34,14 @@ afterAll(async () => {
 })
 
 describe('mongo.store 地基', () => {
-  it('集合合同锁定为设计定稿的 9 个', () => {
-    expect(COLLECTIONS).toHaveLength(9)
+  it('集合合同锁定为 10 个（大拆除后 7 + v1.4 凭证体系 credentials/cwt_applications + 定格 environments）', () => {
+    expect(COLLECTIONS).toHaveLength(10)
     expect([...COLLECTIONS].sort()).toEqual(
       [
         'audit',
+        'credentials',
         'cwt_applications',
-        'cwt_registry',
+        'environments',
         'meta',
         'sessions',
         'skill_installs',
@@ -52,12 +53,12 @@ describe('mongo.store 地基', () => {
     expect(COLLECTIONS).not.toContain('admin') // 已并入 meta
     expect(COLLECTIONS).not.toContain('user_sessions') // 已并入 sessions
     expect(COLLECTIONS).not.toContain('ops_log') // 已并入 audit
-    expect(COLLECTIONS).not.toContain('cwt_records') // 已并入 audit
+    expect(COLLECTIONS).not.toContain('cwt_registry') // 大拆除：旧 CWT 注册表退役（legacy 走只读文件导入）
   })
 
   it('未知集合访问被拒（白名单护栏）', async (ctx) => {
     if (!skip(ctx)) return
-    expect(() => store.col('secrets')).toThrow(/不在 9 集合合同/)
+    expect(() => store.col('secrets')).toThrow(/不在 \d+ 集合合同/) // 数量动态引用合同，扩容不再碎
   })
 
   it('未连接时 col() 明确报错', async () => {
@@ -121,12 +122,12 @@ describe('mongo.store 地基', () => {
     if (!skip(ctx)) return
     if ((await store.health()).topology !== 'replset') return ctx.skip()
     await store.withTransaction(async (session) => {
-      await store.col('cwt_registry').insertOne({ _id: 'jtx', status: 'approved' }, { session })
+      await store.col('audit').insertOne({ _id: 'jtx', kind: 'ops', at: new Date() }, { session })
       await store
         .col('users')
-        .updateOne({ _id: 'jtx' }, { $set: { cwtVerifiedAt: 123 } }, { upsert: true, session })
+        .updateOne({ _id: 'jtx' }, { $set: { tier: 9 } }, { upsert: true, session })
     })
-    expect(await store.count('cwt_registry', {})).toBe(1)
+    expect(await store.count('audit', { _id: 'jtx' })).toBe(1)
     expect(await store.count('users', { _id: 'jtx' })).toBe(1)
   })
 
