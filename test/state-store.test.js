@@ -9,7 +9,6 @@ import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest
 import { StateStore, USER_OWNED_FIELDS } from '../src/services/state.store.js'
 import { MongoStore } from '../src/services/mongo.store.js'
 import { dataService } from '../src/services/data.service.js'
-import { CONFIG } from '../src/config/config.js'
 
 const fixtureState = () => ({
   swtcUsers: {
@@ -125,6 +124,34 @@ describe('B 组·mongodb 扇出', () => {
     await repo.save(state)
     expect(await store.col('users').countDocuments({})).toBe(1)
     expect(await store.col('users').findOne({ _id: 'jb' })).toBe(null)
+  })
+
+  it('弃号传播：缓存 port=null（占用弃号，2026-11-14）→ 库侧 $unset，整读不带病复活', async (ctx) => {
+    if (!skip(ctx)) return
+    const state = fixtureState()
+    state.swtcUsers.ja.port = null
+    await repo.save(state)
+    const ja = await store.col('users').findOne({ _id: 'ja' })
+    expect(ja.port).toBeUndefined()
+    const back = await repo.load()
+    expect(back.swtcUsers.ja.port).toBeUndefined()
+  })
+
+  it('占用账本 round-trip：meta#occupations 整镜像，mongo 模式重启不静默丢；清空传播', async (ctx) => {
+    if (!skip(ctx)) return
+    const state = fixtureState()
+    state.externalOccupations = {
+      40180: { port: 40180, scope: 'public', firstSeen: 111, lastSeen: 222, hits: 3 },
+    }
+    await repo.save(state)
+    const back = await repo.load()
+    expect(back.externalOccupations).toEqual({
+      40180: { port: 40180, scope: 'public', firstSeen: 111, lastSeen: 222, hits: 3 },
+    })
+    // 缓存是权威：账本清零同样整镜像覆盖
+    state.externalOccupations = {}
+    await repo.save(state)
+    expect((await repo.load()).externalOccupations).toEqual({})
   })
 
   it('空缓存护栏：swtcUsers={} 的写回不清库（2026-10 审计防整表清库回归位）', async (ctx) => {

@@ -107,7 +107,7 @@ ADMIN_ADDRESS=<管理员地址> PUBLIC_HOST=<公网IP或域名> ./deploy/install
 ### 6.3 数据与升级
 
 - **保留旧数据**：上传自动排除 `data/ config.json state.json patches/`；`update.sh` 只更新代码
-- **备份**：`sudo ./deploy/backup.sh`（+ `VOLUME_BACKUP=1` 连租户数据卷），保留最近 7 份
+- **备份**：`sudo ./deploy/backup.sh`——一键迁移 bundle（库快照+keys+入口+工作区+租户卷+镜像清单，内附 RESTORE.md），产物 0600 保留最近 7 份；`verify` 恢复演练走影子库
 - **升级**：`sudo ./deploy/update.sh`（内网离线自动全量重建）；`systemctl restart dsh-multitenant`
 - **回滚**：解包最近备份 + 重启
 

@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { createServer, request as httpRequest } from 'node:http'
+import { createServer } from 'node:http'
 import { connect as netConnect } from 'node:net'
 
 // imageCapability 的缓存逻辑要在**真实实例**上测（每个实例自带一份缓存），

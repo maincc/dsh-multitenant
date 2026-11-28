@@ -29,7 +29,7 @@
         >
         <span class="badge" :class="badgeCls(t2.status)">{{ $t('env.status.' + t2.status) }}</span>
         <span class="enva-meta"
-          >{{ shortAddr(t2.sourceAddr) }} · {{ fmtBytes(t2.sizeBytes) }} ·
+          >{{ shortAddress(t2.sourceAddr) }} · {{ formatBytes(t2.sizeBytes) }} ·
           {{ $t('env.usedBy', { n: (t2.pinnedBy || []).length }) }} ·
           {{ (t2.createdAt || '').slice(0, 10) }}</span
         >
@@ -136,7 +136,7 @@
                 {{
                   $t('env.admin.bundleCol', {
                     n: (detail.bundle?.files || []).length,
-                    size: fmtBytes(detail.bundle?.bytes || 0),
+                    size: formatBytes(detail.bundle?.bytes || 0),
                   })
                 }}
               </div>
@@ -144,7 +144,7 @@
                 v-if="detail.provenance && Object.keys(detail.provenance).length"
                 class="enva-prov"
               >
-                <div class="env-muted env-small">{{ $t('env.provDeclared') }}</div>
+                <div class="enva-muted enva-small">{{ $t('env.provDeclared') }}</div>
                 <span
                   v-for="(v, k) in detail.provenance"
                   :key="k"
@@ -164,7 +164,7 @@
                   >
                     {{ f.p }}
                     <span class="enva-muted"
-                      >{{ fmtBytes(f.size) }} · {{ (f.sha256 || '').slice(0, 8) }}</span
+                      >{{ formatBytes(f.size) }} · {{ (f.sha256 || '').slice(0, 8) }}</span
                     >
                   </div>
                 </div>
@@ -240,10 +240,11 @@
  */
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import axios from 'axios'
+import { envApi } from '../api/env.js'
 import { toast, askConfirm } from '../composables/useDialog'
 import { useAdminBadges } from '../composables/useAdminBadges'
-import { requestAccounts, signMessage, getPublicKey } from '../api/wallet'
+import { signAdminOperation } from '../api/adminSign.js'
+import { formatBytes, shortAddress } from '../utils/format.js'
 
 const { t } = useI18n()
 const { syncEnvRows } = useAdminBadges()
@@ -283,22 +284,13 @@ const hitFiles = computed(() => new Set((detail.value?.scan?.hits || []).map((h)
 const cdValid = computed(() => cd.value.address && /^[a-z0-9][a-z0-9-]{1,40}$/.test(cd.value.slug))
 
 async function load() {
-  const res = await axios.get('/api/admin/environments')
-  all.value = res.data.environments || []
+  const res = await envApi.adminList()
+  all.value = res.environments || []
   // 审批动作后 list 必重拉——红点判数从同一份行就地同步，不等轮询（用户裁定：实时）
   syncEnvRows(all.value)
 }
 onMounted(() => load().catch((e) => toast(errMsg(e))))
 const errMsg = (e) => e?.response?.data?.error || e?.message || 'error'
-const shortAddr = (a) => (a ? `${a.slice(0, 8)}…${a.slice(-4)}` : '—')
-const fmtBytes = (n) =>
-  !n
-    ? '0 B'
-    : n >= 1073741824
-      ? `${(n / 1073741824).toFixed(1)} GB`
-      : n >= 1048576
-        ? `${(n / 1048576).toFixed(0)} MB`
-        : `${(n / 1024).toFixed(0)} KB`
 const badgeCls = (st) =>
   ({
     draft: 'badge-info',
@@ -336,35 +328,26 @@ async function toggle(row) {
   openedId.value = row._id
   detail.value = null
   try {
-    const res = await axios.get(`/api/admin/environments/${encodeURIComponent(row._id)}`)
-    detail.value = res.data.template || res.data
+    const res = await envApi.adminDetail(row._id)
+    detail.value = res.template || res
   } catch (e) {
     toast(errMsg(e))
   }
 }
 
-// —— 钱包签名（AdminPanel signAdminOperation 同款；会话地址校验由服务端把关） ——
+// —— 钱包签名（P3 孪生收敛 2026-11-10）——
+// 旧本地拷贝缺 2026-11-02 材料校验加固（插件未解锁时 nonce/签/公钥半路蒸发→裸 POST
+// 撞 SIGNATURE_REQUIRED，报错误导为"没签名"）。现委托 ../api/adminSign.js 唯一权威支：
+// 材料不齐就地刹车；t 注入走桌面 i18n 话术；会话地址校验照旧由服务端 challenge 把关。
 async function signOp(operation, payload) {
-  const pluginAddress = await requestAccounts()
-  const chal = await axios.post('/api/admin/challenge', {
-    address: pluginAddress.toLowerCase(),
-    operation,
-    payload,
-  })
-  const signature = await signMessage(pluginAddress, chal.data.message)
-  const publicKey = await getPublicKey(pluginAddress)
-  return {
-    'x-admin-nonce': chal.data.nonce,
-    'x-admin-signature': signature,
-    'x-admin-pubkey': publicKey,
-  }
+  return signAdminOperation(operation, payload, { t })
 }
 
 async function publish(doc) {
   busy.value = true
   try {
     const headers = await signOp('env-publish', { id: doc._id })
-    await axios.post('/api/admin/env-publish', { id: doc._id }, { headers })
+    await envApi.adminPublish(doc._id, headers)
     toast(t('env.admin.published'))
     await load()
     if (detail.value?._id === doc._id) detail.value = { ...detail.value, status: 'published' }
@@ -380,7 +363,7 @@ async function rejectFlow(doc, reason) {
   busy.value = true
   try {
     const headers = await signOp('env-reject', { id: doc._id })
-    await axios.post('/api/admin/env-reject', { id: doc._id, reason }, { headers })
+    await envApi.adminReject(doc._id, reason, headers)
     toast(t('env.admin.rejected'))
     rejecting.value = null
     await load()
@@ -408,8 +391,8 @@ async function revoke(doc) {
   busy.value = true
   try {
     const headers = await signOp('env-revoke', { id: doc._id })
-    const res = await axios.post('/api/admin/env-revoke', { id: doc._id }, { headers })
-    toast(res.data.notice || t('env.admin.revoked'))
+    const res = await envApi.adminRevoke(doc._id, headers)
+    toast(res.notice || t('env.admin.revoked'))
     await load()
   } catch (e) {
     toast(errMsg(e))
@@ -421,12 +404,12 @@ async function rescan(doc) {
   busy.value = true
   try {
     const headers = await signOp('env-scan', { id: doc._id })
-    const res = await axios.post('/api/admin/env-scan', { id: doc._id }, { headers })
-    detail.value = { ...detail.value, scan: res.data.scan }
+    const res = await envApi.adminScan(doc._id, headers)
+    detail.value = { ...detail.value, scan: res.scan }
     toast(
       t('env.admin.rescanDone', {
-        sec: res.data.scan?.secrets?.length || 0,
-        hits: res.data.scan?.hits?.length || 0,
+        sec: res.scan?.secrets?.length || 0,
+        hits: res.scan?.hits?.length || 0,
       }),
     )
     await load()
@@ -464,8 +447,8 @@ async function cdGo() {
       include: { skills: [], plugins: [], folders: [] }, // 代格保守默认：不替作者决定公开内容
     }
     if (!cd.value.dryDone) {
-      const res = await axios.post('/api/admin/env-commit', { ...payload, dryRun: true })
-      cd.value.preview = res.data
+      const res = await envApi.adminCommit({ ...payload, dryRun: true })
+      cd.value.preview = res
       cd.value.dryDone = true
       return
     }
@@ -476,8 +459,8 @@ async function cdGo() {
       slug: payload.slug,
       include: payload.include,
     })
-    const res = await axios.post('/api/admin/env-commit', payload, { headers })
-    toast(t('env.admin.committed', { tag: res.data.template?.slug || payload.slug }))
+    const res = await envApi.adminCommit(payload, headers)
+    toast(t('env.admin.committed', { tag: res.template?.slug || payload.slug }))
     cd.value.open = false
     await load()
   } catch (e) {
@@ -589,9 +572,9 @@ async function cdGo() {
 }
 /* 主行动钮与确认弹窗的红钮同款配方：实红底白字，暗底浅底都读得清 */
 .enva-confirm-danger {
-  background: #dc2626;
-  border-color: #dc2626;
-  color: #fff;
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--surface-white);
 }
 .enva-confirm-danger:hover:not(:disabled) {
   background: #b91c1c;
@@ -625,9 +608,9 @@ async function cdGo() {
 }
 .enva-modal-box {
   width: min(460px, 92vw);
-  /* 用户裁定 2026-11-06：代格弹窗与全站弹窗同浅色壳（modal-panel 配方背景 #fff）
+  /* 用户裁定 2026-11-06：代格弹窗与全站弹窗同浅色壳（modal-panel 配方背景 var(--surface-white)）
      ——原 var(--bg-elevated) 全仓零定义，暗色兜底值一直在裸奔 */
-  background: #fff;
+  background: var(--surface-white);
   color: #1d2129;
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 16px;
@@ -669,7 +652,7 @@ async function cdGo() {
   margin-top: 8px;
 }
 .badge-danger {
-  color: #fff;
+  color: var(--surface-white);
   background: rgba(217, 107, 107, 0.25);
   border: 1px solid rgba(217, 107, 107, 0.5);
 }

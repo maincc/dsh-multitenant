@@ -62,6 +62,17 @@ export const ADMIN_SIGNED_OPERATIONS = Object.freeze([
   'user-upgrade',
   'user-downgrade',
   'dsh/build-image',
+  // ── 补齐（2026-11 P1 拆分现行发现）：以下 7 op buildBinding 早已生效、路由一直在签，
+  // 但本数组漏登——数组此前无消费方所以未爆；P1 注册表把 signOp 校验指向本数组后，
+  // 漏登=env 域注册即抛。真闸=buildBinding switch（未知 op 返 null 拒签），本数组=
+  // 声明面；两面一致性由 test/binding-coverage.test.js 双向钉死（判例 58"三兄弟漏一个"现行案）。
+  'env-commit',
+  'env-publish',
+  'env-revoke',
+  'env-apply',
+  'env-scan',
+  'env-reject',
+  'skill-hide',
 ])
 
 /** 待执行的管理操作挑战（地址 → 记录）。与 tenantConfigService 的挑战池同样是一次性 */

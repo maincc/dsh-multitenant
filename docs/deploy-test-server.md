@@ -178,18 +178,19 @@ systemctl daemon-reload && systemctl enable --now dsh-mongod dsh-platform
 空库首启平台自建 schema 戳。要搬本机数据（一般测试没必要）：
 
 ```bash
-# 本机出快照
-scripts/mongo-backup.sh backup
-# 传服务器后还原。坑位备忘（已在脚本修复）：mongorestore --dir 必须喂【快照根目录】
-# （里面才是 dsh_prod/ 子目录），喂到 dsh_prod 子目录会静默全跳过。
+# 本机出 bundle（唯一备份入口：库+keys+入口+工作区+卷一袋，产物 0600）
+BACKUP_DIR=/tmp/dsh-bk ./deploy/backup.sh
+# 传服务器后还原库。坑位备忘（已在脚本修复）：mongorestore --dir 必须喂【dump 根目录】
+# （bundle 解包后是 mongo/，里面才是 dsh_prod/ 子目录），喂到 dsh_prod 子目录会静默全跳过。
 mongorestore --uri='mongodb://127.0.0.1:27018/dsh_prod?replicaSet=dsh-rs' \
-  --drop --dir=/opt/dsh/backup/<快照目录>
+  --drop --dir=<bundle 解包目录>/mongo
 ```
 
 ### 5. 定时备份
 
 ```cron
-30 3 * * * cd /opt/dsh/dsh-multitenant && scripts/mongo-backup.sh backup >> /var/log/dsh-backup.log 2>&1
+30 3 * * * cd /opt/dsh/dsh-multitenant && BACKUP_DIR=/opt/dsh/backup ./deploy/backup.sh >> /var/log/dsh-backup.log 2>&1
+30 4 * * 0 cd /opt/dsh/dsh-multitenant && BACKUP_DIR=/opt/dsh/backup ./deploy/backup.sh verify >> /var/log/dsh-backup.log 2>&1
 ```
 
 备份目录含用户数据，保持 0700；上线前做一次"备份→影子库还原→verify 对账"演练。

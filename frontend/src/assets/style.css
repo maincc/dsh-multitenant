@@ -14,8 +14,8 @@ body {
     'Helvetica Neue',
     Arial,
     sans-serif;
-  background: #f8fafc;
-  color: #334155;
+  background: var(--bg-page);
+  color: var(--text-body);
   line-height: 1.6;
 }
 
@@ -23,7 +23,7 @@ body {
 :root {
   --brand-start: #6b7bdb;
   --brand-end: #6c69c2;
-  --brand-grad: linear-gradient(135deg, #6b7bdb 0%, #6c69c2 100%);
+  --brand-grad: linear-gradient(135deg, var(--brand-start) 0%, #6c69c2 100%);
   --brand-active-bg: #eef0f8;
   --brand-text: #6b7bdb;
   --bg-page: #f8fafc;
@@ -31,16 +31,25 @@ body {
   --text-main: #1e293b;
   --text-muted: #64748b;
   --text-faint: #94a3b8;
+  --surface-white: #fff;
+  --surface-soft: #f1f5f9;
+  --text-secondary: #475569;
+  --text-body: #334155;
+  --danger: #dc2626;
+  --success: #10b981;
+  --card-border: rgba(226, 232, 240, 0.8);
+  --card-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  --transition-fast: all 0.2s;
 }
 
 /* ── 卡片（原型稿：bg-white rounded-2xl border-slate-200/80 shadow-sm） ── */
 .card {
   background: white;
   border-radius: 16px;
-  border: 1px solid rgba(226, 232, 240, 0.8);
+  border: 1px solid var(--card-border);
   padding: 1.5rem;
   margin-bottom: 1.5rem;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  box-shadow: var(--card-shadow);
 }
 
 .card h2 {
@@ -88,18 +97,18 @@ th,
 td {
   padding: 0.75rem;
   text-align: left;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--surface-soft);
 }
 
 th {
-  background: #f8fafc;
+  background: var(--bg-page);
   font-weight: 600;
-  color: #64748b;
+  color: var(--text-muted);
   font-size: 0.85rem;
 }
 
 tr:hover {
-  background: #f8fafc;
+  background: var(--bg-page);
 }
 
 /* ── 徽章 ── */
@@ -138,7 +147,7 @@ tr:hover {
   border-radius: 12px;
   cursor: pointer;
   font-size: 0.9rem;
-  transition: all 0.2s;
+  transition: var(--transition-fast);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -165,7 +174,7 @@ tr:hover {
 }
 
 .btn-success {
-  background: #10b981;
+  background: var(--success);
   color: white;
 }
 
@@ -175,7 +184,7 @@ tr:hover {
 
 .btn-danger {
   background: transparent;
-  color: #dc2626;
+  color: var(--danger);
   border: 1px solid #fecaca;
 }
 
@@ -202,20 +211,20 @@ tr:hover {
 }
 
 .btn-secondary {
-  background: #f1f5f9;
-  color: #475569;
-  border: 1px solid #e2e8f0;
+  background: var(--surface-soft);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-light);
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: #e2e8f0;
+  background: var(--border-light);
 }
 
 /* ── 进度条 ── */
 .progress-bar {
   width: 100%;
   height: 8px;
-  background: #f1f5f9;
+  background: var(--surface-soft);
   border-radius: 999px;
   overflow: hidden;
   margin-top: 0.5rem;
@@ -255,7 +264,7 @@ tr:hover {
 .mini-spinner {
   width: 18px;
   height: 18px;
-  border: 2px solid #e2e8f0;
+  border: 2px solid var(--border-light);
   border-top: 2px solid var(--brand-text);
   border-radius: 50%;
   animation: spin 1s linear infinite;
@@ -283,18 +292,18 @@ tr:hover {
    消费方：SkillMarket / AdminPanel 台账搜索 / AdminPanel 任免名册 */
 .search-input {
   padding: 0.5rem 0.75rem;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-light);
   border-radius: 10px;
   font-size: 0.9rem;
   width: min(240px, 100%);
   box-sizing: border-box;
   outline: none;
-  color: #1e293b;
-  background: #fff;
+  color: var(--text-main);
+  background: var(--surface-white);
 }
 
 .search-input:focus {
-  border-color: #6b7bdb;
+  border-color: var(--brand-text);
   box-shadow: 0 0 0 3px rgba(107, 123, 219, 0.15);
 }
 
@@ -308,4 +317,16 @@ tr:hover {
   border-radius: 50%;
   background: #e5484d;
   box-shadow: 0 0 0 2px rgba(229, 72, 77, 0.22);
+}
+
+/* ── 全局动效正源（P3 Tier A：scoped 副本清退，判例 63 报告 §2.1） ── */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }

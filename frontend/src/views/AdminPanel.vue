@@ -66,1266 +66,69 @@
       <section class="gate-content">
         <!-- ════════ 系统概览 ════════ -->
         <div v-if="activeTab === 'overview'" class="tab-content">
-          <div class="tab-head">
-            <div class="tab-head-text">
-              <h4>{{ $t('admin.tabOverview') }}</h4>
-              <p class="tab-hint">{{ $t('admin.overviewHint') }}</p>
-            </div>
-            <div class="tab-head-actions">
-              <span class="refresh-hint">{{
-                $t('admin.refreshAuto', { n: Math.round(refreshIntervalMs / 1000) })
-              }}</span>
-              <button class="btn btn-small" :disabled="loading" @click="refreshNow(true)">
-                {{ loading ? $t('admin.loading') : $t('admin.refresh') }}
-              </button>
-            </div>
-          </div>
-
-          <!-- 当前管理员信息 -->
-          <div class="admin-info-card">
-            <div class="admin-info">
-              <div class="admin-label">{{ $t('admin.currentAdminLabel') }}</div>
-              <code class="admin-address">{{ currentAddress || currentAdminAddress }}</code>
-              <button class="btn btn-small btn-danger" @click="logout">
-                {{ $t('admin.logout') }}
-              </button>
-            </div>
-          </div>
-
-          <!-- Docker 状态指示器 -->
-          <div class="docker-status-card" :class="dockerAvailable ? 'docker-ok' : 'docker-error'">
-            <div class="docker-status">
-              <div class="status-icon"></div>
-              <div class="status-info">
-                <div class="status-label">{{ $t('admin.dockerStatus') }}</div>
-                <div class="status-text">
-                  {{ dockerAvailable ? $t('admin.running') : $t('admin.notRunning') }}
-                </div>
-              </div>
-              <div v-if="!dockerAvailable" class="status-hint">{{ $t('admin.dockerHint') }}</div>
-            </div>
-          </div>
-
-          <!-- 系统统计 -->
-          <div class="stats-grid">
-            <div class="stat-card">
-              <h3>{{ $t('admin.statTotal') }}</h3>
-              <div class="value">{{ stats.totalUsers }}</div>
-            </div>
-            <div class="stat-card">
-              <h3>{{ $t('admin.running') }}</h3>
-              <div class="value">{{ stats.runningUsers }}</div>
-            </div>
-            <div class="stat-card">
-              <h3>{{ $t('admin.statTier1') }}</h3>
-              <div class="value">{{ stats.tierCounts[1] || 0 }}</div>
-            </div>
-            <div class="stat-card">
-              <h3>{{ $t('admin.statTier2') }}</h3>
-              <div class="value">{{ stats.tierCounts[2] || 0 }}</div>
-            </div>
-          </div>
-
-          <!-- 孤儿数据卷清理 -->
-          <div class="sub-section">
-            <h4>{{ $t('admin.orphanTitle') }}</h4>
-            <p class="tab-hint">{{ $t('admin.orphanHint') }}</p>
-            <div class="action-buttons">
-              <button class="btn btn-warning" @click="scanOrphanVolumes" :disabled="orphanScanning">
-                {{ orphanScanning ? $t('admin.orphanScanning') : $t('admin.orphanScanBtn') }}
-              </button>
-              <button
-                v-if="orphanVolumes.length > 0"
-                class="btn btn-danger"
-                @click="cleanupOrphanVolumes"
-              >
-                {{ $t('admin.orphanCleanBtn', { n: orphanVolumes.length }) }}
-              </button>
-            </div>
-            <div v-if="orphanNotice" class="orphan-notice">{{ orphanNotice }}</div>
-            <ul v-if="orphanVolumes.length > 0" class="orphan-list">
-              <li v-for="v in orphanVolumes" :key="v" class="orphan-item">
-                <span class="orphan-name">{{ v }}</span>
-              </li>
-            </ul>
-          </div>
+          <AdminTabOverview
+            :loading="loading"
+            :stats="stats"
+            :current-address="currentAddress"
+            :current-admin-address="currentAdminAddress"
+            :docker-available="dockerAvailable"
+            :refresh-interval-ms="refreshIntervalMs"
+            @refresh="refreshNow(true)"
+          />
         </div>
 
         <!-- ════════ 用户管理 ════════ -->
         <div v-else-if="activeTab === 'users'" class="tab-content">
-          <div class="tab-head">
-            <div class="tab-head-text">
-              <h4>{{ $t('admin.tabUsers') }}</h4>
-              <p class="tab-hint">{{ $t('admin.userListHint') }}</p>
-            </div>
-            <div class="tab-head-actions">
-              <span class="refresh-hint">{{
-                $t('admin.refreshAuto', { n: Math.round(refreshIntervalMs / 1000) })
-              }}</span>
-              <button class="btn btn-small" :disabled="loading" @click="refreshNow(true)">
-                {{ loading ? $t('admin.loading') : $t('admin.refresh') }}
-              </button>
-            </div>
-          </div>
-          <div v-if="loading" class="loading">{{ $t('admin.loading') }}</div>
-          <div v-else-if="error" class="error">{{ error }}</div>
-          <table v-else>
-            <thead>
-              <tr>
-                <th>{{ $t('admin.colAddress') }}</th>
-                <th>{{ $t('admin.colPort') }}</th>
-                <th>{{ $t('admin.colTier') }}</th>
-                <th>{{ $t('admin.colVersion') }}</th>
-                <th>{{ $t('admin.colStatus') }}</th>
-                <th>{{ $t('admin.colIdle') }}</th>
-                <th>{{ $t('admin.colRole') }}</th>
-                <th>{{ $t('admin.colOps') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="user in users" :key="user.address">
-                <td>
-                  <span class="address addr-tip" :data-full="user.address">{{
-                    shortAddress(user.address)
-                  }}</span>
-                </td>
-                <td>{{ user.port }}</td>
-                <td>
-                  <span class="badge" :class="tierBadge(user.tier)">
-                    {{ user.tierLabel }}
-                  </span>
-                </td>
-                <td>
-                  <code v-if="user.dshVersion" class="dsh-ver">{{ user.dshVersion }}</code>
-                  <span v-else class="dsh-ver-unknown">{{ $t('admin.versionUnknown') }}</span>
-                </td>
-                <td>
-                  <span class="badge" :class="statusBadge(user.status)">
-                    {{ statusText(user.status) }}
-                  </span>
-                </td>
-                <td>{{ formatIdle(user.idle) }}</td>
-                <td>
-                  <span v-if="user.isAdmin" class="badge badge-success">{{
-                    $t('admin.roleAdmin')
-                  }}</span>
-                  <span v-else class="badge badge-info">{{ $t('admin.roleUser') }}</span>
-                </td>
-                <td>
-                  <div class="ops-cell">
-                    <button
-                      class="btn btn-primary"
-                      @click="upgradeUser(user.address, user.tier + 1)"
-                      :disabled="
-                        user.tier >= maxTier ||
-                        user.status === 'destroyed' ||
-                        user.status === 'unknown'
-                      "
-                    >
-                      {{ $t('admin.upgrade') }}
-                    </button>
-                    <button
-                      class="btn btn-success"
-                      @click="downgradeUser(user.address, user.tier - 1)"
-                      :disabled="
-                        user.tier <= 1 || user.status === 'destroyed' || user.status === 'unknown'
-                      "
-                    >
-                      {{ $t('admin.downgrade') }}
-                    </button>
-                    <!-- 提权与容器生命周期解耦（2026-10-23 用户实测"不能用"的根因）：
-                         任命管理员=台账+档案动作，容器 destroyed/unknown 不该禁用它——
-                         真正的门禁是当场钱包签名双验证，这里不设状态闸 -->
-                    <button
-                      v-if="!user.isAdmin"
-                      class="btn btn-warning"
-                      @click="promoteUser(user.address)"
-                    >
-                      {{ $t('admin.promote') }}
-                    </button>
-                    <!-- 撤权在用户管理行内闭环（任免名册转只读后的唯一操作入口）：
-                         demoteAdmin 自带 danger 确认+钱包签名门禁，LAST_ADMIN 防锁死
-                         由后端人话报错直出 -->
-                    <button
-                      v-if="user.isAdmin"
-                      class="btn btn-danger"
-                      @click="demoteAdmin(user.address)"
-                    >
-                      {{ $t('admin.rosterDemote') }}
-                    </button>
-                    <a
-                      v-if="user.status === 'running'"
-                      href="#"
-                      @click.prevent="openTenant(user.address)"
-                      rel="noopener noreferrer"
-                      class="btn btn-info"
-                    >
-                      {{ $t('admin.visit') }}
-                    </a>
-                    <button
-                      v-if="user.status === 'running'"
-                      class="btn btn-warning"
-                      @click="forceStopUser(user.address)"
-                      :title="$t('admin.forceStopTitle')"
-                    >
-                      {{ $t('admin.forceStop') }}
-                    </button>
-                    <button
-                      class="btn btn-danger"
-                      @click="deleteVolume(user.address)"
-                      :title="$t('admin.deleteDataTitle')"
-                    >
-                      {{ $t('admin.deleteData') }}
-                    </button>
-                    <button
-                      class="btn btn-danger"
-                      @click="removeUser(user.address)"
-                      :title="$t('admin.removeTitle')"
-                    >
-                      {{ $t('admin.remove') }}
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <AdminTabUsers
+            :users="users"
+            :tiers="tiers"
+            :loading="loading"
+            :error="error"
+            :refresh-interval-ms="refreshIntervalMs"
+            @refresh="refreshNow(true)"
+          />
         </div>
 
         <!-- ════════ 配额配置（只读） ════════ -->
         <div v-else-if="activeTab === 'quota'" class="tab-content">
-          <div class="tab-head">
-            <div class="tab-head-text">
-              <h4>{{ $t('admin.tabQuota') }}</h4>
-              <p class="tab-hint">{{ $t('admin.tierConfigHint') }}</p>
-              <p class="tab-hint tab-hint-warn">{{ $t('admin.diskQuotaHint') }}</p>
-            </div>
-            <div class="tab-head-actions">
-              <span class="refresh-hint">{{
-                $t('admin.refreshAuto', { n: Math.round(refreshIntervalMs / 1000) })
-              }}</span>
-              <button class="btn btn-small" :disabled="loading" @click="refreshNow(true)">
-                {{ loading ? $t('admin.loading') : $t('admin.refresh') }}
-              </button>
-            </div>
-          </div>
-          <table>
-            <thead>
-              <tr>
-                <th>{{ $t('admin.colTierLevel') }}</th>
-                <th>{{ $t('admin.colTierLabel') }}</th>
-                <th>{{ $t('admin.colMemory') }}</th>
-                <th>{{ $t('admin.colCpu') }}</th>
-                <th>{{ $t('admin.colPids') }}</th>
-                <th>{{ $t('admin.colDiskLimit') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in tierRows" :key="row.tier">
-                <td>
-                  <span class="badge" :class="tierBadge(row.tier)">T{{ row.tier }}</span>
-                </td>
-                <td>{{ row.limits.label }}</td>
-                <td>{{ row.limits.memory }}</td>
-                <td>{{ row.limits.cpus }} {{ $t('admin.cpuUnit') }}</td>
-                <td>{{ row.limits.pids }}</td>
-                <td>{{ row.limits.disk || '-' }}</td>
-              </tr>
-            </tbody>
-          </table>
+          <AdminTabQuota
+            :tiers="tiers"
+            :loading="loading"
+            :refresh-interval-ms="refreshIntervalMs"
+            @refresh="refreshNow(true)"
+          />
         </div>
 
         <!-- ════════ 资源监控 ════════ -->
         <div v-else-if="activeTab === 'monitor'" class="tab-content">
-          <div class="tab-head">
-            <div class="tab-head-text">
-              <h4>{{ $t('admin.tabMonitor') }}</h4>
-              <p class="tab-hint">{{ $t('admin.monitorHint') }}</p>
-            </div>
-            <div class="tab-head-actions">
-              <span class="refresh-hint">{{
-                $t('admin.refreshAuto', { n: Math.round(refreshIntervalMs / 1000) })
-              }}</span>
-              <button class="btn btn-small" :disabled="loading" @click="refreshNow(true)">
-                {{ loading ? $t('admin.loading') : $t('admin.refresh') }}
-              </button>
-            </div>
-          </div>
-
-          <!-- 资源监控（M2：自动升级） -->
-          <div class="sub-section">
-            <h4>{{ $t('admin.monitorTitle') }}</h4>
-
-            <!-- 监控配置卡 -->
-            <div class="monitor-config">
-              <div class="monitor-item">
-                <span class="monitor-label">{{ $t('admin.monitorThreshold') }}</span>
-                <span class="monitor-value">
-                  {{ stats.resource?.autoUpgradeThreshold ?? 80 }}%
-                </span>
-              </div>
-              <div class="monitor-item">
-                <span class="monitor-label">{{ $t('admin.monitorInterval') }}</span>
-                <span class="monitor-value">
-                  {{ ((stats.resource?.monitorIntervalMs ?? 30000) / 1000).toFixed(0) }}s
-                </span>
-              </div>
-              <div class="monitor-item">
-                <span class="monitor-label">{{ $t('admin.monitorCooldown') }}</span>
-                <span class="monitor-value">
-                  {{ ((stats.resource?.autoUpgradeCooldownMs ?? 600000) / 60000).toFixed(0) }}min
-                </span>
-              </div>
-              <div class="monitor-item">
-                <span class="monitor-label">{{ $t('admin.monitorUpgraded') }}</span>
-                <span class="monitor-value monitor-upgraded">
-                  {{
-                    $t('admin.monitorUpgradedCount', { n: stats.resource?.autoUpgradeCount ?? 0 })
-                  }}
-                </span>
-              </div>
-            </div>
-
-            <!-- 各容器资源一览 -->
-            <h5 class="monitor-subtitle">{{ $t('admin.monitorUsersTitle') }}</h5>
-            <p class="tab-hint">{{ $t('admin.monitorUsersHint') }}</p>
-            <table v-if="users.length">
-              <thead>
-                <tr>
-                  <th>{{ $t('admin.monitorColAddress') }}</th>
-                  <th>{{ $t('admin.monitorColTier') }}</th>
-                  <th>{{ $t('admin.monitorColStatus') }}</th>
-                  <th>{{ $t('admin.monitorColMem') }}</th>
-                  <th>{{ $t('admin.monitorColMemPct') }}</th>
-                  <th>{{ $t('admin.monitorColCpu') }}</th>
-                  <th>{{ $t('admin.monitorColVolume') }}</th>
-                  <th>{{ $t('admin.monitorColUpgraded') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="u in users" :key="u.address">
-                  <td class="cwt-mono addr-tip" :data-full="u.address">
-                    {{ shortAddr(u.address) }}
-                  </td>
-                  <td>
-                    <span class="badge" :class="tierBadge(u.tier)">
-                      {{ u.tierLabel }}
-                    </span>
-                  </td>
-                  <td>
-                    <span class="badge" :class="statusBadge(u.status)">
-                      {{ statusText(u.status) }}
-                    </span>
-                  </td>
-                  <td>{{ u.stats ? u.stats.memory : '-' }}</td>
-                  <td>
-                    <span
-                      v-if="u.stats"
-                      class="mem-pct"
-                      :class="memPctClass(u.stats.memoryPercent)"
-                    >
-                      {{ u.stats.memoryPercent }}
-                    </span>
-                    <span v-else>-</span>
-                  </td>
-                  <td>{{ u.stats ? u.stats.cpu : '-' }}</td>
-                  <td>{{ volumeSize(u.address) }}</td>
-                  <td>
-                    <span v-if="u.lastAutoUpgradeAt" class="badge badge-success">
-                      {{ $t('admin.monitorUpgradedAt', { time: fmtTime(u.lastAutoUpgradeAt) }) }}
-                    </span>
-                    <span v-else class="monitor-never">{{ $t('admin.monitorNever') }}</span>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-            <div v-else class="monitor-empty">{{ $t('admin.monitorNoUsers') }}</div>
-          </div>
-
-          <!-- 磁盘监控 -->
-          <div class="sub-section">
-            <h4>{{ $t('admin.diskTitle') }}</h4>
-            <p class="tab-hint">
-              {{
-                $t('admin.diskHint', {
-                  n: ((stats.resource?.diskCheckIntervalMs ?? 300000) / 60000).toFixed(0),
-                })
-              }}
-            </p>
-
-            <template v-if="stats.resource?.disk">
-              <!-- 宿主磁盘 -->
-              <h5 class="monitor-subtitle">{{ $t('admin.diskHostTitle') }}</h5>
-              <div class="monitor-config">
-                <div class="monitor-item">
-                  <span class="monitor-label">{{ $t('admin.diskTotal') }}</span>
-                  <span class="monitor-value">{{
-                    fmtDisk(stats.resource.disk.host?.totalKB || 0)
-                  }}</span>
-                </div>
-                <div class="monitor-item">
-                  <span class="monitor-label">{{ $t('admin.diskUsed') }}</span>
-                  <span class="monitor-value">{{
-                    fmtDisk(stats.resource.disk.host?.usedKB || 0)
-                  }}</span>
-                </div>
-                <div class="monitor-item">
-                  <span class="monitor-label">{{ $t('admin.diskAvailable') }}</span>
-                  <span class="monitor-value">{{
-                    fmtDisk(stats.resource.disk.host?.availableKB || 0)
-                  }}</span>
-                </div>
-                <div class="monitor-item">
-                  <span class="monitor-label">{{ $t('admin.diskUsage') }}</span>
-                  <span
-                    class="monitor-value"
-                    :class="usagePctClass(stats.resource.disk.host?.usePercent)"
-                    :title="stats.resource.disk.host?.path || ''"
-                  >
-                    {{ stats.resource.disk.host?.usePercent || '-' }}
-                    <!-- F3 低盘标记：后端 collectDiskUsage 按 maintenance.lowFreeBytes 判定 -->
-                    <span v-if="stats.resource.disk.host?.lowFree" class="mem-pct-high"
-                      >⚠ {{ $t('admin.diskLowFree') }}</span
-                    >
-                  </span>
-                </div>
-              </div>
-
-              <!-- Docker 存储 -->
-              <h5 class="monitor-subtitle">{{ $t('admin.diskDockerTitle') }}</h5>
-              <table v-if="stats.resource.disk.docker?.items?.length">
-                <thead>
-                  <tr>
-                    <th>{{ $t('admin.diskColType') }}</th>
-                    <th>{{ $t('admin.diskColSize') }}</th>
-                    <th>{{ $t('admin.diskColReclaimable') }}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="item in stats.resource.disk.docker.items" :key="item.name">
-                    <td>{{ dockerTypeLabel(item.name) }}</td>
-                    <td>{{ item.size }}</td>
-                    <td class="reclaimable-cell">{{ item.reclaimable }}</td>
-                  </tr>
-                </tbody>
-              </table>
-
-              <!-- 租户数据卷 -->
-              <div class="disk-vol-head">
-                <h5 class="monitor-subtitle">{{ $t('admin.diskVolumesTitle') }}</h5>
-                <button
-                  class="btn btn-small"
-                  :class="diskScanning ? 'btn-disabled' : 'btn-primary'"
-                  :disabled="diskScanning"
-                  @click="runDiskScan"
-                >
-                  {{ diskScanning ? $t('admin.diskScanning') : $t('admin.diskScanBtn') }}
-                </button>
-              </div>
-              <p class="tab-hint">{{ $t('admin.diskScanHint') }}</p>
-              <table v-if="stats.resource.disk.volumes?.length">
-                <thead>
-                  <tr>
-                    <th>{{ $t('admin.diskColVolume') }}</th>
-                    <th>{{ $t('admin.diskColVolSize') }}（{{ $t('admin.diskHostEngine') }}）</th>
-                    <th>{{ $t('admin.diskColVolSize') }}（{{ $t('admin.diskHostActual') }}）</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="v in stats.resource.disk.volumes" :key="v.volume">
-                    <td class="cwt-mono">{{ v.volume.replace('dsh-data-swtc-', '…') }}</td>
-                    <td class="mem-pct-ok">{{ v.size }}</td>
-                    <td>
-                      <span v-if="v.sizeActual" :class="actualSizeClass(v.size, v.sizeActual)">
-                        {{ fmtBytes(v.sizeActual) }}
-                      </span>
-                      <span v-else class="monitor-never">-</span>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </template>
-            <div v-else class="monitor-empty">{{ $t('admin.diskNoData') }}</div>
-          </div>
+          <AdminTabMonitor
+            :users="users"
+            :stats="stats"
+            :loading="loading"
+            :refresh-interval-ms="refreshIntervalMs"
+            @refresh="refreshNow(true)"
+            @disk-scan="mergeDiskScan"
+          />
         </div>
 
         <!-- ════════ DSH 版本管理 ════════ -->
         <div v-else-if="activeTab === 'envtpl'" class="tab-content">
-          <div class="tab-head">
-            <h4>{{ $t('admin.tabEnv') }}</h4>
-            <p class="tab-hint">{{ $t('env.admin.hint') }}</p>
-          </div>
+          <!-- 基线形制：envtpl 页头光板（无刷新区——本 tab 数据由
+               EnvTemplatesAdmin 自拉，壳 refreshNow 拉的是 users/stats，挂按钮即误导） -->
+          <AdminTabHead :title="$t('admin.tabEnv')" :hint="$t('env.admin.hint')" />
           <EnvTemplatesAdmin />
         </div>
         <div v-else-if="activeTab === 'dsh'" class="tab-content">
-          <div class="tab-head">
-            <div class="tab-head-text">
-              <h4>{{ $t('admin.tabDsh') }}</h4>
-              <p class="tab-hint">{{ $t('admin.dshHint') }}</p>
-            </div>
-            <div class="tab-head-actions">
-              <span class="refresh-hint">{{
-                $t('admin.refreshAuto', { n: Math.round(refreshIntervalMs / 1000) })
-              }}</span>
-              <button class="btn btn-small" :disabled="loading" @click="refreshNow(true)">
-                {{ loading ? $t('admin.loading') : $t('admin.refresh') }}
-              </button>
-            </div>
-          </div>
-
-          <!-- 2026-10 审计：读失败必须在本 tab 内可见。此前写进全局 error，
-               而横幅只挂在 users tab——dsh 表读挂了既看不见，还会串到别的
-               tab 冒出不相关的错误 -->
-          <div v-if="dshError" class="error">{{ dshError }}</div>
-
-          <!-- 两层模型说明：镜像层 vs 租户层 -->
-          <div class="dsh-model-card">
-            <div class="dsh-model-step">
-              <span class="dsh-step-no">1</span>
-              <div>
-                <strong>{{ $t('admin.dshLayerImage') }}</strong>
-                <p>{{ $t('admin.dshLayerImageDesc') }}</p>
-              </div>
-            </div>
-            <div class="dsh-model-step">
-              <span class="dsh-step-no">2</span>
-              <div>
-                <strong>{{ $t('admin.dshLayerTenant') }}</strong>
-                <p>{{ $t('admin.dshLayerTenantDesc') }}</p>
-              </div>
-            </div>
-          </div>
-
-          <!-- ① 本地版本列表：远端有哪些版本、哪些已经建成镜像 -->
-          <div class="dsh-card">
-            <div class="dsh-card-head">
-              <h5>
-                <span class="dsh-step">1</span>
-                {{ $t('admin.dshStepVersions') }}
-              </h5>
-              <label class="dsh-check">
-                <input v-model="dshIncludePrerelease" type="checkbox" @change="loadDshVersions" />
-                {{ $t('admin.dshShowPrerelease') }}
-              </label>
-            </div>
-
-            <p v-if="dshVersionsError" class="dsh-error">{{ dshVersionsError }}</p>
-
-            <!-- 选中一个版本 → 构建镜像 -->
-            <div class="dsh-row">
-              <select v-model="dshSelectedVersion" class="dsh-select">
-                <option value="">{{ $t('admin.dshSelectVersion') }}</option>
-                <option v-for="v in allVersionOptions" :key="v.version" :value="v.version">
-                  {{ v.version }}{{ v.version === dshVersions.latest ? ' ★' : ''
-                  }}{{ v.local ? ' ✓' : '' }}{{ v.stable ? '' : ' ' + $t('admin.dshPreShort') }}
-                </option>
-              </select>
-              <button
-                class="btn btn-small"
-                :disabled="dshVersionsLoading"
-                @click="loadDshVersions(true)"
-              >
-                {{ dshVersionsLoading ? $t('admin.loading') : $t('admin.dshRefreshVersions') }}
-              </button>
-              <span class="dsh-hint-small">
-                {{ $t('admin.dshPrereleaseCount', { n: dshVersions.prereleaseCount ?? 0 }) }}
-              </span>
-            </div>
-
-            <p class="dsh-hint-small">{{ $t('admin.dshVersionsHint') }}</p>
-
-            <!-- 本地镜像钦定：机器上现存的任意租户镜像可直接选为平台默认
-                 （不必先"构建"——覆盖 docker load 传入、历史遗留 tag 等场景）。
-                 原先的"本地已构建的版本"表与它同源同形，已并入这里统一呈现。 -->
-            <h6 class="dsh-subhead">
-              {{ $t('admin.dshLocalImages') }}
-              <span class="dsh-muted">（{{ dshImages.images.length }}）</span>
-              <button class="btn btn-small" :disabled="dshImagesLoading" @click="loadDshImages">
-                {{ dshImagesLoading ? $t('admin.loading') : $t('admin.refresh') }}
-              </button>
-            </h6>
-            <!-- 先把"现在的总体镜像是谁"说明白（含"没有/读不出"两种状态）：
-                 看不到现状却要对现状签名，是没有道理的交互 -->
-            <p class="dsh-note">
-              {{ $t('admin.dshCurrentDefault') }}：
-              <template v-if="dshImages.defaultId">
-                <code class="dsh-ver">{{ dshImages.defaultRef || dshImages.defaultId }}</code>
-                <span class="dsh-muted">
-                  {{
-                    dshImages.defaultVersion
-                      ? `（${dshImages.defaultVersion}）`
-                      : `（${$t('admin.dshDefaultVersionUnknown')}）`
-                  }}
-                </span>
-              </template>
-              <span v-else>{{ $t('admin.dshNoDefaultYet') }}</span>
-            </p>
-            <p v-if="dshImagesError" class="dsh-error">{{ dshImagesError }}</p>
-            <table v-if="dshImages.images.length" class="dsh-table">
-              <thead>
-                <tr>
-                  <th>{{ $t('admin.dshColVersion') }}</th>
-                  <th>{{ $t('admin.dshImageRef') }}</th>
-                  <th>{{ $t('admin.dshBuiltAt') }}</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="im in dshImages.images" :key="im.ref">
-                  <td>
-                    <code class="dsh-ver">{{ im.version }}</code>
-                    <span v-if="im.isDefault" class="dsh-ver-tag">
-                      {{ $t('admin.dshDefaultTag') }}
-                    </span>
-                  </td>
-                  <td>
-                    <code>{{ im.ref }}</code>
-                    <span class="dsh-muted"> {{ im.imageId }}</span>
-                  </td>
-                  <td class="dsh-muted">{{ im.createdAt || '—' }}</td>
-                  <td>
-                    <!-- 默认行没有动作：挂[默认]徽标的行"已经是"总体镜像，再给
-                         一个"确认它是默认"的按钮属于自我重复。
-                         未知态（latest 不存在）时没有任何一行有徽标，
-                         于是每一行都是"设为平台默认"的出路——"不知道"与
-                         "不能设置"在逻辑上互斥，不需要额外按钮来兜底。 -->
-                    <button
-                      v-if="!im.isDefault"
-                      class="btn btn-small"
-                      :disabled="!!dshSelecting"
-                      @click="selectPlatformImage(im)"
-                    >
-                      {{
-                        dshSelecting === im.ref
-                          ? $t('admin.dshSelecting')
-                          : $t('admin.dshSelectAsDefault')
-                      }}
-                    </button>
-                    <span v-else class="dsh-muted">—</span>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-            <p v-else-if="!dshImagesLoading" class="dsh-note">{{ $t('admin.dshNoLocalImages') }}</p>
-            <p class="dsh-hint-small">{{ $t('admin.dshLocalImagesHint') }}</p>
-          </div>
-
-          <!-- ② 构建版本镜像 -->
-          <div class="dsh-card">
-            <div class="dsh-card-head">
-              <h5>
-                <span class="dsh-step">2</span>
-                {{ $t('admin.dshStepBuild') }}
-              </h5>
-            </div>
-            <div class="dsh-row">
-              <button
-                class="btn btn-primary btn-small"
-                :disabled="!dshSelectedVersion || dshBuild.running"
-                @click="startImageUpgrade"
-              >
-                {{
-                  dshBuild.running
-                    ? $t('admin.dshBuilding', { version: dshBuild.version })
-                    : $t('admin.dshBuildImage')
-                }}
-              </button>
-              <span v-if="!dshSelectedVersion" class="dsh-hint-small">
-                {{ $t('admin.dshBuildPickVersion') }}
-              </span>
-            </div>
-
-            <!-- 构建进度 -->
-            <div v-if="dshBuild.running || dshBuild.finishedAt" class="dsh-progress">
-              <div v-if="dshBuild.running" class="dsh-progress-running">
-                <span class="dsh-spinner"></span>
-                {{ $t('admin.dshBuilding', { version: dshBuild.version }) }}
-              </div>
-              <div v-else-if="dshBuild.ok" class="dsh-progress-ok">
-                ✓ {{ $t('admin.dshBuildOk', { version: dshBuild.result?.version || '?' }) }}
-              </div>
-              <div v-else class="dsh-progress-fail">
-                ✗ {{ $t('admin.dshBuildFail') }}: {{ dshBuild.error }}
-              </div>
-            </div>
-          </div>
-
-          <!-- ③ 总体镜像（全部租户共用的那个） -->
-          <div class="dsh-card">
-            <div class="dsh-card-head">
-              <h5>
-                <span class="dsh-step">3</span>
-                {{ $t('admin.dshStepImage') }}
-              </h5>
-              <button class="btn btn-small" :disabled="dshStatusLoading" @click="loadDshStatus">
-                {{ dshStatusLoading ? $t('admin.loading') : $t('admin.refresh') }}
-              </button>
-            </div>
-
-            <div class="dsh-kv-grid">
-              <div class="dsh-kv">
-                <span class="dsh-kv-label">{{ $t('admin.dshImageVersion') }}</span>
-                <code>
-                  {{ dshStatus.currentImageVersion || $t('admin.dshVersionUnknown') }}
-                </code>
-              </div>
-              <div class="dsh-kv">
-                <span class="dsh-kv-label">{{ $t('admin.dshLatestAvailable') }}</span>
-                <code v-if="dshStatus.upgrade?.latest">{{ dshStatus.upgrade.latest }}</code>
-                <span v-else class="dsh-muted">{{ dshStatus.upgrade?.reason || '—' }}</span>
-              </div>
-              <div class="dsh-kv">
-                <span class="dsh-kv-label">{{ $t('admin.dshImageName') }}</span>
-                <code>{{ dshStatus.image || '—' }}</code>
-              </div>
-              <div class="dsh-kv">
-                <span class="dsh-kv-label">{{ $t('admin.dshStaleTenants') }}</span>
-                <code :class="{ 'dsh-warn-text': dshStatus.staleTenants > 0 }">
-                  {{ dshStatus.staleTenants ?? 0 }}
-                </code>
-              </div>
-              <div class="dsh-kv">
-                <span class="dsh-kv-label">{{ $t('admin.dshLastBuild') }}</span>
-                <code>{{ dshStatus.recorded ? formatTime(dshStatus.recorded.at) : '—' }}</code>
-              </div>
-            </div>
-
-            <!-- 镜像版本落后提示：这是管理员最需要立刻看到的一句话 -->
-            <p v-if="dshStatus.upgrade?.behind" class="dsh-alert">
-              ⚠
-              {{
-                $t('admin.dshBehind', {
-                  current: dshStatus.currentImageVersion,
-                  latest: dshStatus.upgrade.latest,
-                })
-              }}
-            </p>
-            <p
-              v-else-if="dshStatus.currentImageVersion && dshStatus.upgrade?.behind === false"
-              class="dsh-ok-note"
-            >
-              ✓ {{ $t('admin.dshImageIsLatest') }}
-            </p>
-            <p v-if="!dshStatus.currentImageVersion" class="dsh-note">
-              {{ $t('admin.dshVersionUnknownHint') }}
-            </p>
-
-            <p v-if="dshStatus.note" class="dsh-note">⚠ {{ dshStatus.note }}</p>
-          </div>
-
-          <!-- ④ 个别租户镜像：每个租户容器实际钉在哪个镜像上 -->
-          <div class="dsh-card">
-            <div class="dsh-card-head">
-              <h5>
-                <span class="dsh-step">4</span>
-                {{ $t('admin.dshStepTenants') }}
-              </h5>
-              <div class="dsh-actions">
-                <button
-                  class="btn btn-small"
-                  :disabled="dshApply.running || !dshStatus.staleTenants"
-                  @click="previewApplyAll"
-                >
-                  {{ $t('admin.dshPreviewStale') }}
-                </button>
-                <button
-                  class="btn btn-warning btn-small"
-                  :disabled="dshApply.running || !dshStatus.staleTenants"
-                  @click="applyAllStale"
-                >
-                  {{ $t('admin.dshApplyStale', { n: dshStatus.staleTenants ?? 0 }) }}
-                </button>
-              </div>
-            </div>
-
-            <p class="dsh-hint-small">{{ $t('admin.dshApplyHint') }}</p>
-
-            <table v-if="dshStatus.tenants?.length" class="dsh-table">
-              <thead>
-                <tr>
-                  <th>{{ $t('admin.dshColAddress') }}</th>
-                  <th>{{ $t('admin.dshColStatus') }}</th>
-                  <th>{{ $t('admin.dshColVersion') }}</th>
-                  <th>{{ $t('admin.dshColImage') }}</th>
-                  <th>{{ $t('admin.dshColTarget') }}</th>
-                  <th>{{ $t('admin.dshColActions') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="t in dshStatus.tenants" :key="t.address">
-                  <td>
-                    <code class="dsh-addr addr-tip" :data-full="t.address">{{
-                      shortAddress(t.address)
-                    }}</code>
-                  </td>
-                  <td>
-                    <span class="dsh-badge" :class="`dsh-badge-${t.containerStatus}`">
-                      {{ t.containerStatus }}
-                    </span>
-                  </td>
-                  <td>
-                    <code class="dsh-ver" :class="{ 'dsh-ver-stale': t.stale }">
-                      {{ t.dshVersion || '?' }}
-                    </code>
-                    <span v-if="t.stale" class="dsh-badge dsh-badge-stale dsh-ver-tag">
-                      {{ $t('admin.dshOutdated') }}
-                    </span>
-                  </td>
-                  <td>
-                    <code class="dsh-img addr-tip" :data-full="t.containerImageId || ''">{{
-                      shortImageId(t.containerImageId)
-                    }}</code>
-                    <div v-if="t.pinnedImage" class="dsh-pinned">
-                      {{ $t('admin.dshPinnedTo', { ref: t.pinnedImage }) }}
-                    </div>
-                  </td>
-                  <td class="dsh-pick-cell">
-                    <!-- 租户镜像选择：默认跟随平台最新（latest），也可钉到某个
-                         已构建的版本（回滚 / 多版本并存） -->
-                    <select
-                      class="dsh-select dsh-select-sm"
-                      :value="dshTargetImage[t.address] ?? t.pinnedImage ?? ''"
-                      :disabled="dshApply.running"
-                      @change="setTargetImage(t.address, $event.target.value)"
-                    >
-                      <option value="">{{ $t('admin.dshFollowDefault') }}</option>
-                      <option v-for="im in dshAvailableImages" :key="im.ref" :value="im.ref">
-                        {{ im.version }}
-                      </option>
-                    </select>
-                  </td>
-                  <td>
-                    <button
-                      class="btn btn-small"
-                      :disabled="dshApply.running"
-                      @click="previewApplyOne(t.address)"
-                    >
-                      {{ $t('admin.dshPreview') }}
-                    </button>
-                    <button
-                      class="btn btn-warning btn-small"
-                      :disabled="dshApply.running || !needsApply(t)"
-                      @click="applyOne(t.address)"
-                    >
-                      {{ $t('admin.dshApply') }}
-                    </button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-            <p v-else class="dsh-empty">{{ $t('admin.dshNoTenants') }}</p>
-
-            <!-- 应用进度 / 结果 -->
-            <div v-if="dshApply.running || dshApply.finishedAt" class="dsh-progress">
-              <div v-if="dshApply.running" class="dsh-progress-running">
-                <span class="dsh-spinner"></span>
-                {{ $t('admin.dshApplying', { done: dshApply.completed, total: dshApply.total }) }}
-              </div>
-              <div v-else class="dsh-progress-ok">✓ {{ $t('admin.dshApplyDone') }}</div>
-            </div>
-
-            <ul v-if="dshApplyResults.length" class="dsh-result-list">
-              <li v-for="(r, i) in dshApplyResults" :key="i" :class="r.ok ? 'ok' : 'fail'">
-                <code class="addr-tip" :data-full="r.address">{{ shortAddress(r.address) }}</code>
-                <span v-if="r.ok">
-                  <template v-if="r.dryRun">
-                    {{ $t('admin.dshPlan') }}: {{ shortImageId(r.fromImageId) }} →
-                    {{ shortImageId(r.toImageId) }} ({{ r.targetVersion }})
-                    <!-- 备份目录可写性必须在预览阶段可见：否则点「更新」才因
-                         备份失败而中止（容器已停过一次），白白制造停机 -->
-                    <span v-if="r.backup && r.backupDirError" class="dsh-plan-warn">
-                      {{ $t('admin.dshBackupDirBad', { dir: r.backupDirError }) }}
-                    </span>
-                    <span v-else-if="r.backupDirFallback" class="dsh-plan-warn">
-                      ⚠
-                      {{
-                        $t('admin.dshBackupDirFallback', {
-                          from: r.backupDirFallback,
-                          to: r.backupDir,
-                        })
-                      }}
-                    </span>
-                    <span v-else-if="r.backupDir" class="dsh-plan-ok">
-                      · {{ $t('admin.dshBackupDir', { dir: r.backupDir }) }}
-                    </span>
-                  </template>
-                  <template v-else-if="r.skipped">
-                    {{ $t('admin.dshSkipped') }}: {{ r.reason }}
-                  </template>
-                  <template v-else>
-                    ✓ {{ r.dshVersion }} · {{ $t('admin.dshBackup') }}:
-                    {{ r.backupPath || '—' }}
-                  </template>
-                </span>
-                <span v-else class="dsh-fail-text">✗ {{ r.error }}</span>
-              </li>
-            </ul>
-          </div>
-
-          <!-- 版本历史（回退依据） -->
-          <div v-if="dshStatus.history?.length" class="dsh-card">
-            <div class="dsh-card-head">
-              <h5>{{ $t('admin.dshHistory') }}</h5>
-            </div>
-            <p class="dsh-history-hint">{{ $t('admin.dshHistoryHint') }}</p>
-            <ul class="dsh-history">
-              <li v-for="(h, i) in [...dshStatus.history].reverse()" :key="i">
-                <!-- 只有"在本地 + 非当前 + 无引用 + 无 tag"的历史构建才让勾选 -->
-                <input
-                  v-if="h.removable"
-                  type="checkbox"
-                  class="dsh-hist-check"
-                  :value="h.imageId"
-                  v-model="selectedImageIds"
-                />
-                <span v-else class="dsh-hist-check-spacer"></span>
-                <code>{{ h.version || '?' }}</code>
-                <span class="dsh-muted addr-tip" :data-full="h.imageId || ''">{{
-                  shortImageId(h.imageId)
-                }}</span>
-                <!-- 关键：镜像是否还在本地。历史会保留每次构建，tag 只有一个，
-                     旧构建会被覆盖成悬空镜像 —— 不标出来会误以为都能回滚 -->
-                <span v-if="h.present" class="dsh-ver-tag">
-                  {{ $t('admin.dshImagePresent') }}
-                </span>
-                <span v-else class="dsh-ver-unknown">
-                  {{ $t('admin.dshImageGone') }}
-                </span>
-                <span v-if="h.present && h.sizeBytes" class="dsh-muted">
-                  {{ formatBytes(h.sizeBytes) }}
-                </span>
-                <span class="dsh-muted">{{ formatTime(h.at) }}</span>
-                <span class="dsh-muted">{{ h.by }}</span>
-                <span v-if="h.reason && h.reason !== 'not_local'" class="dsh-muted dsh-hist-reason">
-                  {{ $t(`admin.dshKeepReason_${h.reason}`) }}
-                </span>
-              </li>
-            </ul>
-          </div>
-
-          <!-- 镜像占用与清理。
-               必须**始终渲染**：早先只在"有可清理项"时才显示，结果镜像全都有 tag /
-               正在用时，清理入口整个消失，用户以为没做这个功能。 -->
-          <div class="dsh-card">
-            <div class="dsh-card-head">
-              <h5>{{ $t('admin.dshImages') }}</h5>
-              <span v-if="pruneItems.length" class="dsh-muted dsh-reclaim">
-                {{ $t('admin.dshReclaimable', { size: formatBytes(pruneableBytes) }) }}
-              </span>
-            </div>
-
-            <p v-if="pruneInfoIncomplete" class="dsh-prune-warn">
-              {{ $t('admin.dshPruneInfoIncomplete') }}
-            </p>
-
-            <ul class="dsh-history">
-              <li v-for="im in pruneItems" :key="im.id">
-                <input
-                  v-if="im.removable"
-                  type="checkbox"
-                  class="dsh-hist-check"
-                  :value="im.id"
-                  v-model="selectedImageIds"
-                />
-                <span v-else class="dsh-hist-check-spacer"></span>
-                <code v-if="im.tag && im.tag !== '<none>'">{{ im.tag }}</code>
-                <code v-else-if="im.historyVersion">
-                  {{ $t('admin.dshDanglingFrom', { version: im.historyVersion }) }}
-                </code>
-                <code v-else>{{ $t('admin.dshDangling') }}</code>
-                <span class="dsh-muted addr-tip" :data-full="im.id || ''">{{
-                  shortImageId(im.id)
-                }}</span>
-                <span class="dsh-muted">{{ formatBytes(im.sizeBytes) }}</span>
-                <span v-if="im.isCurrent" class="dsh-ver-tag">
-                  {{ $t('admin.dshKeepReason_current') }}
-                </span>
-                <span v-else-if="im.used" class="dsh-ver-stale">
-                  {{ $t('admin.dshKeepReason_in_use') }}
-                  <template v-if="im.usedBy?.length">
-                    · {{ im.usedBy.map((c) => `${c.name}(${c.state})`).join(', ') }}
-                  </template>
-                </span>
-                <span v-else class="dsh-ver-ok">{{ $t('admin.dshCanRemove') }}</span>
-              </li>
-            </ul>
-
-            <p v-if="!pruneItems.length" class="dsh-prune-msg">
-              {{ $t('admin.dshNoImages') }}
-            </p>
-
-            <div class="dsh-prune-bar">
-              <label class="dsh-muted">
-                <input
-                  type="checkbox"
-                  :disabled="!pruneableItems.length"
-                  :checked="
-                    pruneableItems.length > 0 && selectedImageIds.length === pruneableItems.length
-                  "
-                  @change="toggleSelectAllImages"
-                />
-                {{
-                  pruneableItems.length
-                    ? $t('admin.dshSelectAllRemovable', { n: pruneableItems.length })
-                    : $t('admin.dshNothingToPrune')
-                }}
-              </label>
-              <button
-                class="btn btn-small dsh-prune-btn"
-                :disabled="!selectedImageIds.length || dshPrune.running"
-                @click="pruneImages"
-              >
-                {{ dshPrune.running ? $t('admin.dshPruning') : $t('admin.dshPruneImages') }}
-              </button>
-            </div>
-
-            <p v-if="dshPrune.message" class="dsh-prune-msg">{{ dshPrune.message }}</p>
-            <p class="dsh-history-hint">{{ $t('admin.dshPruneHint') }}</p>
-          </div>
+          <AdminTabDsh
+            :loading="loading"
+            :refresh-interval-ms="refreshIntervalMs"
+            @refresh="refreshNow(true)"
+          />
         </div>
 
         <!-- ════ v1.4 CWT 解除限制申请审批 ════ -->
         <div v-else-if="activeTab === 'cred'" class="tab-content">
-          <div class="tab-head">
-            <div class="tab-head-text">
-              <h4>{{ $t('admin.credTabTitle') }}</h4>
-              <p class="tab-hint">{{ $t('admin.credTabHint') }}</p>
-            </div>
-          </div>
-          <div class="filter-row">
-            <button
-              v-for="s in ['pending', 'approved', 'rejected']"
-              :key="s"
-              class="btn btn-small"
-              :class="cwtStatusFilter === s ? 'btn-primary' : 'btn-secondary'"
-              @click="setCwtStatus(s)"
-            >
-              {{ $t('admin.credStatus_' + s) }}
-            </button>
-            <span class="badge badge-info">{{ $t('admin.credTotal', { n: cwtTotal }) }}</span>
-            <button class="btn btn-small" :disabled="cwtLoading" @click="loadCwtApps">
-              {{ $t('admin.refresh') }}
-            </button>
-          </div>
-          <div v-if="cwtLoading" class="loading">{{ $t('admin.loading') }}</div>
-          <div v-else class="table-scroll">
-            <table class="cred-table">
-              <thead>
-                <tr>
-                  <th>{{ $t('admin.colAddress') }}</th>
-                  <th>{{ $t('admin.credColSubmitted') }}</th>
-                  <th>{{ $t('admin.credColStatus') }}</th>
-                  <th>{{ $t('admin.colOps') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-if="!cwtApps.length">
-                  <td colspan="4">{{ $t('admin.credEmpty') }}</td>
-                </tr>
-                <tr v-for="app in cwtApps" :key="app._id">
-                  <td>
-                    <span class="address addr-tip" :data-full="app.addressDisplay || app.address"
-                      >{{ (app.addressDisplay || app.address).slice(0, 10) }}...</span
-                    >
-                  </td>
-                  <td>{{ fmtTime(app.submittedAt) }}</td>
-                  <td>
-                    <span
-                      class="badge"
-                      :class="
-                        app.status === 'pending'
-                          ? 'badge-warning'
-                          : app.status === 'approved'
-                            ? 'badge-success'
-                            : 'badge-info'
-                      "
-                      >{{ $t('admin.credStatus_' + app.status) }}</span
-                    >
-                    <span v-if="app.decidedAt" class="dsh-ver-unknown">{{
-                      fmtTime(app.decidedAt)
-                    }}</span>
-                  </td>
-                  <td>
-                    <div v-if="app.status === 'pending'" class="ops-cell">
-                      <button
-                        class="btn btn-success"
-                        :disabled="!!cwtBusy"
-                        @click="approveCwt(app)"
-                      >
-                        {{ $t('admin.credApprove') }}
-                      </button>
-                      <button class="btn" :disabled="!!cwtBusy" @click="rejectCwt(app)">
-                        {{ $t('admin.credReject') }}
-                      </button>
-                    </div>
-                    <span v-else>-</span>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="ops-cell" style="margin-top: 0.75rem">
-            <button class="btn btn-small" :disabled="cwtOffset === 0" @click="cwtPage(-1)">
-              {{ $t('admin.credPrev') }}
-            </button>
-            <button
-              class="btn btn-small"
-              :disabled="cwtOffset + 10 >= cwtTotal"
-              @click="cwtPage(1)"
-            >
-              {{ $t('admin.credNext') }}
-            </button>
-          </div>
-
-          <div class="tab-head" style="margin-top: 1.75rem">
-            <div class="tab-head-text">
-              <h4>{{ $t('admin.ledgerTitle') }}</h4>
-              <p class="tab-hint">{{ $t('admin.ledgerHint') }}</p>
-            </div>
-          </div>
-          <div class="filter-row">
-            <button
-              v-for="k in ['all', 'did', 'cwt', 'admin']"
-              :key="k"
-              class="btn btn-small"
-              :class="credKind === k ? 'btn-primary' : 'btn-secondary'"
-              @click="setCredKind(k)"
-            >
-              {{ $t('admin.ledgerKind_' + k) }}
-            </button>
-            <input
-              v-model="credQ"
-              class="search-input"
-              :placeholder="$t('admin.ledgerSearchPh')"
-              @keyup.enter="setCredKind(credKind)"
-            />
-            <span class="badge badge-info">{{ $t('admin.credTotal', { n: credTotal }) }}</span>
-            <button class="btn btn-small" :disabled="credLoading" @click="loadCredRows">
-              {{ $t('admin.refresh') }}
-            </button>
-          </div>
-          <div v-if="credLoading" class="loading">{{ $t('admin.loading') }}</div>
-          <div v-else class="table-scroll">
-            <table class="cred-table">
-              <thead>
-                <tr>
-                  <th>{{ $t('admin.colAddress') }}</th>
-                  <th>{{ $t('admin.ledgerColKind') }}</th>
-                  <th>{{ $t('admin.ledgerColState') }}</th>
-                  <th>{{ $t('admin.ledgerColSource') }}</th>
-                  <th>{{ $t('admin.ledgerColIssued') }}</th>
-                  <th>{{ $t('admin.ledgerColVc') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-if="!credRows.length">
-                  <td colspan="6">{{ $t('admin.ledgerEmpty') }}</td>
-                </tr>
-                <tr v-for="c in credRows" :key="c.address">
-                  <td>
-                    <span class="address addr-tip" :data-full="c.addressDisplay || c.address"
-                      >{{ (c.addressDisplay || c.address).slice(0, 10) }}...</span
-                    >
-                  </td>
-                  <td>
-                    <!-- 三类卡制式：管理凭证是独立第三类（isAdmin=台账 roles 事实），
-                         不并入解限 CWT——两者权限语义完全不同 -->
-                    <span
-                      class="badge"
-                      :class="
-                        c.isAdmin
-                          ? 'badge-danger'
-                          : c.kind === 'cwt'
-                            ? 'badge-success'
-                            : 'badge-info'
-                      "
-                      >{{ $t('admin.ledgerCard_' + (c.isAdmin ? 'admin' : c.kind)) }}</span
-                    >
-                  </td>
-                  <td>
-                    <span
-                      class="badge"
-                      :class="c.state === 'claimed' ? 'badge-success' : 'badge-warning'"
-                      >{{ $t('admin.ledgerState_' + c.state) }}</span
-                    >
-                  </td>
-                  <td>{{ $t('admin.ledgerSrc_' + c.source) }}</td>
-                  <td>
-                    {{ fmtTime(c.issuedAt) }}
-                    <span v-if="c.claimedAt" class="dsh-ver-unknown"
-                      >{{ $t('admin.ledgerClaimedAt') }} {{ fmtTime(c.claimedAt) }}</span
-                    >
-                    <span v-if="c.expiresAt" class="dsh-ver-unknown"
-                      >{{ $t('admin.ledgerExpiresAt') }} {{ fmtTime(c.expiresAt) }}</span
-                    >
-                  </td>
-                  <td>
-                    <span v-if="c.vcId" class="addr-tip" :data-full="c.vcId">{{
-                      '#' + (c.vcId.split('#')[1] || c.vcId)
-                    }}</span>
-                    <span v-else>-</span>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="ops-cell" style="margin-top: 0.75rem">
-            <button class="btn btn-small" :disabled="credOffset === 0" @click="credPage(-1)">
-              {{ $t('admin.credPrev') }}
-            </button>
-            <button
-              class="btn btn-small"
-              :disabled="credOffset + 10 >= credTotal"
-              @click="credPage(1)"
-            >
-              {{ $t('admin.credNext') }}
-            </button>
-          </div>
-
-          <div class="tab-head" style="margin-top: 1.75rem">
-            <div class="tab-head-text">
-              <h4>{{ $t('admin.rosterTitle') }}</h4>
-              <p class="tab-hint">{{ $t('admin.rosterHint') }}</p>
-            </div>
-          </div>
-          <div class="filter-row">
-            <!-- 任命/撤销操作已统一收敛到「用户管理」行内按钮（2026-10-23 用户拍板
-                 去双入口）；本块转为现任名册只读审计视图 -->
-            <button class="btn btn-small" :disabled="rosterLoading" @click="loadRoster">
-              {{ $t('admin.refresh') }}
-            </button>
-          </div>
-          <div v-if="rosterLoading" class="loading">{{ $t('admin.loading') }}</div>
-          <div v-else class="table-scroll">
-            <table class="cred-table">
-              <thead>
-                <tr>
-                  <th>{{ $t('admin.colAddress') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-if="!rosterAddrs.length">
-                  <td>{{ $t('admin.rosterEmpty') }}</td>
-                </tr>
-                <tr v-for="a in rosterAddrs" :key="a">
-                  <td>
-                    <span class="address addr-tip" :data-full="a"
-                      >{{ a.slice(0, 12) }}…{{ a.slice(-4) }}</span
-                    >
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <div v-if="rosterHistory.length" style="margin-top: 0.75rem">
-            <p class="hint">{{ $t('admin.rosterHistoryTitle') }}</p>
-            <div v-for="(h, i) in rosterHistory.slice(0, 8)" :key="i" class="hint">
-              {{ fmtTime(h.timestamp) }} · {{ $t('admin.rosterAct_' + h.action) }}
-              <span v-if="h.address" class="addr-tip" :data-full="h.address"
-                >{{ h.address.slice(0, 12) }}…</span
-              >
-              <span v-if="h.operator">（by {{ h.operator.slice(0, 10) }}…）</span>
-            </div>
-          </div>
+          <AdminTabCred />
         </div>
       </section>
     </div>
@@ -1363,13 +166,25 @@
 
 <script setup>
 import { askConfirm, toast } from '../composables/useDialog'
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, provide } from 'vue'
 import { useAdminBadges, startAdminBadges, stopAdminBadges } from '../composables/useAdminBadges'
 // 红点判数入口（模板侧 badgeFor 引用此解构——只 import 不解构=运行时 TypeError，上一版踩中自修）
 const { badgeFor, syncCredCount, refreshCred } = useAdminBadges()
 import axios from 'axios'
+import { adminStatusApi } from '../api/adminStatus.js'
+import { adminOpsApi } from '../api/adminOps.js'
 import { useI18n } from 'vue-i18n'
 import { buildAdminTabs } from '../admin-tabs'
+import AdminTabHead from '../components/admin/AdminTabHead.vue'
+import AdminTabQuota from '../components/admin/AdminTabQuota.vue'
+import { bindAdminCredHost } from '../composables/useAdminCred.js'
+import { bindDshHost, cleanupDsh, useAdminDsh } from '../composables/useAdminDsh.js'
+import AdminTabUsers from '../components/admin/AdminTabUsers.vue'
+import AdminTabMonitor from '../components/admin/AdminTabMonitor.vue'
+import AdminTabOverview from '../components/admin/AdminTabOverview.vue'
+import AdminTabCred from '../components/admin/AdminTabCred.vue'
+import AdminTabDsh from '../components/admin/AdminTabDsh.vue'
+import { tierBadge as sharedTierBadge, makeStatusText } from '../components/admin/shared.js'
 import EnvTemplatesAdmin from '../components/EnvTemplatesAdmin.vue'
 import {
   requestAccounts,
@@ -1378,6 +193,8 @@ import {
   watchAccountsChanged,
   friendlyPluginError,
 } from '../api/wallet.js'
+import { signAdminOperation as signAdminCore } from '../api/adminSign.js'
+import { formatBytes, shortAddress } from '../utils/format.js'
 
 const { t } = useI18n()
 
@@ -1414,238 +231,7 @@ const hasCCDAO = ref(false)
 const currentAdminAddress = ref(null)
 const currentAddress = ref(null)
 const dockerAvailable = ref(false)
-// ---- DSH 版本管理 ----
-const dshStatus = ref({
-  image: null,
-  currentImageVersion: null,
-  currentImageId: null,
-  upgrade: null,
-  staleTenants: 0,
-  tenants: [],
-  history: [],
-  note: null,
-})
-const dshStatusLoading = ref(false)
-// dsh tab 专属读错状态（2026-10 审计：不再写跨 tab 的全局 error）
-const dshError = ref('')
-const dshVersions = ref({
-  latest: null,
-  stable: [],
-  prerelease: [],
-  prereleaseCount: 0,
-  // 与"远端有哪些版本"分开：这三个回答"本地手上已有哪些版本"
-  stableLocal: [],
-  prereleaseLocal: [],
-  localTags: [],
-  currentVersion: null,
-})
-const dshVersionsLoading = ref(false)
-const dshVersionsError = ref(null)
-const dshIncludePrerelease = ref(false)
-const dshSelectedVersion = ref('')
-const dshBuild = ref({
-  running: false,
-  version: null,
-  ok: null,
-  error: null,
-  result: null,
-  finishedAt: null,
-})
-const dshApply = ref({
-  running: false,
-  total: 0,
-  completed: 0,
-  results: [],
-  finishedAt: null,
-})
-// 本次会话内的应用/预览结果（含 dryRun 计划与逐租户失败原因）
-const dshApplyResults = ref([])
 
-/**
- * 「更新」进行中状态 —— 用**居中遮罩**告知用户"确实在执行"。
- *
- * 为什么必须要有：单租户更新是**同步**请求（后端重建完容器才返回），耗时数十秒
- * 到数分钟。期间页面只有按钮变灰，用户完全不知道是在跑、还是卡死了，容易重复点
- * 或以为没生效。批量更新虽然后台跑+轮询，但同样需要"正在进行"的明确反馈。
- */
-const dshUpdate = ref({
-  /** @type {'single'|'batch'|null} */
-  kind: null,
-  /** 当前正在处理的租户地址（单租户时有值） */
-  address: '',
-  /** 显示用标签：单租户显示短暂版本 → 目标版本 */
-  phase: '',
-})
-let dshPollTimer = null
-
-/** 居中遮罩的标题/说明文案由 kind 决定（模板里用 $t 拼） */
-const dshUpdateBusy = computed(() => dshUpdate.value.kind !== null)
-
-/**
- * 可选版本（远端）合并成一个列表。
- *
- * 不分成 stable / prerelease 两个 optgroup：DSH 目前**只有预发布版本**
- * （stable 恒为空），分组会让"稳定版"那一组永远空着、看起来像坏了；
- * 合并后按"latest 置顶 + 版本号降序"排列，预发布加个短标记区分。
- * /versions 默认折叠预发布，所以勾选"显示预发布"后会重新拉取。
- */
-const allVersionOptions = computed(() => {
-  const seen = new Set()
-  const out = []
-  const add = (v, stable) => {
-    if (!v || seen.has(v)) return
-    seen.add(v)
-    out.push({ version: v, local: versionIsLocal(v), stable })
-  }
-  const stableRows = dshVersions.value.stableLocal || []
-  const preRows = dshVersions.value.prereleaseLocal || []
-  for (const r of stableRows) add(r.version, true)
-  for (const r of preRows) add(r.version, false)
-  const cmp = (a, b) => {
-    if (a === dshVersions.value.latest) return -1
-    if (b === dshVersions.value.latest) return 1
-    // 按数字段降序比较版本号（预发布后缀不参与，够用且不会误排）
-    const pa = String(a)
-      .split(/[.-]/)
-      .map((x) => parseInt(x, 10) || 0)
-    const pb = String(b)
-      .split(/[.-]/)
-      .map((x) => parseInt(x, 10) || 0)
-    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-      if ((pb[i] || 0) !== (pa[i] || 0)) return (pb[i] || 0) - (pa[i] || 0)
-    }
-    return String(b).localeCompare(String(a))
-  }
-  return out.sort((a, b) => cmp(a.version, b.version))
-})
-
-/** 后端已判定该版本对应镜像是否仍在本地 */
-const versionIsLocal = (v) =>
-  Boolean(
-    (dshVersions.value.stableLocal || [])
-      .concat(dshVersions.value.prereleaseLocal || [])
-      .find((r) => r.version === v)?.local,
-  )
-
-/**
- * 本地已构建的版本行（来自 /versions 的 localTags）。
- * 注意：latest 是移动标签、不指向某个具体版本，界面里单独由「总体镜像」呈现，
- * 这里只列具体版本，避免同一镜像因为两个 tag 出现两行造成误解。
- */
-/** 本地镜像清单（"钦定平台默认镜像"用：含 load 进来的、非本平台构建的） */
-const dshImages = ref({ images: [], defaultId: '', defaultRef: '', defaultVersion: null })
-const dshImagesLoading = ref(false)
-const dshImagesError = ref('')
-/** 正在钦定的 ref（禁重复点击） */
-const dshSelecting = ref('')
-
-/** 本地镜像清单（含不在历史里的，如更早遗留的 tag） */
-const pruneItems = computed(() => dshStatus.value.prunable?.items || [])
-
-/** 后端判定可安全清理的镜像 */
-const pruneableItems = computed(() => pruneItems.value.filter((im) => im.removable))
-
-/** 可清理体积合计（存在共享层，实际释放可能更少） */
-const pruneableBytes = computed(() =>
-  pruneableItems.value.reduce((s, im) => s + (im.sizeBytes || 0), 0),
-)
-
-/** 后端拿不到容器信息时为 true —— 此时无法判断谁在用，一律不可清理 */
-const pruneInfoIncomplete = computed(() => Boolean(dshStatus.value.prunable?.infoIncomplete))
-
-const selectedImageIds = ref([])
-
-/** 镜像清理状态（成功后要刷新状态，"在本地"标记与清单会随之更新） */
-const dshPrune = ref({ running: false, message: '' })
-
-const toggleSelectAllImages = (e) => {
-  selectedImageIds.value = e.target.checked ? pruneableItems.value.map((im) => im.id) : []
-}
-
-/** 把字节数格式化成人类可读（后端只给字节，避免在两端各写一套单位逻辑） */
-const formatBytes = (n) => {
-  const b = Number(n) || 0
-  if (b <= 0) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.min(units.length - 1, Math.floor(Math.log(b) / Math.log(1024)))
-  return `${(b / 1024 ** i).toFixed(i === 0 ? 0 : 2)} ${units[i]}`
-}
-
-/**
- * 清理选中的悬空镜像（破坏性操作 → 走管理端签名）。
- * 必须把 ids 并入签名 binding：签名内容即"删哪几个"，服务端会逐项重新校验。
- */
-const pruneImages = async () => {
-  const ids = [...selectedImageIds.value]
-  if (!ids.length) return
-  // 2026-10 审计：不可逆删镜像（zh.js 自己警告"带 tag 旧版本删掉无法回滚"）此前零确认
-  if (
-    !(await askConfirm({ message: t('admin.confirmPruneImages', { n: ids.length }), danger: true }))
-  )
-    return
-  dshPrune.value = { running: true, message: '' }
-  try {
-    const headers = await signAdminOperation('dsh/prune-images', { ids })
-    const res = await axios.post('/api/admin/dsh/images/prune', { ids }, { headers })
-    const { removed = [], skipped = [], freedBytes = 0 } = res.data || {}
-    // ⚠️ script setup 里没有 $t（那是模板专属）：必须用 useI18n() 的 t——
-    // 此处曾写错，镜像删成功后组装回执时 ReferenceError，用户误以为没删掉
-    const parts = [t('admin.dshPruned', { n: removed.length, size: formatBytes(freedBytes) })]
-    if (skipped.length) parts.push(t('admin.dshPruneSkipped', { n: skipped.length }))
-    dshPrune.value = { running: false, message: parts.join('，') }
-  } catch (err) {
-    dshPrune.value = { running: false, message: friendlyPluginError(err) }
-  } finally {
-    // 刷新放 finally 且两路都拉——不管这次是全删成、被服务端部分拒、还是中途抛错，
-    // 页面都必须回到守护进程的真实状态：
-    //   · /status 现算清理面板列表（prunable.items 与可回收字节）
-    //   · /versions 现算版本行"✓ 本地"标记：不重拉的话刚删掉的 0.1.1-rc.2
-    //     会长期谎称"本地存在"（2026-10 实测用户所见即此）
-    // 两个都 catch：守护瞬时不答也不该把已执行完的清理反报成失败
-    selectedImageIds.value = []
-    await loadDshStatus().catch(() => {})
-    await loadDshVersions().catch(() => {})
-    // 镜像刚被删掉 → 钦定清单必须同步，否则按钮还对着一个已不存在的 tag
-    await loadDshImages().catch(() => {})
-  }
-}
-
-/** 短地址显示（前 6 + … + 后 4），表格里避免撑爆 */
-function shortAddress(addr) {
-  if (!addr) return '—'
-  return addr.length > 12 ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : addr
-}
-
-/** 镜像 ID 只留前 12 位（sha256: 前缀太长） */
-function shortImageId(id) {
-  if (!id) return '—'
-  const bare = String(id).replace(/^sha256:/, '')
-  return bare.slice(0, 12)
-}
-
-function formatTime(ts) {
-  if (!ts) return '—'
-  return new Date(ts).toLocaleString()
-}
-
-// 最高配额等级（随 tier 配置动态变化，不硬编码 3）
-const maxTier = computed(() => {
-  const keys = Object.keys(tiers.value || {})
-    .map(Number)
-    .filter(Number.isFinite)
-  return keys.length ? Math.max(...keys) : 3
-})
-
-/**
- * 配额档位行（升序）。过滤非数字键：运维可能在 tiers 里加 comment 等说明键
- * （其他配置块都带 comment），这些不该被渲染成一档配额。
- */
-const tierRows = computed(() =>
-  Object.entries(tiers.value || {})
-    .filter(([key]) => Number.isFinite(Number(key)))
-    .map(([tier, limits]) => ({ tier: Number(tier), limits }))
-    .sort((a, b) => a.tier - b.tier),
-)
 let dataRefreshInterval = null
 /** 上次拉取时间：切 tab 时做 1 秒节流，避免狂点 tab 打爆后端 */
 let lastFetchAt = 0
@@ -1684,28 +270,6 @@ const refreshNow = async (force = false) => {
 // 账户监听解绑函数（wallet.js watchAccountsChanged 返回），卸载时调用避免重复监听
 let unbindAccounts = null
 
-// 租户 DSH 实例地址：用当前访问入口页的 host 拼端口（不再硬编码 127.0.0.1）
-// 注：网关方案下不再直接拼 URL —— 打开租户需先取一次性 gateway_ticket（见 openTenant）
-const webUrl = (port) => `http://${window.location.hostname}:${port}/`
-
-/**
- * 管理员代开租户容器：后端生成一次性 gateway_ticket（管理员会话授权），
- * 浏览器打开该 URL 首跳即换取租户会话并放行（后续请求无需再带 ticket）。
- */
-const openTenant = async (address) => {
-  try {
-    const res = await axios.get(`/api/admin/tenant-url?address=${encodeURIComponent(address)}`)
-    if (res.data.url) {
-      window.open(res.data.url, '_blank', 'noopener')
-      return
-    }
-    toast(t('admin.openFail', { err: res.data.error || res.status }))
-  } catch (err) {
-    const msg = err.response?.data?.error || err.message
-    toast(t('admin.openFail', { err: msg }))
-  }
-}
-
 const checkCCDAO = () => {
   hasCCDAO.value = typeof window.ccdao !== 'undefined'
 }
@@ -1738,8 +302,7 @@ const handleAccountsChanged = async (accounts, source = 'unknown') => {
     // 先确认新地址在不在管理员名单里，避免对普通地址也弹签名窗
     let isAdminUser = false
     try {
-      const checkRes = await axios.get('/api/admin/check', { params: { address: newAddress } })
-      isAdminUser = checkRes.data.isAdmin
+      isAdminUser = (await adminStatusApi.check(newAddress)).isAdmin
     } catch {
       /* 预检失败走签名兜底 */
     }
@@ -1799,8 +362,7 @@ const setupAccountChangeListener = () => {
 
 const checkDockerStatus = async () => {
   try {
-    const res = await axios.get('/api/docker/status')
-    dockerAvailable.value = res.data.available
+    dockerAvailable.value = (await adminOpsApi.dockerStatus()).available
   } catch (err) {
     dockerAvailable.value = false
   }
@@ -1808,8 +370,7 @@ const checkDockerStatus = async () => {
 
 const checkAdmin = async () => {
   try {
-    const res = await axios.get('/api/admin/check')
-    isAdmin.value = res.data.isAdmin
+    isAdmin.value = (await adminStatusApi.check()).isAdmin
   } catch (err) {
     isAdmin.value = false
   }
@@ -1859,246 +420,30 @@ const signLogin = async (pluginAddress) => {
  * @param {object} payload   会改变行为的入参（含目标 address）
  * @returns {Promise<object>} 可直接展开进 axios config 的 headers
  */
+// P3 孪生收敛（2026-11-10）：challenge→sign→材料校验→三头 的权威流程唯 ../api/adminSign.js
+// 一支（旧本地全装拷贝退役，判例 58 孪生面漂移根治）。此处只留桌面本地关注：
+// hasCCDAO 前置闸 + 钱包≠会话预检（opts.sessionAddress 注入）+ friendlyPluginError 包装。
 const signAdminOperation = async (operation, payload) => {
   if (!hasCCDAO.value) {
     throw new Error(t('admin.signNeedsWallet'))
   }
-  // 插件原始大小写地址（签名用）；挑战必须绑在**当前登录会话**的地址上
-  const pluginAddress = await requestAccounts()
-  // 预检：钱包已切走而登录会话还是旧地址（账户监听有竞态/漏检窗口）——
-  // 立刻说人话指引，不必等后端 403 再猜"是不是只能操作自己的数据"（不是）
-  if (currentAddress.value && pluginAddress.toLowerCase() !== currentAddress.value) {
-    throw new Error(
-      `钱包当前账户与登录管理面板的账户不一致（${currentAddress.value.slice(0, 10)}…）。` +
-        '请在 CCDAO 插件切回登录时的账户，或退出重新登录。',
-    )
-  }
   try {
-    const chalRes = await axios.post('/api/admin/challenge', {
-      address: pluginAddress.toLowerCase(),
-      operation,
-      payload,
+    return await signAdminCore(operation, payload, {
+      sessionAddress: currentAddress.value,
+      t,
     })
-    const { message } = chalRes.data
-    const signature = await signMessage(pluginAddress, message)
-    const publicKey = await getPublicKey(pluginAddress)
-    // 材料不齐就地刹车（线上案 2026-11-02：插件未解锁时 swtc_getPublicKey 可回
-    // undefined/对象——axios 静默丢非串头，裸 POST 撞上 SIGNATURE_REQUIRED，
-    // 报错文案把人引向"没签名"，实际是"签了但材料半路蒸发"）。绝不再提交无签请求。
-    const nonce = chalRes.data.nonce
-    const sigStr = typeof signature === 'string' ? signature : (signature?.signature ?? '')
-    const pubStr =
-      typeof publicKey === 'string' ? publicKey : (publicKey?.publicKey ?? publicKey?.pubKey ?? '')
-    if (!nonce || !sigStr || !pubStr) {
-      throw new Error(
-        t('admin.sigMaterialMissing', {
-          miss: [
-            !nonce && 'nonce',
-            !sigStr && t('admin.sigKindSign'),
-            !pubStr && t('admin.sigKindPub'),
-          ]
-            .filter(Boolean)
-            .join('、'),
-        }),
-      )
-    }
-    return {
-      'x-admin-nonce': nonce,
-      'x-admin-signature': sigStr,
-      'x-admin-pubkey': pubStr,
-    }
   } catch (err) {
     throw new Error(friendlyPluginError(err))
   }
 }
 
 // ---- v1.4 CWT 解除限制申请审批 ----
-const cwtApps = ref([])
-const cwtTotal = ref(0)
-const cwtOffset = ref(0)
-const cwtStatusFilter = ref('pending')
-const cwtLoading = ref(false)
-const cwtBusy = ref('')
-
-const loadCwtApps = async () => {
-  cwtLoading.value = true
-  try {
-    const res = await axios.get('/api/admin/cwt-applications', {
-      params: { status: cwtStatusFilter.value, limit: 10, offset: cwtOffset.value },
-    })
-    cwtApps.value = res.data.applications || []
-    cwtTotal.value = res.data.total || 0
-    // 红点实时化（用户裁定）：审批动作后本函数必被重拉——pending 视图直接搭车，
-    // 切了别的过滤则轻取一次 total，判数始终来自写后重读的库账
-    if (cwtStatusFilter.value === 'pending') syncCredCount(cwtTotal.value)
-    else refreshCred()
-  } catch (err) {
-    toast(t('admin.credOpFail', { err: err?.response?.data?.error || err.message }))
-  } finally {
-    cwtLoading.value = false
-  }
-}
-
-const setCwtStatus = (s) => {
-  cwtStatusFilter.value = s
-  cwtOffset.value = 0
-  loadCwtApps()
-}
-
-const cwtPage = (delta) => {
-  cwtOffset.value = Math.max(0, cwtOffset.value + delta * 10)
-  loadCwtApps()
-}
-
-/* ── 凭证台账：谁持有什么卡（浏览，只读） ── */
-const credRows = ref([])
-const credTotal = ref(0)
-const credOffset = ref(0)
-const credKind = ref('all')
-const credQ = ref('')
-const credLoading = ref(false)
-
-const loadCredRows = async () => {
-  credLoading.value = true
-  try {
-    const res = await axios.get('/api/admin/credentials', {
-      params: {
-        kind: credKind.value,
-        // 台账主键/档案 DID 一律小写形态存储：把用户粘贴的规范大小写地址
-        // 原样传 q 会精确匹配空手而归（2026-10 审计）。查询前先归一。
-        q: credQ.value.trim().toLowerCase(),
-        limit: 10,
-        offset: credOffset.value,
-      },
-    })
-    credRows.value = res.data.credentials || []
-    credTotal.value = res.data.total || 0
-  } catch (err) {
-    toast(t('admin.credOpFail', { err: err?.response?.data?.error || err.message }))
-  } finally {
-    credLoading.value = false
-  }
-}
-
-const setCredKind = (k) => {
-  credKind.value = k
-  credOffset.value = 0
-  loadCredRows()
-}
-
-const credPage = (delta) => {
-  credOffset.value = Math.max(0, credOffset.value + delta * 10)
-  loadCredRows()
-}
 
 /* ── v1.5 管理员任免（名册=配发政策面；判权骑 admin 凭证，5A 后端编排） ── */
-const rosterAddrs = ref([])
-const rosterHistory = ref([])
-const rosterLoading = ref(false)
-const rosterBusy = ref('')
-
-const loadRoster = async () => {
-  rosterLoading.value = true
-  try {
-    const res = await axios.get('/api/admin/admins')
-    rosterAddrs.value = res.data.addresses || []
-    rosterHistory.value = res.data.history || []
-  } catch (err) {
-    toast(t('admin.credOpFail', { err: err?.response?.data?.error || err.message }))
-  } finally {
-    rosterLoading.value = false
-  }
-}
 
 // promoteAdmin（任免名册的任命输入口）已退役（2026-10-23 用户拍板去双入口）：
 // 任命=「用户管理」行内 promoteUser；名册块转只读审计视图。
 // 从未开过容器的地址不在用户列表=系统里尚不存在该用户，本就不该提前任命。
-
-const demoteAdmin = async (addr) => {
-  if (rosterBusy.value) return
-  if (
-    !(await askConfirm({
-      message: t('admin.rosterDemoteConfirm', { addr: addr.slice(0, 10) + '…' }),
-      danger: true,
-    }))
-  )
-    return
-  try {
-    rosterBusy.value = 'demote'
-    const headers = await signAdminOperation('demote', { address: addr })
-    const res = await axios.post(`/api/admin/demote/${addr}`, {}, { headers })
-    toast(
-      t('admin.rosterDemoted', { addr: addr.slice(0, 10) + '…', to: res.data.demotedTo || '?' }),
-    )
-    await loadRoster()
-    // 从用户管理撤销时：行徽章与提权/撤销按钮态必须即时翻转（force 绕 3s 缓存）
-    fetchData(true)
-  } catch (err) {
-    // LAST_ADMIN 等人话错误直出（后端已把防锁死语义写在 error 里）
-    toast(t('admin.credOpFail', { err: err?.response?.data?.error || err.message }))
-  } finally {
-    rosterBusy.value = ''
-  }
-}
-
-const approveCwt = async (app) => {
-  await askConfirm({
-    message: t('admin.credConfirmApprove', { addr: app.addressDisplay || app.address }),
-    confirmLabel: t('admin.credApprove'),
-    run: async () => {
-      cwtBusy.value = app._id
-      try {
-        const headers = await signAdminOperation('cwt/approve', {
-          id: app._id,
-          address: app.address,
-        })
-        await axios.post(
-          `/api/admin/cwt-applications/${encodeURIComponent(app._id)}/approve`,
-          {},
-          { headers },
-        )
-        toast(t('admin.credApproved'))
-        await loadCwtApps()
-        loadCredRows().catch(() => {})
-      } catch (err) {
-        toast(t('admin.credOpFail', { err: err?.response?.data?.error || err.message }))
-        throw err
-      } finally {
-        cwtBusy.value = ''
-      }
-    },
-  })
-}
-
-const rejectCwt = async (app) => {
-  await askConfirm({
-    message: t('admin.credConfirmReject', { addr: app.addressDisplay || app.address }),
-    confirmLabel: t('admin.credReject'),
-    danger: true,
-    run: async () => {
-      cwtBusy.value = app._id
-      try {
-        const headers = await signAdminOperation('cwt/reject', {
-          id: app._id,
-          address: app.address,
-        })
-        await axios.post(
-          `/api/admin/cwt-applications/${encodeURIComponent(app._id)}/reject`,
-          {},
-          { headers },
-        )
-        toast(t('admin.credRejected'))
-        await loadCwtApps()
-        loadCredRows().catch(() => {})
-      } catch (err) {
-        toast(t('admin.credOpFail', { err: err?.response?.data?.error || err.message }))
-        throw err
-      } finally {
-        cwtBusy.value = ''
-      }
-    },
-  })
-}
 
 const adminLogin = async () => {
   if (!hasCCDAO.value) return
@@ -2153,75 +498,23 @@ const logout = async () => {
   stopPolling()
 }
 
-// ---- 孤儿数据卷（扫描 + 清理） ----
-const orphanVolumes = ref([])
-const orphanScanning = ref(false)
-const orphanNotice = ref('')
-
-const scanOrphanVolumes = async () => {
-  orphanScanning.value = true
-  orphanNotice.value = ''
-  try {
-    const res = await axios.get('/api/admin/orphan-volumes')
-    orphanVolumes.value = res.data.orphanVolumes || []
-    orphanNotice.value = orphanVolumes.value.length
-      ? t('admin.orphanFound', { n: orphanVolumes.value.length })
-      : t('admin.orphanNone')
-  } catch (err) {
-    toast(t('admin.orphanScanFail', { err: err.response?.data?.error || err.message }))
-  } finally {
-    orphanScanning.value = false
-  }
-}
-
-const cleanupOrphanVolumes = async () => {
-  if (!orphanVolumes.value.length) return
-  await askConfirm({
-    message: t('admin.orphanConfirm', { n: orphanVolumes.value.length }),
-    details: [...orphanVolumes.value],
-    danger: true,
-    confirmLabel: t('admin.orphanCleanBtn', { n: orphanVolumes.value.length }),
-    run: async () => {
-      try {
-        // 批量删卷是不可逆操作 → 签名绑"删哪几个卷"（服务端只删 签署清单∩仍是孤儿 的交集）
-        const headers = await signAdminOperation('cleanup-orphan-volumes', {
-          volumes: [...orphanVolumes.value],
-        })
-        const res = await axios.post(
-          '/api/admin/cleanup-orphan-volumes',
-          { volumes: [...orphanVolumes.value] },
-          { headers },
-        )
-        const { removed = [], failed = [], skipped = [] } = res.data || {}
-        const parts = [t('admin.orphanCleaned', { ok: removed.length, fail: failed.length })]
-        if (skipped.length) parts.push(t('admin.orphanSkipped', { n: skipped.length }))
-        orphanNotice.value = parts.join('，')
-        // 刷新列表：剩下的就是删除失败的
-        orphanVolumes.value = (failed || []).map((f) => f.name)
-      } catch (err) {
-        toast(t('admin.orphanCleanFail', { err: err.response?.data?.error || err.message }))
-      }
-    },
-  })
-}
-
 const fetchData = async (force = false) => {
   try {
     loading.value = true
     const [usersRes, statsRes] = await Promise.all([
       // force=1：绕过服务端短缓存（手动刷新/写操作后拿到的必须是最新）
-      axios.get(force ? '/api/users?force=1' : '/api/users'),
-      axios.get('/api/stats'),
+      adminOpsApi.users(force),
+      adminOpsApi.stats(),
     ])
     // 间隔由后端下发：改 config.json 后重启服务即生效，无需重新构建前端
-    const iv = Number(statsRes.data?.uiConfig?.refreshIntervalMs)
+    const iv = Number(statsRes?.uiConfig?.refreshIntervalMs)
     if (Number.isFinite(iv) && iv >= 3000 && iv !== refreshIntervalMs.value) {
       refreshIntervalMs.value = iv
       if (dataRefreshInterval) startPolling() // 间隔变了 → 用新间隔重建定时器
     }
-    users.value = usersRes.data.users
-    tiers.value = usersRes.data.tiers
-    stats.value = statsRes.data
+    users.value = usersRes.users
+    tiers.value = usersRes.tiers
+    stats.value = statsRes
     error.value = null
   } catch (err) {
     error.value = t('admin.loadFail', { err: err.message })
@@ -2230,275 +523,21 @@ const fetchData = async (force = false) => {
   }
 }
 
-// 审查 H1（2026-11-06）：diskScanning 六处引用零声明——扫描钮一点必抛。
-// badgeFor 判例同族：模板/引用名缺声明，构建全绿运行时才炸。补上。
-const diskScanning = ref(false)
-
-/** 手动触发精确扫描：du 实测每个租户卷真实占用（O(n)，管理员按需调用） */
-const runDiskScan = async () => {
-  if (diskScanning.value) return
-  diskScanning.value = true
-  try {
-    const res = await axios.post('/api/admin/disk-scan')
-    // 扫描结果直接合并进本地 stats，避免等待下一次轮询
-    const { scanned, volumes } = res.data
-    if (scanned && stats.value.resource?.disk) {
-      stats.value.resource.disk.volumes = volumes
-      stats.value.resource.disk.preciseScannedAt = res.data.preciseScannedAt
-    }
-    toast(t('admin.diskScanDone', { n: volumes?.length ?? 0 }))
-  } catch (err) {
-    toast(t('admin.diskScanFail', { err: err.response?.data?.error || err.message }))
-  } finally {
-    diskScanning.value = false
-  }
-}
-
-const shortAddr = (a) => (a ? `${a.slice(0, 8)}…${a.slice(-4)}` : '-')
-const fmtTime = (t) => (t ? new Date(t).toLocaleString() : '-')
-// 2026-10 审计：调配额会当场 stop→update→start 该租户容器（别人正在用的会话被断）。
-// 此前既无确认也无签名——后端已收进签名白名单（binding=address:tier），
-// 这里补危险确认，动作进 run 由弹窗 busy 锁防连点。
-const upgradeUser = async (address, tier) => {
-  if (tier > maxTier.value) return
-  await askConfirm({
-    message: t('admin.confirmTierChange', { addr: `${address.slice(0, 10)}…`, tier }),
-    danger: true,
-    run: async () => {
-      try {
-        const headers = await signAdminOperation('user-upgrade', { address, tier })
-        await axios.post(`/api/upgrade/${address}`, { tier }, { headers })
-        await fetchData()
-        toast(t('admin.upgradeOk'))
-      } catch (err) {
-        toast(t('admin.upgradeFail', { err: err.response?.data?.error || err.message }))
-      }
-    },
-  })
-}
-
-const downgradeUser = async (address, tier) => {
-  if (tier < 1) return
-  // 2026-11-02 实账补刀：2026-10 审计给同端点升级半边上了"确认+签名"，降级半边
-  // 漏了——裸 POST 无签，服务端闸（binding=address:tier 双向同闸）拒得对，用户
-  // 看到的是我们的手术遗漏。与 upgradeUser 同款补全：danger 确认 + run 锁 +
-  // signAdminOperation('user-upgrade')——同一把闸同一张票，降档同样会重启对方容器。
-  await askConfirm({
-    message: t('admin.confirmTierChange', { addr: `${address.slice(0, 10)}…`, tier }),
-    danger: true,
-    run: async () => {
-      try {
-        const headers = await signAdminOperation('user-upgrade', { address, tier })
-        await axios.post(`/api/upgrade/${address}`, { tier }, { headers })
-        await fetchData()
-        toast(t('admin.downgradeOk'))
-      } catch (err) {
-        toast(t('admin.downgradeFail', { err: err.response?.data?.error || err.message }))
-      }
-    },
-  })
-}
-
-const removeUser = async (address) => {
-  const port = users.value.find((u) => u.address === address)?.port
-  if (!(await askConfirm(t('admin.confirmRemove', { addr: `${address.slice(0, 10)}...`, port }))))
-    return
-
-  // 卷二选一改 danger 正语义（确认=连卷删除不可逆；取消/Esc/遮罩=保留数据卷，
-  // 关闭弹窗必落安全面——原生时代"取消=删除"的反向地雷就此拆除）
-  const wipeVolume = await askConfirm({
-    message: t('admin.confirmRemoveKeepVolume'),
-    danger: true,
-    confirmLabel: t('admin.volWipeBtn'),
-    cancelLabel: t('admin.volKeepBtn'),
-  })
-  const keepVolume = !wipeVolume
-
-  try {
-    const headers = await signAdminOperation('remove', { address, keepVolume })
-    await axios.post(`/api/user/${address}/remove`, null, {
-      params: keepVolume ? { keepVolume: 1 } : {},
-      headers,
-    })
-    await fetchData()
-    toast(keepVolume ? t('admin.removedOkKeepVolume') : t('admin.removedOk'))
-  } catch (err) {
-    toast(t('admin.removeFail', { err: err.response?.data?.error || err.message }))
-  }
-}
-
-const forceStopUser = async (address) => {
-  await askConfirm({
-    message: t('admin.confirmForceStop', { addr: `${address.slice(0, 10)}...` }),
-    danger: true,
-    run: async () => {
-      try {
-        const headers = await signAdminOperation('force-stop', { address })
-        await axios.post(`/api/admin/force-stop/${address}`, null, { headers })
-        await fetchData()
-        toast(t('admin.forceStoppedOk'))
-      } catch (err) {
-        toast(t('admin.forceStopFail', { err: err.response?.data?.error || err.message }))
-      }
-    },
-  })
-}
-
-const deleteVolume = async (address) => {
-  if (!(await askConfirm(t('admin.confirmDeleteVolume', { addr: `${address.slice(0, 10)}...` }))))
-    return
-
-  await askConfirm({
-    message: t('admin.confirmDeleteVolume2'),
-    danger: true,
-    run: async () => {
-      try {
-        const headers = await signAdminOperation('delete-volume', { address })
-        await axios.post(`/api/admin/delete-volume/${address}`, null, { headers })
-        await fetchData()
-        toast(t('admin.volumeDeletedOk'))
-      } catch (err) {
-        toast(t('admin.removeFail', { err: err.response?.data?.error || err.message }))
-      }
-    },
-  })
-}
-
-const promoteUser = async (address) => {
-  await askConfirm({
-    message: t('admin.confirmPromote', { addr: `${address.slice(0, 10)}...` }),
-    run: async () => {
-      try {
-        const headers = await signAdminOperation('promote', { address })
-        await axios.post(`/api/admin/promote/${address}`, null, { headers })
-        await fetchData()
-        toast(t('admin.promoteOk'))
-      } catch (err) {
-        toast(t('admin.promoteFail', { err: err.response?.data?.error || err.message }))
-      }
-    },
-  })
-}
-
-const tierBadge = (tier) => {
-  const map = { 1: 'badge-info', 2: 'badge-warning', 3: 'badge-success' }
-  return map[tier] || 'badge-info'
-}
-
-const statusBadge = (status) => {
-  const map = {
-    running: 'badge-success',
-    stopped: 'badge-warning',
-    destroyed: 'badge-danger',
-    unknown: 'badge-secondary',
-  }
-  return map[status] || 'badge-info'
-}
-
-const statusText = (status) => {
-  const map = {
-    running: t('admin.statusRunning'),
-    stopped: t('admin.statusStopped'),
-    destroyed: t('admin.statusDestroyed'),
-    unknown: t('admin.statusUnknown'),
-  }
-  return map[status] || status
-}
-
 /** 内存占比样式：达到自动升级阈值（80%）时高亮警示 */
-const memPctClass = (pct) => {
-  const n = Number.parseFloat(String(pct ?? ''))
-  if (!Number.isFinite(n)) return ''
-  if (n >= 80) return 'mem-pct-high'
-  if (n >= 60) return 'mem-pct-warn'
-  return 'mem-pct-ok'
-}
 
 /** KB → 人类可读容量（如 "52.2 GB"） */
-const fmtDisk = (kb) => {
-  const b = Number(kb)
-  if (!Number.isFinite(b) || b <= 0) return '-'
-  if (b >= 1024 * 1024 * 1024) return `${(b / (1024 * 1024 * 1024)).toFixed(1)} TB`
-  if (b >= 1024 * 1024) return `${(b / (1024 * 1024)).toFixed(1)} GB`
-  if (b >= 1024) return `${(b / 1024).toFixed(1)} MB`
-  return `${kb} KB`
-}
 
 /** 宿主磁盘使用率样式 */
-const usagePctClass = (pct) => {
-  const n = Number.parseFloat(String(pct ?? ''))
-  if (!Number.isFinite(n)) return ''
-  if (n >= 80) return 'mem-pct-high'
-  if (n >= 60) return 'mem-pct-warn'
-  return 'mem-pct-ok'
-}
 
 /** Docker 存储类型 → 中文名 */
-const dockerTypeLabel = (name) => {
-  const map = {
-    Images: t('admin.diskTypeImages'),
-    Containers: t('admin.diskTypeContainers'),
-    'Local Volumes': t('admin.diskTypeLocalVolumes'),
-    'Build Cache': t('admin.diskTypeBuildCache'),
-  }
-  return map[name] || name
-}
 
 /** 解析 docker 大小字符串（"101.3kB" / "602.1MB" / "1.2GB"）→ 字节数 */
-const parseSize = (s) => {
-  const m = String(s ?? '')
-    .trim()
-    .match(/^([\d.]+)\s*([kKmMgGtT]?)[bB]?$/)
-  if (!m) return 0
-  const n = Number.parseFloat(m[1])
-  const unit = (m[2] || '').toLowerCase()
-  const mult = { k: 1024, m: 1024 ** 2, g: 1024 ** 3, t: 1024 ** 4 }[unit] || 1
-  return n * mult
-}
 
 /** 字节数 → 人类可读（如 "2.4 MB"） */
-const fmtBytes = (b) => {
-  const n = Number(b)
-  if (!Number.isFinite(n) || n < 0) return '-'
-  if (n >= 1024 ** 4) return `${(n / 1024 ** 4).toFixed(2)} TB`
-  if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(2)} GB`
-  if (n >= 1024 ** 2) return `${(n / 1024 ** 2).toFixed(2)} MB`
-  if (n >= 1024) return `${(n / 1024).toFixed(1)} kB`
-  return `${n} B`
-}
 
 /** 实测值与引擎口径差异高亮：偏差 ≥2 倍标黄，≥10 倍标红（提示引擎口径失真） */
-const actualSizeClass = (engineSize, actualBytes) => {
-  const engine = parseSize(engineSize)
-  const actual = Number(actualBytes)
-  if (!engine || !Number.isFinite(actual) || actual <= 0) return ''
-  const ratio = actual / engine
-  if (ratio >= 10) return 'mem-pct-high'
-  if (ratio >= 2) return 'mem-pct-warn'
-  return 'mem-pct-ok'
-}
 
 /** 按地址查租户数据卷大小（volume 名形如 dsh-data-swtc-<address>） */
-const volumeSize = (address) => {
-  const volumes = stats.value.resource?.disk?.volumes
-  if (!Array.isArray(volumes) || !address) return '-'
-  const hit = volumes.find((v) => v.volume === `dsh-data-swtc-${address}`)
-  if (!hit) return '-'
-  // 有 du 实测值优先展示（真实占用），否则回退引擎口径
-  return hit.sizeActual ? fmtBytes(hit.sizeActual) : hit.size
-}
-
-/** 磁盘占用进度条宽度：该卷占所有租户卷最大者的百分比（最小 4% 保证可见） */
-const formatIdle = (ms) => {
-  // 2026-10 审计：idle 可为 null/undefined（无启动记录/状态漂移）。undefined
-  // 与数字比较全为 false，会一路落到最后一行渲染出 "NaN天"；null 则被
-  // null<60000=true 误显示成 "0秒"（看起来像刚活跃）。非有限值一律占位。
-  if (!Number.isFinite(ms)) return '—'
-  if (ms < 60000) return `${Math.floor(ms / 1000)}${t('admin.secUnit')}`
-  if (ms < 3600000) return `${Math.floor(ms / 60000)}${t('admin.minUnit')}`
-  if (ms < 86400000) return `${(ms / 3600000).toFixed(1)}${t('admin.hourUnit')}`
-  return `${(ms / 86400000).toFixed(1)}${t('admin.dayUnit')}`
-}
 
 const getCurrentAddress = async () => {
   if (!hasCCDAO.value) return
@@ -2510,342 +549,31 @@ const getCurrentAddress = async () => {
   }
 }
 
-// ---------------------------------------------------------------------------
-// DSH 版本管理
-// ---------------------------------------------------------------------------
+/** 精确扫描结果回壳合并（AdminTabMonitor 的 disk-scan 事件） */
+bindAdminCredHost({
+  sign: (op, payload) => signAdminOperation(op, payload),
+  refresh: (force) => fetchData(force),
+})
 
-/** 拉当前镜像状态 + 各租户版本归属 */
-const loadDshStatus = async () => {
-  dshStatusLoading.value = true
-  try {
-    // 先确保版本列表已加载：/status 只读缓存做版本对比（它不联网，以免拖慢刷新），
-    // 所以这里必须先把缓存预热，否则"最新可用版本"永远显示"尚未加载"
-    if (!dshVersions.value.latest) {
-      await loadDshVersions()
-    }
-    const res = await axios.get('/api/admin/dsh/status')
-    dshStatus.value = res.data
-    dshError.value = ''
-  } catch (err) {
-    console.error('[AdminPanel] 读取 DSH 镜像状态失败:', err)
-    // 写本 tab 的横幅（此前写全局 error：横幅在 users tab，看不见且会串tab）
-    dshError.value = t('admin.loadFail', {
-      err: err.response?.data?.error || err.message,
-    })
-  } finally {
-    dshStatusLoading.value = false
+// 升级全屏遮罩留壳（跨 tab 可见语义）；状态取 useAdminDsh 单例
+const { dshUpdate, dshApply, dshUpdateBusy } = useAdminDsh()
+
+bindDshHost({
+  sign: (op, payload) => signAdminOperation(op, payload),
+  refresh: (force) => fetchData(force),
+})
+
+const mergeDiskScan = ({ scanned, volumes, preciseScannedAt }) => {
+  if (scanned && stats.value.resource?.disk) {
+    stats.value.resource.disk.volumes = volumes
+    stats.value.resource.disk.preciseScannedAt = preciseScannedAt
   }
 }
 
-/** 拉本地镜像清单（含当前默认镜像的 ID 用于打标） */
-const loadDshImages = async () => {
-  dshImagesLoading.value = true
-  dshImagesError.value = ''
-  try {
-    const res = await axios.get('/api/admin/dsh/local-images')
-    // 形状归一：任何字段缺失都塌成安全默认值，绝不让模板对 undefined 取值
-    // （曾经清单形状一变整张表就人间蒸发，"想设也没得设"）
-    dshImages.value = {
-      images: Array.isArray(res.data.images) ? res.data.images : [],
-      defaultId: res.data.defaultId || '',
-      defaultRef: res.data.defaultRef || '',
-      defaultVersion: res.data.defaultVersion || null,
-    }
-  } catch (err) {
-    // 错误必须上屏：静默 console 会让空表看起来像"本机真没镜像"（误导决策）
-    dshImages.value = { images: [], defaultId: '', defaultRef: '', defaultVersion: null }
-    dshImagesError.value = `${t('admin.dshImagesLoadFail')}：${err.response?.data?.error || err.message}`
-  } finally {
-    dshImagesLoading.value = false
-  }
-}
-
-/** 把选中的本地镜像钦定为平台默认（签名绑 ref；只影响以后的新建/重建） */
-const selectPlatformImage = async (img) => {
-  await askConfirm({
-    message: t('admin.dshSelectConfirm', { ref: img.ref }),
-    run: async () => {
-      dshSelecting.value = img.ref
-      try {
-        const headers = await signAdminOperation('dsh/select', { ref: img.ref })
-        await axios.post('/api/admin/dsh/select', { ref: img.ref }, { headers })
-        toast(t('admin.dshSelectDone', { ref: img.ref }))
-      } catch (err) {
-        toast(t('admin.dshSelectFail', { err: err.response?.data?.error || err.message }))
-      } finally {
-        // 无论成败都刷新：latest tag 可能已挪、清单与状态必须回到事实态
-        dshSelecting.value = ''
-        await Promise.all([
-          loadDshImages().catch(() => {}),
-          loadDshStatus().catch(() => {}),
-          loadDshVersions().catch(() => {}),
-        ])
-      }
-    },
-  })
-}
-
-/** 拉 npm 可用版本（force=true 时让后端清缓存重拉） */
-const loadDshVersions = async (force = false) => {
-  dshVersionsLoading.value = true
-  dshVersionsError.value = null
-  try {
-    const res = await axios.get('/api/admin/dsh/versions', {
-      params: {
-        includePrerelease: dshIncludePrerelease.value ? 1 : 0,
-        ...(force ? { refresh: 1 } : {}),
-      },
-    })
-    dshVersions.value = res.data
-  } catch (err) {
-    const data = err.response?.data
-    // registry 不可达（503）要明确说明，而不是静默空列表
-    dshVersionsError.value = data?.error || err.message
-  } finally {
-    dshVersionsLoading.value = false
-  }
-}
-
-const stopDshPolling = () => {
-  if (dshPollTimer) {
-    clearInterval(dshPollTimer)
-    dshPollTimer = null
-  }
-}
-
-/** 还有任务在跑就不该停表（构建与批量共用同一个定时器） */
-const anyDshTaskRunning = () => dshBuild.value.running || dshApply.value.running
-
-/**
- * 批量任务在无法继续确认状态时的兜底收尾。
- * 否则遮罩会永久停留、进度不再更新，比"没有进度"更糟。
- */
-const finishBatchUpdate = () => {
-  stopDshPolling()
-  if (dshUpdate.value.kind === 'batch') {
-    dshUpdate.value = { kind: null, address: '', phase: '' }
-  }
-}
-
-/** 轮询构建与应用进度（两者都可能在进行） */
-const startDshPolling = () => {
-  if (dshPollTimer) return
-  // 是否已观察到批量任务"真的开始跑"。
-  // 必须确认过才算结束：POST 返回 202 与后台任务被标记 running 之间有一瞬间，
-  // 若第一次轮询恰好落在这个窗口，会看到 running:false 而**提前判定结束**
-  // （遮罩卡死、进度不再更新）。没见过 running=true 之前不认"结束"。
-  let sawApplyRunning = false
-  // 兜底计时：POST 已返回 202 却迟迟等不到 running=true（服务端起来前就失败），
-  // 不能让遮罩无限停留 —— 超时后收尾并强制刷新一次状态。
-  let pollTicks = 0
-  dshPollTimer = setInterval(async () => {
-    pollTicks += 1
-    try {
-      if (dshBuild.value.running) {
-        const res = await axios.get('/api/admin/dsh/image')
-        dshBuild.value = res.data
-        if (!res.data.running) {
-          // 构建结束：刷新镜像状态（新版本要显示出来）。
-          // 版本清单也要重拉：新构建的 "✓ 本地" 标记来自 /versions 的现算结果，
-          // 不刷的话刚建好的版本要等用户手动点"更新"才亮勾（与清理面板同源同步）。
-          // 钦定清单同样要重拉：刚构建的 tag 就是它的候选行。
-          await loadDshStatus()
-          await loadDshVersions().catch(() => {})
-          await loadDshImages().catch(() => {})
-          // 注意：批量可能同时在跑，不能无条件停表
-          if (!anyDshTaskRunning()) stopDshPolling()
-        }
-      }
-      if (dshApply.value.running) {
-        const res = await axios.get('/api/admin/dsh/apply')
-        dshApply.value = res.data
-        if (res.data.running) sawApplyRunning = true
-        if (!res.data.running && sawApplyRunning) {
-          // 批量结束：把逐租户结果落到明细列表（含失败原因）
-          dshApplyResults.value = res.data.results || []
-          // 全部待选目标作废：批量已把陈旧租户刷到最新，下拉框回到实际钉像
-          dshTargetImage.value = {}
-          await loadDshStatus()
-          finishBatchUpdate()
-        } else if (!sawApplyRunning && pollTicks >= 30) {
-          // ~60s 仍未见到任务启动 → 视为启动失败，收尾并刷新真实状态
-          console.error('[AdminPanel] 批量任务迟迟未启动，停止跟踪')
-          await loadDshStatus().catch(() => {})
-          finishBatchUpdate()
-        }
-      }
-    } catch (err) {
-      // 单次轮询失败（网络抖动/瞬时 5xx）不该终止整个进度跟踪：
-      // 停表会让遮罩永久停留、进度静默失效。只有确认没有任务在跑才真停。
-      console.error('[AdminPanel] 轮询 DSH 任务失败:', err)
-      if (!anyDshTaskRunning()) {
-        stopDshPolling()
-        if (dshUpdate.value.kind === 'batch') finishBatchUpdate()
-      }
-    }
-  }, 2000)
-}
-
-/** 构建指定 DSH 版本的新镜像
- *  2026-10 审计：构建产物直接成为平台默认镜像（决定之后所有新租户），
- *  后端已要求当场签名（version 进绑定）——这里补危险确认 + 签名头 */
-const startImageUpgrade = async () => {
-  if (!dshSelectedVersion.value) return
-  const version = dshSelectedVersion.value
-  if (
-    !(await askConfirm({
-      message: t('admin.confirmBuildImage', { v: version }),
-      danger: true,
-    }))
-  )
-    return
-  try {
-    const headers = await signAdminOperation('dsh/build-image', { version })
-    await axios.post('/api/admin/dsh/image', { version }, { headers })
-    dshBuild.value = {
-      running: true,
-      version: dshSelectedVersion.value,
-      ok: null,
-      error: null,
-      result: null,
-      finishedAt: null,
-    }
-    startDshPolling()
-  } catch (err) {
-    dshBuild.value = {
-      ...dshBuild.value,
-      running: false,
-      ok: false,
-      error: err.response?.data?.error || err.message,
-      finishedAt: Date.now(),
-    }
-  }
-}
-
-/**
- * 每个租户的目标镜像选择（地址 → 镜像 ref；空串 = 跟随平台默认 latest）。
- *
- * 为什么按租户分开存：这是「个别租户镜像」，不同租户可以跑不同版本
- * （例如给某个租户回滚到旧版排查问题），共用一个值就做不到。
- */
-const dshTargetImage = ref({})
-
-const dshAvailableImages = computed(() => dshStatus.value.availableImages || [])
-
-const setTargetImage = (address, value) => {
-  // 显式记录（含清空）：清空后要覆盖掉 pinnedImage 的回退值，所以不能删 key
-  dshTargetImage.value = { ...dshTargetImage.value, [address]: value }
-}
-
-/** 该租户本次要用的镜像；空 = 不钉，走平台默认 */
-const targetImageFor = (address) => dshTargetImage.value[address] || ''
-
-/**
- * 是否需要更新。
- * 不能只看 t.stale（容器镜像 != 平台当前镜像）：钉到别的版本时目标可能
- * 根本不是平台当前镜像，此时即使不 stale 也必须允许执行。
- */
-const needsApply = (t) => Boolean(t.stale) || targetImageFor(t.address) !== ''
-
-/** 预览（dryRun）：单租户，不真正重建 */
-const previewApplyOne = async (address) => {
-  dshApplyResults.value = []
-  try {
-    // 预览也要签名：后端把 dsh/apply 整体当作破坏性操作（dryRun 只是"不执行"，
-    // 签名绑定的是地址这个执行意图，与是否 dryRun 无关）。漏签名会直接 403
-    // SIGNATURE_REQUIRED —— 这正是"预览按钮点了没反应"的原因。
-    const image = targetImageFor(address)
-    const headers = await signAdminOperation('dsh/apply', { address, image })
-    const res = await axios.post(
-      '/api/admin/dsh/apply',
-      { address, image, dryRun: true },
-      { headers },
-    )
-    dshApplyResults.value = res.data.results || []
-  } catch (err) {
-    dshApplyResults.value = [{ address, ok: false, error: friendlyPluginError(err) }]
-  }
-}
-
-/** 预览全部待更新租户 */
-const previewApplyAll = async () => {
-  dshApplyResults.value = []
-  try {
-    const headers = await signAdminOperation('dsh/apply', { all: true })
-    const res = await axios.post('/api/admin/dsh/apply', { all: true, dryRun: true }, { headers })
-    dshApplyResults.value = res.data.results || []
-  } catch (err) {
-    toast(t('admin.applyFail', { err: friendlyPluginError(err) }))
-  }
-}
-
-/** 应用当前镜像到单个租户（重建容器，保留数据卷）
- *  2026-10 审计：补危险确认（重建=该租户会话中断；签名已在） */
-const applyOne = async (address) => {
-  if (
-    !(await askConfirm({
-      message: t('admin.confirmApplyOne', { addr: `${address.slice(0, 10)}…` }),
-      danger: true,
-    }))
-  )
-    return
-  dshApplyResults.value = []
-  // 同步请求（后端重建完才返回），必须给用户明确的"正在执行"反馈。
-  // phase 显示**目标版本**（这次要装上的），不是租户当前版本 —— 免得被读成
-  // "正在更新到 <当前版本>"。
-  const image = targetImageFor(address)
-  // phase 要反映"这次到底装哪个"：钉了版本就显示那个版本，否则显示最新版
-  const target = image
-    ? String(image).split(':')[1]
-    : dshStatus.value.upgrade?.latest || dshStatus.value.currentImageVersion || ''
-  dshUpdate.value = { kind: 'single', address, phase: target }
-  try {
-    const headers = await signAdminOperation('dsh/apply', { address, image })
-    const res = await axios.post('/api/admin/dsh/apply', { address, image }, { headers })
-    dshApplyResults.value = res.data.results || []
-    // 应用成功 → 撤销本地待选目标：下拉框回到"实际钉住的镜像"（loadDshStatus
-    // 刷新出的 pinnedImage）。留着陈旧 key 会在别处换钉后仍显示旧目标（2026-10 审计）
-    const rest = { ...dshTargetImage.value }
-    delete rest[address]
-    dshTargetImage.value = rest
-    await loadDshStatus()
-  } catch (err) {
-    dshApplyResults.value = [{ address, ok: false, error: friendlyPluginError(err) }]
-    await loadDshStatus()
-  } finally {
-    dshUpdate.value = { kind: null, address: '', phase: '' }
-  }
-}
-
-/** 批量应用（后台跑，轮询进度）
- *  2026-10 审计：重建全部租户容器（在用会话全断）只有签名没有确认——补危险
- *  确认；zh.js 文案自己写着"建议先预览"，预览/执行必须有两道不同的动作 */
-const applyAllStale = async () => {
-  await askConfirm({
-    message: t('admin.confirmApplyAllStale', { n: dshStatus.value?.staleTenants ?? 0 }),
-    danger: true,
-    run: async () => {
-      dshApplyResults.value = []
-      try {
-        const headers = await signAdminOperation('dsh/apply', { all: true })
-        const res = await axios.post('/api/admin/dsh/apply', { all: true }, { headers })
-        dshApply.value = {
-          running: true,
-          total: res.data.total || 0,
-          completed: 0,
-          results: [],
-          finishedAt: null,
-        }
-        // 批量在服务端后台跑，遮罩持续到轮询发现任务结束
-        dshUpdate.value = { kind: 'batch', address: '', phase: '' }
-        startDshPolling()
-      } catch (err) {
-        toast(t('admin.applyFail', { err: friendlyPluginError(err) }))
-      }
-    },
-  })
-}
-
+// 子 tab 组件的壳层单例注入口（签名包装/数据刷新/撤销管理员——判例 58：全域唯此一支）
+provide('adminSign', signAdminOperation)
+provide('adminRefresh', (force) => fetchData(force))
+provide('adminLogout', logout)
 onMounted(async () => {
   checkCCDAO()
 
@@ -2861,10 +589,8 @@ onMounted(async () => {
     // 检查当前地址是否是管理员
     if (currentAddress.value) {
       try {
-        const res = await axios.get('/api/admin/check', {
-          params: { address: currentAddress.value },
-        })
-        if (res.data.isAdmin) {
+        const ck = await adminStatusApi.check(currentAddress.value)
+        if (ck.isAdmin) {
           // 当前地址是管理员，检查 cookie session
           await checkAdmin()
           if (isAdmin.value) {
@@ -2896,17 +622,7 @@ onMounted(async () => {
 // 轮询间隔若被调长（例如 5 分钟），这一步保证「切过去看到的就是新的」。
 watch(activeTab, () => {
   if (Date.now() - lastFetchAt > 1000) refreshNow()
-  // DSH tab 的数据不在 fetchData 里：进来就拉一次，否则"当前镜像/本地镜像
-  // 钦定清单"要用户手动点刷新才出现（新功能表第一眼是空的，不可接受）
-  if (activeTab.value === 'dsh') {
-    loadDshStatus().catch(() => {})
-    loadDshImages().catch(() => {})
-  }
-  if (activeTab.value === 'cred') {
-    loadCwtApps().catch(() => {})
-    loadCredRows().catch(() => {})
-    loadRoster().catch(() => {})
-  }
+  // DSH tab 数据随组件 onMounted 自拉（useAdminDsh 单例跨 tab 保活）
 })
 
 // 回到前台 → 立即补一次；后台由 startPolling 的定时器判断跳过
@@ -2926,9 +642,7 @@ onUnmounted(() => {
   // 清理定时器与监听
   stopPolling()
   document.removeEventListener('visibilitychange', onVisibilityChange)
-  stopDshPolling()
-  // 遮罩是组件状态：离开页面时必须清掉，否则再次进来会残留"执行中"
-  dshUpdate.value = { kind: null, address: '', phase: '' }
+  cleanupDsh()
   // 解绑账户监听（避免组件重挂载后重复监听）
   unbindAccounts?.()
   unbindAccounts = null
@@ -2949,65 +663,33 @@ onUnmounted(() => {
 
 /* ─── 磁盘扫描（租户卷区块） ─── */
 
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 /* ════ 状态卡片（noAccess / login） ════ */
-.state-card {
-  margin: auto;
-  width: min(540px, calc(100% - 2rem));
-  background: #fff;
-  border-radius: 16px;
-  border: 1px solid rgba(226, 232, 240, 0.8);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
-  text-align: center;
-  padding: 3rem 2rem;
-}
 
 .state-card h2 {
   font-size: 1.4rem;
   margin-bottom: 1rem;
-  color: #1e293b;
+  color: var(--text-main);
 }
 
 .state-card p {
-  color: #64748b;
+  color: var(--text-muted);
   margin-bottom: 2rem;
 }
 
 .error-card h2 {
-  color: #dc2626;
+  color: var(--danger);
 }
 
 .address-display {
   font-family: 'JetBrains Mono', ui-monospace, monospace;
-  background: #f8fafc;
+  background: var(--bg-page);
   padding: 0.5rem 0.75rem;
   border-radius: 10px;
   word-break: break-all;
   margin-bottom: 2rem;
   display: block;
   font-size: 0.85rem;
-  color: #334155;
-}
-
-.btn-large {
-  padding: 0.75rem 2rem;
-  font-size: 1.05rem;
-}
-
-.btn-small {
-  padding: 0.25rem 0.75rem;
-  font-size: 0.85rem;
-  margin-left: 0.5rem;
+  color: var(--text-body);
 }
 
 .current-address {
@@ -3015,39 +697,17 @@ onUnmounted(() => {
 }
 
 .current-address p {
-  color: #64748b;
+  color: var(--text-muted);
   margin-bottom: 0.5rem;
   font-size: 0.9rem;
 }
 
 /* ════ 主界面：左侧栏 + 右侧内容（与 React 原型稿一致） ════ */
-.gate-shell {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  gap: 1rem;
-  padding: 1.25rem;
-  align-items: stretch;
-}
 
-.gate-sidebar {
-  width: 176px;
-  flex-shrink: 0;
-}
-
-.sidebar-card {
-  background: #fff;
-  border-radius: 16px;
-  border: 1px solid rgba(226, 232, 240, 0.8);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
-  padding: 0.5rem;
-}
-
-.sidebar-nav {
-  display: flex;
-  flex-direction: column;
-  gap: 0.125rem;
-  padding-top: 0.25rem;
+/* P3 切刀误删回迁（2026-11-13 目检案连带清查）：v-html 注入的 svg 不受 scoped 罩，
+   必须 :deep 定性 display:block——否则基线留缝、侧栏图标错位 */
+.sidebar-icon :deep(svg) {
+  display: block;
 }
 
 .sidebar-item {
@@ -3062,278 +722,27 @@ onUnmounted(() => {
   border-radius: 12px;
   font-size: 14px;
   font-weight: 500;
-  color: #64748b;
+  color: var(--text-muted);
   cursor: pointer;
   text-align: left;
-  transition: all 0.2s;
-}
-
-.sidebar-item:hover {
-  background: #f8fafc;
-  color: #475569;
-}
-
-.sidebar-item.active {
-  background: #eef0f8;
-  color: #6b7bdb;
-}
-
-.sidebar-icon {
-  width: 14px;
-  height: 14px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.sidebar-icon :deep(svg) {
-  display: block;
+  transition: var(--transition-fast);
 }
 
 /* ─── 右侧内容卡 ─── */
-.gate-content {
-  flex: 1;
-  min-width: 0;
-  background: #fff;
-  border-radius: 16px;
-  border: 1px solid rgba(226, 232, 240, 0.8);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
-  padding: 1.5rem;
-  overflow-y: auto;
-}
 
 .tab-content {
   animation: fadeIn 0.25s;
 }
 
-.tab-head h4 {
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: #94a3b8;
-  margin-bottom: 0.125rem;
-}
-
-.tab-hint {
-  font-size: 11px;
-  color: #94a3b8;
-  line-height: 1.6;
-  margin-bottom: 1rem;
-}
-
-.sub-section {
-  margin-top: 1.5rem;
-  padding-top: 1.5rem;
-  border-top: 1px solid #f8fafc;
-}
-
-.sub-section h4 {
-  font-size: 13px;
-  font-weight: 600;
-  color: #334155;
-  margin-bottom: 0.25rem;
-}
-
 /* ─── 资源监控（配额配置页） ─── */
-.monitor-config {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 0.75rem;
-  margin: 0.75rem 0 1.25rem;
-  padding: 1rem 1.25rem;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-}
-
-.monitor-item {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.monitor-label {
-  font-size: 0.75rem;
-  color: #94a3b8;
-}
-
-.monitor-value {
-  font-size: 1.1rem;
-  font-weight: 700;
-  color: #1e293b;
-}
-
-.monitor-upgraded {
-  color: #10b981;
-}
-
-.monitor-subtitle {
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: #334155;
-  margin: 1rem 0 0.25rem;
-}
-
-.mem-pct {
-  font-weight: 600;
-}
-
-.mem-pct-ok {
-  color: #10b981;
-}
-
-.mem-pct-warn {
-  color: #f59e0b;
-}
-
-.mem-pct-high {
-  color: #ef4444;
-}
-
-.monitor-never {
-  color: #94a3b8;
-  font-size: 0.8rem;
-}
-
-.monitor-empty {
-  padding: 1.25rem;
-  text-align: center;
-  color: #94a3b8;
-  font-size: 0.85rem;
-  background: #f8fafc;
-  border: 1px dashed #e2e8f0;
-  border-radius: 12px;
-}
 
 /* ─── 磁盘监控（配额配置页） ─── */
-.reclaimable-cell {
-  color: #f59e0b;
-  font-size: 0.8rem;
-}
 
 /* ─── 磁盘扫描（租户卷区块） ─── */
-.disk-vol-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.disk-vol-head .monitor-subtitle {
-  margin: 0.5rem 0 0;
-}
-
-.btn-disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
 
 /* ─── 管理员信息卡 ─── */
-.admin-info-card {
-  background: linear-gradient(135deg, #6b7bdb 0%, #6c69c2 100%);
-  color: white;
-  border-radius: 12px;
-  padding: 0.875rem 1.25rem;
-  margin-bottom: 1rem;
-}
-
-.admin-info {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-
-.admin-label {
-  font-weight: 600;
-  font-size: 0.95rem;
-  flex-shrink: 0;
-}
-
-.admin-address {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
-  background: rgba(255, 255, 255, 0.2);
-  padding: 0.4rem 0.875rem;
-  border-radius: 8px;
-  flex: 1;
-  font-size: 0.85rem;
-  word-break: break-all;
-}
-
-.admin-info .btn-danger {
-  color: white;
-  border-color: rgba(255, 255, 255, 0.4);
-  background: rgba(255, 255, 255, 0.12);
-  margin-left: 0;
-}
-
-.admin-info .btn-danger:hover {
-  background: rgba(255, 255, 255, 0.22);
-}
-
 /* ─── Docker 状态 ─── */
-.docker-status-card {
-  padding: 0.875rem 1.25rem;
-  border-radius: 12px;
-  margin-bottom: 1rem;
-  transition: all 0.3s;
-  color: white;
-}
-
-.docker-status-card.docker-ok {
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-}
-
-.docker-status-card.docker-error {
-  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-}
-
-.docker-status {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-
-.status-icon {
-  font-size: 1.5rem;
-}
-
-.status-info {
-  flex: 1;
-}
-
-.status-label {
-  font-weight: 600;
-  font-size: 0.85rem;
-  opacity: 0.9;
-}
-
-.status-text {
-  font-size: 1.05rem;
-  font-weight: 700;
-}
-
-.status-hint {
-  font-size: 0.85rem;
-  opacity: 0.9;
-  margin-top: 0.25rem;
-  flex: 1;
-  text-align: right;
-}
-
 /* ─── 操作按钮行 ─── */
-.action-buttons {
-  display: flex;
-  gap: 0.75rem;
-  margin: 1rem 0;
-  flex-wrap: wrap;
-}
-
-table {
-  font-size: 0.875rem;
-}
-
 .btn {
   margin-right: 0.375rem;
   text-decoration: none;
@@ -3345,351 +754,19 @@ table {
   cursor: not-allowed;
 }
 
-.ops-cell {
-  display: flex;
-  gap: 0.375rem;
-  flex-wrap: wrap;
-  align-items: center;
-}
-
-.ops-cell .btn {
-  margin-right: 0;
-  padding: 0.25rem 0.625rem;
-  font-size: 0.8rem;
-}
-
-.badge-secondary {
-  background: #64748b;
-  color: white;
-}
-
 /* ─── CWT 授权管理 ─── */
-.cwt-mono {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
-  font-size: 0.82rem;
-}
-
-.cwt-empty {
-  color: #94a3b8;
-  padding: 0.6rem 0;
-  font-size: 0.875rem;
-}
 
 /* ─── CWT 申请列表：筛选头 + 分页 ─── */
-.cwt-list-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-}
-
-.cwt-list-head h4 {
-  margin: 0;
-}
-
-.cwt-filter {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.82rem;
-  color: #64748b;
-}
-
-.cwt-filter select {
-  -webkit-appearance: none;
-  appearance: none;
-  padding: 0.25rem 1.5rem 0.25rem 0.45rem; /* 文字左右等距：左侧=0.45rem，右侧=箭头让位后的0.45rem */
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
-  background: #fff
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='7' viewBox='0 0 10 7'><path d='M1 1l4 4 4-4' fill='none' stroke='%2364748b' stroke-width='1.6' stroke-linecap='round'/></svg>")
-    no-repeat right 0.5rem center;
-  font-size: 0.82rem;
-  color: #334155;
-}
-
-.cwt-filter select:focus {
-  outline: none;
-  border-color: var(--brand);
-  box-shadow: 0 0 0 2px rgba(64, 126, 255, 0.15);
-}
-
-.cwt-pager {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  margin-top: 0.6rem;
-  flex-wrap: wrap;
-}
-
-.cwt-page-info {
-  font-size: 0.82rem;
-  color: #64748b;
-}
-
-.cwt-more-hint {
-  color: #94a3b8;
-}
-
-.cwt-page-btns {
-  display: flex;
-  gap: 0.4rem;
-}
-
-.cwt-token-preview {
-  margin-top: 0.4rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.72rem;
-  background: #f8fafc;
-  border-radius: 8px;
-  padding: 0.4rem;
-  word-break: break-all;
-  max-width: 420px;
-  border: 1px solid #f1f5f9;
-}
 
 /* ─── 孤儿数据卷 ─── */
-.orphan-notice {
-  margin-top: 0.6rem;
-  font-size: 0.85rem;
-  text-align: center;
-  color: #475569;
-}
-
-.orphan-list {
-  margin-top: 0.6rem;
-  list-style: none;
-  padding: 0;
-  max-height: 180px;
-  overflow-y: auto;
-}
-
-.orphan-item {
-  padding: 0.25rem 0.4rem;
-  border-bottom: 1px dashed #f1f5f9;
-}
-
-.orphan-name {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.78rem;
-  word-break: break-all;
-}
-
 /* ==========================================================================
    DSH 版本管理
    ========================================================================== */
-
-.dsh-model-card {
-  display: flex;
-  gap: 1rem;
-  flex-wrap: wrap;
-  margin-bottom: 1rem;
-}
-
-.dsh-model-step {
-  flex: 1 1 260px;
-  display: flex;
-  gap: 0.6rem;
-  align-items: flex-start;
-  padding: 0.75rem 0.9rem;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-}
-
-.dsh-step-no {
-  flex: 0 0 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: var(--brand);
-  color: #fff;
-  font-size: 0.75rem;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.dsh-model-step strong {
-  display: block;
-  font-size: 0.86rem;
-  color: #1e293b;
-}
-
-.dsh-model-step p {
-  margin: 0.15rem 0 0;
-  font-size: 0.78rem;
-  line-height: 1.5;
-  color: #64748b;
-}
-
-.dsh-card {
-  background: #fff;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  padding: 1rem;
-  margin-bottom: 1rem;
-}
-
-.dsh-card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-  margin-bottom: 0.75rem;
-}
-
-.dsh-card-head h5 {
-  margin: 0;
-  font-size: 0.92rem;
-  color: #1e293b;
-}
-
-.dsh-kv-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 0.75rem;
-}
-
-.dsh-kv {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-}
-
-.dsh-kv-label {
-  font-size: 0.75rem;
-  color: #94a3b8;
-}
-
-.dsh-kv code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.82rem;
-  color: #334155;
-  word-break: break-all;
-}
-
-.dsh-warn-text {
-  color: #d97706 !important;
-  font-weight: 600;
-}
-
-.dsh-note {
-  margin: 0.75rem 0 0;
-  padding: 0.5rem 0.65rem;
-  background: #fffbeb;
-  border-left: 3px solid #f59e0b;
-  border-radius: 4px;
-  font-size: 0.78rem;
-  line-height: 1.5;
-  color: #92400e;
-}
-
-.dsh-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-.dsh-select {
-  flex: 1 1 220px;
-  -webkit-appearance: none;
-  appearance: none;
-  padding: 0.35rem 1.7rem 0.35rem 0.55rem; /* 文字左右等距，右侧为箭头让位 */
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
-  background: #fff
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='7' viewBox='0 0 10 7'><path d='M1 1l4 4 4-4' fill='none' stroke='%2364748b' stroke-width='1.6' stroke-linecap='round'/></svg>")
-    no-repeat right 0.6rem center;
-  font-size: 0.82rem;
-  color: #334155;
-}
 
 .dsh-select:focus {
   outline: none;
   border-color: var(--brand);
   box-shadow: 0 0 0 2px rgba(64, 126, 255, 0.15);
-}
-
-.dsh-check {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.8rem;
-  color: #475569;
-  cursor: pointer;
-}
-
-.dsh-hint-small {
-  margin: 0.6rem 0 0;
-  font-size: 0.76rem;
-  line-height: 1.5;
-  color: #94a3b8;
-}
-
-.dsh-error {
-  margin: 0 0 0.6rem;
-  padding: 0.5rem 0.65rem;
-  background: #fef2f2;
-  border-left: 3px solid #ef4444;
-  border-radius: 4px;
-  font-size: 0.78rem;
-  color: #b91c1c;
-}
-
-.dsh-actions {
-  display: flex;
-  gap: 0.4rem;
-  flex-wrap: wrap;
-}
-
-.dsh-progress {
-  margin-top: 0.75rem;
-}
-
-.dsh-progress-running,
-.dsh-progress-ok,
-.dsh-progress-fail {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.82rem;
-  padding: 0.5rem 0.65rem;
-  border-radius: 6px;
-}
-
-.dsh-progress-running {
-  background: #eff6ff;
-  color: #1d4ed8;
-}
-
-.dsh-progress-ok {
-  background: #f0fdf4;
-  color: #15803d;
-}
-
-.dsh-progress-fail {
-  background: #fef2f2;
-  color: #b91c1c;
-}
-
-.dsh-spinner {
-  width: 12px;
-  height: 12px;
-  border: 2px solid #bfdbfe;
-  border-top-color: #1d4ed8;
-  border-radius: 50%;
-  animation: dsh-spin 0.8s linear infinite;
-}
-
-@keyframes dsh-spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 /* 「更新」执行中的居中遮罩。
@@ -3715,7 +792,7 @@ table {
   max-width: 420px;
   padding: 1.5rem 1.75rem;
   border-radius: 12px;
-  background: #fff;
+  background: var(--surface-white);
   box-shadow: 0 12px 40px rgba(15, 23, 42, 0.28);
   text-align: center;
 }
@@ -3735,7 +812,7 @@ table {
 .dsh-overlay-addr {
   margin: 0;
   font-size: 0.82rem;
-  color: #475569;
+  color: var(--text-secondary);
 }
 
 .dsh-overlay-phase {
@@ -3756,130 +833,19 @@ table {
   margin: 0.15rem 0 0;
   font-size: 0.76rem;
   line-height: 1.5;
-  color: #94a3b8;
-}
-
-.dsh-select-sm {
-  padding: 0.15rem 0.3rem;
-  font-size: 0.76rem;
-  max-width: 11rem;
-}
-
-.dsh-pinned {
-  margin-top: 0.15rem;
-  font-size: 0.7rem;
-  color: #1d4ed8;
-}
-
-.dsh-pick-cell {
-  white-space: nowrap;
+  color: var(--text-faint);
 }
 
 /* 步骤序号：把"版本 → 构建 → 总体镜像 → 租户镜像"这条链在视觉上串起来 */
-.dsh-step {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  margin-right: 0.35rem;
-  border-radius: 50%;
-  background: #1d4ed8;
-  color: #fff;
-  font-size: 0.7rem;
-  font-weight: 700;
-  vertical-align: middle;
-}
-
-.dsh-subhead {
-  margin: 0.85rem 0 0.35rem;
-  font-size: 0.82rem;
-  color: #334155;
-}
 
 /* "可清理"标记：与"在用/当前"形成对比，一眼能看出哪些是垃圾 */
-.dsh-ver-ok {
-  font-size: 0.72rem;
-  padding: 0.05rem 0.35rem;
-  border-radius: 4px;
-  background: #dcfce7;
-  color: #15803d;
-  white-space: nowrap;
-}
-
-.dsh-prune-warn {
-  margin: 0 0 0.5rem;
-  padding: 0.45rem 0.6rem;
-  border-radius: 6px;
-  background: #fffbeb;
-  color: #b45309;
-  font-size: 0.76rem;
-}
 
 /* 后门：万一请求真的挂死，用户不该只能强刷页面 */
 .dsh-overlay-dismiss {
   margin-top: 0.35rem;
 }
 
-.dsh-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 0.5rem;
-  font-size: 0.82rem;
-}
-
-.dsh-table th {
-  text-align: left;
-  padding: 0.45rem 0.5rem;
-  border-bottom: 1px solid #e2e8f0;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: #94a3b8;
-  white-space: nowrap;
-}
-
-.dsh-table td {
-  padding: 0.5rem;
-  border-bottom: 1px solid #f1f5f9;
-  vertical-align: middle;
-}
-
-.dsh-addr,
-.dsh-img {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.78rem;
-  color: #475569;
-}
-
 /* 租户实际在跑的 DSH 版本（主列表 + 镜像升级表共用） */
-.dsh-ver {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.78rem;
-  color: #0f172a;
-}
-
-.dsh-ver-stale {
-  color: #b45309;
-  font-weight: 600;
-}
-
-.dsh-ver-tag {
-  margin-left: 0.35rem;
-}
-
-.dsh-ver-unknown {
-  font-size: 0.78rem;
-  color: #94a3b8;
-}
-
-.dsh-badge {
-  display: inline-block;
-  padding: 0.1rem 0.45rem;
-  border-radius: 999px;
-  font-size: 0.72rem;
-  font-weight: 500;
-  white-space: nowrap;
-}
 
 .dsh-badge-running {
   background: #dcfce7;
@@ -3887,13 +853,8 @@ table {
 }
 
 .dsh-badge-stopped {
-  background: #f1f5f9;
-  color: #64748b;
-}
-
-.dsh-badge-stale {
-  background: #fef3c7;
-  color: #b45309;
+  background: var(--surface-soft);
+  color: var(--text-muted);
 }
 
 .dsh-badge-ok {
@@ -3901,218 +862,21 @@ table {
   color: #15803d;
 }
 
-.dsh-empty {
-  margin: 0.5rem 0 0;
-  font-size: 0.82rem;
-  color: #94a3b8;
-}
-
-.dsh-result-list,
-.dsh-history {
-  list-style: none;
-  margin: 0.75rem 0 0;
-  padding: 0;
-}
-
-.dsh-result-list li {
-  display: flex;
-  gap: 0.5rem;
-  align-items: baseline;
-  flex-wrap: wrap;
-  padding: 0.4rem 0.55rem;
-  border-radius: 6px;
-  font-size: 0.8rem;
-  margin-bottom: 0.3rem;
-}
-
-.dsh-result-list li.ok {
-  background: #f0fdf4;
-  color: #15803d;
-}
-
-.dsh-result-list li.fail {
-  background: #fef2f2;
-}
-
-.dsh-fail-text {
-  color: #b91c1c;
-}
-
 /* 预览计划里的快照目录提示：会降级/不可用必须显眼，正常则弱化 */
-.dsh-plan-warn {
-  color: #b45309;
-  font-weight: 600;
-}
-
-.dsh-plan-ok {
-  color: #64748b;
-}
 
 /* 版本历史：镜像是否仍在本地 + 可清理项 */
-.dsh-history-hint {
-  margin: 0 0 0.5rem;
-  font-size: 0.75rem;
-  line-height: 1.5;
-  color: #94a3b8;
-}
-
-.dsh-hist-check,
-.dsh-hist-check-spacer {
-  width: 14px;
-  flex: 0 0 14px;
-}
-
-.dsh-hist-reason {
-  font-size: 0.72rem;
-}
-
-.dsh-reclaim {
-  font-weight: 600;
-  color: #b45309;
-}
-
-.dsh-prune-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  margin-top: 0.6rem;
-  padding-top: 0.6rem;
-  border-top: 1px solid #e2e8f0;
-}
-
-.dsh-prune-bar label {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.76rem;
-  cursor: pointer;
-}
-
-.dsh-prune-btn {
-  flex: 0 0 auto;
-}
-
-.dsh-prune-msg {
-  margin: 0.5rem 0 0;
-  font-size: 0.76rem;
-  color: #475569;
-}
-
-.dsh-history li {
-  display: flex;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-  padding: 0.35rem 0;
-  border-bottom: 1px solid #f1f5f9;
-  font-size: 0.8rem;
-}
-
-.dsh-muted {
-  color: #94a3b8;
-}
-
-.dsh-alert {
-  margin: 0.75rem 0 0;
-  padding: 0.55rem 0.7rem;
-  background: #fef2f2;
-  border-left: 3px solid #ef4444;
-  border-radius: 4px;
-  font-size: 0.8rem;
-  font-weight: 500;
-  line-height: 1.55;
-  color: #b91c1c;
-}
-
-.dsh-ok-note {
-  margin: 0.75rem 0 0;
-  padding: 0.55rem 0.7rem;
-  background: #f0fdf4;
-  border-left: 3px solid #22c55e;
-  border-radius: 4px;
-  font-size: 0.8rem;
-  line-height: 1.55;
-  color: #15803d;
-}
 
 /* 概括页头：左标题/提示，右自动刷新提示+刷新按钮（按钮跟随每个 tab 的概括区） */
-.tab-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-}
-.tab-head-text {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.tab-head-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-shrink: 0;
-}
-.refresh-hint {
-  font-size: 11px;
-  color: #94a3b8;
-}
 
 /* 缩写地址/镜像 ID：悬停立即弹出完整值。
    用自绘 tooltip 而不是原生 title —— 原生有约 1 秒延迟、样式不可控、不能选中。 */
-.addr-tip {
-  position: relative;
-  cursor: help;
-}
 /* 提示 ::after 是子节点：任何 overflow:hidden 祖先（含自身省略号）都会裁掉它 */
-.addr-tip[data-full] {
-  overflow: visible;
-  text-overflow: clip;
-}
-.addr-tip[data-full]:hover::after {
-  content: attr(data-full);
-  position: absolute;
-  left: 0;
-  top: 100%;
-  z-index: 40;
-  margin-top: 4px;
-  padding: 6px 10px;
-  width: max-content;
-  max-width: 460px;
-  background: #1e293b;
-  color: #f8fafc;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 1.5;
-  letter-spacing: normal;
-  border-radius: 6px;
-  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.28);
-  white-space: normal;
-  word-break: break-all;
-  text-align: left;
-  pointer-events: none;
-}
 
 /* v1.4 CWT 审批 tab */
-.filter-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  margin-bottom: 0.75rem;
-}
 
 /* 凭证审批三表（审批/签发台账/任免名册）数据行恒单行（2026-10-23 用户反馈
    "表格里数据换行"）：列内容不被压缩折行，放不下时容器横向滚动——宽度换给
    内嵌态的窄内容区也不破版 */
-.table-scroll {
-  overflow-x: auto;
-}
-.cred-table th,
-.cred-table td {
-  white-space: nowrap;
-}
-
 /* 台账搜索：大号胶囊 + 放大镜 + 聚焦光晕 */
 /* cred-search/addr-input 制式已废（2026-10-23 三框统一）：台账与名册搜索框
    改用全局 .search-input（参照=技能市场原版），单一来源防漂移 */

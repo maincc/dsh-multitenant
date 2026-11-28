@@ -118,8 +118,18 @@ const meta = [
 // 本机 70s 探针实证）；与 src/services/migration.js 的真迁移器保持一致。
 const toDate = (ms) => new Date(Number(ms) || 0)
 const sessDocs = [
-  ...Object.entries(sessions).map(([hash, v]) => ({ ...v, _id: hash, scope: 'admin', expiresAt: toDate(v.expiresAt) })),
-  ...Object.entries(userSessions).map(([hash, v]) => ({ ...v, _id: hash, scope: 'user', expiresAt: toDate(v.expiresAt) })),
+  ...Object.entries(sessions).map(([hash, v]) => ({
+    ...v,
+    _id: hash,
+    scope: 'admin',
+    expiresAt: toDate(v.expiresAt),
+  })),
+  ...Object.entries(userSessions).map(([hash, v]) => ({
+    ...v,
+    _id: hash,
+    scope: 'user',
+    expiresAt: toDate(v.expiresAt),
+  })),
 ]
 // 审计两流合一：时间统一 at（Date，ttl_90d 生效前提），kind 区分（字段原样保留）
 const auditDocs = [

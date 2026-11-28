@@ -65,6 +65,12 @@ cmd_start() {
   # 等端口真就绪再探状态（--fork 返回≠立刻可连接；过早探测得空值会误判异常）
   for _ in $(seq 1 30); do running && break; sleep 0.5; done
   echo "mongod 已拉起（port=$PORT rs=$RS_NAME dbpath=${DATA_DIR}）"
+  # 探拓扑需要 mongosh CLI——缺工具≠实例异常（2026-11-18 实踩：无 mongosh 机器
+  # 上探得空值走"异常"分支，把端口健康、拓扑完好的进程杀了。缺 CLI 只警不杀）
+  if ! command -v mongosh >/dev/null 2>&1; then
+    echo "⚠ 无 mongosh CLI，跳过拓扑核验（进程保留；dbpath 复用即带拓扑，端口在听就能用）" >&2
+    return 0
+  fi
   st="$(rs_state || true)"
   [ -z "$st" ] && { sleep 1; st="$(rs_state || true)"; } # 空值再重试一次
   case "$st" in

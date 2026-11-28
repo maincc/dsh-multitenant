@@ -1,0 +1,109 @@
+/* 用户中心跨 tab 视觉件（P3 UC 拆分伴生物）。 */
+.user-center .action-buttons {
+  display: flex;
+  gap: 0.75rem;
+  margin: 1.25rem 0;
+  flex-wrap: wrap;
+}
+
+.user-center .action-buttons .btn {
+  flex: 1;
+  min-width: 150px;
+  padding: 0.625rem 1.25rem;
+  font-size: 0.95rem;
+}
+
+.user-center .hint {
+  margin-bottom: 0.75rem;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.user-center .hint strong {
+  color: var(--text-body);
+}
+
+.user-center .hint:last-child {
+  margin-bottom: 0;
+}
+
+.user-center .official-key-actions .hint {
+  margin: 0;
+}
+
+.user-center .key-state.ok {
+  color: var(--success);
+}
+
+.user-center .key-state.missing {
+  color: #ef4444;
+}
+
+.user-center .stat-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.user-center .stat-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.625rem 0;
+  border-bottom: 1px solid var(--bg-page);
+}
+
+.user-center .stat-label {
+  font-size: 12px;
+  color: var(--text-faint);
+  width: 88px;
+  flex-shrink: 0;
+}
+
+.user-center .stat-value {
+  font-size: 13px;
+  color: var(--text-body);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-center .stat-clip {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-center .mono {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+.user-center .copy-mini {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 0.8em;
+  padding: 0 0.2rem;
+  opacity: 0.6;
+  vertical-align: baseline;
+  flex-shrink: 0;
+}
+
+.user-center .cred-dot {
+  box-sizing: border-box;
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+/* 切刀回归修复（审查 B 刀）：基线这些元素在壳模板内、壳 scoped 罩可达；拆分后
+   组件够不着——按原规则本体以祖先限定入库恢复原状（非全局化，不动 ET 旧例） */
+.user-center .btn-small {
+  padding: 0.25rem 0.75rem;
+  font-size: 0.85rem;
+  margin-left: 0.5rem;
+}

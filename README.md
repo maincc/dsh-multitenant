@@ -3,13 +3,13 @@
 基于 SWTC 地址的智能容器分配系统：为每个用户分配独立的 Docker 容器运行 DeepSeek
 Harness Web，并以可验证凭证（VC）作为准入与豁免的判权底座。
 
-| 我要…              | 看这里                                                                               |
-| ------------------ | ------------------------------------------------------------------------------------ |
-| 部署/更新服务器    | [DEPLOY.md](DEPLOY.md)（增量指南）+ [deploy/README.md](deploy/README.md)（脚本本体） |
-| 装配平台签发身份   | 下方快速开始 §5 + [docs/keys-provisioning.md](docs/keys-provisioning.md)             |
-| 凭证/签发/判权细节 | [docs/did-vc-runbook.md](docs/did-vc-runbook.md)                                     |
-| 全部文档索引       | [docs/README.md](docs/README.md)                                                     |
-| 历史事故与修法     | [docs/fixlog.md](docs/fixlog.md)                                                     |
+| 我要…              | 看这里                                                                                                                 |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| 部署/更新服务器    | [docs/deploy-test-server.md](docs/deploy-test-server.md)（实测手册）+ [deploy/README.md](deploy/README.md)（脚本本体） |
+| 装配平台签发身份   | 下方快速开始 §5 + [docs/keys-provisioning.md](docs/keys-provisioning.md)                                               |
+| 凭证/签发/判权细节 | [docs/did-vc-runbook.md](docs/did-vc-runbook.md)                                                                       |
+| 全部文档索引       | [docs/README.md](docs/README.md)                                                                                       |
+| 历史事故与修法     | [docs/fixlog.md](docs/fixlog.md)                                                                                       |
 
 ## 核心判权不变量（改凭证链路前必读）
 
@@ -50,16 +50,15 @@ dsh-multitenant/
 │   └── utils/                 # 地址、错误、会话工具
 ├── frontend/                  # Vue 前端（构建产物由平台静态服务）
 ├── test/                      # vitest 全量套件（869 用例，含真库自包含用例）
-├── scripts/                   # 运维脚本（seed-to-pem / mongo-rs / mongo-backup 等）
-├── deploy/                    # 服务器部署体系（install/update/rsync-upload/systemd）
+├── scripts/                   # 运维脚本（seed-to-pem / mongo-rs 等）
+├── deploy/                    # 服务器部署体系（install/update/rsync-upload/backup/systemd）
 ├── docs/                      # 设计文档与复盘（索引见 docs/README.md）
 ├── data/                      # 运行时数据（rsync 只进不出；keys/ 见 §5）
 │   ├── keys/                  #   平台签发身份：issuer.key + issuer-profile.json
 │   └── …                      #   users/config/stats/logs（json 形态的业务数据）
 ├── patches/ + host.patch.yml  # 租户注入 patch（构建期资产，Dockerfile COPY）
 ├── Dockerfile                 # 租户镜像（DSH_VERSION 烘进镜像，tag 供回滚）
-├── config.json(.example)      # 现场配置（example 是字段语义权威注释）
-└── DEPLOY.md                  # 部署增量指南（形态选型/红线/验收）
+└── config.json(.example)      # 现场配置（example 是字段语义权威注释）
 ```
 
 ## 🚀 快速开始
@@ -103,8 +102,9 @@ npm start                    # ② config.json 的 storage 段 provider=mongodb
 # 应急回退文件形态：DSH_STORAGE_PROVIDER=json npm start
 ```
 
-备份与恢复演练：`scripts/mongo-backup.sh backup`（快照+保留 7 份）/ `verify`（还原进
-影子库逐集合对账，绝不碰生产库）。回退 json 形态：去掉配置重启即可（文件轨未动过）。
+备份与恢复演练：`./deploy/backup.sh`（一键迁移 bundle：库+keys+入口+工作区+卷+镜像
+清单，保留 7 份）/ `verify`（bundle 库快照还原进影子库逐集合对账，绝不碰生产库）。
+回退 json 形态：去掉配置重启即可（文件轨未动过）。
 安全边界：mongod 仅监听 127.0.0.1 且未启鉴权——**本地形态专用**，上服务器必须
 auth+TLS+独立账号（见 docs/security-hardening-plan.md）。
 

@@ -1,6 +1,6 @@
 <template>
   <div id="app">
-    <nav class="navbar">
+    <nav class="navbar" v-if="!isMobile">
       <div class="nav-brand">
         <router-link to="/" class="brand-link" :title="$t('common.brand')">
           <img class="brand-logo" :src="dshLogo" alt="DSH logo" />
@@ -18,7 +18,7 @@
         <router-link to="/user" class="nav-tab">{{ $t('common.nav.user') }}</router-link>
       </div>
     </nav>
-    <main class="page">
+    <main class="page" :class="{ 'mobile-page': isMobile }">
       <router-view />
     </main>
 
@@ -28,8 +28,14 @@
 </template>
 
 <script setup>
+import { useRoute } from 'vue-router'
 import dshLogo from './assets/dsh-logo-white.svg'
 import GlobalDialog from './components/GlobalDialog.vue'
+import { useIsMobile } from './composables/useIsMobile.js'
+
+const route = useRoute()
+// T3 收敛（2026-11-10）：isMobile 旧为 App/Home/UserCenter 三份复制，改全站单例
+const isMobile = useIsMobile()
 </script>
 
 <style scoped>
@@ -47,7 +53,7 @@ import GlobalDialog from './components/GlobalDialog.vue'
   align-items: center;
   padding: 0 1.5rem;
   gap: 1rem;
-  background: linear-gradient(135deg, #6c69c2 0%, #6b7bdb 100%);
+  background: linear-gradient(135deg, #6c69c2 0%, var(--brand-text) 100%);
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
 }
 
@@ -98,7 +104,7 @@ import GlobalDialog from './components/GlobalDialog.vue'
   border-radius: 8px;
   font-size: 14px;
   font-weight: 500;
-  transition: all 0.2s;
+  transition: var(--transition-fast);
 }
 
 .nav-tab:hover {
@@ -117,7 +123,14 @@ import GlobalDialog from './components/GlobalDialog.vue'
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  background: #f8fafc;
+  background: var(--bg-page);
+  width: 100%;
+}
+
+/* 移动端页面不需要顶部间距 */
+.page.mobile-page {
+  background: #f4f5fa;
+  width: 100%;
 }
 
 /* 三 Tab 视图自身撑满并内部滚动；Home 等长页在此容器内自然滚动 */

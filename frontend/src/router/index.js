@@ -1,7 +1,11 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import UserCenter from '../views/UserCenter.vue'
 import Home from '../views/Home.vue'
-import SkillMarket from '../views/SkillMarket.vue'
+// T5 移动 chunk 拆分（2026-11-10）：UserCenter/SkillMarket/MobileContainer 改路由级懒加载——
+// 桌面用户不再为首屏背上整个用户中心（含桌面 AdminPanel 巨型孪生），移动用户也不背 SkillMarket；
+// Home 保留同步（首屏入口，异步反而多一跳白屏）。判权与装载无关，照旧全在服务端。
+const UserCenter = () => import('../views/UserCenter.vue')
+const SkillMarket = () => import('../views/SkillMarket.vue')
+const MobileContainer = () => import('../views/mobile/MobileContainer.vue')
 
 const routes = [
   { path: '/', component: Home },
@@ -12,6 +16,7 @@ const routes = [
   { path: '/user', component: UserCenter },
   { path: '/user/:address', component: UserCenter, props: true },
   { path: '/skills', component: SkillMarket },
+  { path: '/mobile/container', component: MobileContainer },
 ]
 
 const router = createRouter({

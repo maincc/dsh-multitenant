@@ -4,16 +4,20 @@ import {
   isAdmin,
   getTierLimits,
   getAdminAddresses,
+  _defaultsForTest as DEFAULTS,
   _deepMergeForTest as deepMerge,
 } from '../src/config/config.js'
 
 describe('配置模块', () => {
   describe('loadConfig', () => {
     it('应该加载默认配置', () => {
-      const config = loadConfig()
-      expect(config.server.port).toBe(8090)
-      expect(config.docker.basePort).toBe(31000)
-      expect(config.tiers[1].memory).toBe('512m')
+      // 语义落 DEFAULTS 表本身：宿主存在 config.json 时合并结果必然带部署者
+      // 覆盖（2026-11-14 实证：本机部署改 40000 段后断言合并值 31000 误伤）。
+      // 合并机制由 deepMerge 用例覆盖，这里守"默认表完备"。
+      expect(DEFAULTS.server.port).toBe(8090)
+      expect(DEFAULTS.docker.basePort).toBe(31000)
+      expect(DEFAULTS.docker.internalBasePort).toBe(0)
+      expect(DEFAULTS.tiers[1].memory).toBe('512m')
     })
 
     it('应该有 3 个配额层级', () => {

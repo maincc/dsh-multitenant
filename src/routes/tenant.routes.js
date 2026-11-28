@@ -15,8 +15,9 @@ import {
 import { validateSwtcAddress } from '../middleware/validate.middleware.js'
 import { rateLimit } from '../middleware/rate-limit.middleware.js'
 import { userSessionStore } from '../middleware/user-auth.middleware.js'
-import { normalizeAddress, swtcVolumeName } from '../utils/address.js'
-import { handleError } from '../utils/errors.js'
+import { secureFlag } from '../utils/cookie-flags.js'
+import { publicScheme, tenantBaseUrl } from '../utils/public-endpoint.js'
+import { normalizeAddress } from '../utils/address.js'
 import { tenantGateway } from '../services/tenant-proxy.service.js'
 
 /**
@@ -131,7 +132,7 @@ export async function handleTenantRoutes(req, res, path, url) {
         const loginToken = userSessionStore.create(address)
         res.writeHead(200, {
           'content-type': 'application/json; charset=utf-8',
-          'set-cookie': `user_session=${loginToken}; path=/; max-age=43200; httponly; samesite=strict`,
+          'set-cookie': `user_session=${loginToken}; path=/; httponly; samesite=strict${secureFlag(req)}`,
         })
         res.end(JSON.stringify({ ok: true, loggedIn: true, address }))
         return true
@@ -171,11 +172,15 @@ export async function handleTenantRoutes(req, res, path, url) {
         }
       }
       const gwTicket = tenantGateway.issueTicket(address)
+      // 对外形态单点（2026-11-12 隧道口径；2026-11-26 增子域模板，入口感知）：
+      // 域名入口且配了 tenantUrlTemplate → t{port}.泛域:入口口；否则旧形态
+      const tplBase = tenantBaseUrl(port, req, address)
       const containerUrl =
-        `http://${targetHost}:${port}/` + (gwTicket ? `?gateway_ticket=${gwTicket}` : '')
+        (tplBase ? `${tplBase}/` : `${publicScheme(req)}://${targetHost}:${port}/`) +
+        (gwTicket ? `?gateway_ticket=${gwTicket}` : '')
       // 签名验证通过 → 签发普通用户会话（网关门禁凭据，2h；切钱包时前端会主动吊销）
       const sessionToken = userSessionStore.create(address)
-      const cookieHeader = `user_session=${sessionToken}; path=/; max-age=43200; httponly; samesite=strict`
+      const cookieHeader = `user_session=${sessionToken}; path=/; httponly; samesite=strict${secureFlag(req)}`
       // 前端 XHR/fetch 场景：浏览器 fetch 的 redirect:manual 会把 302 包成 opaque
       // (status 0)，前端拿不到 location。format=json 时直接给 200 JSON + cookie，
       // 由前端 window.open；地址栏直开（无 format）保持 302 跳转语义不变。
@@ -543,15 +548,17 @@ export async function handleTenantRoutes(req, res, path, url) {
           }
         }
         const gwTicket = tenantGateway.issueTicket(address)
+        const tplBase = tenantBaseUrl(result.port, req, address)
         containerUrl =
-          `http://${targetHost}:${result.port}/` + (gwTicket ? `?gateway_ticket=${gwTicket}` : '')
+          (tplBase ? `${tplBase}/` : `${publicScheme(req)}://${targetHost}:${result.port}/`) +
+          (gwTicket ? `?gateway_ticket=${gwTicket}` : '')
       }
       if (!res.headersSent) {
         const headers = { 'content-type': 'application/json; charset=utf-8' }
         if (containerUrl) {
           const sessionToken = userSessionStore.create(address)
           headers['set-cookie'] =
-            `user_session=${sessionToken}; path=/; max-age=43200; httponly; samesite=strict`
+            `user_session=${sessionToken}; path=/; httponly; samesite=strict${secureFlag(req)}`
           result.url = containerUrl
         }
         res.writeHead(200, headers)

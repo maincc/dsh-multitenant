@@ -1,5 +1,54 @@
 <template>
-  <div class="home">
+  <!-- 移动端：根据登录状态显示不同内容 -->
+  <div v-if="isMobile">
+    <!-- 未登录：显示产品介绍页（和桌面一样） -->
+    <div v-if="!isLoggedIn" class="home">
+      <div class="hero">
+        <h1>{{ $t('home.heroTitle') }}</h1>
+        <p class="subtitle">{{ $t('home.subtitle') }}</p>
+
+        <div class="features">
+          <div class="feature-card">
+            <div class="icon">🔐</div>
+            <h3>{{ $t('home.features.wallet.title') }}</h3>
+            <p>{{ $t('home.features.wallet.desc') }}</p>
+          </div>
+          <div class="feature-card">
+            <div class="icon">📦</div>
+            <h3>{{ $t('home.features.container.title') }}</h3>
+            <p>{{ $t('home.features.container.desc') }}</p>
+          </div>
+          <div class="feature-card">
+            <div class="icon">⚡</div>
+            <h3>{{ $t('home.features.scale.title') }}</h3>
+            <p>{{ $t('home.features.scale.desc') }}</p>
+          </div>
+          <div class="feature-card">
+            <div class="icon">🪪</div>
+            <h3>{{ $t('home.features.credential.title') }}</h3>
+            <p>{{ $t('home.features.credential.desc') }}</p>
+          </div>
+          <div class="feature-card">
+            <div class="icon">💾</div>
+            <h3>{{ $t('home.features.persist.title') }}</h3>
+            <p>{{ $t('home.features.persist.desc') }}</p>
+          </div>
+        </div>
+
+        <div class="actions">
+          <router-link to="/user" class="btn btn-primary btn-large">
+            {{ $t('home.actions.start') }}
+          </router-link>
+        </div>
+      </div>
+    </div>
+
+    <!-- 已登录：显示系统概览页 -->
+    <MobileHome v-else />
+  </div>
+
+  <!-- 桌面端：原有首页 -->
+  <div v-else class="home">
     <div class="hero">
       <h1>{{ $t('home.heroTitle') }}</h1>
       <p class="subtitle">{{ $t('home.subtitle') }}</p>
@@ -192,7 +241,67 @@
   </div>
 </template>
 
-<script setup></script>
+<script setup>
+import { ref, onMounted, onActivated, watch, defineAsyncComponent } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import axios from 'axios'
+// T5 移动 chunk 拆分（2026-11-10）：MobileHome 仅 isMobile 时渲染，改懒加载剥出桌面首屏
+const MobileHome = defineAsyncComponent(() => import('./mobile/MobileHome.vue'))
+import { useIsMobile } from '../composables/useIsMobile.js'
+
+const route = useRoute()
+const router = useRouter()
+// T3 收敛（2026-11-10）：isMobile 走全站单例
+const isMobile = useIsMobile()
+const isLoggedIn = ref(false)
+
+// 检查登录状态
+async function checkLoginStatus() {
+  // 先检查 localStorage 中是否有钱包地址
+  const savedAddress = localStorage.getItem('swtc_address')
+  if (!savedAddress) {
+    isLoggedIn.value = false
+    return
+  }
+
+  // 检查后端 session
+  try {
+    const res = await axios.get('/api/user/credential-status')
+    isLoggedIn.value = true
+  } catch (e) {
+    if (e.response?.status === 401) {
+      isLoggedIn.value = false
+    }
+  }
+}
+
+onMounted(() => {
+  checkLoginStatus()
+})
+
+// 组件被激活时重新检查登录状态
+onActivated(() => {
+  checkLoginStatus()
+})
+
+// 移动端工作台统一收进 /user 壳（2026-11-10 挂机跌落报障补刀）：'/' 的移动分支
+// ——登出=营销引导页、登录=裸 MobileHome——都没有底部 tab 壳（壳只在 UserCenter）。
+// 会话失联后浏览器 reload 回 '/' 的用户会再次面对"tab 消失"。移动一律直进 /user，
+// 失联恢复/首登由壳内「我的」tab（MobileMe 登录面板）承担；桌面 '/' 行为不变。
+if (isMobile.value) {
+  router.replace('/user')
+}
+
+// 监听路由变化
+watch(
+  () => route.path,
+  () => {
+    if (route.path === '/') {
+      checkLoginStatus()
+    }
+  },
+)
+</script>
 
 <style scoped>
 .home {
@@ -212,7 +321,7 @@
 
 .hero h1 {
   font-size: 2.5rem;
-  background: linear-gradient(135deg, #6b7bdb 0%, #6c69c2 100%);
+  background: linear-gradient(135deg, var(--brand-text) 0%, #6c69c2 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   margin-bottom: 0.75rem;
@@ -285,7 +394,7 @@
 .guide h2 {
   text-align: center;
   margin-bottom: 2rem;
-  color: #6b7bdb;
+  color: var(--brand-text);
 }
 
 .guide-steps {
@@ -314,7 +423,7 @@
   width: 2rem;
   height: 2rem;
   border-radius: 50%;
-  background: linear-gradient(135deg, #6b7bdb 0%, #6c69c2 100%);
+  background: linear-gradient(135deg, var(--brand-text) 0%, #6c69c2 100%);
   color: white;
   font-weight: 700;
   display: flex;
@@ -336,7 +445,7 @@
 }
 
 .step-body a {
-  color: #6b7bdb;
+  color: var(--brand-text);
 }
 
 .guide-notes {
@@ -373,7 +482,7 @@
 .tiers h2 {
   text-align: center;
   margin-bottom: 2rem;
-  color: #6b7bdb;
+  color: var(--brand-text);
 }
 
 .tier-grid {
@@ -399,14 +508,129 @@
 }
 
 @media (max-width: 620px) {
+  .home {
+    padding: 0.75rem;
+  }
+
+  .hero {
+    padding: 2rem 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .hero h1 {
+    font-size: 1.75rem;
+  }
+
+  .subtitle {
+    font-size: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
   .features {
     grid-template-columns: 1fr;
+    gap: 1rem;
+    margin: 1.5rem 0;
   }
+
   .features .feature-card:last-child {
     grid-column: auto;
   }
+
+  .feature-card {
+    padding: 1.25rem 1rem;
+  }
+
+  .feature-card .icon {
+    font-size: 1.75rem;
+  }
+
+  .feature-card h3 {
+    font-size: 1rem;
+  }
+
+  .feature-card p {
+    font-size: 0.85rem;
+  }
+
+  .btn-large {
+    padding: 0.625rem 1.5rem;
+    font-size: 0.95rem;
+    width: 100%;
+    max-width: 280px;
+  }
+
+  .guide {
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+  }
+
+  .guide h2 {
+    font-size: 1.25rem;
+    margin-bottom: 1.25rem;
+  }
+
   .guide-steps {
     grid-template-columns: 1fr;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+  }
+
+  .guide-step {
+    padding: 1rem;
+  }
+
+  .step-num {
+    width: 1.75rem;
+    height: 1.75rem;
+    font-size: 0.9rem;
+  }
+
+  .step-body h3 {
+    font-size: 0.95rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .step-body p {
+    font-size: 0.85rem;
+  }
+
+  .guide-notes {
+    padding: 1rem;
+  }
+
+  .guide-notes h3 {
+    font-size: 0.9rem;
+  }
+
+  .guide-notes li {
+    font-size: 0.85rem;
+  }
+
+  .tiers {
+    padding: 1.25rem;
+  }
+
+  .tiers h2 {
+    font-size: 1.25rem;
+    margin-bottom: 1.25rem;
+  }
+
+  .tier-grid {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .tier-card {
+    padding: 1.25rem;
+  }
+
+  .tier-card h3 {
+    font-size: 1.1rem;
+  }
+
+  .tier-card li {
+    font-size: 0.85rem;
+    padding: 0.4rem 0;
   }
 }
 
@@ -419,7 +643,7 @@
 }
 
 .tier-card.featured {
-  border-color: #6b7bdb;
+  border-color: var(--brand-text);
   background: linear-gradient(135deg, #f0f4ff 0%, #faf5ff 100%);
 }
 

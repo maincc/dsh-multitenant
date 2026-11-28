@@ -17,25 +17,22 @@ import {
   readdirSync,
 } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import { CONFIG, getTierLimits } from '../config/config.js'
-import { credentialService } from './credential.service.js'
+import { tenantAuthority } from '../utils/public-endpoint.js'
 import { dockerService } from './docker.service.js'
 import { dataService } from './data.service.js'
 import { stateStore } from './state.store.js'
 import { tenantGateway } from './tenant-proxy.service.js'
+import { portsMixin } from './user/ports.js'
+import { usageMixin } from './user/usage.js'
+import { queueMixin } from './user/queue.js'
+import { resourcesMixin } from './user/resources.js'
+import { queriesMixin } from './user/queries.js'
 // 代激活 cookie 缓存（check-rpc 的 /api 调用也要带上，否则新版会 401）
 import { authCookieCache } from './dsh-auth.service.js'
 import { swtcContainerName, swtcVolumeName, normalizeAddress } from '../utils/address.js'
-import {
-  readMemAvailableKB,
-  parseMemorySpecToBytes,
-  MEM_HEADROOM_BYTES,
-} from '../utils/host-resources.js'
-import { NotFoundError, BadRequestError, ConflictError } from '../utils/errors.js'
+import { NotFoundError, BadRequestError } from '../utils/errors.js'
 
-const execFileAsync = promisify(execFile)
 const ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)))
 const PATCHES_DIR = join(ROOT, 'patches')
 
@@ -159,9 +156,6 @@ function patchesDir() {
   return patchDirForTest ?? PATCHES_DIR
 }
 const SCRIPTS_DIR = join(ROOT, 'src', 'services')
-/** 等待队列上限与过期时间（security-hardening-plan P0-3） */
-const WAIT_QUEUE_MAX = 500
-const WAIT_QUEUE_STALE_MS = 60 * 60 * 1000
 // 确保 patches 目录存在（旧版入口在启动时创建，模块化版需自行保证）
 mkdirSync(patchesDir(), { recursive: true })
 
@@ -184,29 +178,6 @@ function isCredentialsCorruption(text) {
   return /invalid document|credentials-local|failed to parse/i.test(s)
 }
 
-/** 本地日期 YYYY-MM-DD（每日限时按此重置） */
-function todayStr() {
-  const d = new Date()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${d.getFullYear()}-${m}-${day}`
-}
-
-/** 今日本地 00:00 的毫秒时间戳（跨午夜运行段的截断点，2026-10 审计 #配额精度） */
-function dayStartMs() {
-  const d = new Date()
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
-}
-
-/**
- * usages 记录 → 毫秒累计。
- * 新格式 {date, ms, minutes} 直取 ms；旧格式 {date, minutes}（历史落盘/测试夹具）
- * 折算 minutes*60000——下次 settle 写回即自然完成迁移，无需启动期批量改写。
- */
-function usageRecMs(rec) {
-  return typeof rec.ms === 'number' ? rec.ms : (rec.minutes || 0) * 60000
-}
-
 export class UserService {
   /** 管理端列表的短 TTL 缓存：{ at, data }；由 _saveState 失效 */
   _usersCache = { at: 0, data: null }
@@ -214,233 +185,6 @@ export class UserService {
     this.state = dataService.loadState()
     this.state.usages = this.state.usages || {} // 每日使用时长记录 { address: { date, minutes } }
     this.waitQueue = [] // 等待队列
-  }
-
-  /**
-   * 分配宿主内部回环端口（40000-49999 随机，避开已占用）。
-   * 内部端口只绑 127.0.0.1，对外进路由网关（tenantGateway）代理。
-   * @param {Set<number>} [exclude] 本次分配过程要排除的端口（重试时避免拿到同一个）
-   */
-  allocateInternalPort(exclude = new Set()) {
-    const used = new Set(exclude)
-    for (const u of Object.values(this.state.swtcUsers || {})) {
-      if (u?.internalPort) used.add(u.internalPort)
-    }
-    for (let i = 0; i < 300; i++) {
-      const p = 40000 + Math.floor(Math.random() * 10000)
-      if (!used.has(p)) {
-        used.add(p)
-        return p
-      }
-    }
-    throw new Error('no internal port available')
-  }
-
-  /**
-   * 资源预检（F1 改造，2026-09 磁盘防复发方案）
-   * 检查是否有足够资源创建新容器。
-   *
-   * 改造前这里是"形同虚设"的重灾区（三个缺口各自修掉）：
-   * - 缺口 C 磁盘：旧版查 `df -k /`，Linux 上 /var/lib/docker 独立挂载时
-   *   查错分区（盘真满了预检全绿）。现查 docker info 的 DockerRootDir
-   *   所在分区（docker.service.hostFreeBytes 内实现；macOS 上该路径是
-   *   VM 内地址、宿主不可达，自动回落 `/`，语义不变）。阈值走
-   *   CONFIG.docker.minFreeBytes（默认 4GiB，旧值写死 2GiB 偏紧）。
-   * - 缺口 D 内存：旧版 `sysctl hw.memsize` 是 macOS 专有命令，Linux 上
-   *   抛错被 catch 成 true —— 生产（Linux）内存保护恒真（roadmap P1-4）。
-   *   现 Linux 读 /proc/meminfo 的 MemAvailable 实测真检，水位 =
-   *   即将供应 tier 的 memory 限额 + 512MB 余量；读不到按 fail-closed
-   *   记不足（warn 模式下只记日志不拦，见 preflightMode）。
-   *   macOS 保留旧行为（开发机形态不变，避免制造新误杀）。
-   * - 拦截强度：preflightMode=warn（上线默认）时"不足"只记日志、照常
-   *   放行——行为=历史；观察无误后运维改 enforce，才真正入等待队列。
-   *   ports/containers 两项是本来就可靠的硬检查，不受 mode 影响。
-   *
-   * @param {number} [tier] 即将供应的资源档（内存水位按它的限额算），缺省 1
-   */
-  async preflightCheck(tier = 1) {
-    const checks = {
-      ports: false,
-      memory: false,
-      disk: false,
-      containers: false,
-    }
-
-    // 1. 检查端口（含可按需征用的 destroyed 闲置端口，避免僵尸占用导致误报耗尽）
-    const availablePorts = this.state.availablePorts?.length ?? 0
-    const nextPort = this.state.nextPort ?? CONFIG.docker.basePort
-    checks.ports =
-      availablePorts > 0 || nextPort < CONFIG.docker.maxPort || this.hasReclaimablePorts()
-
-    // 2. 主机内存：Linux 实测 MemAvailable 真检；非 Linux（macOS 开发机）保留旧逻辑
-    if (process.platform === 'linux') {
-      const availKB = await readMemAvailableKB()
-      if (availKB === null) {
-        // fail-closed：读不到按"不足"计（warn 模式兜底放行，enforce 由运维确认环境后才开）
-        checks.memory = false
-        console.warn('[preflight] 无法读取 /proc/meminfo 的 MemAvailable：按内存不足处理')
-      } else {
-        const limit = parseMemorySpecToBytes(getTierLimits(tier).memory) ?? 512 * 1024 * 1024
-        checks.memory = availKB * 1024 >= limit + MEM_HEADROOM_BYTES
-      }
-    } else {
-      try {
-        const { stdout } = await execFileAsync('sysctl', ['-n', 'hw.memsize'])
-        const totalMemory = parseInt(stdout.trim(), 10)
-        // 简化检查：如果总内存 > 8GB，认为足够
-        checks.memory = totalMemory > 8 * 1024 * 1024 * 1024
-      } catch {
-        checks.memory = true // 无法检查时假设足够
-      }
-    }
-
-    // 3. 磁盘：查 Docker 数据分区（缺口 C 修复），阈值可配置（默认 4GiB）
-    try {
-      const free = await dockerService.hostFreeBytes()
-      if (!free) {
-        checks.disk = false
-        console.warn('[preflight] df 读取失败：按磁盘不足处理（fail-closed）')
-      } else {
-        const minFreeBytes = CONFIG.docker?.minFreeBytes ?? 4 * 1024 * 1024 * 1024
-        checks.disk = free.freeBytes >= minFreeBytes
-      }
-    } catch {
-      checks.disk = false
-    }
-
-    // 4. 检查容器数量（最多 50 个）
-    try {
-      const containers = await dockerService.listSwtcContainers()
-      checks.containers = containers.length < 50
-    } catch {
-      checks.containers = true
-    }
-
-    const failed = Object.entries(checks)
-      .filter(([_, v]) => !v)
-      .map(([k]) => k)
-
-    return {
-      ok: failed.length === 0,
-      checks,
-      failed,
-    }
-  }
-
-  /**
-   * 预检拦截强度：warn（默认）=不足只记日志不拦，enforce=拒绝供应入队。
-   * 环境变量 DSH_PREFLIGHT_MODE 可临时覆盖（应急/验证用）。
-   */
-  preflightMode() {
-    const v = String(process.env.DSH_PREFLIGHT_MODE || CONFIG.docker?.preflightMode || 'warn')
-      .trim()
-      .toLowerCase()
-    return v === 'enforce' ? 'enforce' : 'warn'
-  }
-
-  /**
-   * 添加到等待队列（security-hardening-plan P0-3：上限 + 过期淘汰，防无界内存增长）
-   */
-  addToWaitQueue(address, tier = 1) {
-    this.pruneWaitQueue()
-    // 检查是否已在队列中
-    const existing = this.waitQueue.find((item) => item.address === address)
-    if (existing) {
-      return {
-        position: this.waitQueue.indexOf(existing) + 1,
-        alreadyInQueue: true,
-      }
-    }
-
-    if (this.waitQueue.length >= WAIT_QUEUE_MAX) {
-      return { position: -1, full: true, alreadyInQueue: false }
-    }
-
-    const item = {
-      address,
-      tier,
-      timestamp: Date.now(),
-      status: 'waiting',
-    }
-    this.waitQueue.push(item)
-    return {
-      position: this.waitQueue.length,
-      alreadyInQueue: false,
-    }
-  }
-
-  /**
-   * 淘汰过期等待项（超过 1 小时仍未创建则移出队列）
-   */
-  pruneWaitQueue() {
-    const now = Date.now()
-    this.waitQueue = this.waitQueue.filter((item) => now - item.timestamp < WAIT_QUEUE_STALE_MS)
-  }
-
-  /**
-   * 从等待队列移除
-   */
-  removeFromWaitQueue(address) {
-    const index = this.waitQueue.findIndex((item) => item.address === address)
-    if (index !== -1) {
-      this.waitQueue.splice(index, 1)
-      return true
-    }
-    return false
-  }
-
-  /**
-   * 获取队列中的位置
-   */
-  getQueuePosition(address) {
-    const index = this.waitQueue.findIndex((item) => item.address === address)
-    if (index === -1) return null
-    return {
-      position: index + 1,
-      total: this.waitQueue.length,
-      timestamp: this.waitQueue[index].timestamp,
-    }
-  }
-
-  /**
-   * 处理等待队列
-   * 尝试为队列中的用户创建容器
-   */
-  async processWaitQueue() {
-    if (this.waitQueue.length === 0) return []
-
-    const processed = []
-    const check = await this.preflightCheck(this.waitQueue[0]?.tier ?? 1)
-
-    if (!check.ok && this.preflightMode() === 'enforce') {
-      console.log(`[queue] Resources still insufficient: ${check.failed.join(', ')}`)
-      return processed
-    }
-    if (!check.ok) {
-      // warn 模式：预检报不足也照常处理队列头（行为=历史放行，只是多一条日志）
-      console.log(
-        `[queue] Resources insufficient (${check.failed.join(', ')}) — warn mode, still processing`,
-      )
-    }
-
-    // 处理队列中的第一个用户
-    const next = this.waitQueue.shift()
-    if (next) {
-      try {
-        console.log(`[queue] Processing ${next.address} (tier ${next.tier})`)
-        await this.ensureContainer(next.address)
-        next.status = 'completed'
-        processed.push(next)
-        console.log(`[queue] Successfully created container for ${next.address}`)
-      } catch (err) {
-        console.error(`[queue] Failed to create container for ${next.address}:`, err.message)
-        next.status = 'failed'
-        next.error = err.message
-        processed.push(next)
-      }
-    }
-
-    return processed
   }
 
   /**
@@ -771,334 +515,6 @@ export class UserService {
   }
 
   /**
-   * 每日使用时限配置（优先 state，回退 config.json）
-   */
-  usageLimitConfig() {
-    return this.state?.usageLimit ?? CONFIG.usageLimit ?? {}
-  }
-
-  /**
-   * 结算一段运行时长：把 usageStartedAt 累计进当日 usages，然后清零起点。
-   * 所有"容器停止"路径都要调用，保证挂机时间也被准确结算。
-   *
-   * 2026-10 全面审计三处精度修复（原实现在免费额度语义上是可绕过的）：
-   * ① 尾差：原先每段 `Math.floor(段/60000)`，<60s 的段整段记 0——反复"起 59s 停一次"
-   *    当日额度几乎不掉，限时形同虚设。现按**毫秒**累计（usages[].ms），
-   *    minutes 字段照旧双写供展示/旧读方使用，只有视图层才 floor。
-   * ② 跨午夜：容器 23:50 起、00:10 结算时，原先把 20 分钟全记进"今天"——
-   *    新的一天被昨天开的段白白吃掉。现段起点截到今日 00:00（昨日槽本就归零，
-   *    跨日部分丢弃即是正确语义）。
-   * ③ 锚点：settledAt 由调用方在 **docker stop 成功之后**传入（默认现在），
-   *    与"先停再结"的顺序纪律配套（见各停止路径）。
-   * @returns {number} 本次结算的分钟数（视图口径）
-   */
-  settleUsage(address, settledAt = Date.now()) {
-    const user = this.state.swtcUsers?.[address]
-    const startedAt = user?.usageStartedAt
-    if (!startedAt) return 0
-    const today = todayStr()
-    const rec = this.state.usages[address] || {}
-    const baseMs = rec.date === today ? usageRecMs(rec) : 0
-    const effStart = Math.max(startedAt, dayStartMs())
-    const segMs = Math.max(0, settledAt - effStart)
-    // P7 顺序纪律：先清表针再累计——若颠倒，中间任何失败会让下一段重复计费
-    delete user.usageStartedAt
-    const ms = baseMs + segMs
-    this.state.usages[address] = { date: today, ms, minutes: Math.floor(ms / 60000) }
-    return Math.floor(segMs / 60000)
-  }
-
-  /**
-   * 当日已用分钟（含当前运行段），跨日自动归零
-   */
-  getUsedMinutes(address) {
-    const today = todayStr()
-    const rec = this.state.usages[address]
-    let ms = rec && rec.date === today ? usageRecMs(rec) : 0
-    const user = this.state.swtcUsers?.[address]
-    if (user?.usageStartedAt) {
-      // 与 settleUsage 同口径：跨午夜的段只计今日部分
-      ms += Math.max(0, Date.now() - Math.max(user.usageStartedAt, dayStartMs()))
-    }
-    return Math.floor(ms / 60000)
-  }
-
-  /**
-   * 是否存在「容器已销毁（destroyed）但记录还占着端口」的闲置端口（可按需征用）
-   */
-  hasReclaimablePorts() {
-    for (const user of Object.values(this.state.swtcUsers || {})) {
-      if (user.containerStatus === 'destroyed' && user.port) return true
-    }
-    return false
-  }
-
-  /**
-   * 端口耗尽时的按需征用：把 destroyed 租户闲置的端口收进回收池供新用户分配。
-   * 被征用者下次连接时会重新分配新端口（端口号对用户透明，内部资产转移）。
-   * 前提：destroyed 状态时网关监听已关闭（cleanup/destroy 路径已补 close），端口确实空闲。
-   * @param {string} excludeAddress - 本次申请者自身（不征用自己的端口）
-   * @returns {number} 征用到的端口数量
-   */
-  async reclaimDestroyedPorts(excludeAddress) {
-    if (!this.state.availablePorts) this.state.availablePorts = []
-    let reclaimed = 0
-    for (const [addr, user] of Object.entries(this.state.swtcUsers || {})) {
-      if (!user?.port) continue
-      if (addr === excludeAddress) continue
-      if (user.containerStatus !== 'destroyed') continue
-      if (this.state.availablePorts.includes(user.port)) continue
-      this.state.availablePorts.push(user.port)
-      reclaimed++
-      console.log(
-        `[port] reclaiming destroyed tenant ${addr.slice(0, 8)}...: port ${user.port} → pool`,
-      )
-      // 端口已被征用：该地址下次连接时重新分配新端口（记录里不再保留旧号）
-      delete user.port
-    }
-    if (reclaimed > 0) {
-      this.state.availablePorts.sort((a, b) => a - b)
-      await this._saveState()
-    }
-    return reclaimed
-  }
-
-  /**
-   * 启动容器前的每日额度检查；超限抛 USAGE_LIMIT_REACHED（开关关闭则放行）
-   */
-  ensureUsageAllowed(address) {
-    const cfg = this.usageLimitConfig()
-    if (!cfg.enabled) return
-    // v1.4：持 CWT 解除凭证 = 不限时（台账快照同步查，零 I/O）
-    if (credentialService.isExemptSync(address)) return
-    const limit = cfg.dailyMinutes
-    if (limit === null || !Number.isFinite(limit) || limit <= 0) return
-    const used = this.getUsedMinutes(address)
-    if (used >= limit) {
-      const err = new Error(`今日使用时长已达上限（${limit} 分钟），请明日再试`)
-      err.code = 'USAGE_LIMIT_REACHED'
-      err.usedMinutes = used
-      err.dailyLimit = limit
-      throw err
-    }
-  }
-
-  /**
-   * 定时检查：运行中的非豁免容器超限 → 优雅停止（结算后停）
-   */
-  async checkUsageLimitAndStop() {
-    if (this._usageCheckRunning) return
-    this._usageCheckRunning = true
-    try {
-      const cfg = this.usageLimitConfig()
-      if (!cfg.enabled) return
-      // 豁免判据走 credentialService 内存快照（其 init 自带周期水合，不在热循环里 await 库）
-      const limit = cfg.dailyMinutes
-      if (!Number.isFinite(limit) || limit <= 0) return
-      const grace =
-        this.state.cleanupPolicy?.stopGraceSeconds ?? CONFIG.cleanup.stopGraceSeconds ?? 60
-      let changed = false
-      for (const [address, user] of Object.entries(this.state.swtcUsers || {})) {
-        if (user.containerStatus !== 'running') continue
-        if (credentialService.isExemptSync(address)) continue
-        if (this.getUsedMinutes(address) < limit) continue
-        // 2026-10 审计：原先"先结算后停止"——若 stop 失败（continue 走人），
-        // 表针已被清掉而容器还在跑，此后一分钟都不计费 = 免费无限运行。
-        // 现在停成功才结算（锚点=此刻，容器实际已停）。
-        const name = swtcContainerName(address)
-        try {
-          await dockerService.stopContainer(name, grace)
-        } catch (err) {
-          console.error(`[usage-limit] failed to stop ${name}:`, err.message)
-          continue
-        }
-        this.settleUsage(address)
-        user.containerStatus = 'stopped'
-        user.stoppedAt = Date.now()
-        changed = true
-        console.log(
-          `[usage-limit] ${address} reached ${limit}min daily limit, container stopped (grace ${grace}s)`,
-        )
-        dataService.logOperation('system_usage_limit_stop', {
-          address,
-          operator: 'system',
-          dailyLimitMinutes: limit,
-        })
-      }
-      if (changed) await this._saveState()
-    } finally {
-      this._usageCheckRunning = false
-    }
-  }
-
-  /**
-   * 资源监控：内存使用率超阈自动升级配额（升一级）
-   *
-   * 规则（config.json → resource）：
-   *   - 仅检查 containerStatus === 'running' 的容器；
-   *   - 读取 docker stats 的 memPercent，超过 autoUpgradeThreshold（默认 80%）→ 自动升一级 tier；
-   *   - 已达最高 tier 不再升级；
-   *   - 同一容器升级后进入冷却期（autoUpgradeCooldownMs，默认 10min），防止升级重启反复触发；
-   *   - stats 读取失败（容器刚停/不存在）→ 跳过该容器，不报错。
-   *
-   * 防重入：_monitorRunning 标志（与 cleanup/usage-limit 同风格），
-   * 本轮未结束的重复触发直接跳过。
-   */
-  async monitorResources() {
-    if (this._monitorRunning) return
-    this._monitorRunning = true
-    try {
-      const cfg = CONFIG.resource || {}
-      const threshold = Number(cfg.autoUpgradeThreshold ?? 80)
-      const cooldownMs = Number(cfg.autoUpgradeCooldownMs ?? 10 * 60 * 1000)
-      if (!Number.isFinite(threshold) || threshold <= 0) return
-
-      // 最高 tier（config.tiers 的最大 key）
-      const maxTier = Object.keys(CONFIG.tiers || {})
-        .map(Number)
-        .filter(Number.isFinite)
-        .reduce((m, t) => (t > m ? t : m), 1)
-
-      let changed = false
-      const now = Date.now()
-      for (const [address, user] of Object.entries(this.state.swtcUsers || {})) {
-        if (user.containerStatus !== 'running') continue
-        const tier = user.tier ?? 1
-        if (tier >= maxTier) continue
-        // 冷却期内不重复升级
-        if (user.lastAutoUpgradeAt && now - user.lastAutoUpgradeAt < cooldownMs) continue
-
-        const name = swtcContainerName(address)
-        let stats
-        try {
-          stats = await dockerService.getContainerStats(name)
-        } catch {
-          // stats 读取失败（容器刚停等）→ 跳过
-          continue
-        }
-        if (!stats) continue
-
-        // docker stats memPercent 形如 "12.34%"，parseFloat 取数值
-        const memPercent = Number.parseFloat(String(stats.memPercent ?? ''))
-        if (!Number.isFinite(memPercent) || memPercent < threshold) continue
-
-        // 超阈：自动升一级
-        const nextTier = tier + 1
-        try {
-          await this.upgradeContainer(address, nextTier)
-          // 冷却标记（upgradeContainer 内部已 saveState，落盘由它完成）
-          this.state.swtcUsers[address].lastAutoUpgradeAt = Date.now()
-          changed = true
-          console.log(
-            `[monitor] ${address} memory ${memPercent.toFixed(1)}% >= ${threshold}%, auto-upgraded to tier ${nextTier}`,
-          )
-        } catch (err) {
-          console.error(`[monitor] auto-upgrade failed for ${address}:`, err.message)
-        }
-      }
-      if (changed) await this._saveState()
-    } finally {
-      this._monitorRunning = false
-    }
-  }
-
-  /**
-   * 采集磁盘使用情况（宿主 + Docker 总体 + 租户数据卷），结果缓存到 this.diskUsage
-   * 供 /api/stats 返回给管理面板展示；采集任一失败则该项为 null，不影响其他项。
-   * 防重入：_diskCollectRunning 标志。
-   */
-  async collectDiskUsage() {
-    if (this._diskCollectRunning) return
-    this._diskCollectRunning = true
-    try {
-      const [host, docker, volumes] = await Promise.all([
-        dockerService.hostDiskUsage(),
-        dockerService.dockerDiskSummary(),
-        dockerService.tenantVolumeUsage(),
-      ])
-      // F3#4 低盘告警：宿主可用 < docker.maintenance.lowFreeBytes →
-      // host.lowFree=true（面板红条）+ 日志列可回收 top-N（人工判断依据）。
-      // 只加标记，不拦截、不删除——判断与处置留给人。
-      let lowFree = false
-      if (host) {
-        const threshold = CONFIG.docker?.maintenance?.lowFreeBytes ?? 4 * 1024 * 1024 * 1024
-        lowFree = host.availableKB * 1024 < threshold
-        // dockerDiskSummary 实物返 {items}；历史上有的调用方按裸数组消费
-        // （判例十一：mock 数组绿、真机 {items} 崩——低盘告警形同虚设，
-        // 可回收 21GB 报成"无回收项"）。宽容双契约，再不让形状分歧说谎。
-        const dockerList = Array.isArray(docker) ? docker : (docker?.items ?? [])
-        if (lowFree) {
-          const reclaim = dockerList
-            .filter((d) => d.reclaimable && !/^0B$/i.test(String(d.reclaimable)))
-            .slice(0, 3)
-            .map((d) => `${d.name}:${d.reclaimable}`)
-            .join(' ')
-          console.warn(
-            `[disk] 低盘告警：可用 ${(host.availableKB / 1048576).toFixed(1)}GB < ${(threshold / 1073741824).toFixed(0)}GB（分区 ${host.path ?? '?'}）。可回收 ${reclaim || '（docker system df 无回收项——检查非 Docker 占用）'}`,
-          )
-        }
-      }
-      this.diskUsage = {
-        collectedAt: Date.now(),
-        host: host ? { ...host, lowFree } : null,
-        docker,
-        volumes,
-      }
-    } catch (err) {
-      console.error('[disk] collect failed:', err.message)
-      this.diskUsage = { collectedAt: Date.now(), host: null, docker: null, volumes: null }
-    } finally {
-      this._diskCollectRunning = false
-    }
-  }
-
-  /**
-   * 精确扫描：用 du 实测每个租户卷的真实占用（覆盖 docker system df 的
-   * overlayfs 口径偏差），结果写入 this.diskUsage.volumes[i].sizeActual（字节数）。
-   *
-   * 设计取舍：
-   *   - 引擎口径（collectDiskUsage）O(1) 可扩展，但 Docker Desktop overlayfs 下数值偏小；
-   *   - du 实测准确但 O(n)（每卷起一次临时容器，~1s），卷多时不可进定时器热路径；
-   *   - 因此扫描按需/低频执行：管理员手动触发（POST /api/admin/disk-scan）或
-   *     每日自动快照（见 server.js startDiskMonitor）。
-   *
-   * 防重入：_volumeScanRunning 标志；卷数超过 maxVolumes 时跳过（保护宿主资源）。
-   * @param {number} [maxVolumes] 单次扫描卷数上限，超出不扫描返回 false
-   * @returns {Promise<boolean>} 是否执行了扫描
-   */
-  async scanVolumeUsage(maxVolumes = 50) {
-    if (this._volumeScanRunning) return false
-    const volumes = this.diskUsage?.volumes
-    if (!Array.isArray(volumes) || volumes.length === 0) return false
-    if (volumes.length > maxVolumes) {
-      console.warn(
-        `[disk] precise scan skipped: ${volumes.length} volumes exceed limit ${maxVolumes}`,
-      )
-      return false
-    }
-    this._volumeScanRunning = true
-    try {
-      console.log(`[disk] precise scan started: ${volumes.length} volumes (du)`)
-      // 串行逐卷 du（避免同时起多个临时容器争抢宿主资源）
-      for (const v of volumes) {
-        const bytes = await dockerService.duVolumeSize(v.volume)
-        if (bytes !== null) {
-          v.sizeActual = bytes
-          v.sizeActualAt = Date.now()
-        }
-      }
-      this.diskUsage.preciseScannedAt = Date.now()
-      console.log(`[disk] precise scan finished: ${volumes.length} volumes`)
-      return true
-    } catch (err) {
-      console.error('[disk] precise scan failed:', err.message)
-      return false
-    } finally {
-      this._volumeScanRunning = false
-    }
-  }
-
-  /**
    * 用户主动停止自己的容器：结算当前运行段（保全每日额度），优雅停止
    */
   async stopContainerForUser(address) {
@@ -1254,65 +670,6 @@ export class UserService {
     return info.exists
   }
 
-  async getUserInfo(address) {
-    const user = this.state.swtcUsers?.[address]
-    if (!user) throw new NotFoundError('User not found')
-
-    const stats =
-      user.containerStatus === 'running'
-        ? await dockerService.getContainerStats(swtcContainerName(address))
-        : null
-
-    return {
-      address,
-      port: user.port,
-      tier: user.tier ?? 1,
-      tierLabel: getTierLimits(user.tier ?? 1)?.label ?? '基础',
-      tierLimits: getTierLimits(user.tier ?? 1),
-      status: user.containerStatus ?? 'running',
-      createdAt: user.createdAt,
-      lastSeenAt: user.lastSeenAt,
-      idle: Date.now() - user.lastSeenAt,
-      isAdmin: credentialService.isAdmSync(address),
-      stats: stats
-        ? {
-            cpu: stats.cpu,
-            memory: stats.mem,
-            memoryPercent: stats.memPercent,
-          }
-        : null,
-    }
-  }
-
-  /**
-   * 获取所有用户列表
-   */
-  /**
-   * 管理端列表（带短 TTL 缓存）。
-   *
-   * 为什么加缓存：管理端每轮刷新都要为每个 running 租户跑一次 docker 采样，
-   * 而多个管理员/多个标签页会**各自**触发一遍 → docker CLI 被打爆。
-   * 缓存只活几秒（默认 3s），且任何状态写入都会立即失效（见 _saveState），
-   * 所以「管理员点完按钮看到旧状态」不会发生。
-   *
-   * @param {{force?: boolean}} [opts] force=true 跳过缓存
-   */
-  async getAllUsers({ force = false } = {}) {
-    const ttl = Number(CONFIG.admin?.usersCacheTtlMs ?? 3000)
-    const cached = this._usersCache
-    if (!force && cached?.data && Date.now() - cached.at < ttl) {
-      return cached.data
-    }
-    const data = await this._computeAllUsers()
-    this._usersCache = { at: Date.now(), data }
-    return data
-  }
-
-  /** 让列表缓存立即失效 */
-  invalidateUsersCache() {
-    this._usersCache = { at: 0, data: null }
-  }
-
   /**
    * 状态落盘 + 列表缓存失效。所有 saveState 统一走这里 ——
    * 少挂一处就会让管理员点完按钮看到旧状态。
@@ -1341,66 +698,6 @@ export class UserService {
       '[state] 已从 MongoDB 水合用户域状态：租户 ' +
         Object.keys(this.state.swtcUsers).length +
         ' 个',
-    )
-  }
-
-  async _computeAllUsers() {
-    const users = this.state.swtcUsers || {}
-
-    // 检查 Docker 是否可用
-    const dockerAvailable = await dockerService.isDockerAvailable()
-
-    // 只对 running 的租户批量取一次 stats（一次 docker 进程拿全部，替 N 次）
-    const runningNames = Object.entries(users)
-      .filter(([, u]) => dockerAvailable && u.containerStatus === 'running')
-      .map(([address]) => swtcContainerName(address))
-    const statsMap = await dockerService.getContainerStatsMany(runningNames)
-
-    return Promise.all(
-      Object.entries(users).map(async ([address, user]) => {
-        let stats = null
-        let actualStatus = user.containerStatus ?? 'unknown'
-
-        // 只有 Docker 可用时才查询实时状态
-        if (dockerAvailable && user.containerStatus === 'running') {
-          stats = statsMap.get(swtcContainerName(address)) ?? null
-          // 如果获取 stats 失败，可能容器实际已停止
-          if (!stats) {
-            actualStatus = 'unknown'
-          }
-        } else if (!dockerAvailable) {
-          // Docker 不可用，显示未知状态
-          actualStatus = 'unknown'
-        }
-
-        return {
-          address,
-          port: user.port,
-          tier: user.tier ?? 1,
-          tierLabel: getTierLimits(user.tier ?? 1)?.label ?? '基础',
-          status: actualStatus,
-          // 管理员要看到"这个租户到底在跑哪个 DSH 版本"。
-          // 优先问容器本身（真实值）；容器不在/exec 失败时退回创建时记录值。
-          // 走 dockerService 的镜像 ID 缓存，同一镜像只 exec 一次。
-          dshVersion:
-            (await dockerService.containerDshVersion(swtcContainerName(address))) ??
-            user.baseImageVersion ??
-            null,
-          createdAt: user.createdAt,
-          lastSeenAt: user.lastSeenAt,
-          lastAutoUpgradeAt: user.lastAutoUpgradeAt ?? null,
-          idle: Date.now() - user.lastSeenAt,
-          isAdmin: credentialService.isAdmSync(address),
-          stats: stats
-            ? {
-                cpu: stats.cpu,
-                memory: stats.mem,
-                memoryPercent: stats.memPercent,
-              }
-            : null,
-          dockerAvailable,
-        }
-      }),
     )
   }
 
@@ -1440,8 +737,22 @@ export class UserService {
       if (internalPort === null) {
         throw new Error(`SWTC container ${name} has no readable port mapping`)
       }
-      const port = this.state.swtcUsers?.[address]?.port ?? internalPort
-      return await this.finalizeTenant(address, name, port, internalPort)
+      // 对外端口以**记账**为准（旧兜底 `?? internalPort` 会把内部回环号当对外号
+      // 绑上 0.0.0.0——绕过段纪律，弃号场景重连必踩）。记账缺失/越界/被外人占
+      // → findFreePublicPort 换号 → 拆容器（卷保留）按新映射重建。
+      const recorded = this.state.swtcUsers?.[address]?.port ?? null
+      // 旧容器未拆，其 127.0.0.1 映射口探针必撞——豁免记账（见 findFreePublicPort）
+      const port = await this.findFreePublicPort(recorded, address, internalPort)
+      if (port === recorded) {
+        return await this.finalizeTenant(address, name, port, internalPort)
+      }
+      console.log(
+        `[port] ${address.slice(0, 8)}… 对外端口 ${recorded ?? '缺失'} → ${port}（弃号/越界/外部占用），重建容器换新映射，卷数据保留`,
+      )
+      await dockerService.removeContainer(name)
+      // 清记账：下方创建路径经"回收池→nextPort→探针改派"重新领号
+      if (this.state.swtcUsers?.[address]) this.state.swtcUsers[address].port = null
+      // fall through 到创建路径
     }
 
     // 2) 资源预检（队列处理时跳过）
@@ -1479,30 +790,58 @@ export class UserService {
       if (pinned) image = pinned
     }
 
-    // 优先使用回收的对外端口，其次使用 nextPort；内部回环端口随机分配
-    let port
-    if (this.state.availablePorts && this.state.availablePorts.length > 0) {
-      port = this.state.availablePorts.shift() // 取出最小的可用端口
-      console.log(`[port] using recycled port ${port} for ${address}`)
-    } else {
-      const own = this.state.swtcUsers?.[address]?.port ?? null
-      port = own ?? this.state.nextPort ?? CONFIG.docker.basePort
+    // 优先使用回收的对外端口，其次使用 nextPort；内部回环端口双段配对/随机。
+    // 端口段纪律（2026-11，方案 B 配套）：对外端口一律以 [basePort, maxPort]
+    // 为界（唯一对外段；2026-11-14 去掉了与它同义的 public* 重复键）——回收池
+    // 越界旧号就地丢弃，own 越界视为无号重发，nextPort 越界走征用/耗尽既有路径。
+    // 段值由 config 收口，隧道映射段与发号段同源。
+    const { pub } = this.tenantPortRanges()
+    let port = null
+    while (this.state.availablePorts?.length > 0 && port === null) {
+      const candidate = this.state.availablePorts.shift()
+      if (this.portInRange(candidate)) {
+        port = candidate
+        console.log(`[port] using recycled port ${port} for ${address}`)
+      } else {
+        console.log(
+          `[port] discarding out-of-range recycled port ${candidate} (range ${pub.base}..${pub.max})`,
+        )
+      }
+    }
+    if (port === null) {
+      const ownRaw = this.state.swtcUsers?.[address]?.port ?? null
+      const own = ownRaw !== null && this.portInRange(ownRaw) ? ownRaw : null
+      if (ownRaw !== null && own === null) {
+        console.log(
+          `[port] ${address.slice(0, 8)}… stale port ${ownRaw} out of range (range ${pub.base}..${pub.max}), reassigning`,
+        )
+      }
+      port = own ?? this.state.nextPort ?? pub.base
       // 2026-10 审计：领号即推进 nextPort（同步原子，两个 await 之间不插队）。
       // 此前只在 createContainer 成功后才推进——并发开通的两个租户读到同一个
       // nextPort，各自建容器都成功，撞点在网关 listen（见 tenant-proxy 的
       // owner 门）：第二个会关掉第一个的监听=跨租户劫持。预推进让端口发放
       // 本身就是原子的；创建失败多跳的号作废不用回收（跳号无害，重排有洞）。
-      if (!own) this.state.nextPort = port + 1
+      if (own === null) this.state.nextPort = port + 1
       // 端口即将耗尽：把「容器已销毁（destroyed）、记录还占着端口」的闲置端口
-      // 一次性征用进回收池，供新用户使用（被征用者下次连接时重新分配新端口，内部透明）
-      if (port > CONFIG.docker.maxPort && (await this.reclaimDestroyedPorts(address)) > 0) {
-        port = this.state.availablePorts.shift()
-        console.log(`[port] reclaimed destroyed tenants' ports, using ${port} for ${address}`)
+      // 一次性征用进回收池，供新用户使用（征用时按端口段纪律滤掉越界号）
+      if (!this.portInRange(port) && (await this.reclaimDestroyedPorts(address)) > 0) {
+        const reclaimedPort = this.state.availablePorts.shift()
+        if (reclaimedPort !== undefined) {
+          port = reclaimedPort
+          console.log(`[port] reclaimed destroyed tenants' ports, using ${port} for ${address}`)
+        }
       }
     }
+    // 对外占用探号（40xxx 混段部署的常态）：候选号被外部程序监听 → 段内改派。
+    // 回收池号被占不回池（"洞"是别人的，回池下次照撞）；destroyed 记录的号已由
+    // 弃号清账，下次连接由本函数重新领号。
+    port = await this.findFreePublicPort(port, address)
     const tier = this.state.swtcUsers?.[address]?.tier ?? 1
     const limits = getTierLimits(tier)
-    let internalPort = this.allocateInternalPort()
+    // 双段配对模式：内部回环口由对外口推导（一一对应，findFreePublicPort
+    // 已两端探过）；旧模式维持随机分配。
+    let internalPort = this.internalForPublic(port) ?? this.allocateInternalPort()
     const excludedInternal = new Set() // 本次创建已尝试过的内部端口（冲突时换新）
 
     for (let attempt = 0; attempt < 64; attempt++) {
@@ -1510,8 +849,11 @@ export class UserService {
         port = port + 1
         // 跳号重试同样先占后建（与领号处同一纪律，见上方注释）
         if (port >= (this.state.nextPort ?? 0)) this.state.nextPort = port + 1
+        // 双段模式：整对换号——对外口 +1，配对回环口跟着平移
+        const paired = this.internalForPublic(port)
+        if (paired !== null) internalPort = paired
       }
-      if (port > CONFIG.docker.maxPort) {
+      if (!this.portInRange(port)) {
         throw new Error(`exhausted host port range for SWTC tenant ${address}`)
       }
 
@@ -1529,7 +871,7 @@ export class UserService {
         try {
           await this._saveState()
         } catch {}
-        this.state.nextPort = Math.max(this.state.nextPort ?? CONFIG.docker.basePort, port + 1)
+        this.state.nextPort = Math.max(this.state.nextPort ?? pub.base, port + 1)
         // 新容器 = 可还原画面：active 快照合回（不覆盖已有文件；判例 2026-10-29）
         await this._restoreWorkspace(address, name)
         return await this.finalizeTenant(address, name, port, internalPort)
@@ -1551,9 +893,12 @@ export class UserService {
           continue
         }
         // 内部回环端口冲突（Bind for 127.0.0.1:xxxxx / port is already allocated）：
-        // 对外端口现在由网关监听、docker 不再发布，故 docker 层只会因内部端口冲突报错，
-        // 换一个新的内部端口重试（对外端口不动）。
+        // 对外端口现在由网关监听、docker 不再发布，故 docker 层只会因内部端口冲突报错。
+        // 旧模式：换一个新的内部端口重试（对外端口不动）。
+        // 双段模式：记占用账（探针后被人抢绑，TOCTOU 实锤），整对换号——
+        // 循环顶部 port+1 会重算配对回环口，一一对应不破坏。
         if (msg.includes('port is already allocated') || msg.includes('Bind for 127.0.0.1')) {
+          if (this.internalForPublic(port) !== null) this.recordOccupation(internalPort, 'internal')
           excludedInternal.add(internalPort)
           internalPort = this.allocateInternalPort(excludedInternal)
           continue
@@ -1748,15 +1093,15 @@ export class UserService {
         this.state.swtcUsers?.[address]?.rebuildEpoch ?? null,
       )
     } catch (err) {
-      // PORT_TAKEN（2026-10 审计）：端口正在为**另一租户**服务——把号留在记录里
-      // 会让重连永远撞同一个占位（restart 路径也照记录 port 重绑），必须弃号，
-      // 下次重连经 ensureContainer 领新号。其余失败（宿主程序占用等）保号重试。
-      const takenByOther = err?.code === 'PORT_TAKEN'
-      // 容器本身是好的，只是对外端口绑不上：保留容器与卷，标记 stopped，
-      // 端口留在记录里供下次重连复用（listen 是幂等的，会先 close 再重绑）。
+      // 绑败一律弃号（2026-11，配合 ensureContainer 的探号领号）：
+      // PORT_TAKEN=账内另一租户在册 / EADDRINUSE=宿主外部程序占用 / 其余 bind 错误。
+      // 保号=下次重连永撞同号（restart 路径照记录 port 重绑，实测死循环）；
+      // 弃号后 ensureContainer 会探号领号、重建容器映射（卷数据不动）。
+      // 探针到这里的竞态窗口（发号时空闲、listen 时被抢）由本分支同样兜住。
+      // 容器本身是好的，只是对外端口绑不上：保留容器与卷，标记 stopped。
       this.state.swtcUsers[address] = {
         ...prev,
-        port: takenByOther ? null : port,
+        port: null,
         internalPort,
         tier,
         createdAt: prev.createdAt ?? Date.now(),
@@ -1768,9 +1113,9 @@ export class UserService {
       }
       await this._saveState()
       throw new Error(
-        takenByOther
+        err?.code === 'PORT_TAKEN'
           ? `对外端口 ${port} 正被另一租户服务（状态竞态已自愈：稍后重连将自动分配新端口）`
-          : `网关端口 ${port} 绑定失败（该端口可能被宿主其他程序占用）：${err.message}`,
+          : `网关端口 ${port} 绑定失败（该端口可能被宿主其他程序占用，已弃号，重连将自动换号）：${err.message}`,
       )
     }
 
@@ -2603,10 +1948,16 @@ export class UserService {
     // 对外 authority：用户浏览器经网关访问时的 Host 头（网关透传不改 Host），
     // 显式列入 trustedHosts，保证将来关闭"局域网自动信任"后也能过 DSH 的 fence。
     const externalAuthority = this.externalAuthority(port)
+    // 子域模板形态（泛域名反代部署，2026-11-26）：patch 烘死时不分辨入口，
+    // 传统 authority 与子域 authority 并列入 trustedHosts（去重）——同一容器
+    // 局域网 IP 直连与公网子域进都合法。模板改了 patch 必重建=本函数所在的
+    // 每次重启重建链（见上方漂移注释块），无第二本账。
+    const tplAuthority = tenantAuthority(port)
     const trusted = [
       `127.0.0.1:${port}`,
       `localhost:${port}`,
       ...(externalAuthority ? [externalAuthority] : []),
+      ...(tplAuthority && tplAuthority !== externalAuthority ? [tplAuthority] : []),
       ...PUBLIC_TRUST,
     ]
     return (
@@ -2671,8 +2022,14 @@ export class UserService {
         )
       } catch (err) {
         failed++
+        // 绑定失败=这号对本租户已不可用（外部程序占用/他租户在册）。保号则
+        // 每 60s 撞一次刷日志、永不自愈；弃号后下次"连接"走 ensureContainer
+        // exists 分支的探号领号路径重建映射（卷数据不动）。
+        const lostPort = user.port
+        user.port = null
+        await this._saveState() // 弃号落盘：否则进程重启后账又带上老号，每轮 heal 白撞一次
         console.error(
-          `[gateway-heal] ${address.slice(0, 10)}... 端口 ${user.port} 绑定失败：${err.message}`,
+          `[gateway-heal] ${address.slice(0, 10)}... 端口 ${lostPort} 绑定失败，已弃号（重连自动换号）：${err.message}`,
         )
       }
     }
@@ -2761,7 +2118,10 @@ export class UserService {
 
       // 对外端口回收基线只沿用"有对外端口记录"的容器（新恢复的 40000+ 内部端口不推高 nextPort）
       if (saved?.port) {
-        this.state.nextPort = Math.max(this.state.nextPort ?? CONFIG.docker.basePort, port + 1)
+        this.state.nextPort = Math.max(
+          this.state.nextPort ?? this.tenantPortRanges().pub.base,
+          port + 1,
+        )
       }
 
       // 重新开放网关监听（进程重启后外部端口需要接管）
@@ -3053,37 +2413,22 @@ export class UserService {
       await this._saveState()
     }
   }
+}
 
-  /**
-   * 获取系统统计
-   */
-  getStats() {
-    const users = this.state.swtcUsers || {}
-    const totalUsers = Object.keys(users).length
-    const runningUsers = Object.values(users).filter((u) => u.containerStatus === 'running').length
-    const tierCounts = { 1: 0, 2: 0, 3: 0 }
-    Object.values(users).forEach((u) => {
-      const tier = u.tier ?? 1
-      tierCounts[tier] = (tierCounts[tier] || 0) + 1
+// P2 域拆装配（refactor-giant-files §三）：域 mixin 逐字节搬运，this 语义不变——
+// state 仍在实例上；跨域互借（如端口回收调 this._saveState）为 §3.2 过渡允许丑线。
+// P2 审查整改：弃用 Object.assign——它把 mixin 方法以 **enumerable** 描述符写上
+// prototype（Object.keys(UserService.prototype) 基线 0 → assign 后 29），与 class 体
+// 方法的非枚举语义有偏差；改 defineProperty 循环，描述符与 class 方法完全一致
+// （writable/configurable true、enumerable false）。结构闸见 test/p2-assembly.test.js。
+for (const mixin of [portsMixin, usageMixin, queueMixin, resourcesMixin, queriesMixin]) {
+  for (const [name, fn] of Object.entries(mixin)) {
+    Object.defineProperty(UserService.prototype, name, {
+      value: fn,
+      writable: true,
+      enumerable: false,
+      configurable: true,
     })
-    // 资源监控相关（供管理面板展示）
-    const resource = CONFIG.resource || {}
-    const autoUpgradeCount = Object.values(users).filter((u) => u.lastAutoUpgradeAt).length
-    return {
-      totalUsers,
-      runningUsers,
-      tierCounts,
-      tiers: CONFIG.tiers,
-      resource: {
-        enabled: true,
-        monitorIntervalMs: resource.monitorIntervalMs ?? 30000,
-        autoUpgradeThreshold: resource.autoUpgradeThreshold ?? 80,
-        autoUpgradeCooldownMs: resource.autoUpgradeCooldownMs ?? 600000,
-        diskCheckIntervalMs: resource.diskCheckIntervalMs ?? 300000,
-        autoUpgradeCount,
-        disk: this.diskUsage ?? null,
-      },
-    }
   }
 }
 

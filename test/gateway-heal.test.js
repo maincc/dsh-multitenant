@@ -164,6 +164,10 @@ describe('ensureGatewayRoutes：网关路由自愈', () => {
     expect(r.checked).toBe(2)
     expect(r.restored).toBe(1)
     expect(r.failed).toBe(1)
+    // 2026-11 占用处理：绑定失败方弃号（保号=每 60s 永撞外部占用的口、永不自愈）；
+    // 下次"连接"经 ensureContainer 探号领号重建。成功方的账不动。
+    expect(userService.state.swtcUsers[A1].port).toBeNull()
+    expect(userService.state.swtcUsers[A3].port).toBe(31018)
     // 第二个租户仍然被处理
     expect(tenantGateway.listen).toHaveBeenCalledTimes(2)
   })
